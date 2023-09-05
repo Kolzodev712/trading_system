@@ -2,7 +2,6 @@ use crate::parser::{Config, FileConfigParser};
 use crate::rest_requests::make_get_request;
 use serde_json::Value;
 use std::collections::HashMap;
-// use std::process;
 
 struct URLs {
     base: String,

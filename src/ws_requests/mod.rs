@@ -7,47 +7,58 @@ use tokio::sync::mpsc::Sender;
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::protocol::Message;
 
-/// Constructs a WebSocket URL and initiates a WebSocket connection.
+/// Establishes a WebSocket connection to the Binance API for a given method.
 ///
-/// This function builds a WebSocket URL using the provided parameters and initiates a connection
-/// to the constructed URL. It returns the established WebSocket stream for further handling.
+/// Constructs the WebSocket URL using provided parameters, and if `base` and `quote`
+/// are given, they are included in the constructed URL. If either of `base` or `quote`
+/// are not provided, the constructed URL does not include them.
 ///
 /// # Parameters
 /// - `ws_base_url`: The base URL for the WebSocket connection.
-/// - `endpoint`: The specific WebSocket endpoint.
-/// - `base`: The base trading pair. This will be converted to lowercase in the URL.
-/// - `quote`: The quote trading pair. This will be converted to lowercase in the URL.
-/// - `method`: The specific method or resource to request (e.g., "depth").
+/// - `endpoint`: The endpoint to connect to.
+/// - `base`: The base cryptocurrency symbol (e.g., "BTC"). This is optional.
+/// - `quote`: The quote cryptocurrency symbol (e.g., "USDT"). This is optional.
+/// - `method`: The method for the WebSocket stream (e.g., "depth", "trades").
 ///
 /// # Returns
-/// A `Result` containing the established WebSocket stream. If the connection fails, it returns
-/// an error wrapped in a `Box<dyn Error>`.
+/// Returns a WebSocket stream on success or an error if the connection could not be established.
 ///
 /// # Examples
-///
 /// ```no_run
-/// let stream = make_ws_request("wss://stream.binance.com:9443", "ws", "BNB", "BTC", "depth").await
-///     .expect("Failed to establish WebSocket connection");
+/// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// let ws_stream = make_ws_request(
+///     "wss://stream.binance.com:9443",
+///     "ws",
+///     Some("BTC"),
+///     Some("USDT"),
+///     "depth"
+/// ).await?;
+/// # Ok(())
+/// # }
 /// ```
 pub async fn make_ws_request(
     ws_base_url: &str,
     endpoint: &str,
-    base: &str,
-    quote: &str,
+    base: Option<&str>,
+    quote: Option<&str>,
     method: &str,
 ) -> Result<
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<TcpStream>>,
     Box<dyn Error>,
 > {
     // Construct the WebSocket URL using the provided parameters.
-    let ws_url = format!(
-        "{}/{}/{}{}@{}",
-        ws_base_url,
-        endpoint,
-        base.to_lowercase(),
-        quote.to_lowercase(),
-        method,
-    );
+    let ws_url = if let (Some(base), Some(quote)) = (base, quote) {
+        format!(
+            "{}/{}/{}{}@{}",
+            ws_base_url,
+            endpoint,
+            base.to_lowercase(),
+            quote.to_lowercase(),
+            method
+        )
+    } else {
+        format!("{}/{}/@{}", ws_base_url, endpoint, method)
+    };
 
     // Establish a WebSocket connection to the constructed URL.
     let (ws_stream, _) = connect_async(ws_url).await.expect("Error connecting");

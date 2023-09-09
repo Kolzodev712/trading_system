@@ -9,9 +9,7 @@ use rest_requests::exchanges::binance::{
 };
 
 use threads::{AsyncConsume, AsyncProduce, AsyncProducerConsumer};
-use ws_requests::exchanges_ws::binance_ws::{
-    binance_orderbook_ws_stream, binance_trades_ws_stream,
-};
+use ws_requests::exchanges_ws::binance_ws::binance_ws_stream;
 use ws_requests::handle_messages;
 
 struct Producer;
@@ -20,7 +18,7 @@ struct Consumer;
 #[async_trait]
 impl AsyncProduce<String> for Producer {
     async fn produce(&self, tx: tokio::sync::mpsc::Sender<String>) {
-        let ob_stream = binance_orderbook_ws_stream("BTC", "USDT").await;
+        let ob_stream = binance_ws_stream("BTC", "USDT", "kline_1h").await;
         match ob_stream {
             Ok(ob_stream) => {
                 if let Err(e) = handle_messages(ob_stream, tx.clone()).await {

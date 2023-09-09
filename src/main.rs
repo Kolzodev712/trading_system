@@ -12,26 +12,35 @@ use threads::{AsyncConsume, AsyncProduce, AsyncProducerConsumer};
 use ws_requests::exchanges_ws::binance_ws::{
     binance_orderbook_ws_stream, binance_trades_ws_stream,
 };
+use ws_requests::handle_messages;
 
 struct Producer;
 struct Consumer;
 
 #[async_trait]
-impl AsyncProduce<()> for Producer {
-    async fn produce(&self, tx: tokio::sync::mpsc::Sender<()>) {
-        let _obs = binance_orderbook_ws_stream("BTC", "USDT").await;
-        if let Err(e) = tx.send(_obs).await {
-            println!("Failed to send {:?}: {}", _obs, e);
+impl AsyncProduce<String> for Producer {
+    async fn produce(&self, tx: tokio::sync::mpsc::Sender<String>) {
+        let ob_stream = binance_orderbook_ws_stream("BTC", "USDT").await;
+        match ob_stream {
+            Ok(ob_stream) => {
+                if let Err(e) = handle_messages(ob_stream, tx.clone()).await {
+                    eprintln!("Error while handling messages: {}", e);
+                }
+                tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+            }
+            Err(error) => {
+                eprintln!("Failed to establish WebSocket connection: {}", error);
+                // Handle the error as needed...
+            }
         }
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
     }
 }
 
 #[async_trait]
-impl AsyncConsume<()> for Consumer {
-    async fn consume(&self, mut rx: tokio::sync::mpsc::Receiver<()>) {
+impl AsyncConsume<String> for Consumer {
+    async fn consume(&self, mut rx: tokio::sync::mpsc::Receiver<String>) {
         while let Some(val) = rx.recv().await {
-            println!("Received: {:?}", val); // investigate why this is not printing. Maybe the data does not go into the channel as expected.
+            println!("Receiving WS data: {:?}", val);
         }
     }
 }

@@ -1,4 +1,5 @@
 mod parser;
+mod redis;
 mod rest_requests;
 mod threads;
 mod ws_requests;
@@ -37,8 +38,14 @@ impl AsyncProduce<String> for Producer {
 #[async_trait]
 impl AsyncConsume<String> for Consumer {
     async fn consume(&self, mut rx: tokio::sync::mpsc::Receiver<String>) {
+        let redis = redis::RedisClass {};
+
         while let Some(val) = rx.recv().await {
             println!("Receiving WS data: {:?}", val);
+
+            if let Err(e) = redis.store_ws_data("binance", &val) {
+                eprintln!("Error sending data to Redis: {:?}", e);
+            }
         }
     }
 }

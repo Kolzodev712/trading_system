@@ -15,3 +15,5 @@ tokio-tungstenite = { version = "0.14", features = ["rustls-tls"] }
 config = "0.11.0"
 futures-util = "0.3"
 anyhow = { version = "1.0", default-features = false }
+redis = "0.23.2"
+chrono = "0.4.31"

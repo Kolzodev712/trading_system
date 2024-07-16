@@ -1,11 +1,18 @@
 [package]
-name = "trading_system"
+name = "kolzo_trading_system"
 version = "0.1.0"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
-[dependencies]
+[workspace]
+members = [
+    "src/core_logic", 
+    "src/market_data", 
+    "src/trading",
+    ]
+
+[workspace.dependencies]
 # Logging
 tracing = { version = "0.1.40" }
 
@@ -22,7 +29,6 @@ tokio-tungstenite = { version = "0.14", features = ["rustls-tls"] }
 reqwest = "0.11"
 url = "2.2"
 
-
 # Errors
 anyhow = { version = "1.0", default-features = false }
 thiserror = "1.0"
@@ -31,3 +37,10 @@ thiserror = "1.0"
 futures-util = "0.3"
 chrono = "0.4.31"
 smol_str = "0.2"
+
+# Testing
+tokio-test = "0.4"
+
+[dependencies]
+
+[dev-dependencies]

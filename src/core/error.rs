@@ -1,0 +1,45 @@
+use anyhow::Error;
+use reqwest::{
+    self,
+    header::{InvalidHeaderName, InvalidHeaderValue},
+};
+use thiserror::Error;
+use tokio::sync::mpsc::error::SendError;
+use tokio_tungstenite::tungstenite;
+use url::ParseError;
+
+#[derive(Error, Debug)]
+pub enum KolzoError {
+    #[error("Channel send error: {0}")]
+    ChannelSendError(#[from] SendError<String>),
+
+    #[error("WebSocket connection error: {0}")]
+    WsConnectionError(#[from] tungstenite::Error),
+
+    #[error("TCP stream error: {0}")]
+    TcpStreamError(#[from] tokio::io::Error),
+
+    #[error("URL parsing error: {0}")]
+    UrlParseError(#[from] ParseError),
+
+    #[error("HTTP request error: {0}")]
+    HttpRequestError(#[from] reqwest::Error),
+
+    #[error("JSON serialization/deserialization error: {0}")]
+    JsonError(#[from] serde_json::Error),
+
+    #[error("Invalid header name: {0}")]
+    InvalidHeaderName(#[from] InvalidHeaderName),
+
+    #[error("Invalid header value: {0}")]
+    InvalidHeaderValue(#[from] InvalidHeaderValue),
+
+    #[error("Custom error: {0}")]
+    CustomError(Error),
+}
+
+impl KolzoError {
+    pub fn new_custom_error(msg: String) -> Self {
+        KolzoError::CustomError(anyhow::anyhow!(msg))
+    }
+}

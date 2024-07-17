@@ -27,6 +27,19 @@ pub trait MessageHandler {
     fn handle_ping(&self, ping: Vec<u8>);
 }
 
+/// Trait for creating WebSocket subscription requests.
+///
+/// This trait provides a method for creating subscription requests
+/// to be sent over a WebSocket connection.
+pub trait SubscriptionHandler {
+    /// Creates a subscription request message.
+    ///
+    /// # Returns
+    ///
+    /// * `Message` - The WebSocket message for the subscription request.
+    fn create_subscription_request(&self) -> Message;
+}
+
 /// Establishes a WebSocket connection to the given URL.
 ///
 /// This function connects to the WebSocket server at the specified URL and
@@ -101,5 +114,35 @@ where
             _ => {}
         }
     }
+    Ok(())
+}
+
+/// Subscribes to WebSocket channels using the provided subscription handler.
+///
+/// This function sends subscription requests to the WebSocket stream using
+/// the provided subscription handler.
+///
+/// # Arguments
+///
+/// * `ws_stream` - The WebSocket stream to send subscription requests to.
+/// * `subscription_handler` - The subscription handler to create subscription requests.
+///
+/// # Returns
+///
+/// * `Ok(())` - If the subscription requests were sent successfully.
+/// * `Err(KolzoError)` - An error if there was a problem sending the subscription requests.
+///
+/// # Errors
+///
+/// This function returns an error if there was a problem sending the subscription requests.
+pub async fn subscribe_to_channels<S>(
+    ws_stream: &mut WebSocketStream<MaybeTlsStream<TcpStream>>,
+    subscription_handler: S,
+) -> Result<(), KolzoError>
+where
+    S: SubscriptionHandler,
+{
+    let subscription_message = subscription_handler.create_subscription_request();
+    ws_stream.send(subscription_message).await?;
     Ok(())
 }

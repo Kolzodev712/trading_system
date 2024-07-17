@@ -588,6 +588,23 @@ checksum = "b5e6163cb8c49088c2c36f57875e58ccd8c87c7427f7fbd50ea6710b2f3f2e8f"
 [[package]]
 name = "market_data"
 version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "core_logic",
+ "futures-util",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "smol_str",
+ "thiserror",
+ "tokio",
+ "tokio-test",
+ "tokio-tungstenite",
+ "tracing",
+ "url",
+]
 
 [[package]]
 name = "memchr"
@@ -1311,6 +1328,23 @@ dependencies = [
 [[package]]
 name = "trading"
 version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "core_logic",
+ "futures-util",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "smol_str",
+ "thiserror",
+ "tokio",
+ "tokio-test",
+ "tokio-tungstenite",
+ "tracing",
+ "url",
+]
 
 [[package]]
 name = "try-lock"

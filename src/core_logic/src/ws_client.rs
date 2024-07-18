@@ -1,4 +1,4 @@
-use super::error::KolzoError;
+use crate::error::KolzoError;
 use futures_util::{stream::StreamExt, SinkExt};
 use tokio::{net::TcpStream, sync::mpsc::Sender};
 use tokio_tungstenite::{

@@ -1,5 +1,6 @@
 // Structs and enums:
 
+use core_logic::data::OrderBook;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use std::primitive::str;
@@ -33,4 +34,20 @@ pub struct BinanceOrderbook {
 pub struct PriceLevel {
     pub price: Decimal,
     pub quantity: Decimal,
+}
+
+impl From<BinanceOrderbook> for OrderBook {
+    fn from(orderbook: BinanceOrderbook) -> Self {
+        let bids = orderbook
+            .bids
+            .into_iter()
+            .map(|level| level.price)
+            .collect();
+        let asks = orderbook
+            .asks
+            .into_iter()
+            .map(|level| level.price)
+            .collect();
+        OrderBook { bids, asks }
+    }
 }

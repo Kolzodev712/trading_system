@@ -1,5 +1,6 @@
-use super::types::BinanceWSMessage;
+use super::types::{BinanceOrderbook, BinanceWSMessage};
 use core_logic::{
+    data::OrderBook,
     error::KolzoError,
     ws_client::{
         handle_messages, make_ws_request, subscribe_to_channels, MessageHandler,
@@ -16,7 +17,12 @@ struct DataHandler;
 
 impl MessageHandler for DataHandler {
     fn handle_text_message(&self, text: String) {
-        println!("Data message: {}", text);
+        if let Ok(orderbook) = serde_json::from_str::<BinanceOrderbook>(&text) {
+            let general_orderbook: OrderBook = orderbook.into();
+            println!("General Orderbook: {:?}", general_orderbook);
+        } else {
+            println!("Received message: {}", text);
+        }
     }
 
     fn handle_ping(&self, _ping: Vec<u8>) {

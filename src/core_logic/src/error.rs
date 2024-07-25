@@ -25,14 +25,14 @@ pub enum KolzoError {
     #[error("HTTP request error: {0}")]
     HttpRequestError(#[from] reqwest::Error),
 
-    #[error("JSON serialization/deserialization error: {0}")]
-    JsonError(#[from] serde_json::Error),
-
     #[error("Invalid header name: {0}")]
     InvalidHeaderName(#[from] InvalidHeaderName),
 
     #[error("Invalid header value: {0}")]
     InvalidHeaderValue(#[from] InvalidHeaderValue),
+
+    #[error("JSON serialization/deserialization error: {0}")]
+    JsonError(#[from] serde_json::Error),
 
     #[error("Custom error: {0}")]
     CustomError(Error),

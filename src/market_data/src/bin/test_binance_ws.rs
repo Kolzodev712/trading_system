@@ -1,6 +1,6 @@
 use core_logic::data::DataType;
 use core_logic::error::KolzoError;
-use market_data::exchanges::binance::{
+use market_data::exchanges::binance::websocket::{
     binance_ws::{BinanceChannel, BinanceWSClient},
     types::ParsedBinanceMessage,
 };

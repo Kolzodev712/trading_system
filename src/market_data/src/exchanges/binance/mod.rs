@@ -1,2 +1,2 @@
-pub mod binance_ws;
-pub mod types;
+pub mod rest;
+pub mod websocket;

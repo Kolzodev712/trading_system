@@ -1,5 +1,7 @@
+use super::types::{BinanceRestEndpoint, BinanceSymbol};
 use async_trait::async_trait;
 use core_logic::{
+    data::DataType,
     error::KolzoError,
     rest_client::{make_rest_request, HttpMethod, RestExchangeHandler},
 };
@@ -7,24 +9,44 @@ use reqwest::StatusCode;
 use serde::de::DeserializeOwned;
 use std::collections::HashMap;
 
+pub const BINANCE_URL: &str = "https://api.binance.com/api/v3/";
+
 pub struct BinanceExchangeHandler {
-    url: String,
+    data_type: DataType,
+    symbol: BinanceSymbol,
+    limit: Option<u32>,
 }
 
 impl BinanceExchangeHandler {
-    pub fn new(url: String) -> Self {
-        BinanceExchangeHandler { url }
-    }
-
-    pub fn get_url(&self) -> &str {
-        &self.url
+    pub fn new(data_type: DataType, symbol: BinanceSymbol, limit: Option<u32>) -> Self {
+        BinanceExchangeHandler {
+            data_type,
+            symbol,
+            limit,
+        }
     }
 
     pub async fn get<T>(&self) -> Result<T, KolzoError>
     where
         T: DeserializeOwned,
     {
-        let text = make_rest_request(&self.url, HttpMethod::GET, Some(self)).await?;
+        let endpoint = match self.data_type {
+            DataType::Orderbook => BinanceRestEndpoint::Orderbook {
+                symbol: self.symbol.clone(),
+                limit: self.limit,
+            },
+            DataType::Trade => BinanceRestEndpoint::Trade {
+                symbol: self.symbol.clone(),
+            },
+        };
+
+        let text = make_rest_request(
+            BINANCE_URL,
+            endpoint.get_endpoint(),
+            HttpMethod::GET,
+            Some(self),
+        )
+        .await?;
         let result: T = serde_json::from_str(&text).map_err(KolzoError::JsonError)?;
         Ok(result)
     }
@@ -54,13 +76,19 @@ impl RestExchangeHandler for BinanceExchangeHandler {
     }
 
     fn get_params(&self) -> Option<HashMap<String, String>> {
-        None
+        let endpoint = match self.data_type {
+            DataType::Orderbook => BinanceRestEndpoint::Orderbook {
+                symbol: self.symbol.clone(),
+                limit: self.limit,
+            },
+            DataType::Trade => BinanceRestEndpoint::Trade {
+                symbol: self.symbol.clone(),
+            },
+        };
+        Some(endpoint.get_params())
     }
 
     fn get_body(&self) -> Option<String> {
         None
     }
 }
-
-// make params adjustable
-// make it more flexible

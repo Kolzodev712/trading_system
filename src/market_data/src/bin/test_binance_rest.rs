@@ -1,29 +1,23 @@
+use core_logic::data::{DataType, OrderBook, Trade};
 use market_data::exchanges::binance::rest::{
-    binance_rest::BinanceExchangeHandler, types::BinanceOrderbookSnapshot,
+    binance_rest::BinanceExchangeHandler,
+    types::{BinanceOrderbookSnapshot, BinanceSymbol, BinanceTradeSnapshot},
 };
 
 #[tokio::main]
-async fn main() {
-    let binance_url = "https://api.binance.com/api/v3/depth?symbol=BTCUSDT&limit=10";
-    let binance_handler = BinanceExchangeHandler::new(binance_url.to_string());
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let symbol = BinanceSymbol::new("BTC", "USDT");
 
-    // Example GET request to Binance API for OrderBookSnapshot
-    match binance_handler.get::<BinanceOrderbookSnapshot>().await {
-        Ok(order_book) => {
-            println!("{:?}", order_book);
-        }
-        Err(e) => {
-            eprintln!("Error: {:?}", e);
-        }
-    }
+    let orderbook_handler =
+        BinanceExchangeHandler::new(DataType::Orderbook, symbol.clone(), Some(10));
+    let binance_orderbook: BinanceOrderbookSnapshot = orderbook_handler.get().await?;
+    let _orderbook: OrderBook = binance_orderbook.into();
+    println!("{:?}", _orderbook);
 
-    // Example GET request to Binance API for another type
-    // match binance_handler.get::<AnotherType>().await {
-    //     Ok(result) => {
-    //         println!("{:?}", result);
-    //     }
-    //     Err(e) => {
-    //         eprintln!("Error: {:?}", e);
-    //     }
-    // }
+    let trade_handler = BinanceExchangeHandler::new(DataType::Trade, symbol, None);
+    let binance_trades: Vec<BinanceTradeSnapshot> = trade_handler.get().await?;
+    let _trades: Vec<Trade> = binance_trades.into_iter().map(Trade::from).collect();
+    // println!("{:?}", trades);
+
+    Ok(())
 }

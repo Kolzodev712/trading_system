@@ -9,12 +9,28 @@ use tracing::error;
 
 #[async_trait]
 pub trait RestExchangeHandler {
+    fn build_full_url(&self, base_url: &str, endpoint: &str) -> String {
+        let mut full_url = format!("{}{}", base_url, endpoint);
+
+        if let Some(params) = self.get_params() {
+            let query_string: String = params
+                .into_iter()
+                .map(|(key, value)| format!("{}={}", key, value))
+                .collect::<Vec<String>>()
+                .join("&");
+            full_url = format!("{}?{}", full_url, query_string);
+        }
+
+        full_url
+    }
+
     async fn handle_response(
         &self,
         rest_url: &str,
         status: StatusCode,
         text: &str,
     ) -> Result<(), KolzoError>;
+
     fn get_headers(&self) -> Option<HashMap<String, String>>;
     fn get_params(&self) -> Option<HashMap<String, String>>;
     fn get_body(&self) -> Option<String>;
@@ -45,7 +61,8 @@ impl From<HttpMethod> for Method {
 ///
 /// # Arguments
 ///
-/// * `rest_url` - The full REST URL for the request.
+/// * `base_url` - The base URL for the request.
+/// * `endpoint` - The specific endpoint for the request.
 /// * `method` - The HTTP method for the request.
 /// * `handler` - The exchange-specific handler to process the request and response.
 ///
@@ -57,7 +74,8 @@ impl From<HttpMethod> for Method {
 ///
 /// This function can return a `KolzoError` if the request fails or encounters an issue during processing.
 pub async fn make_rest_request<H>(
-    rest_url: &str,
+    base_url: &str,
+    endpoint: &str,
     method: HttpMethod,
     handler: Option<&H>,
 ) -> Result<String, KolzoError>
@@ -66,7 +84,11 @@ where
 {
     let client = Client::new();
     let method: Method = method.into();
-    let mut request_builder = client.request(method, rest_url);
+    let full_url = handler.map_or_else(
+        || format!("{}{}", base_url, endpoint),
+        |h| h.build_full_url(base_url, endpoint),
+    );
+    let mut request_builder = client.request(method, &full_url);
 
     if let Some(handler) = handler {
         if let Some(headers) = handler.get_headers() {
@@ -75,10 +97,6 @@ where
                 let header_value = HeaderValue::from_bytes(value.as_bytes())?;
                 request_builder = request_builder.header(header_name, header_value);
             }
-        }
-
-        if let Some(params) = handler.get_params() {
-            request_builder = request_builder.query(&params);
         }
 
         if let Some(body) = handler.get_body() {
@@ -94,13 +112,13 @@ where
         .unwrap_or_else(|_| "Unknown error".to_string());
 
     if let Some(handler) = handler {
-        handler.handle_response(rest_url, status, &text).await?;
+        handler.handle_response(&full_url, status, &text).await?;
     }
 
     if status.is_success() {
         Ok(text)
     } else {
-        error!("ERROR: {} RETURNED | {:?} | {}", rest_url, status, text);
+        error!("ERROR: {} RETURNED | {:?} | {}", full_url, status, text);
         process::exit(1); // Set exit code to 1 to indicate an error
     }
 }

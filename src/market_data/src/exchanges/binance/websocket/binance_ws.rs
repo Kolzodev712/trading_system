@@ -15,6 +15,8 @@ use tokio_tungstenite::{
 };
 use tracing::{debug, error};
 
+pub const BINANCE_WS_URL: &str = "wss://stream.binance.com:9443/ws";
+
 #[derive(Debug, Clone)]
 pub struct BinanceChannel {
     pub channel: DataType,
@@ -121,9 +123,9 @@ pub struct BinanceWSClient {
 }
 
 impl BinanceWSClient {
-    pub fn new(url: &str, channel_info: BinanceChannel) -> Self {
+    pub fn new(channel_info: BinanceChannel) -> Self {
         Self {
-            url: url.into(),
+            url: BINANCE_WS_URL.into(),
             subscription_handler: BinanceSubscriptionHandler::new(channel_info),
         }
     }

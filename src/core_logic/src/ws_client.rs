@@ -1,4 +1,4 @@
-use crate::error::KolzoError;
+use crate::{authenticator::WsAuthenticator, error::KolzoError};
 use async_trait::async_trait;
 use tokio::{net::TcpStream, sync::mpsc::Sender};
 use tokio_tungstenite::{tungstenite::protocol::Message, MaybeTlsStream, WebSocketStream};
@@ -25,6 +25,7 @@ pub trait WebSocketClient<T> {
     async fn make_ws_request(
         &self,
         ws_url: &str,
+        authenticator: Option<&dyn WsAuthenticator>,
     ) -> Result<WebSocketStream<MaybeTlsStream<TcpStream>>, KolzoError>;
 
     /// Handles messages from the WebSocket stream.
@@ -42,6 +43,7 @@ pub trait WebSocketClient<T> {
         &self,
         ws_stream: &mut WebSocketStream<MaybeTlsStream<TcpStream>>,
         subscription_handler: S,
+        authenticator: Option<&dyn WsAuthenticator>,
     ) -> Result<(), KolzoError>
     where
         S: SubscriptionHandler + Send + Sync + 'static;

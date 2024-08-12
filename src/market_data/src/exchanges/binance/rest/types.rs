@@ -3,16 +3,18 @@ use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-#[derive(Debug, PartialEq, Eq, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, Eq, PartialEq)]
 #[serde(rename_all = "camelCase")]
+/// <https://binance-docs.github.io/apidocs/spot/en/#order-book>
 pub struct BinanceOrderbookSnapshot {
     pub last_update_id: u64,
     pub bids: Vec<[Decimal; 2]>,
     pub asks: Vec<[Decimal; 2]>,
 }
 
-#[derive(Debug, PartialEq, Eq, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, Eq, PartialEq)]
 #[serde(rename_all = "camelCase")]
+/// <https://binance-docs.github.io/apidocs/spot/en/#recent-trades-list>
 pub struct BinanceTradeSnapshot {
     pub id: u64,
     pub price: Decimal,
@@ -51,8 +53,33 @@ impl From<BinanceTradeSnapshot> for Trade {
     }
 }
 
+#[derive(Debug, Deserialize, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+/// <https://binance-docs.github.io/apidocs/spot/en/#account-information-user_data>
+pub struct AccountInfo {
+    pub can_trade: bool,
+    pub can_withdraw: bool,
+    pub can_deposit: bool,
+    pub brokered: bool,
+    pub require_self_trade_prevention: bool,
+    pub prevent_sor: bool,
+    pub update_time: u64,
+    pub account_type: String,
+    pub balances: Vec<Balance>,
+    pub permissions: Vec<String>,
+    pub uid: u64,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct Balance {
+    pub asset: String,
+    pub free: Decimal,
+    pub locked: Decimal,
+}
+
 #[derive(Debug, PartialEq, Eq, Deserialize, Serialize, Clone)]
-pub enum BinanceRestEndpoint {
+pub enum BinancePublicEndpoint {
     Orderbook {
         symbol: BinanceSymbol,
         limit: Option<u32>,
@@ -62,17 +89,17 @@ pub enum BinanceRestEndpoint {
     },
 }
 
-impl BinanceRestEndpoint {
+impl BinancePublicEndpoint {
     pub fn get_endpoint(&self) -> &str {
         match self {
-            BinanceRestEndpoint::Orderbook { .. } => "depth",
-            BinanceRestEndpoint::Trade { .. } => "trades",
+            BinancePublicEndpoint::Orderbook { .. } => "depth",
+            BinancePublicEndpoint::Trade { .. } => "trades",
         }
     }
 
     pub fn get_params(&self) -> HashMap<String, String> {
         match self {
-            BinanceRestEndpoint::Orderbook { symbol, limit } => {
+            BinancePublicEndpoint::Orderbook { symbol, limit } => {
                 let mut params = HashMap::new();
                 params.insert("symbol".to_string(), symbol.to_symbol());
                 if let Some(l) = limit {
@@ -80,9 +107,61 @@ impl BinanceRestEndpoint {
                 }
                 params
             }
-            BinanceRestEndpoint::Trade { symbol } => {
+            BinancePublicEndpoint::Trade { symbol } => {
                 let mut params = HashMap::new();
                 params.insert("symbol".to_string(), symbol.to_symbol());
+                params
+            }
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, Deserialize, Serialize, Clone)]
+pub enum BinancePrivateEndpoint {
+    AccountInfo,
+    PlaceOrder {
+        symbol: BinanceSymbol,
+        side: String,
+        order_type: String,
+        quantity: Decimal,
+        price: Option<Decimal>,
+        time_in_force: Option<String>,
+    },
+}
+
+impl BinancePrivateEndpoint {
+    pub fn get_endpoint(&self) -> &str {
+        match self {
+            BinancePrivateEndpoint::AccountInfo => "account",
+            BinancePrivateEndpoint::PlaceOrder { .. } => "order",
+        }
+    }
+
+    pub fn get_params(&self) -> HashMap<String, String> {
+        match self {
+            BinancePrivateEndpoint::AccountInfo => HashMap::new(),
+            BinancePrivateEndpoint::PlaceOrder {
+                symbol,
+                side,
+                order_type,
+                quantity,
+                price,
+                time_in_force,
+            } => {
+                let mut params = HashMap::new();
+                params.insert("symbol".to_string(), symbol.to_symbol());
+                params.insert("side".to_string(), side.clone());
+                params.insert("type".to_string(), order_type.clone());
+                params.insert("quantity".to_string(), quantity.to_string());
+
+                if let Some(p) = price {
+                    params.insert("price".to_string(), p.to_string());
+                }
+
+                if let Some(tif) = time_in_force {
+                    params.insert("timeInForce".to_string(), tif.clone());
+                }
+
                 params
             }
         }

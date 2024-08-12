@@ -1,4 +1,4 @@
-use super::error::KolzoError;
+use super::{authenticator::RestAuthenticator, error::KolzoError};
 use async_trait::async_trait;
 use reqwest::{
     header::{HeaderName, HeaderValue},
@@ -9,10 +9,15 @@ use tracing::error;
 
 #[async_trait]
 pub trait RestExchangeHandler {
-    fn build_full_url(&self, base_url: &str, endpoint: &str) -> String {
+    fn build_full_url(
+        &self,
+        base_url: &str,
+        endpoint: &str,
+        authenticator: &dyn RestAuthenticator,
+    ) -> String {
         let mut full_url = format!("{}{}", base_url, endpoint);
 
-        if let Some(params) = self.get_params() {
+        if let Some(params) = self.get_params(authenticator) {
             let query_string: String = params
                 .into_iter()
                 .map(|(key, value)| format!("{}={}", key, value))
@@ -31,9 +36,16 @@ pub trait RestExchangeHandler {
         text: &str,
     ) -> Result<(), KolzoError>;
 
-    fn get_headers(&self) -> Option<HashMap<String, String>>;
-    fn get_params(&self) -> Option<HashMap<String, String>>;
+    fn get_headers(&self, authenticator: &dyn RestAuthenticator)
+        -> Option<HashMap<String, String>>;
+    fn get_params(&self, authenticator: &dyn RestAuthenticator) -> Option<HashMap<String, String>>;
     fn get_body(&self) -> Option<String>;
+    fn authenticate(
+        &self,
+        authenticator: &dyn RestAuthenticator,
+    ) -> Option<HashMap<String, String>> {
+        authenticator.get_headers()
+    }
 }
 
 /// Enum for HTTP methods.
@@ -65,6 +77,7 @@ impl From<HttpMethod> for Method {
 /// * `endpoint` - The specific endpoint for the request.
 /// * `method` - The HTTP method for the request.
 /// * `handler` - The exchange-specific handler to process the request and response.
+/// * `authenticator` - The general authenticator used to sign the request and provide headers.
 ///
 /// # Returns
 ///
@@ -78,6 +91,7 @@ pub async fn make_rest_request<H>(
     endpoint: &str,
     method: HttpMethod,
     handler: Option<&H>,
+    authenticator: &dyn RestAuthenticator,
 ) -> Result<String, KolzoError>
 where
     H: RestExchangeHandler + Send + Sync,
@@ -86,12 +100,20 @@ where
     let method: Method = method.into();
     let full_url = handler.map_or_else(
         || format!("{}{}", base_url, endpoint),
-        |h| h.build_full_url(base_url, endpoint),
+        |h| h.build_full_url(base_url, endpoint, authenticator),
     );
     let mut request_builder = client.request(method, &full_url);
 
     if let Some(handler) = handler {
-        if let Some(headers) = handler.get_headers() {
+        if let Some(auth_headers) = handler.authenticate(authenticator) {
+            for (key, value) in auth_headers {
+                let header_name = HeaderName::from_bytes(key.as_bytes())?;
+                let header_value = HeaderValue::from_bytes(value.as_bytes())?;
+                request_builder = request_builder.header(header_name, header_value);
+            }
+        }
+
+        if let Some(headers) = handler.get_headers(authenticator) {
             for (key, value) in headers {
                 let header_name = HeaderName::from_bytes(key.as_bytes())?;
                 let header_value = HeaderValue::from_bytes(value.as_bytes())?;

@@ -3,13 +3,13 @@
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, PartialEq, Eq, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, Eq, PartialEq)]
 pub struct OrderBook {
     pub bids: Vec<Decimal>,
     pub asks: Vec<Decimal>,
 }
 
-#[derive(Debug, PartialEq, Eq, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, Eq, PartialEq)]
 pub struct Trade {
     pub price: Decimal,
     pub quantity: Decimal,
@@ -17,7 +17,14 @@ pub struct Trade {
     pub is_market_maker: bool,
 }
 
-#[derive(Debug, PartialEq, Eq, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, Eq, PartialEq)]
+pub struct Account {
+    pub account_type: String,
+    pub update_time: u64,
+    pub uid: u64,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub enum DataType {
     Orderbook,
     Trade,

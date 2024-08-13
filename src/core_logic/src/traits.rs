@@ -1,5 +1,5 @@
 use super::{
-    data::{Account, Balance, Order, OrderId, OrderRequest, Pair},
+    data::{Order, OrderId, OrderRequest, Pair},
     error::KolzoError,
     Exchange,
 };
@@ -26,54 +26,22 @@ where
     /// implemented in to fetch the orders from the exchange.
     async fn fetch_open_orders(&self) -> Result<Vec<Order>, KolzoError>;
 
-    /// Fetches and returns the list of balances
-    ///
-    /// If the exchange supports streaming of balance updates this method can return
-    /// list of balances it currently has in memory. Otherwise the kolzo should be
-    /// implemented in to fetch the current balances from the exchange.
-    async fn fetch_balances(&self) -> Result<Vec<Balance>, KolzoError> {
-        unimplemented!()
-    }
-
-    /// Fetches and returns the account information
-    ///
-    /// If the exchange supports fetching of account information this method can return
-    /// full margin information (positions, collaterals, etc.).
-    async fn fetch_account_information(&self) -> Result<Option<Account>, KolzoError> {
-        Ok(None)
-    }
-
     /// Creates a single order
     async fn open_order(&self, req: OrderRequest) -> Result<Order, KolzoError>;
 
     /// Cancels a single order by pair & order_id
     ///
     /// When exchange requires an additional parameters to cancel the order (for example
-    /// order side), the kolzo should take care of it using some form of open order
+    /// order side), the client should take care of it using some form of open order
     /// cache.
     ///
     /// If the exchange rejects the cancel due to non-existent order,
     /// order already being completed or cancelled, the kolzo is
-    /// expected to return appropriate [`kolzoError`] ([`kolzoError::OrderNotFound`],
-    /// [`kolzoError::OrderAlreadyFilled`] and [`kolzoError::OrderAlreadyCancelled`] respectively).
+    /// expected to return appropriate [`KolzoError`] ([`KolzoError::OrderNotFound`],
+    /// [`KolzoError::OrderAlreadyFilled`] and [`KolzoError::OrderAlreadyCancelled`] respectively).
     async fn cancel_order_by_id(
         &self,
         pair: &InstrumentId,
         order_id: OrderId,
     ) -> Result<(), KolzoError>;
-
-    /// Cancels all orders for a given pair
-    ///
-    /// Exchanges usually provide an endpoint for cancelling all orders on a given market.
-    /// If they provide only individual cancel endpoint, the kolzo is expected to implement
-    /// custom logic to cancel all orders on a given pair.
-    ///
-    /// The return value of this method can be an empty vec in case the kolzo guarantees
-    /// to call [`kolzoNotification::CancelOrder`] for each order that has been cancelled.
-    /// Otherwise the return value is expected to contain a vector of IDs of the cancelled
-    /// orders.
-    ///
-    /// TODO: we want to change signature to return `kolzoResult<Option<Vec<OrderId>>>` for APIs
-    /// which don't support returning the cancelled order ids.
-    async fn cancel_all(&self, pair: &Pair) -> Result<Vec<OrderId>, KolzoError>;
 }

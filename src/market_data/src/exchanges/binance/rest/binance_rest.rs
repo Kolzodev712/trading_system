@@ -10,6 +10,7 @@ use core_logic::{
 use hmac::{Hmac, Mac};
 use reqwest::StatusCode;
 use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use std::collections::HashMap;
 
@@ -18,11 +19,14 @@ type HmacSha256 = Hmac<Sha256>;
 pub const BINANCE_URL: &str = "https://api.binance.com/api/v3/";
 
 /// Enum to handle both public and private endpoints
+#[derive(Debug, PartialEq, Eq, Deserialize, Serialize, Clone)]
+
 pub enum BinanceEndpoint {
     Public(BinancePublicEndpoint),
     Private(BinancePrivateEndpoint),
 }
 
+#[derive(Debug, PartialEq, Eq, Deserialize, Serialize, Clone)]
 pub struct BinanceAuthenticator {
     pub api_key: Option<String>,
     pub secret_key: Option<String>,
@@ -90,6 +94,7 @@ impl RestAuthenticator for BinanceAuthenticator {
     }
 }
 
+#[derive(Debug, PartialEq, Eq, Deserialize, Serialize, Clone)]
 pub struct BinanceExchangeHandler {
     endpoint: BinanceEndpoint,
     authenticator: BinanceAuthenticator,

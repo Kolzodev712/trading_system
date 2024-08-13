@@ -34,6 +34,15 @@ pub enum KolzoError {
     #[error("JSON serialization/deserialization error: {0}")]
     JsonError(#[from] serde_json::Error),
 
+    #[error("Order not found error: {0}")]
+    OrderNotFound(Error),
+
+    #[error("Order already filled error: {0}")]
+    OrderAlreadyFilled(Error),
+
+    #[error("Order already cancelled error: {0}")]
+    OrderAlreadyCanceled(Error),
+
     #[error("Custom error: {0}")]
     CustomError(Error),
 }

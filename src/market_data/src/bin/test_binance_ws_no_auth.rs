@@ -1,6 +1,6 @@
-use core_logic::error::KolzoError;
+use core_logic::{data::DataType, error::KolzoError};
 use market_data::exchanges::binance::websocket::{
-    binance_ws::{BinanceChannelPublic, BinanceWSClient},
+    binance_ws::{BinanceChannel, BinanceWSClient},
     types::ParsedBinanceMessage,
 };
 use tokio::sync::mpsc;
@@ -11,12 +11,13 @@ async fn main() -> Result<(), KolzoError> {
     let base = "btc";
     let quote = "usdt";
 
-    let trade_channel_info = BinanceChannelPublic::Trade {
+    let trade_channel_info = BinanceChannel {
+        channel: DataType::Trade,
         base: base.to_string(),
         quote: quote.to_string(),
     };
 
-    let client = BinanceWSClient::new_public(trade_channel_info, None);
+    let client = BinanceWSClient::new(trade_channel_info);
     client.run(tx).await?;
 
     while let Some(message) = rx.recv().await {
@@ -30,7 +31,6 @@ async fn main() -> Result<(), KolzoError> {
             ParsedBinanceMessage::Raw(raw) => {
                 println!("Received Raw message: {}", raw);
             }
-            _ => {}
         }
     }
 

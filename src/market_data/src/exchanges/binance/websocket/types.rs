@@ -1,6 +1,6 @@
 // Structs and enums:
 
-use core_logic::data::{Account, OrderBook, Trade};
+use core_logic::data::{OrderBook, Trade};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use std::primitive::str;
@@ -84,47 +84,11 @@ impl From<BinanceTrade> for Trade {
 }
 
 #[derive(Debug, PartialEq, Eq, Deserialize, Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct AccountInfo {
-    pub can_trade: bool,
-    pub can_withdraw: bool,
-    pub can_deposit: bool,
-    pub brokered: bool,
-    pub require_self_trade_prevention: bool,
-    pub prevent_sor: bool,
-    pub update_time: u64,
-    pub account_type: String,
-    pub balances: Vec<Balance>,
-    pub permissions: Vec<String>,
-    pub uid: u64,
-}
-
-#[derive(Debug, PartialEq, Eq, Deserialize, Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct Balance {
-    pub asset: String,
-    pub free: Decimal,
-    pub locked: Decimal,
-}
-
-impl From<AccountInfo> for Account {
-    fn from(account: AccountInfo) -> Self {
-        Account {
-            account_type: account.account_type,
-            update_time: account.update_time,
-            uid: account.uid,
-        }
-    }
-}
-
-#[derive(Debug, PartialEq, Eq, Deserialize, Serialize, Clone)]
 pub enum BinanceWsEventType {
     #[serde(rename = "depthUpdate")]
     DepthUpdate,
     #[serde(rename = "trade")]
     Trade,
-    #[serde(rename = "account.status")]
-    Account,
     Unknown,
 }
 
@@ -132,6 +96,5 @@ pub enum BinanceWsEventType {
 pub enum ParsedBinanceMessage {
     OrderBook(OrderBook),
     Trade(Trade),
-    Account(Account),
     Raw(String),
 }

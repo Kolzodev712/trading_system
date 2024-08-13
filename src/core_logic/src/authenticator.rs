@@ -1,4 +1,3 @@
-use super::error::KolzoError;
 use async_trait::async_trait;
 use std::collections::HashMap;
 
@@ -12,11 +11,4 @@ pub trait RestAuthenticator {
         timestamp: Option<u64>,
     ) -> HashMap<String, String>;
     fn get_headers(&self) -> Option<HashMap<String, String>>;
-}
-
-#[async_trait]
-pub trait WsAuthenticator: Send + Sync {
-    async fn authenticate(&self, ws_url: &str) -> Result<String, KolzoError>;
-    fn sign_subscription_message(&self, message: &str) -> Option<String>;
-    fn get_auth_headers(&self) -> Option<HashMap<String, String>>;
 }

@@ -1,4 +1,4 @@
-use core_logic::data::{OrderBook, Trade};
+use core_logic::data::{DataType, OrderBook, Trade};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -82,7 +82,7 @@ pub struct Balance {
 pub enum BinancePublicEndpoint {
     Orderbook {
         symbol: BinanceSymbol,
-        limit: Option<u32>,
+        limit: Option<u64>,
     },
     Trade {
         symbol: BinanceSymbol,
@@ -184,5 +184,20 @@ impl BinanceSymbol {
 
     pub fn to_symbol(&self) -> String {
         format!("{}{}", self.base, self.quote)
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, Deserialize, Serialize, Clone)]
+pub enum BinanceDataType {
+    Orderbook,
+    Trade,
+}
+
+impl From<DataType> for BinanceDataType {
+    fn from(data_type: DataType) -> Self {
+        match data_type {
+            DataType::Orderbook => BinanceDataType::Orderbook,
+            DataType::Trade => BinanceDataType::Trade,
+        }
     }
 }

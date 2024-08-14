@@ -1,7 +1,7 @@
-use core_logic::data::{DataType, OrderBook, Trade};
+use core_logic::data::{OrderBook, Trade};
 use market_data::exchanges::binance::rest::{
     binance_rest::BinanceExchangeHandler,
-    types::{BinanceOrderbookSnapshot, BinanceSymbol, BinanceTradeSnapshot},
+    types::{BinanceDataType, BinanceOrderbookSnapshot, BinanceSymbol, BinanceTradeSnapshot},
 };
 use std::env;
 
@@ -14,7 +14,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Create a handler for the order book
     let orderbook_handler = BinanceExchangeHandler::new_public(
-        DataType::Orderbook,
+        BinanceDataType::Orderbook,
         symbol.clone(),
         Some(10),
         None,
@@ -27,7 +27,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("{:?}", _orderbook);
 
     let trade_handler = BinanceExchangeHandler::new_public(
-        DataType::Trade,
+        BinanceDataType::Trade,
         symbol,
         None,
         None,

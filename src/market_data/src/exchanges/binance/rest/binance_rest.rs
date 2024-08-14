@@ -1,8 +1,7 @@
-use super::types::{BinancePrivateEndpoint, BinancePublicEndpoint, BinanceSymbol};
+use super::types::{BinanceDataType, BinancePrivateEndpoint, BinancePublicEndpoint, BinanceSymbol};
 use async_trait::async_trait;
 use core_logic::{
     authenticator::RestAuthenticator,
-    data::DataType,
     error::KolzoError,
     rest_client::{make_rest_request, HttpMethod, RestExchangeHandler},
     utils::current_timestamp,
@@ -104,19 +103,21 @@ pub struct BinanceExchangeHandler {
 
 impl BinanceExchangeHandler {
     pub fn new_public(
-        data_type: DataType,
+        data_type: BinanceDataType,
         symbol: BinanceSymbol,
-        limit: Option<u32>,
+        limit: Option<u64>,
         recv_window: Option<u64>,
         timestamp: Option<u64>,
         api_key: Option<String>,
         secret_key: Option<String>,
     ) -> Self {
         let endpoint = match data_type {
-            DataType::Orderbook => {
+            BinanceDataType::Orderbook => {
                 BinanceEndpoint::Public(BinancePublicEndpoint::Orderbook { symbol, limit })
             }
-            DataType::Trade => BinanceEndpoint::Public(BinancePublicEndpoint::Trade { symbol }),
+            BinanceDataType::Trade => {
+                BinanceEndpoint::Public(BinancePublicEndpoint::Trade { symbol })
+            }
         };
 
         let authenticator = BinanceAuthenticator::new(api_key, secret_key);

@@ -7,10 +7,10 @@ use std::fmt::Debug;
 
 /// Trait that defines the kolzo's interactions with the exchange
 ///
-/// Each kolzo is expected to implement the `KolzoClient` trait to provide
+/// Each kolzo is expected to implement the `TradingClient` trait to provide
 /// an abstraction over the exchange API.
 #[async_trait::async_trait]
-pub trait KolzoClient<InstrumentId = Pair>: Debug + Send + Sync + 'static
+pub trait TradingClient<InstrumentId = Pair>: Debug + Send + Sync + 'static
 where
     InstrumentId: Clone + Debug + Send + 'static,
 {

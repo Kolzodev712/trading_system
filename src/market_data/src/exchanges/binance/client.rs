@@ -36,8 +36,6 @@ impl BinanceClient {
             self.config.limit,
             None,
             None,
-            None,
-            None,
         );
         let orderbook_snapshots: BinanceOrderbookSnapshot = orderbook_handler.get().await?;
         let orderbook: OrderBook = orderbook_snapshots.into();
@@ -49,8 +47,6 @@ impl BinanceClient {
         let trade_handler = BinanceExchangeHandler::new_public(
             BinanceDataType::Trade,
             self.config.symbol.clone(),
-            None,
-            None,
             None,
             None,
             None,
@@ -66,8 +62,8 @@ impl BinanceClient {
             BinancePrivateEndpoint::AccountInfo,
             None,
             None,
-            Some(self.config.api_key.clone()),
-            Some(self.config.secret_key.clone()),
+            self.config.api_key.clone(),
+            self.config.secret_key.clone(),
         );
 
         let account_info_raw: AccountInfo = account_info_handler.get().await?;

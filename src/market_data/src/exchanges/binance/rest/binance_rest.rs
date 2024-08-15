@@ -1,15 +1,15 @@
 use super::types::{BinanceDataType, BinancePrivateEndpoint, BinancePublicEndpoint, BinanceSymbol};
 use async_trait::async_trait;
 use core_logic::{
-    authenticator::RestAuthenticator,
-    error::KolzoError,
-    rest_client::{create_rest_request, HttpMethod, RestExchangeHandler},
+    authenticator::RestAuthenticator, error::KolzoError, rest_client::RestExchangeHandler,
     utils::current_timestamp,
 };
 use hmac::{Hmac, Mac};
 use reqwest::StatusCode;
-use serde::de::DeserializeOwned;
-use serde::{Deserialize, Serialize};
+use serde::{
+    de::DeserializeOwned,
+    {Deserialize, Serialize},
+};
 use sha2::Sha256;
 use std::collections::HashMap;
 
@@ -24,14 +24,14 @@ pub enum BinanceEndpoint {
     Private(BinancePrivateEndpoint),
 }
 
-#[derive(Debug, PartialEq, Eq, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
 pub struct BinanceAuthenticator {
-    pub api_key: Option<String>,
-    pub secret_key: Option<String>,
+    pub api_key: String,
+    pub secret_key: String,
 }
 
 impl BinanceAuthenticator {
-    pub fn new(api_key: Option<String>, secret_key: Option<String>) -> Self {
+    pub fn new(api_key: String, secret_key: String) -> Self {
         BinanceAuthenticator {
             api_key,
             secret_key,
@@ -42,16 +42,12 @@ impl BinanceAuthenticator {
 #[async_trait]
 impl RestAuthenticator for BinanceAuthenticator {
     async fn generate_signature(&self, query_string: &str) -> Result<Option<String>, KolzoError> {
-        if let Some(secret_key) = &self.secret_key {
-            let mut mac = HmacSha256::new_from_slice(secret_key.as_bytes())
-                .map_err(|e| KolzoError::CustomError(anyhow::anyhow!(e.to_string())))?;
-            mac.update(query_string.as_bytes());
-            let result = mac.finalize();
-            let signature_bytes = result.into_bytes();
-            Ok(Some(hex::encode(signature_bytes)))
-        } else {
-            Ok(None)
-        }
+        let mut mac = HmacSha256::new_from_slice(self.secret_key.as_bytes())
+            .map_err(|e| KolzoError::CustomError(anyhow::anyhow!(e.to_string())))?;
+        mac.update(query_string.as_bytes());
+        let result = mac.finalize();
+        let signature_bytes = result.into_bytes();
+        Ok(Some(hex::encode(signature_bytes)))
     }
 
     async fn build_signed_params(
@@ -81,21 +77,15 @@ impl RestAuthenticator for BinanceAuthenticator {
 
     fn get_headers(&self) -> Result<Option<HashMap<String, String>>, KolzoError> {
         let mut headers = HashMap::new();
-        if let Some(ref key) = self.api_key {
-            headers.insert("X-MBX-APIKEY".to_string(), key.clone());
-        }
-        if headers.is_empty() {
-            Ok(None)
-        } else {
-            Ok(Some(headers))
-        }
+        headers.insert("X-MBX-APIKEY".to_string(), self.api_key.clone());
+        Ok(Some(headers))
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
 pub struct BinanceExchangeHandler {
     endpoint: BinanceEndpoint,
-    authenticator: BinanceAuthenticator,
+    authenticator: Option<BinanceAuthenticator>,
     recv_window: Option<u64>,
     timestamp: Option<u64>,
 }
@@ -107,8 +97,6 @@ impl BinanceExchangeHandler {
         limit: Option<u64>,
         recv_window: Option<u64>,
         timestamp: Option<u64>,
-        api_key: Option<String>,
-        secret_key: Option<String>,
     ) -> Self {
         let endpoint = match data_type {
             BinanceDataType::Orderbook => {
@@ -119,49 +107,29 @@ impl BinanceExchangeHandler {
             }
         };
 
-        let authenticator = BinanceAuthenticator::new(api_key, secret_key);
-
         BinanceExchangeHandler {
             endpoint,
-            authenticator,
+            authenticator: None, // No authenticator needed for public endpoints
             recv_window,
             timestamp,
         }
     }
 
-    // Constructor for private endpoints
     pub fn new_private(
         private_endpoint: BinancePrivateEndpoint,
         recv_window: Option<u64>,
         timestamp: Option<u64>,
-        api_key: Option<String>,
-        secret_key: Option<String>,
+        api_key: String,
+        secret_key: String,
     ) -> Self {
         let authenticator = BinanceAuthenticator::new(api_key, secret_key);
 
         BinanceExchangeHandler {
             endpoint: BinanceEndpoint::Private(private_endpoint),
-            authenticator,
+            authenticator: Some(authenticator), // Authenticator required for private endpoints
             recv_window,
             timestamp,
         }
-    }
-
-    pub async fn get<T>(&self) -> Result<T, KolzoError>
-    where
-        T: DeserializeOwned,
-    {
-        let endpoint_path = self.get_endpoint_path();
-        let text = create_rest_request(
-            BINANCE_URL,
-            endpoint_path,
-            HttpMethod::GET,
-            Some(self),
-            Some(&self.authenticator),
-        )
-        .await?;
-        let result: T = serde_json::from_str(&text).map_err(KolzoError::JsonError)?;
-        Ok(result)
     }
 
     fn get_endpoint_path(&self) -> &str {
@@ -169,6 +137,37 @@ impl BinanceExchangeHandler {
             BinanceEndpoint::Public(endpoint) => endpoint.get_endpoint(),
             BinanceEndpoint::Private(endpoint) => endpoint.get_endpoint(),
         }
+    }
+
+    pub async fn get<T>(&self) -> Result<T, KolzoError>
+    where
+        T: DeserializeOwned,
+    {
+        let authenticator: Option<&dyn RestAuthenticator> = self
+            .authenticator
+            .as_ref()
+            .map(|auth| auth as &dyn RestAuthenticator);
+
+        let url = self
+            .build_full_url(BINANCE_URL, self.get_endpoint_path(), authenticator)
+            .await;
+
+        let client = reqwest::Client::new();
+        let mut request_builder = client.get(&url);
+
+        if let Some(headers) = self.get_headers(authenticator)? {
+            for (key, value) in headers {
+                request_builder = request_builder.header(&key, &value);
+            }
+        }
+
+        let response = request_builder.send().await?;
+        let status = response.status();
+        let text = response.text().await?;
+
+        self.handle_response(&url, status, &text).await?;
+
+        serde_json::from_str::<T>(&text).map_err(KolzoError::JsonError)
     }
 }
 

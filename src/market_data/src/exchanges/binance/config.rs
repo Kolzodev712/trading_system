@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use super::types::BinanceSymbol;
+use super::rest::types::BinanceSymbol;
 
 #[derive(Debug, PartialEq, Eq, Deserialize, Serialize, Clone)]
 pub struct BinanceConfig {

@@ -8,27 +8,36 @@ use std::{collections::HashMap, process};
 use tracing::error;
 
 #[async_trait]
-pub trait RestExchangeHandler {
-    fn build_full_url(
+pub trait RestExchangeHandler: Send + Sync {
+    /// Builds the full URL for the request, including the base URL, endpoint, and any query parameters.
+    ///
+    /// # Arguments
+    ///
+    /// * `base_url` - The base URL for the API.
+    /// * `endpoint` - The specific endpoint for the request.
+    /// * `authenticator` - An optional authenticator used to sign the request and provide headers.
+    ///
+    /// # Returns
+    ///
+    /// Returns the full URL as a `String`.
+    async fn build_full_url(
         &self,
         base_url: &str,
         endpoint: &str,
-        authenticator: &dyn RestAuthenticator,
-    ) -> String {
-        let mut full_url = format!("{}{}", base_url, endpoint);
+        authenticator: Option<&dyn RestAuthenticator>,
+    ) -> String;
 
-        if let Some(params) = self.get_params(authenticator) {
-            let query_string: String = params
-                .into_iter()
-                .map(|(key, value)| format!("{}={}", key, value))
-                .collect::<Vec<String>>()
-                .join("&");
-            full_url = format!("{}?{}", full_url, query_string);
-        }
-
-        full_url
-    }
-
+    /// Handles the response from the REST API.
+    ///
+    /// # Arguments
+    ///
+    /// * `rest_url` - The URL that was requested.
+    /// * `status` - The HTTP status code of the response.
+    /// * `text` - The response body as a string.
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Result` which is `Ok(())` if the response was handled successfully or an error if not.
     async fn handle_response(
         &self,
         rest_url: &str,
@@ -36,28 +45,79 @@ pub trait RestExchangeHandler {
         text: &str,
     ) -> Result<(), KolzoError>;
 
-    fn get_headers(&self, authenticator: &dyn RestAuthenticator)
-        -> Option<HashMap<String, String>>;
-    fn get_params(&self, authenticator: &dyn RestAuthenticator) -> Option<HashMap<String, String>>;
+    /// Retrieves any additional headers needed for the request.
+    ///
+    /// # Arguments
+    ///
+    /// * `authenticator` - An optional authenticator that may provide additional headers.
+    ///
+    /// # Returns
+    ///
+    /// Returns an `Option<HashMap<String, String>>` containing the headers, or `None` if no additional headers are needed.
+    fn get_headers(
+        &self,
+        authenticator: Option<&dyn RestAuthenticator>,
+    ) -> Result<Option<HashMap<String, String>>, KolzoError>;
+
+    /// Retrieves any additional parameters needed for the request.
+    ///
+    /// # Arguments
+    ///
+    /// * `authenticator` - An optional authenticator that may provide additional parameters.
+    ///
+    /// # Returns
+    ///
+    /// Returns an `Option<HashMap<String, String>>` containing the parameters, or `None` if no additional parameters are needed.
+    async fn get_params(
+        &self,
+        authenticator: Option<&dyn RestAuthenticator>,
+    ) -> Result<Option<HashMap<String, String>>, KolzoError>;
+
+    /// Retrieves the request body, if any.
+    ///
+    /// # Returns
+    ///
+    /// Returns an `Option<String>` containing the body as a string, or `None` if there is no body.
     fn get_body(&self) -> Option<String>;
+
+    /// Authenticates the request by adding any necessary authentication headers.
+    ///
+    /// # Arguments
+    ///
+    /// * `authenticator` - An optional authenticator used to provide authentication headers.
+    ///
+    /// # Returns
+    ///
+    /// Returns an `Option<HashMap<String, String>>` containing the authentication headers, or `None` if no authentication is needed.
     fn authenticate(
         &self,
-        authenticator: &dyn RestAuthenticator,
-    ) -> Option<HashMap<String, String>> {
-        authenticator.get_headers()
-    }
+        authenticator: Option<&dyn RestAuthenticator>,
+    ) -> Result<Option<HashMap<String, String>>, KolzoError>;
 }
 
-/// Enum for HTTP methods.
+/// Represents the different HTTP methods that can be used in a REST request.
 pub enum HttpMethod {
+    /// The HTTP GET method, used to retrieve data.
     GET,
+    /// The HTTP POST method, used to submit data to be processed.
     POST,
+    /// The HTTP PUT method, used to update existing data.
     PUT,
+    /// The HTTP DELETE method, used to delete data.
     DELETE,
+    /// The HTTP PATCH method, used to apply partial modifications to data.
     PATCH,
 }
 
 impl From<HttpMethod> for Method {
+    /// Converts a `HttpMethod` to a `reqwest::Method`.
+    ///
+    /// # Example
+    /// ```
+    /// let method = HttpMethod::GET;
+    /// let reqwest_method: Method = method.into();
+    /// assert_eq!(reqwest_method, Method::GET);
+    /// ```
     fn from(method: HttpMethod) -> Self {
         match method {
             HttpMethod::GET => Method::GET,
@@ -71,52 +131,83 @@ impl From<HttpMethod> for Method {
 
 /// Makes a REST request to the specified URL, leveraging exchange-specific logic from the handler.
 ///
+/// This function constructs a full URL, prepares the request with optional headers and body content,
+/// sends the request, and handles the response based on the exchange-specific handler.
+///
 /// # Arguments
 ///
-/// * `base_url` - The base URL for the request.
-/// * `endpoint` - The specific endpoint for the request.
-/// * `method` - The HTTP method for the request.
-/// * `handler` - The exchange-specific handler to process the request and response.
-/// * `authenticator` - The general authenticator used to sign the request and provide headers.
+/// * `base_url` - The base URL for the request, such as "https://api.exchange.com".
+/// * `endpoint` - The specific endpoint for the request, such as "/v1/order".
+/// * `method` - The HTTP method for the request, such as GET, POST, etc.
+/// * `handler` - An optional handler that implements `RestExchangeHandler`, which defines
+///   exchange-specific behavior for the request.
+/// * `authenticator` - An optional authenticator used to sign the request and provide headers.
 ///
 /// # Returns
 ///
-/// Returns a `Result` containing the `Response` if the request is successful, or a `KolzoError` if there was a failure.
+/// Returns a `Result` containing the `String` response if the request is successful, or a `KolzoError`
+/// if there was a failure during the request or response handling.
 ///
 /// # Errors
 ///
-/// This function can return a `KolzoError` if the request fails or encounters an issue during processing.
-pub async fn make_rest_request<H>(
+/// This function can return a `KolzoError` in cases such as:
+/// - Network failures or timeouts when sending the request.
+/// - Invalid headers or parameters provided by the handler or authenticator.
+/// - Non-success HTTP status codes returned from the API.
+///
+/// # Example
+///
+/// ```rust
+/// let base_url = "https://api.exchange.com";
+/// let endpoint = "/v1/order";
+/// let method = HttpMethod::POST;
+/// let response = create_rest_request(
+///     base_url,
+///     endpoint,
+///     method,
+///     Some(&my_exchange_handler),
+///     Some(&my_authenticator)
+/// ).await?;
+/// println!("Response: {}", response);
+/// ```
+pub async fn create_rest_request<H>(
     base_url: &str,
     endpoint: &str,
     method: HttpMethod,
     handler: Option<&H>,
-    authenticator: &dyn RestAuthenticator,
+    authenticator: Option<&dyn RestAuthenticator>,
 ) -> Result<String, KolzoError>
 where
     H: RestExchangeHandler + Send + Sync,
 {
     let client = Client::new();
     let method: Method = method.into();
-    let full_url = handler.map_or_else(
-        || format!("{}{}", base_url, endpoint),
-        |h| h.build_full_url(base_url, endpoint, authenticator),
-    );
+    let full_url = if let Some(handler) = handler {
+        handler
+            .build_full_url(base_url, endpoint, authenticator)
+            .await
+    } else {
+        format!("{}{}", base_url, endpoint)
+    };
     let mut request_builder = client.request(method, &full_url);
 
     if let Some(handler) = handler {
-        if let Some(auth_headers) = handler.authenticate(authenticator) {
+        if let Ok(Some(auth_headers)) = handler.authenticate(authenticator) {
             for (key, value) in auth_headers {
-                let header_name = HeaderName::from_bytes(key.as_bytes())?;
-                let header_value = HeaderValue::from_bytes(value.as_bytes())?;
+                let header_name = HeaderName::from_bytes(key.as_bytes())
+                    .map_err(|e| KolzoError::InvalidHeaderName(e))?;
+                let header_value = HeaderValue::from_bytes(value.as_bytes())
+                    .map_err(|e| KolzoError::InvalidHeaderValue(e))?;
                 request_builder = request_builder.header(header_name, header_value);
             }
         }
 
-        if let Some(headers) = handler.get_headers(authenticator) {
+        if let Ok(Some(headers)) = handler.get_headers(authenticator) {
             for (key, value) in headers {
-                let header_name = HeaderName::from_bytes(key.as_bytes())?;
-                let header_value = HeaderValue::from_bytes(value.as_bytes())?;
+                let header_name = HeaderName::from_bytes(key.as_bytes())
+                    .map_err(|e| KolzoError::InvalidHeaderName(e))?;
+                let header_value = HeaderValue::from_bytes(value.as_bytes())
+                    .map_err(|e| KolzoError::InvalidHeaderValue(e))?;
                 request_builder = request_builder.header(header_name, header_value);
             }
         }

@@ -1,9 +1,9 @@
 use std::vec;
 
 use super::{
-    binance_rest::BinanceExchangeHandler,
     config::BinanceConfig,
-    types::{
+    rest::binance_rest::BinanceExchangeHandler,
+    rest::types::{
         AccountInfo, BinanceDataType, BinanceOrderbookSnapshot, BinancePrivateEndpoint,
         BinanceTradeSnapshot,
     },

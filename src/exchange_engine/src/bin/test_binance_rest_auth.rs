@@ -1,4 +1,4 @@
-use market_data::exchanges::binance::rest::{
+use exchange_engine::exchanges::binance::rest::{
     binance_rest::BinanceExchangeHandler,
     types::{AccountInfo, BinancePrivateEndpoint},
 };

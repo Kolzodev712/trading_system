@@ -1,5 +1,5 @@
 use core_logic::data::{OrderBook, Trade};
-use market_data::exchanges::binance::rest::{
+use exchange_engine::exchanges::binance::rest::{
     binance_rest::BinanceExchangeHandler,
     types::{BinanceDataType, BinanceOrderbookSnapshot, BinanceSymbol, BinanceTradeSnapshot},
 };

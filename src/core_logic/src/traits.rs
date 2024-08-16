@@ -1,3 +1,5 @@
+use crate::data::{OrderBook, Trade};
+
 use super::{
     data::{Order, OrderId, OrderRequest, Pair},
     error::KolzoError,
@@ -5,10 +7,10 @@ use super::{
 };
 use std::fmt::Debug;
 
-/// Trait that defines the kolzo's interactions with the exchange
+/// Trait that defines the TradingClient interactions with the exchange
 ///
-/// Each kolzo is expected to implement the `TradingClient` trait to provide
-/// an abstraction over the exchange API.
+/// Each Bot is expected to implement the `TradingClient` trait to provide
+/// an abstraction over the exchange APIs.
 #[async_trait::async_trait]
 pub trait TradingClient<InstrumentId = Pair>: Debug + Send + Sync + 'static
 where
@@ -16,15 +18,6 @@ where
 {
     /// Keyrock universal identifier of the exchange this client serves
     const EXCHANGE_ID: Exchange;
-
-    /// Boolean constant that determines whether the kolzo client supports pre-condition validation for open order requests
-    const PRECONDITION_CHECKED: bool = false;
-
-    /// If the exchange supports reliable streaming connection (eg. one that is streaming
-    /// order updates with sequence numbering, for example FIX) this method can return
-    /// list of open orders it currently has in memory. Otherwise the kolzo should be
-    /// implemented in to fetch the orders from the exchange.
-    async fn fetch_open_orders(&self) -> Result<Vec<Order>, KolzoError>;
 
     /// Creates a single order
     async fn open_order(&self, req: OrderRequest) -> Result<Order, KolzoError>;
@@ -44,4 +37,22 @@ where
         pair: &InstrumentId,
         order_id: OrderId,
     ) -> Result<(), KolzoError>;
+}
+
+/// Trait that defines the MarketDataClient interactions with the exchange
+///
+/// Each Bot is expected to implement the `MarketDataClient` trait to provide
+/// an abstraction over the exchange APIs.
+#[async_trait::async_trait]
+pub trait MarketDataClient<InstrumentId = Pair>: Debug + Send + Sync + 'static
+where
+    InstrumentId: Clone + Debug + Send + 'static,
+{
+    async fn orderbook_snapshot(&self, _pair: InstrumentId) -> Result<Vec<OrderBook>, KolzoError> {
+        unimplemented!()
+    }
+
+    async fn trade_snapshot(&self, _pair: InstrumentId) -> Result<Vec<Trade>, KolzoError> {
+        unimplemented!()
+    }
 }

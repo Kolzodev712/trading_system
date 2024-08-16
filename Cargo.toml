@@ -8,8 +8,8 @@ edition = "2021"
 [workspace]
 members = [
     "src/core_logic", 
-    "src/market_data", 
-    "src/trading",
+    "src/exchange_engine", 
+    "src/trading_engine",
     ]
 
 [workspace.dependencies]

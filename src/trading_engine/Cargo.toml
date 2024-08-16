@@ -1,5 +1,5 @@
 [package]
-name = "market_data"
+name = "trading_engine"
 version = "0.1.0"
 edition = "2021"
 
@@ -47,5 +47,4 @@ base64 = { workspace = true }
 
 # Testing
 tokio-test = { workspace = true }
-
 

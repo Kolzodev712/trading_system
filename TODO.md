@@ -1,3 +1,3 @@
-- Migrate all String to SmolStr where possible
-- Add open order and cancel order functionality for binance
+- Migrate all `String` to `SmolStr` where possible
+- Add `open_order` and `cancel_orderc functionality for binance
 - Create tests for all available rest functionality and setup a testing architecture

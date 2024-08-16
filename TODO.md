@@ -1,0 +1,3 @@
+- Migrate all String to SmolStr where possible
+- Add open order and cancel order functionality for binance
+- Create tests for all available rest functionality and setup a testing architecture

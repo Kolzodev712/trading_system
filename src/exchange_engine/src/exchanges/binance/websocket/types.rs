@@ -1,6 +1,6 @@
 // Structs and enums:
 
-use core_logic::data::{OrderBook, Trade};
+use core_logic::data::public_data::{OrderBook, Trade};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use std::primitive::str;

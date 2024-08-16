@@ -1,4 +1,7 @@
-use core_logic::data::{DataType, OrderBook, Trade};
+use core_logic::data::{
+    base_data::DataType,
+    public_data::{OrderBook, Trade},
+};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

@@ -1,7 +1,10 @@
-use crate::data::{OrderBook, Trade};
+use crate::data::public_data::{OrderBook, Trade};
 
 use super::{
-    data::{Order, OrderId, OrderRequest, Pair},
+    data::{
+        base_data::{OrderId, Pair},
+        private_data::{Order, OrderRequest},
+    },
     error::KolzoError,
     Exchange,
 };

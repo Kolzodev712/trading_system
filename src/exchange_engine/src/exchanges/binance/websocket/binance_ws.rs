@@ -3,7 +3,10 @@ use super::types::{
 };
 use async_trait::async_trait;
 use core_logic::{
-    data::{DataType, OrderBook, Trade},
+    data::{
+        base_data::DataType,
+        public_data::{OrderBook, Trade},
+    },
     error::KolzoError,
     utils::generate_custom_uuid,
     ws_client::{MessageHandler, SubscriptionHandler, WebSocketClient},

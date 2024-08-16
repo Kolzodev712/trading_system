@@ -1,4 +1,4 @@
-use core_logic::data::{OrderBook, Trade};
+use core_logic::data::public_data::{OrderBook, Trade};
 use exchange_engine::exchanges::binance::rest::{
     binance_rest::BinanceExchangeHandler,
     types::{BinanceDataType, BinanceOrderbookSnapshot, BinanceSymbol, BinanceTradeSnapshot},

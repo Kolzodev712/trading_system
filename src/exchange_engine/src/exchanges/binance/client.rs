@@ -9,7 +9,7 @@ use super::{
     },
 };
 use core_logic::{
-    data::{OrderBook, Trade},
+    data::public_data::{OrderBook, Trade},
     error::KolzoError,
 };
 use serde::{Deserialize, Serialize};

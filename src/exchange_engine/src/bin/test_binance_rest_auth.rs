@@ -13,8 +13,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         BinancePrivateEndpoint::AccountInfo,
         None,
         None,
-        api_key.clone(),
-        secret_key.clone(),
+        api_key.clone().into(),
+        secret_key.clone().into(),
     );
 
     let account_info: AccountInfo = account_info_handler.get().await?;

@@ -1,25 +1,51 @@
 // Structs and enums:
 
-use core_logic::data::public_data::{OrderBook, Trade};
+use core_logic::{
+    data::public_data::{OrderBook, Trade},
+    utils::{
+        deserialize_smol_str, deserialize_vec_smol_str, serialize_smol_str, serialize_vec_smol_str,
+    },
+};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
+use smol_str::SmolStr;
 use std::primitive::str;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct BinanceWSMessage {
-    pub method: String,
-    pub params: Vec<String>,
-    pub id: String,
+    #[serde(
+        serialize_with = "serialize_smol_str",
+        deserialize_with = "deserialize_smol_str"
+    )]
+    pub method: SmolStr,
+    #[serde(
+        serialize_with = "serialize_vec_smol_str",
+        deserialize_with = "deserialize_vec_smol_str"
+    )]
+    pub params: Vec<SmolStr>,
+    #[serde(
+        serialize_with = "serialize_smol_str",
+        deserialize_with = "deserialize_smol_str"
+    )]
+    pub id: SmolStr,
 }
 
 #[derive(Debug, PartialEq, Eq, Deserialize, Serialize, Clone)]
 pub struct BinanceOrderbook {
-    #[serde(rename = "e")]
-    pub event_type: String,
+    #[serde(
+        rename = "e",
+        serialize_with = "serialize_smol_str",
+        deserialize_with = "deserialize_smol_str"
+    )]
+    pub event_type: SmolStr,
     #[serde(rename = "E")]
     pub event_time: u64,
-    #[serde(rename = "s")]
-    pub symbol: String,
+    #[serde(
+        rename = "s",
+        serialize_with = "serialize_smol_str",
+        deserialize_with = "deserialize_smol_str"
+    )]
+    pub symbol: SmolStr,
     #[serde(rename = "U")]
     pub first_update_id: u64,
     #[serde(rename = "u")]
@@ -54,12 +80,20 @@ impl From<BinanceOrderbook> for OrderBook {
 
 #[derive(Debug, PartialEq, Eq, Deserialize, Serialize, Clone)]
 pub struct BinanceTrade {
-    #[serde(rename = "e")]
-    pub event_type: String,
+    #[serde(
+        rename = "e",
+        serialize_with = "serialize_smol_str",
+        deserialize_with = "deserialize_smol_str"
+    )]
+    pub event_type: SmolStr,
     #[serde(rename = "E")]
     pub event_time: u64,
-    #[serde(rename = "s")]
-    pub symbol: String,
+    #[serde(
+        rename = "s",
+        serialize_with = "serialize_smol_str",
+        deserialize_with = "deserialize_smol_str"
+    )]
+    pub symbol: SmolStr,
     #[serde(rename = "t")]
     pub trade_id: u64,
     #[serde(rename = "p")]
@@ -96,5 +130,11 @@ pub enum BinanceWsEventType {
 pub enum ParsedBinanceMessage {
     OrderBook(OrderBook),
     Trade(Trade),
-    Raw(String),
+    Raw(
+        #[serde(
+            serialize_with = "serialize_smol_str",
+            deserialize_with = "deserialize_smol_str"
+        )]
+        SmolStr,
+    ),
 }

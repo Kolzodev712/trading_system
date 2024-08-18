@@ -62,8 +62,8 @@ impl BinanceClient {
             BinancePrivateEndpoint::AccountInfo,
             None,
             None,
-            self.config.api_key.clone(),
-            self.config.secret_key.clone(),
+            self.config.api_key.clone().into(),
+            self.config.secret_key.clone().into(),
         );
 
         let account_info_raw: AccountInfo = account_info_handler.get().await?;

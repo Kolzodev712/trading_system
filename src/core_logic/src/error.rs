@@ -1,8 +1,10 @@
+// General level error abstraction for the trading system
 use anyhow::Error;
 use reqwest::{
     self,
     header::{InvalidHeaderName, InvalidHeaderValue},
 };
+use smol_str::SmolStr;
 use thiserror::Error;
 use tokio::sync::mpsc::error::SendError;
 use tokio_tungstenite::tungstenite;
@@ -11,7 +13,7 @@ use url::ParseError;
 #[derive(Error, Debug)]
 pub enum KolzoError {
     #[error("Channel send error: {0}")]
-    ChannelSendError(#[from] SendError<String>),
+    ChannelSendError(#[from] SendError<SmolStr>),
 
     #[error("WebSocket connection error: {0}")]
     WsConnectionError(#[from] tungstenite::Error),
@@ -48,7 +50,7 @@ pub enum KolzoError {
 }
 
 impl KolzoError {
-    pub fn new_custom_error(msg: String) -> Self {
+    pub fn new_custom_error(msg: SmolStr) -> Self {
         KolzoError::CustomError(anyhow::anyhow!(msg))
     }
 }

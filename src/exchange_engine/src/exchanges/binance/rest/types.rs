@@ -1,9 +1,16 @@
-use core_logic::data::{
-    base_data::DataType,
-    public_data::{OrderBook, Trade},
+use core_logic::{
+    data::{
+        base_data::DataType,
+        public_data::{OrderBook, Trade},
+    },
+    utils::{
+        deserialize_option_smol_str, deserialize_smol_str, deserialize_vec_smol_str,
+        serialize_option_smol_str, serialize_smol_str, serialize_vec_smol_str,
+    },
 };
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
+use smol_str::{SmolStr, ToSmolStr};
 use std::collections::HashMap;
 
 #[derive(Debug, Deserialize, Serialize, Clone, Eq, PartialEq)]
@@ -67,16 +74,28 @@ pub struct AccountInfo {
     pub require_self_trade_prevention: bool,
     pub prevent_sor: bool,
     pub update_time: u64,
-    pub account_type: String,
+    #[serde(
+        serialize_with = "serialize_smol_str",
+        deserialize_with = "deserialize_smol_str"
+    )]
+    pub account_type: SmolStr,
     pub balances: Vec<Balance>,
-    pub permissions: Vec<String>,
+    #[serde(
+        serialize_with = "serialize_vec_smol_str",
+        deserialize_with = "deserialize_vec_smol_str"
+    )]
+    pub permissions: Vec<SmolStr>,
     pub uid: u64,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct Balance {
-    pub asset: String,
+    #[serde(
+        serialize_with = "serialize_smol_str",
+        deserialize_with = "deserialize_smol_str"
+    )]
+    pub asset: SmolStr,
     pub free: Decimal,
     pub locked: Decimal,
 }
@@ -100,19 +119,19 @@ impl BinancePublicEndpoint {
         }
     }
 
-    pub fn get_params(&self) -> HashMap<String, String> {
+    pub fn get_params(&self) -> HashMap<SmolStr, SmolStr> {
         match self {
             BinancePublicEndpoint::Orderbook { symbol, limit } => {
                 let mut params = HashMap::new();
-                params.insert("symbol".to_string(), symbol.to_symbol());
+                params.insert("symbol".into(), symbol.to_symbol());
                 if let Some(l) = limit {
-                    params.insert("limit".to_string(), l.to_string());
+                    params.insert("limit".into(), l.to_smolstr());
                 }
                 params
             }
             BinancePublicEndpoint::Trade { symbol } => {
                 let mut params = HashMap::new();
-                params.insert("symbol".to_string(), symbol.to_symbol());
+                params.insert("symbol".into(), symbol.to_symbol());
                 params
             }
         }
@@ -124,11 +143,23 @@ pub enum BinancePrivateEndpoint {
     AccountInfo,
     PlaceOrder {
         symbol: BinanceSymbol,
-        side: String,
-        order_type: String,
+        #[serde(
+            serialize_with = "serialize_smol_str",
+            deserialize_with = "deserialize_smol_str"
+        )]
+        side: SmolStr,
+        #[serde(
+            serialize_with = "serialize_smol_str",
+            deserialize_with = "deserialize_smol_str"
+        )]
+        order_type: SmolStr,
         quantity: Decimal,
         price: Option<Decimal>,
-        time_in_force: Option<String>,
+        #[serde(
+            serialize_with = "serialize_option_smol_str",
+            deserialize_with = "deserialize_option_smol_str"
+        )]
+        time_in_force: Option<SmolStr>,
     },
 }
 
@@ -140,7 +171,7 @@ impl BinancePrivateEndpoint {
         }
     }
 
-    pub fn get_params(&self) -> HashMap<String, String> {
+    pub fn get_params(&self) -> HashMap<SmolStr, SmolStr> {
         match self {
             BinancePrivateEndpoint::AccountInfo => HashMap::new(),
             BinancePrivateEndpoint::PlaceOrder {
@@ -152,17 +183,17 @@ impl BinancePrivateEndpoint {
                 time_in_force,
             } => {
                 let mut params = HashMap::new();
-                params.insert("symbol".to_string(), symbol.to_symbol());
-                params.insert("side".to_string(), side.clone());
-                params.insert("type".to_string(), order_type.clone());
-                params.insert("quantity".to_string(), quantity.to_string());
+                params.insert("symbol".into(), symbol.to_symbol());
+                params.insert("side".into(), side.clone());
+                params.insert("type".into(), order_type.clone());
+                params.insert("quantity".into(), quantity.to_smolstr());
 
                 if let Some(p) = price {
-                    params.insert("price".to_string(), p.to_string());
+                    params.insert("price".into(), p.to_smolstr());
                 }
 
                 if let Some(tif) = time_in_force {
-                    params.insert("timeInForce".to_string(), tif.clone());
+                    params.insert("timeInForce".into(), tif.clone());
                 }
 
                 params
@@ -173,20 +204,28 @@ impl BinancePrivateEndpoint {
 
 #[derive(Debug, PartialEq, Eq, Deserialize, Serialize, Clone)]
 pub struct BinanceSymbol {
-    pub base: String,
-    pub quote: String,
+    #[serde(
+        serialize_with = "serialize_smol_str",
+        deserialize_with = "deserialize_smol_str"
+    )]
+    pub base: SmolStr,
+    #[serde(
+        serialize_with = "serialize_smol_str",
+        deserialize_with = "deserialize_smol_str"
+    )]
+    pub quote: SmolStr,
 }
 
 impl BinanceSymbol {
     pub fn new(base: &str, quote: &str) -> Self {
         BinanceSymbol {
-            base: base.to_uppercase(),
-            quote: quote.to_uppercase(),
+            base: base.to_uppercase().into(),
+            quote: quote.to_uppercase().into(),
         }
     }
 
-    pub fn to_symbol(&self) -> String {
-        format!("{}{}", self.base, self.quote)
+    pub fn to_symbol(&self) -> SmolStr {
+        format!("{}{}", self.base, self.quote).into()
     }
 }
 

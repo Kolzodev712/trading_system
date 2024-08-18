@@ -1,12 +1,13 @@
 use crate::error::KolzoError;
 use async_trait::async_trait;
+use smol_str::SmolStr;
 use tokio::{net::TcpStream, sync::mpsc::Sender};
 use tokio_tungstenite::{tungstenite::protocol::Message, MaybeTlsStream, WebSocketStream};
 
 /// Trait for handling WebSocket messages.
 pub trait MessageHandler<T> {
     /// Handles a text message received from the WebSocket stream.
-    fn handle_text_message(&self, text: String) -> Result<T, KolzoError>;
+    fn handle_text_message(&self, text: SmolStr) -> Result<T, KolzoError>;
 
     /// Handles a ping message received from the WebSocket stream.
     fn handle_ping(&self, ping: Vec<u8>);

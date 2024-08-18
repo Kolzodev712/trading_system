@@ -4,6 +4,7 @@ use reqwest::{
     header::{HeaderName, HeaderValue},
     Client, Method, StatusCode,
 };
+use smol_str::SmolStr;
 use std::{collections::HashMap, process};
 use tracing::error;
 
@@ -25,7 +26,7 @@ pub trait RestExchangeHandler: Send + Sync {
         base_url: &str,
         endpoint: &str,
         authenticator: Option<&dyn RestAuthenticator>,
-    ) -> String;
+    ) -> SmolStr;
 
     /// Handles the response from the REST API.
     ///
@@ -53,11 +54,11 @@ pub trait RestExchangeHandler: Send + Sync {
     ///
     /// # Returns
     ///
-    /// Returns an `Option<HashMap<String, String>>` containing the headers, or `None` if no additional headers are needed.
+    /// Returns an `Option<HashMap<SmolStr, SmolStr>>` containing the headers, or `None` if no additional headers are needed.
     fn get_headers(
         &self,
         authenticator: Option<&dyn RestAuthenticator>,
-    ) -> Result<Option<HashMap<String, String>>, KolzoError>;
+    ) -> Result<Option<HashMap<SmolStr, SmolStr>>, KolzoError>;
 
     /// Retrieves any additional parameters needed for the request.
     ///
@@ -67,18 +68,18 @@ pub trait RestExchangeHandler: Send + Sync {
     ///
     /// # Returns
     ///
-    /// Returns an `Option<HashMap<String, String>>` containing the parameters, or `None` if no additional parameters are needed.
+    /// Returns an `Option<HashMap<SmolStr, SmolStr>>` containing the parameters, or `None` if no additional parameters are needed.
     async fn get_params(
         &self,
         authenticator: Option<&dyn RestAuthenticator>,
-    ) -> Result<Option<HashMap<String, String>>, KolzoError>;
+    ) -> Result<Option<HashMap<SmolStr, SmolStr>>, KolzoError>;
 
     /// Retrieves the request body, if any.
     ///
     /// # Returns
     ///
-    /// Returns an `Option<String>` containing the body as a string, or `None` if there is no body.
-    fn get_body(&self) -> Option<String>;
+    /// Returns an `Option<SmolStr>` containing the body as a string, or `None` if there is no body.
+    fn get_body(&self) -> Option<SmolStr>;
 
     /// Authenticates the request by adding any necessary authentication headers.
     ///
@@ -88,11 +89,11 @@ pub trait RestExchangeHandler: Send + Sync {
     ///
     /// # Returns
     ///
-    /// Returns an `Option<HashMap<String, String>>` containing the authentication headers, or `None` if no authentication is needed.
+    /// Returns an `Option<HashMap<SmolStr, SmolStr>>` containing the authentication headers, or `None` if no authentication is needed.
     fn authenticate(
         &self,
         authenticator: Option<&dyn RestAuthenticator>,
-    ) -> Result<Option<HashMap<String, String>>, KolzoError>;
+    ) -> Result<Option<HashMap<SmolStr, SmolStr>>, KolzoError>;
 }
 
 /// Represents the different HTTP methods that can be used in a REST request.
@@ -145,7 +146,7 @@ impl From<HttpMethod> for Method {
 ///
 /// # Returns
 ///
-/// Returns a `Result` containing the `String` response if the request is successful, or a `KolzoError`
+/// Returns a `Result` containing the `SmolStr` response if the request is successful, or a `KolzoError`
 /// if there was a failure during the request or response handling.
 ///
 /// # Errors
@@ -171,12 +172,12 @@ impl From<HttpMethod> for Method {
 /// println!("Response: {}", response);
 /// ```
 pub async fn create_rest_request<H>(
-    base_url: &str,
-    endpoint: &str,
+    base_url: SmolStr,
+    endpoint: SmolStr,
     method: HttpMethod,
     handler: Option<&H>,
     authenticator: Option<&dyn RestAuthenticator>,
-) -> Result<String, KolzoError>
+) -> Result<SmolStr, KolzoError>
 where
     H: RestExchangeHandler + Send + Sync,
 {
@@ -184,12 +185,12 @@ where
     let method: Method = method.into();
     let full_url = if let Some(handler) = handler {
         handler
-            .build_full_url(base_url, endpoint, authenticator)
+            .build_full_url(&base_url, &endpoint, authenticator)
             .await
     } else {
-        format!("{}{}", base_url, endpoint)
+        format!("{}{}", base_url, endpoint).into()
     };
-    let mut request_builder = client.request(method, &full_url);
+    let mut request_builder = client.request(method, full_url.to_string());
 
     if let Some(handler) = handler {
         if let Ok(Some(auth_headers)) = handler.authenticate(authenticator) {
@@ -213,7 +214,7 @@ where
         }
 
         if let Some(body) = handler.get_body() {
-            request_builder = request_builder.body(body);
+            request_builder = request_builder.body(body.to_string());
         }
     }
 
@@ -222,14 +223,14 @@ where
     let text = response
         .text()
         .await
-        .unwrap_or_else(|_| "Unknown error".to_string());
+        .unwrap_or_else(|_| "Unknown error".into());
 
     if let Some(handler) = handler {
         handler.handle_response(&full_url, status, &text).await?;
     }
 
     if status.is_success() {
-        Ok(text)
+        Ok(text.into())
     } else {
         error!("ERROR: {} RETURNED | {:?} | {}", full_url, status, text);
         process::exit(1); // Set exit code to 1 to indicate an error

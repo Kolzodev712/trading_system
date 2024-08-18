@@ -1,8 +1,10 @@
 use super::types::{BinanceDataType, BinancePrivateEndpoint, BinancePublicEndpoint, BinanceSymbol};
 use async_trait::async_trait;
 use core_logic::{
-    authenticator::RestAuthenticator, error::KolzoError, rest_client::RestExchangeHandler,
-    utils::current_timestamp,
+    authenticator::RestAuthenticator,
+    error::KolzoError,
+    rest_client::RestExchangeHandler,
+    utils::{current_timestamp, deserialize_smol_str, serialize_smol_str},
 };
 use hmac::{Hmac, Mac};
 use reqwest::StatusCode;
@@ -11,6 +13,7 @@ use serde::{
     {Deserialize, Serialize},
 };
 use sha2::Sha256;
+use smol_str::{SmolStr, ToSmolStr};
 use std::collections::HashMap;
 
 type HmacSha256 = Hmac<Sha256>;
@@ -26,12 +29,20 @@ pub enum BinanceEndpoint {
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
 pub struct BinanceAuthenticator {
-    pub api_key: String,
-    pub secret_key: String,
+    #[serde(
+        serialize_with = "serialize_smol_str",
+        deserialize_with = "deserialize_smol_str"
+    )]
+    pub api_key: SmolStr,
+    #[serde(
+        serialize_with = "serialize_smol_str",
+        deserialize_with = "deserialize_smol_str"
+    )]
+    pub secret_key: SmolStr,
 }
 
 impl BinanceAuthenticator {
-    pub fn new(api_key: String, secret_key: String) -> Self {
+    pub fn new(api_key: SmolStr, secret_key: SmolStr) -> Self {
         BinanceAuthenticator {
             api_key,
             secret_key,
@@ -41,26 +52,26 @@ impl BinanceAuthenticator {
 
 #[async_trait]
 impl RestAuthenticator for BinanceAuthenticator {
-    async fn generate_signature(&self, query_string: &str) -> Result<Option<String>, KolzoError> {
+    async fn generate_signature(&self, query_string: &str) -> Result<Option<SmolStr>, KolzoError> {
         let mut mac = HmacSha256::new_from_slice(self.secret_key.as_bytes())
-            .map_err(|e| KolzoError::CustomError(anyhow::anyhow!(e.to_string())))?;
+            .map_err(|e| KolzoError::CustomError(anyhow::anyhow!(e)))?;
         mac.update(query_string.as_bytes());
         let result = mac.finalize();
         let signature_bytes = result.into_bytes();
-        Ok(Some(hex::encode(signature_bytes)))
+        Ok(Some(SmolStr::new(hex::encode(signature_bytes))))
     }
 
     async fn build_signed_params(
         &self,
-        mut params: HashMap<String, String>,
+        mut params: HashMap<SmolStr, SmolStr>,
         recv_window: Option<u64>,
         timestamp: Option<u64>,
-    ) -> Result<HashMap<String, String>, KolzoError> {
+    ) -> Result<HashMap<SmolStr, SmolStr>, KolzoError> {
         let timestamp = timestamp.unwrap_or_else(current_timestamp);
-        params.insert("timestamp".to_string(), timestamp.to_string());
+        params.insert(SmolStr::new("timestamp"), timestamp.to_smolstr());
 
         let recv_window = recv_window.unwrap_or(10000);
-        params.insert("recvWindow".to_string(), recv_window.to_string());
+        params.insert(SmolStr::new("recvWindow"), recv_window.to_smolstr());
 
         let query_string: String = params
             .iter()
@@ -69,15 +80,15 @@ impl RestAuthenticator for BinanceAuthenticator {
             .join("&");
 
         if let Some(signature) = self.generate_signature(&query_string).await? {
-            params.insert("signature".to_string(), signature);
+            params.insert(SmolStr::new("signature"), signature);
         }
 
         Ok(params)
     }
 
-    fn get_headers(&self) -> Result<Option<HashMap<String, String>>, KolzoError> {
+    fn get_headers(&self) -> Result<Option<HashMap<SmolStr, SmolStr>>, KolzoError> {
         let mut headers = HashMap::new();
-        headers.insert("X-MBX-APIKEY".to_string(), self.api_key.clone());
+        headers.insert(SmolStr::new("X-MBX-APIKEY"), self.api_key.clone());
         Ok(Some(headers))
     }
 }
@@ -119,8 +130,8 @@ impl BinanceExchangeHandler {
         private_endpoint: BinancePrivateEndpoint,
         recv_window: Option<u64>,
         timestamp: Option<u64>,
-        api_key: String,
-        secret_key: String,
+        api_key: SmolStr,
+        secret_key: SmolStr,
     ) -> Self {
         let authenticator = BinanceAuthenticator::new(api_key, secret_key);
 
@@ -153,11 +164,11 @@ impl BinanceExchangeHandler {
             .await;
 
         let client = reqwest::Client::new();
-        let mut request_builder = client.get(&url);
+        let mut request_builder = client.get(&*url.to_string());
 
         if let Some(headers) = self.get_headers(authenticator)? {
             for (key, value) in headers {
-                request_builder = request_builder.header(&key, &value);
+                request_builder = request_builder.header(key.as_str(), value.as_str());
             }
         }
 
@@ -178,8 +189,8 @@ impl RestExchangeHandler for BinanceExchangeHandler {
         base_url: &str,
         endpoint: &str,
         authenticator: Option<&dyn RestAuthenticator>,
-    ) -> String {
-        let mut full_url = format!("{}{}", base_url, endpoint);
+    ) -> SmolStr {
+        let mut full_url = format!("{}{}", base_url, endpoint).into();
 
         if let Ok(Some(params)) = self.get_params(authenticator).await {
             let query_string: String = params
@@ -187,7 +198,7 @@ impl RestExchangeHandler for BinanceExchangeHandler {
                 .map(|(key, value)| format!("{}={}", key, value))
                 .collect::<Vec<String>>()
                 .join("&");
-            full_url = format!("{}?{}", full_url, query_string);
+            full_url = format!("{}?{}", full_url, query_string).into();
         }
 
         full_url
@@ -213,7 +224,7 @@ impl RestExchangeHandler for BinanceExchangeHandler {
     fn get_headers(
         &self,
         authenticator: Option<&dyn RestAuthenticator>,
-    ) -> Result<Option<HashMap<String, String>>, KolzoError> {
+    ) -> Result<Option<HashMap<SmolStr, SmolStr>>, KolzoError> {
         if let Some(authenticator) = authenticator {
             authenticator.get_headers()
         } else {
@@ -224,15 +235,27 @@ impl RestExchangeHandler for BinanceExchangeHandler {
     async fn get_params(
         &self,
         authenticator: Option<&dyn RestAuthenticator>,
-    ) -> Result<Option<HashMap<String, String>>, KolzoError> {
+    ) -> Result<Option<HashMap<SmolStr, SmolStr>>, KolzoError> {
         let params = match &self.endpoint {
-            BinanceEndpoint::Public(endpoint) => Some(endpoint.get_params()),
+            BinanceEndpoint::Public(endpoint) => {
+                let string_params = endpoint.get_params();
+                Some(
+                    string_params
+                        .into_iter()
+                        .map(|(k, v)| (SmolStr::new(k), SmolStr::new(v)))
+                        .collect::<HashMap<SmolStr, SmolStr>>(),
+                )
+            }
             BinanceEndpoint::Private(endpoint) => {
                 if let Some(authenticator) = authenticator {
                     Some(
                         authenticator
                             .build_signed_params(
-                                endpoint.get_params(),
+                                endpoint
+                                    .get_params()
+                                    .into_iter()
+                                    .map(|(k, v)| (SmolStr::new(k), SmolStr::new(v)))
+                                    .collect(),
                                 self.recv_window,
                                 self.timestamp,
                             )
@@ -247,14 +270,14 @@ impl RestExchangeHandler for BinanceExchangeHandler {
         Ok(params)
     }
 
-    fn get_body(&self) -> Option<String> {
+    fn get_body(&self) -> Option<SmolStr> {
         None
     }
 
     fn authenticate(
         &self,
         authenticator: Option<&dyn RestAuthenticator>,
-    ) -> Result<Option<HashMap<String, String>>, KolzoError> {
+    ) -> Result<Option<HashMap<SmolStr, SmolStr>>, KolzoError> {
         if let Some(authenticator) = authenticator {
             authenticator.get_headers()
         } else {

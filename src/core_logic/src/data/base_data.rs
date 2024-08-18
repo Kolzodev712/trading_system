@@ -1,10 +1,21 @@
 // A general level data abstraction for Internal data types, using in the internal system logic.
+use crate::utils::{deserialize_smol_str, serialize_smol_str};
+
 use serde::{Deserialize, Serialize};
+use smol_str::SmolStr;
 
 #[derive(Debug, Deserialize, Serialize, Clone, Eq, PartialEq)]
 pub struct Pair {
-    base: String,
-    quote: String,
+    #[serde(
+        serialize_with = "serialize_smol_str",
+        deserialize_with = "deserialize_smol_str"
+    )]
+    base: SmolStr,
+    #[serde(
+        serialize_with = "serialize_smol_str",
+        deserialize_with = "deserialize_smol_str"
+    )]
+    quote: SmolStr,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Eq, PartialEq)]
@@ -36,7 +47,13 @@ pub enum OrderType {
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Eq, PartialEq)]
-pub struct OrderId(String);
+pub struct OrderId(
+    #[serde(
+        serialize_with = "serialize_smol_str",
+        deserialize_with = "deserialize_smol_str"
+    )]
+    SmolStr,
+);
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub enum DataType {

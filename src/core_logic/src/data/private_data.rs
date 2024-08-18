@@ -1,13 +1,18 @@
 // A general level data abstraction for External data types, using in the external system logic for authenticated requests.
 use super::base_data::{Instrument, OrderId, OrderType, Pair, Side};
-
+use crate::utils::{deserialize_smol_str, serialize_smol_str};
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
+use smol_str::SmolStr;
 
 #[derive(Debug, Deserialize, Serialize, Clone, Eq, PartialEq)]
 pub struct Account {
-    pub account_type: String,
+    #[serde(
+        serialize_with = "serialize_smol_str",
+        deserialize_with = "deserialize_smol_str"
+    )]
+    pub account_type: SmolStr,
     pub update_time: u64,
     pub uid: u64,
 }

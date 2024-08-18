@@ -13,6 +13,7 @@ use core_logic::{
 };
 use futures_util::{stream::StreamExt, SinkExt};
 use serde_json::Value;
+use smol_str::{SmolStr, ToSmolStr};
 use tokio::{net::TcpStream, sync::mpsc};
 use tokio_tungstenite::{
     connect_async, tungstenite::protocol::Message, MaybeTlsStream, WebSocketStream,
@@ -24,8 +25,8 @@ pub const BINANCE_WS_URL: &str = "wss://stream.binance.com:9443/ws";
 #[derive(Debug, Clone)]
 pub struct BinanceChannel {
     pub channel: DataType,
-    pub base: String,
-    pub quote: String,
+    pub base: SmolStr,
+    pub quote: SmolStr,
 }
 
 #[derive(Debug, Clone)]
@@ -53,7 +54,7 @@ impl SubscriptionHandler for BinanceSubscriptionHandler {
                 self.channel_info.base, self.channel_info.quote, channel_name
             )
             .into()],
-            id: generate_custom_uuid(),
+            id: generate_custom_uuid().into(),
         };
 
         let json_msg = serde_json::to_string(&subscription_msg).unwrap();
@@ -97,7 +98,7 @@ impl DataHandler {
 }
 
 impl MessageHandler<ParsedBinanceMessage> for DataHandler {
-    fn handle_text_message(&self, text: String) -> Result<ParsedBinanceMessage, KolzoError> {
+    fn handle_text_message(&self, text: SmolStr) -> Result<ParsedBinanceMessage, KolzoError> {
         debug!("Received text message: {}", text);
 
         let v: Value = serde_json::from_str(&text).map_err(KolzoError::JsonError)?;
@@ -111,7 +112,7 @@ impl MessageHandler<ParsedBinanceMessage> for DataHandler {
             self.handle_event(event_type, v)
         } else {
             Ok(ParsedBinanceMessage::Raw(
-                "No event type found in message. Not processing.".to_string(),
+                "No event type found in message. Not processing.".to_smolstr(),
             ))
         }
     }
@@ -122,7 +123,7 @@ impl MessageHandler<ParsedBinanceMessage> for DataHandler {
 }
 
 pub struct BinanceWSClient {
-    url: String,
+    url: SmolStr,
     subscription_handler: BinanceSubscriptionHandler,
 }
 
@@ -171,16 +172,18 @@ impl WebSocketClient<ParsedBinanceMessage> for BinanceWSClient {
         tokio::spawn(async move {
             while let Some(message) = ws_stream.next().await {
                 match message {
-                    Ok(Message::Text(text)) => match handler.handle_text_message(text.clone()) {
-                        Ok(parsed_message) => {
-                            if let Err(e) = tx.send(parsed_message).await {
-                                error!("Error sending message to channel: {}", e);
+                    Ok(Message::Text(text)) => {
+                        match handler.handle_text_message(text.clone().into()) {
+                            Ok(parsed_message) => {
+                                if let Err(e) = tx.send(parsed_message).await {
+                                    error!("Error sending message to channel: {}", e);
+                                }
+                            }
+                            Err(e) => {
+                                error!("Error processing text message: {}", e);
                             }
                         }
-                        Err(e) => {
-                            error!("Error processing text message: {}", e);
-                        }
-                    },
+                    }
                     Ok(Message::Ping(ping)) => {
                         handler.handle_ping(ping.clone());
                         if let Err(e) = ws_stream.send(Message::Pong(ping)).await {

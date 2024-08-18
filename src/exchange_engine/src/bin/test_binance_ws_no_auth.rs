@@ -13,8 +13,8 @@ async fn main() -> Result<(), KolzoError> {
 
     let trade_channel_info = BinanceChannel {
         channel: DataType::Trade,
-        base: base.to_string(),
-        quote: quote.to_string(),
+        base: base.into(),
+        quote: quote.into(),
     };
 
     let client = BinanceWSClient::new(trade_channel_info);

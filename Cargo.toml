@@ -45,7 +45,7 @@ uuid = { version = "1.10.0", features = [ "v4", "fast-rng", "macro-diagnostics" 
 
 # Utrils
 futures-util = "0.3"
-chrono = "0.4.31"
+chrono = { version = "0.4.31", features = ["serde"] }
 smol_str = "0.2"
 rust_decimal = {version = "1.35.0", features = ["serde"]}
 base64 = "0.22.1"

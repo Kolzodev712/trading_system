@@ -10,18 +10,18 @@ pub struct Pair {
         serialize_with = "serialize_smol_str",
         deserialize_with = "deserialize_smol_str"
     )]
-    base: SmolStr,
+    pub base: SmolStr,
     #[serde(
         serialize_with = "serialize_smol_str",
         deserialize_with = "deserialize_smol_str"
     )]
-    quote: SmolStr,
+    pub quote: SmolStr,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Eq, PartialEq)]
 pub struct Instrument {
-    instrument_type: InstrumentType,
-    pair: Pair,
+    pub instrument_type: InstrumentType,
+    pub pair: Pair,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Eq, PartialEq)]
@@ -42,8 +42,19 @@ pub enum OrderType {
     Market,
     Limit,
     PostOnly,
-    IOC,
-    FOK,
+    Ioc,
+    Fok,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Eq, PartialEq)]
+pub enum OrderStatus {
+    New,
+    PartiallyFilled,
+    Filled,
+    Canceled,
+    PendingCancel,
+    Rejected,
+    Expired,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Eq, PartialEq)]

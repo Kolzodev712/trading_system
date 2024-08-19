@@ -1,5 +1,5 @@
 // A general level data abstraction for External data types, using in the external system logic for authenticated requests.
-use super::base_data::{Instrument, OrderId, OrderType, Pair, Side};
+use super::base_data::{Instrument, OrderId, OrderType, Side};
 use crate::utils::{deserialize_smol_str, serialize_smol_str};
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
@@ -18,9 +18,10 @@ pub struct Account {
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Eq, PartialEq)]
+#[serde(rename_all = "camelCase")]
 pub struct OrderRequest {
     /// Pair where to open the order
-    pub pair: Pair,
+    pub instrument: Instrument,
     /// Side of the book to place the order
     pub side: Side,
     /// Price at which the order will be placed
@@ -29,14 +30,17 @@ pub struct OrderRequest {
     pub amount: Decimal,
     /// The order type: limit, post-only, IOC or FOK
     pub order_type: OrderType,
+    /// Timestamp of the order placement
+    pub timestamp: u64,
 }
 
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Order {
     /// Exchange's order ID
     pub order_id: OrderId,
     /// Pair where to open the order
-    pub pair: Instrument,
+    pub instrument: Instrument,
     /// Side of the book to place the order
     pub side: Side,
     /// Price at which the order will be placed
@@ -47,4 +51,14 @@ pub struct Order {
     pub internal_created_at: DateTime<Utc>,
     /// Exchange's timestamp of the order
     pub exchange_created_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Eq, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Balance {
+    pub symbol: Instrument,
+    pub free: Decimal,
+    pub used: Decimal,
+    pub total: Decimal,
+    pub last_updated: u64,
 }

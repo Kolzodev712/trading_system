@@ -1,6 +1,7 @@
 use core_logic::{
     data::{
-        base_data::DataType,
+        base_data::{DataType, OrderId, OrderStatus, OrderType, Pair, Side},
+        private_data::OrderRequest,
         public_data::{OrderBook, Trade},
     },
     utils::{
@@ -98,6 +99,59 @@ pub struct Balance {
     pub asset: SmolStr,
     pub free: Decimal,
     pub locked: Decimal,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct BinanceOrderRequest {
+    pub symbol: Pair,
+    pub side: Side,
+    pub order_type: OrderType,
+    pub time_in_force: Option<BinanceTypeInForce>,
+    pub quantity: Option<Decimal>,
+    pub price: Option<Decimal>,
+    pub timestamp: u64,
+}
+
+impl From<OrderRequest> for BinanceOrderRequest {
+    fn from(order: OrderRequest) -> Self {
+        let time_in_force = BinanceTypeInForce::Gtc;
+
+        BinanceOrderRequest {
+            symbol: order.instrument.pair,
+            side: order.side,
+            time_in_force: Some(time_in_force),
+            order_type: order.order_type,
+            quantity: Some(order.amount),
+            price: Some(order.price),
+            timestamp: order.timestamp,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum BinanceTypeInForce {
+    Gtc,
+    Ioc,
+    Fok,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OrderResponse {
+    pub symbol: Pair,
+    pub order_id: u64,
+    pub client_order_id: OrderId,
+    pub transact_time: u64,
+    pub price: Decimal,
+    pub orig_qty: Decimal,
+    pub executed_qty: Decimal,
+    pub cummulative_quote_qty: Decimal,
+    pub status: OrderStatus,
+    pub order_type: OrderType,
+    pub side: Side,
+    pub working_time: u64,
 }
 
 #[derive(Debug, PartialEq, Eq, Deserialize, Serialize, Clone)]

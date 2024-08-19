@@ -37,6 +37,15 @@ pub enum Side {
     Sell,
 }
 
+impl From<Side> for SmolStr {
+    fn from(side: Side) -> Self {
+        match side {
+            Side::Buy => SmolStr::new("BUY"),
+            Side::Sell => SmolStr::new("SELL"),
+        }
+    }
+}
+
 #[derive(Debug, Deserialize, Serialize, Clone, Eq, PartialEq)]
 pub enum OrderType {
     Market,
@@ -44,6 +53,18 @@ pub enum OrderType {
     PostOnly,
     Ioc,
     Fok,
+}
+
+impl From<OrderType> for SmolStr {
+    fn from(order_type: OrderType) -> Self {
+        match order_type {
+            OrderType::Market => SmolStr::new("MARKET"),
+            OrderType::Limit => SmolStr::new("LIMIT"),
+            OrderType::PostOnly => SmolStr::new("POST_ONLY"),
+            OrderType::Ioc => SmolStr::new("IOC"),
+            OrderType::Fok => SmolStr::new("FOK"),
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Eq, PartialEq)]
@@ -55,6 +76,20 @@ pub enum OrderStatus {
     PendingCancel,
     Rejected,
     Expired,
+}
+
+impl From<OrderStatus> for SmolStr {
+    fn from(order_status: OrderStatus) -> Self {
+        match order_status {
+            OrderStatus::New => SmolStr::new("NEW"),
+            OrderStatus::PartiallyFilled => SmolStr::new("PARTIALLY_FILLED"),
+            OrderStatus::Filled => SmolStr::new("FILLED"),
+            OrderStatus::Canceled => SmolStr::new("CANCELED"),
+            OrderStatus::PendingCancel => SmolStr::new("PENDING_CANCEL"),
+            OrderStatus::Rejected => SmolStr::new("REJECTED"),
+            OrderStatus::Expired => SmolStr::new("EXPIRED"),
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Eq, PartialEq)]

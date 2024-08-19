@@ -2,10 +2,12 @@ use std::vec;
 
 use super::{
     config::BinanceConfig,
-    rest::binance_rest::BinanceExchangeHandler,
-    rest::types::{
-        AccountInfo, BinanceDataType, BinanceOrderbookSnapshot, BinancePrivateEndpoint,
-        BinanceTradeSnapshot,
+    rest::{
+        binance_rest::BinanceExchangeHandler,
+        types::{
+            AccountInfo, BinanceDataType, BinanceOrderRequest, BinanceOrderbookSnapshot,
+            BinancePrivateEndpoint, BinanceTradeSnapshot,
+        },
     },
 };
 use core_logic::{
@@ -69,5 +71,26 @@ impl BinanceClient {
         let account_info_raw: AccountInfo = account_info_handler.get().await?;
 
         Ok(vec![account_info_raw])
+    }
+
+    pub async fn place_order(&self, order_request: BinanceOrderRequest) -> Result<(), KolzoError> {
+        let private_endpoint = BinancePrivateEndpoint::PlaceOrder {
+            symbol: order_request.symbol.into(),
+            side: order_request.side.into(),
+            order_type: order_request.order_type.into(),
+            quantity: order_request.quantity.unwrap_or_default(),
+            price: order_request.price,
+            time_in_force: order_request.time_in_force.map(|tif| tif.into()),
+        };
+
+        let order_handler = BinanceExchangeHandler::new_private(
+            private_endpoint,
+            None,
+            Some(order_request.timestamp),
+            self.config.api_key.clone().into(),
+            self.config.secret_key.clone().into(),
+        );
+
+        order_handler.post::<()>(None).await
     }
 }

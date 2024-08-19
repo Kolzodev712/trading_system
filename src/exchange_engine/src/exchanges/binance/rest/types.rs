@@ -107,7 +107,7 @@ pub struct BinanceOrderRequest {
     pub symbol: Pair,
     pub side: Side,
     pub order_type: OrderType,
-    pub time_in_force: Option<BinanceTypeInForce>,
+    pub time_in_force: Option<BinanceTimeInForce>,
     pub quantity: Option<Decimal>,
     pub price: Option<Decimal>,
     pub timestamp: u64,
@@ -115,7 +115,7 @@ pub struct BinanceOrderRequest {
 
 impl From<OrderRequest> for BinanceOrderRequest {
     fn from(order: OrderRequest) -> Self {
-        let time_in_force = BinanceTypeInForce::Gtc;
+        let time_in_force = BinanceTimeInForce::Gtc;
 
         BinanceOrderRequest {
             symbol: order.instrument.pair,
@@ -131,10 +131,20 @@ impl From<OrderRequest> for BinanceOrderRequest {
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
-pub enum BinanceTypeInForce {
+pub enum BinanceTimeInForce {
     Gtc,
     Ioc,
     Fok,
+}
+
+impl From<BinanceTimeInForce> for SmolStr {
+    fn from(time_in_focrce: BinanceTimeInForce) -> Self {
+        match time_in_focrce {
+            BinanceTimeInForce::Gtc => SmolStr::new("GTC"),
+            BinanceTimeInForce::Ioc => SmolStr::new("IOC"),
+            BinanceTimeInForce::Fok => SmolStr::new("FOK"),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -280,6 +290,15 @@ impl BinanceSymbol {
 
     pub fn to_symbol(&self) -> SmolStr {
         format!("{}{}", self.base, self.quote).into()
+    }
+}
+
+impl From<Pair> for BinanceSymbol {
+    fn from(pair: Pair) -> Self {
+        BinanceSymbol {
+            base: pair.base.to_uppercase().into(),
+            quote: pair.quote.to_uppercase().into(),
+        }
     }
 }
 

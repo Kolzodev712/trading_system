@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use core_logic::{
     authenticator::RestAuthenticator,
     error::KolzoError,
-    rest_client::RestExchangeHandler,
+    rest_client::{HttpMethod, RestExchangeHandler},
     utils::{current_timestamp, deserialize_smol_str, serialize_smol_str},
 };
 use hmac::{Hmac, Mac};
@@ -170,6 +170,86 @@ impl BinanceExchangeHandler {
             for (key, value) in headers {
                 request_builder = request_builder.header(key.as_str(), value.as_str());
             }
+        }
+
+        let response = request_builder.send().await?;
+        let status = response.status();
+        let text = response.text().await?;
+
+        self.handle_response(&url, status, &text).await?;
+
+        serde_json::from_str::<T>(&text).map_err(KolzoError::JsonError)
+    }
+
+    pub async fn post<T>(&self, body: Option<HashMap<SmolStr, SmolStr>>) -> Result<T, KolzoError>
+    where
+        T: DeserializeOwned,
+    {
+        self.request(HttpMethod::POST, body).await
+    }
+
+    pub async fn put<T>(&self, body: Option<HashMap<SmolStr, SmolStr>>) -> Result<T, KolzoError>
+    where
+        T: DeserializeOwned,
+    {
+        self.request(HttpMethod::PUT, body).await
+    }
+
+    pub async fn delete<T>(&self, body: Option<HashMap<SmolStr, SmolStr>>) -> Result<T, KolzoError>
+    where
+        T: DeserializeOwned,
+    {
+        self.request(HttpMethod::DELETE, body).await
+    }
+
+    pub async fn patch<T>(&self, body: Option<HashMap<SmolStr, SmolStr>>) -> Result<T, KolzoError>
+    where
+        T: DeserializeOwned,
+    {
+        self.request(HttpMethod::PATCH, body).await
+    }
+
+    async fn request<T>(
+        &self,
+        method: HttpMethod,
+        body: Option<HashMap<SmolStr, SmolStr>>,
+    ) -> Result<T, KolzoError>
+    where
+        T: DeserializeOwned,
+    {
+        let authenticator: Option<&dyn RestAuthenticator> = self
+            .authenticator
+            .as_ref()
+            .map(|auth| auth as &dyn RestAuthenticator);
+
+        let url = self
+            .build_full_url(BINANCE_URL, self.get_endpoint_path(), authenticator)
+            .await;
+
+        let client = reqwest::Client::new();
+        let mut request_builder = match method {
+            HttpMethod::GET => client.get(&*url.to_string()),
+            HttpMethod::POST => client.post(&*url.to_string()),
+            HttpMethod::PUT => client.put(&*url.to_string()),
+            HttpMethod::DELETE => client.delete(&*url.to_string()),
+            HttpMethod::PATCH => client.patch(&*url.to_string()),
+        };
+
+        if let Some(headers) = self.get_headers(authenticator)? {
+            for (key, value) in headers {
+                request_builder = request_builder.header(key.as_str(), value.as_str());
+            }
+        }
+
+        if let Some(body_params) = body {
+            let body_params_string: HashMap<String, String> = body_params
+                .into_iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect();
+
+            let body_json =
+                serde_json::to_string(&body_params_string).map_err(|e| KolzoError::JsonError(e))?;
+            request_builder = request_builder.body(body_json);
         }
 
         let response = request_builder.send().await?;

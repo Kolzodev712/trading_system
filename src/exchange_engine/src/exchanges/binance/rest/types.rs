@@ -1,7 +1,8 @@
+use chrono::{DateTime, Utc};
 use core_logic::{
     data::{
         base_data::{DataType, OrderId, OrderStatus, OrderType, Pair, Side},
-        private_data::OrderRequest,
+        private_data::{Order, OrderRequest},
         public_data::{OrderBook, Trade},
     },
     utils::{
@@ -11,7 +12,7 @@ use core_logic::{
 };
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
-use smol_str::{SmolStr, ToSmolStr};
+use smol_str::{format_smolstr, SmolStr, ToSmolStr};
 use std::collections::HashMap;
 
 #[derive(Debug, Deserialize, Serialize, Clone, Eq, PartialEq)]
@@ -104,7 +105,11 @@ pub struct Balance {
 #[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct BinanceOrderRequest {
-    pub symbol: Pair,
+    #[serde(
+        serialize_with = "serialize_smol_str",
+        deserialize_with = "deserialize_smol_str"
+    )]
+    pub symbol: SmolStr,
     pub side: Side,
     pub order_type: OrderType,
     pub time_in_force: Option<BinanceTimeInForce>,
@@ -118,7 +123,11 @@ impl From<OrderRequest> for BinanceOrderRequest {
         let time_in_force = BinanceTimeInForce::Gtc;
 
         BinanceOrderRequest {
-            symbol: order.instrument.pair,
+            symbol: format_smolstr!(
+                "{}{}",
+                order.instrument.pair.base,
+                order.instrument.pair.quote
+            ),
             side: order.side,
             time_in_force: Some(time_in_force),
             order_type: order.order_type,
@@ -129,7 +138,42 @@ impl From<OrderRequest> for BinanceOrderRequest {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq, Deserialize, Serialize)]
+pub struct BinanceOrderResponse {
+    #[serde(
+        serialize_with = "serialize_smol_str",
+        deserialize_with = "deserialize_smol_str"
+    )]
+    pub symbol: SmolStr,
+    pub order_id: u64,
+    pub transact_time: u64,
+    pub price: Decimal,
+    pub orig_qty: Decimal,
+    pub status: OrderStatus,
+    pub time_in_force: BinanceTimeInForce,
+    pub order_type: OrderType,
+    pub side: Side,
+}
+
+impl From<BinanceOrderResponse> for Order {
+    fn from(response: BinanceOrderResponse) -> Self {
+        Order {
+            order_id: OrderId::new(SmolStr::new(response.order_id.to_string())),
+            instrument: response.symbol.into(),
+            side: response.side,
+            price: response.price,
+            amount: response.orig_qty,
+            internal_created_at: Utc::now(),
+            exchange_created_at: response
+                .transact_time
+                .checked_div(1000) // Safely divide to get seconds
+                .and_then(|seconds| chrono::NaiveDateTime::from_timestamp_opt(seconds as i64, 0)) // Handle None case
+                .map(|naive| DateTime::<Utc>::from_naive_utc_and_offset(naive, Utc)),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Eq, PartialEq)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum BinanceTimeInForce {
     Gtc,
@@ -203,10 +247,15 @@ impl BinancePublicEndpoint {
 }
 
 #[derive(Debug, PartialEq, Eq, Deserialize, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
 pub enum BinancePrivateEndpoint {
     AccountInfo,
     PlaceOrder {
-        symbol: BinanceSymbol,
+        #[serde(
+            serialize_with = "serialize_smol_str",
+            deserialize_with = "deserialize_smol_str"
+        )]
+        symbol: SmolStr,
         #[serde(
             serialize_with = "serialize_smol_str",
             deserialize_with = "deserialize_smol_str"
@@ -247,7 +296,7 @@ impl BinancePrivateEndpoint {
                 time_in_force,
             } => {
                 let mut params = HashMap::new();
-                params.insert("symbol".into(), symbol.to_symbol());
+                params.insert("symbol".into(), symbol.clone());
                 params.insert("side".into(), side.clone());
                 params.insert("type".into(), order_type.clone());
                 params.insert("quantity".into(), quantity.to_smolstr());
@@ -267,6 +316,7 @@ impl BinancePrivateEndpoint {
 }
 
 #[derive(Debug, PartialEq, Eq, Deserialize, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct BinanceSymbol {
     #[serde(
         serialize_with = "serialize_smol_str",

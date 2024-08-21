@@ -1,27 +1,28 @@
 use core_logic::{
-    data::base_data::{OrderType, Pair, Side},
+    data::base_data::{OrderType, Side},
     utils::current_timestamp,
 };
 use exchange_engine::exchanges::binance::rest::{
     binance_rest::BinanceExchangeHandler,
-    types::{BinanceOrderRequest, BinancePrivateEndpoint, BinanceTimeInForce},
+    types::{
+        BinanceOrderRequest, BinanceOrderResponse, BinancePrivateEndpoint, BinanceSymbol,
+        BinanceTimeInForce,
+    },
 };
 use rust_decimal::Decimal;
 use std::env;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let api_key = env::var("BINANCE_API_KEY")?; // $env:BINANCE_API_KEY = "YQkiaZqcvbLdtqJ2V50xzkq2y44vX8HLCxALeQeSn35eyd0UpCdG6hhHS68L6GFI"
-    let secret_key = env::var("BINANCE_SECRET_KEY")?; // $env:BINANCE_SECRET_KEY = "IVhqo9ZdafbgdxGmXex6tpx77JqmTKwp57dadWv06VIk4Ce4WNQBQRM3cKqkXMCn"
+    let api_key = env::var("BINANCE_API_KEY")?;
+    let secret_key = env::var("BINANCE_SECRET_KEY")?;
 
-    let symbol = Pair {
-        base: "BTC".into(),
-        quote: "USDT".into(),
-    };
+    let pair: BinanceSymbol = BinanceSymbol::new("BTC", "USDT");
+    let symbol = BinanceSymbol::to_symbol(&pair);
     let side = Side::Sell;
     let order_type = OrderType::Limit;
-    let quantity = Decimal::new(1, 4);
-    let price = Some(Decimal::new(5823147, 2));
+    let quantity = Decimal::new(9, 5);
+    let price = Some(Decimal::new(5935547, 2));
     let time_in_force = Some(BinanceTimeInForce::Gtc);
 
     let order_request = BinanceOrderRequest {
@@ -33,6 +34,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         price,
         timestamp: current_timestamp(),
     };
+
+    println!("{:?}", order_request.clone());
 
     let order_handler = BinanceExchangeHandler::new_private(
         BinancePrivateEndpoint::PlaceOrder {
@@ -50,7 +53,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     // Send the POST request to place the order
-    order_handler.post::<()>(None).await?;
+    let s = order_handler.post::<BinanceOrderResponse>(None).await?;
+
+    println!("ORDER RESPONSE: {:?}", s);
 
     println!("Order placed successfully");
 

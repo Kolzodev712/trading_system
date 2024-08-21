@@ -78,20 +78,6 @@ pub enum OrderStatus {
     Expired,
 }
 
-impl From<OrderStatus> for SmolStr {
-    fn from(order_status: OrderStatus) -> Self {
-        match order_status {
-            OrderStatus::New => SmolStr::new("NEW"),
-            OrderStatus::PartiallyFilled => SmolStr::new("PARTIALLY_FILLED"),
-            OrderStatus::Filled => SmolStr::new("FILLED"),
-            OrderStatus::Canceled => SmolStr::new("CANCELED"),
-            OrderStatus::PendingCancel => SmolStr::new("PENDING_CANCEL"),
-            OrderStatus::Rejected => SmolStr::new("REJECTED"),
-            OrderStatus::Expired => SmolStr::new("EXPIRED"),
-        }
-    }
-}
-
 #[derive(Debug, Deserialize, Serialize, Clone, Eq, PartialEq)]
 pub struct OrderId(
     #[serde(
@@ -100,6 +86,12 @@ pub struct OrderId(
     )]
     SmolStr,
 );
+
+impl OrderId {
+    pub fn new(value: SmolStr) -> Self {
+        OrderId(value)
+    }
+}
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub enum DataType {

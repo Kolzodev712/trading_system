@@ -40,7 +40,11 @@ pub struct Order {
     /// Exchange's order ID
     pub order_id: OrderId,
     /// Pair where to open the order
-    pub instrument: Instrument,
+    #[serde(
+        serialize_with = "serialize_smol_str",
+        deserialize_with = "deserialize_smol_str"
+    )]
+    pub instrument: SmolStr,
     /// Side of the book to place the order
     pub side: Side,
     /// Price at which the order will be placed

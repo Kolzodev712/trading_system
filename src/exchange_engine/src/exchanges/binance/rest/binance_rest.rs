@@ -150,65 +150,6 @@ impl BinanceExchangeHandler {
         }
     }
 
-    pub async fn get<T>(&self) -> Result<T, KolzoError>
-    where
-        T: DeserializeOwned,
-    {
-        let authenticator: Option<&dyn RestAuthenticator> = self
-            .authenticator
-            .as_ref()
-            .map(|auth| auth as &dyn RestAuthenticator);
-
-        let url = self
-            .build_full_url(BINANCE_URL, self.get_endpoint_path(), authenticator)
-            .await;
-
-        let client = reqwest::Client::new();
-        let mut request_builder = client.get(&*url.to_string());
-
-        if let Some(headers) = self.get_headers(authenticator)? {
-            for (key, value) in headers {
-                request_builder = request_builder.header(key.as_str(), value.as_str());
-            }
-        }
-
-        let response = request_builder.send().await?;
-        let status = response.status();
-        let text = response.text().await?;
-
-        self.handle_response(&url, status, &text).await?;
-
-        serde_json::from_str::<T>(&text).map_err(KolzoError::JsonError)
-    }
-
-    pub async fn post<T>(&self, body: Option<HashMap<SmolStr, SmolStr>>) -> Result<T, KolzoError>
-    where
-        T: DeserializeOwned,
-    {
-        self.request(HttpMethod::POST, body).await
-    }
-
-    pub async fn put<T>(&self, body: Option<HashMap<SmolStr, SmolStr>>) -> Result<T, KolzoError>
-    where
-        T: DeserializeOwned,
-    {
-        self.request(HttpMethod::PUT, body).await
-    }
-
-    pub async fn delete<T>(&self, body: Option<HashMap<SmolStr, SmolStr>>) -> Result<T, KolzoError>
-    where
-        T: DeserializeOwned,
-    {
-        self.request(HttpMethod::DELETE, body).await
-    }
-
-    pub async fn patch<T>(&self, body: Option<HashMap<SmolStr, SmolStr>>) -> Result<T, KolzoError>
-    where
-        T: DeserializeOwned,
-    {
-        self.request(HttpMethod::PATCH, body).await
-    }
-
     async fn request<T>(
         &self,
         method: HttpMethod,
@@ -259,6 +200,41 @@ impl BinanceExchangeHandler {
         self.handle_response(&url, status, &text).await?;
 
         serde_json::from_str::<T>(&text).map_err(KolzoError::JsonError)
+    }
+
+    pub async fn get<T>(&self) -> Result<T, KolzoError>
+    where
+        T: DeserializeOwned,
+    {
+        self.request(HttpMethod::GET, None).await
+    }
+
+    pub async fn post<T>(&self, body: Option<HashMap<SmolStr, SmolStr>>) -> Result<T, KolzoError>
+    where
+        T: DeserializeOwned,
+    {
+        self.request(HttpMethod::POST, body).await
+    }
+
+    pub async fn put<T>(&self, body: Option<HashMap<SmolStr, SmolStr>>) -> Result<T, KolzoError>
+    where
+        T: DeserializeOwned,
+    {
+        self.request(HttpMethod::PUT, body).await
+    }
+
+    pub async fn delete<T>(&self, body: Option<HashMap<SmolStr, SmolStr>>) -> Result<T, KolzoError>
+    where
+        T: DeserializeOwned,
+    {
+        self.request(HttpMethod::DELETE, body).await
+    }
+
+    pub async fn patch<T>(&self, body: Option<HashMap<SmolStr, SmolStr>>) -> Result<T, KolzoError>
+    where
+        T: DeserializeOwned,
+    {
+        self.request(HttpMethod::PATCH, body).await
     }
 }
 

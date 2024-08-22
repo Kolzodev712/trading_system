@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
 use core_logic::{
     data::{
-        base_data::{DataType, OrderId, OrderStatus, OrderType, Pair, Side},
+        base_data::{DataType, OrderId, OrderType, Pair, Side},
         private_data::{Order, OrderRequest},
         public_data::{OrderBook, Trade},
     },
@@ -13,7 +13,7 @@ use core_logic::{
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use smol_str::{format_smolstr, SmolStr, ToSmolStr};
-use std::collections::HashMap;
+use std::{collections::HashMap, fmt};
 
 #[derive(Debug, Deserialize, Serialize, Clone, Eq, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -110,8 +110,8 @@ pub struct BinanceOrderRequest {
         deserialize_with = "deserialize_smol_str"
     )]
     pub symbol: SmolStr,
-    pub side: Side,
-    pub order_type: OrderType,
+    pub side: BinanceSide,
+    pub order_type: BinanceOrderType,
     pub time_in_force: Option<BinanceTimeInForce>,
     pub quantity: Option<Decimal>,
     pub price: Option<Decimal>,
@@ -128,9 +128,9 @@ impl From<OrderRequest> for BinanceOrderRequest {
                 order.instrument.pair.base,
                 order.instrument.pair.quote
             ),
-            side: order.side,
+            side: order.side.into(),
             time_in_force: Some(time_in_force),
-            order_type: order.order_type,
+            order_type: order.order_type.into(),
             quantity: Some(order.amount),
             price: Some(order.price),
             timestamp: order.timestamp,
@@ -139,6 +139,7 @@ impl From<OrderRequest> for BinanceOrderRequest {
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct BinanceOrderResponse {
     #[serde(
         serialize_with = "serialize_smol_str",
@@ -149,10 +150,11 @@ pub struct BinanceOrderResponse {
     pub transact_time: u64,
     pub price: Decimal,
     pub orig_qty: Decimal,
-    pub status: OrderStatus,
+    pub status: BinanceOrderStatus,
     pub time_in_force: BinanceTimeInForce,
-    pub order_type: OrderType,
-    pub side: Side,
+    #[serde(rename = "type")]
+    pub type_: BinanceOrderType,
+    pub side: BinanceSide,
 }
 
 impl From<BinanceOrderResponse> for Order {
@@ -160,7 +162,7 @@ impl From<BinanceOrderResponse> for Order {
         Order {
             order_id: OrderId::new(SmolStr::new(response.order_id.to_string())),
             instrument: response.symbol.into(),
-            side: response.side,
+            side: response.side.into(),
             price: response.price,
             amount: response.orig_qty,
             internal_created_at: Utc::now(),
@@ -170,6 +172,63 @@ impl From<BinanceOrderResponse> for Order {
                 .and_then(|seconds| chrono::NaiveDateTime::from_timestamp_opt(seconds as i64, 0)) // Handle None case
                 .map(|naive| DateTime::<Utc>::from_naive_utc_and_offset(naive, Utc)),
         }
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Eq, PartialEq)]
+#[serde(rename_all = "UPPERCASE")]
+pub enum BinanceOrderStatus {
+    New,
+    PartiallyFilled,
+    Filled,
+    Canceled,
+    PendingCancel,
+    Rejected,
+    Expired,
+}
+
+impl fmt::Display for BinanceOrderStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let status_str = match self {
+            BinanceOrderStatus::New => "NEW",
+            BinanceOrderStatus::PartiallyFilled => "partiallyFilled",
+            BinanceOrderStatus::Filled => "filled",
+            BinanceOrderStatus::Canceled => "canceled",
+            BinanceOrderStatus::PendingCancel => "pendingCancel",
+            BinanceOrderStatus::Rejected => "rejected",
+            BinanceOrderStatus::Expired => "expired",
+        };
+        write!(f, "{}", status_str)
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Eq, PartialEq)]
+#[serde(rename_all = "UPPERCASE")]
+pub enum BinanceOrderType {
+    Market,
+    Limit,
+    PostOnly,
+}
+
+impl From<OrderType> for BinanceOrderType {
+    fn from(order_type: OrderType) -> Self {
+        match order_type {
+            OrderType::Market => BinanceOrderType::Market,
+            OrderType::Limit => BinanceOrderType::Limit,
+            OrderType::PostOnly => BinanceOrderType::PostOnly,
+            _ => panic!("Unsupported order type for Binance"), // Or handle it in a way that fits your application's needs
+        }
+    }
+}
+
+impl fmt::Display for BinanceOrderType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let type_str = match self {
+            BinanceOrderType::Market => "market",
+            BinanceOrderType::Limit => "limit",
+            BinanceOrderType::PostOnly => "postOnly",
+        };
+        write!(f, "{}", type_str)
     }
 }
 
@@ -191,6 +250,41 @@ impl From<BinanceTimeInForce> for SmolStr {
     }
 }
 
+#[derive(Debug, Deserialize, Serialize, Clone, Eq, PartialEq)]
+#[serde(rename_all = "UPPERCASE")]
+pub enum BinanceSide {
+    Buy,
+    Sell,
+}
+
+impl From<Side> for BinanceSide {
+    fn from(side: Side) -> Self {
+        match side {
+            Side::Buy => BinanceSide::Buy,
+            Side::Sell => BinanceSide::Sell,
+        }
+    }
+}
+
+impl From<BinanceSide> for Side {
+    fn from(binance_side: BinanceSide) -> Self {
+        match binance_side {
+            BinanceSide::Buy => Side::Buy,
+            BinanceSide::Sell => Side::Sell,
+        }
+    }
+}
+
+impl fmt::Display for BinanceSide {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let side_str = match self {
+            BinanceSide::Buy => "BUY",
+            BinanceSide::Sell => "SELL",
+        };
+        write!(f, "{}", side_str)
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OrderResponse {
@@ -202,7 +296,7 @@ pub struct OrderResponse {
     pub orig_qty: Decimal,
     pub executed_qty: Decimal,
     pub cummulative_quote_qty: Decimal,
-    pub status: OrderStatus,
+    pub status: BinanceOrderStatus,
     pub order_type: OrderType,
     pub side: Side,
     pub working_time: u64,
@@ -256,16 +350,8 @@ pub enum BinancePrivateEndpoint {
             deserialize_with = "deserialize_smol_str"
         )]
         symbol: SmolStr,
-        #[serde(
-            serialize_with = "serialize_smol_str",
-            deserialize_with = "deserialize_smol_str"
-        )]
-        side: SmolStr,
-        #[serde(
-            serialize_with = "serialize_smol_str",
-            deserialize_with = "deserialize_smol_str"
-        )]
-        order_type: SmolStr,
+        side: BinanceSide,
+        order_type: BinanceOrderType,
         quantity: Decimal,
         price: Option<Decimal>,
         #[serde(
@@ -297,8 +383,8 @@ impl BinancePrivateEndpoint {
             } => {
                 let mut params = HashMap::new();
                 params.insert("symbol".into(), symbol.clone());
-                params.insert("side".into(), side.clone());
-                params.insert("type".into(), order_type.clone());
+                params.insert("side".into(), side.clone().to_smolstr());
+                params.insert("type".into(), order_type.clone().to_smolstr());
                 params.insert("quantity".into(), quantity.to_smolstr());
 
                 if let Some(p) = price {

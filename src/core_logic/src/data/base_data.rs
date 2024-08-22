@@ -3,6 +3,7 @@ use crate::utils::{deserialize_smol_str, serialize_smol_str};
 
 use serde::{Deserialize, Serialize};
 use smol_str::SmolStr;
+use std::fmt;
 
 #[derive(Debug, Deserialize, Serialize, Clone, Eq, PartialEq)]
 pub struct Pair {
@@ -37,11 +38,21 @@ pub enum Side {
     Sell,
 }
 
+impl fmt::Display for Side {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let side_str = match self {
+            Side::Buy => "Buy",
+            Side::Sell => "Sell",
+        };
+        write!(f, "{}", side_str)
+    }
+}
+
 impl From<Side> for SmolStr {
     fn from(side: Side) -> Self {
         match side {
-            Side::Buy => SmolStr::new("BUY"),
-            Side::Sell => SmolStr::new("SELL"),
+            Side::Buy => SmolStr::new("Buy"),
+            Side::Sell => SmolStr::new("Sell"),
         }
     }
 }
@@ -53,18 +64,6 @@ pub enum OrderType {
     PostOnly,
     Ioc,
     Fok,
-}
-
-impl From<OrderType> for SmolStr {
-    fn from(order_type: OrderType) -> Self {
-        match order_type {
-            OrderType::Market => SmolStr::new("MARKET"),
-            OrderType::Limit => SmolStr::new("LIMIT"),
-            OrderType::PostOnly => SmolStr::new("POST_ONLY"),
-            OrderType::Ioc => SmolStr::new("IOC"),
-            OrderType::Fok => SmolStr::new("FOK"),
-        }
-    }
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Eq, PartialEq)]

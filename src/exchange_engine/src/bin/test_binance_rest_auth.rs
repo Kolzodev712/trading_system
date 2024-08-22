@@ -1,12 +1,9 @@
-use core_logic::{
-    data::base_data::{OrderType, Side},
-    utils::current_timestamp,
-};
+use core_logic::{data::base_data::Side, utils::current_timestamp};
 use exchange_engine::exchanges::binance::rest::{
     binance_rest::BinanceExchangeHandler,
     types::{
-        BinanceOrderRequest, BinanceOrderResponse, BinancePrivateEndpoint, BinanceSymbol,
-        BinanceTimeInForce,
+        BinanceOrderRequest, BinanceOrderResponse, BinanceOrderType, BinancePrivateEndpoint,
+        BinanceSymbol, BinanceTimeInForce,
     },
 };
 use rust_decimal::Decimal;
@@ -19,23 +16,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let pair: BinanceSymbol = BinanceSymbol::new("BTC", "USDT");
     let symbol = BinanceSymbol::to_symbol(&pair);
-    let side = Side::Sell;
-    let order_type = OrderType::Limit;
+    let side = Side::Buy;
+    let order_type = BinanceOrderType::Limit;
     let quantity = Decimal::new(9, 5);
-    let price = Some(Decimal::new(5935547, 2));
+    let price = Some(Decimal::new(6092347, 2));
     let time_in_force = Some(BinanceTimeInForce::Gtc);
 
     let order_request = BinanceOrderRequest {
         symbol,
-        side,
+        side: side.into(),
         order_type,
         time_in_force,
         quantity: Some(quantity),
         price,
         timestamp: current_timestamp(),
     };
-
-    println!("{:?}", order_request.clone());
 
     let order_handler = BinanceExchangeHandler::new_private(
         BinancePrivateEndpoint::PlaceOrder {
@@ -53,9 +48,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     // Send the POST request to place the order
-    let s = order_handler.post::<BinanceOrderResponse>(None).await?;
-
-    println!("ORDER RESPONSE: {:?}", s);
+    order_handler.post::<BinanceOrderResponse>(None).await?;
 
     println!("Order placed successfully");
 

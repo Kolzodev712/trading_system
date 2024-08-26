@@ -19,7 +19,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let side = Side::Buy;
     let order_type = BinanceOrderType::Limit;
     let quantity = Decimal::new(9, 5);
-    let price = Some(Decimal::new(6092347, 2));
+    let price = Some(Decimal::new(6360047, 2));
     let time_in_force = Some(BinanceTimeInForce::Gtc);
 
     let order_request = BinanceOrderRequest {
@@ -41,7 +41,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             price: order_request.price,
             time_in_force: order_request.time_in_force.map(|tif| tif.into()),
         },
-        None,
+        Some(60000), // for testing only
         Some(order_request.timestamp),
         api_key.clone().into(),
         secret_key.clone().into(),

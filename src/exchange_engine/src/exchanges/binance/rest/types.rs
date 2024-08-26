@@ -175,6 +175,41 @@ impl From<BinanceOrderResponse> for Order {
     }
 }
 
+#[derive(Debug, Clone, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BinanceCancelOrderByIdRequest {
+    #[serde(
+        serialize_with = "serialize_smol_str",
+        deserialize_with = "deserialize_smol_str"
+    )]
+    pub symbol: SmolStr,
+    pub order_id: u64,
+    pub status: BinanceOrderStatus,
+    pub side: BinanceSide,
+    pub time_in_force: BinanceTimeInForce,
+    #[serde(rename = "type")]
+    pub order_type: BinanceOrderType,
+    pub timestamp: u64,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BinanceCancelOrderByIdResponse {
+    #[serde(
+        serialize_with = "serialize_smol_str",
+        deserialize_with = "deserialize_smol_str"
+    )]
+    pub symbol: SmolStr,
+    pub order_id: u64,
+    pub price: Decimal,
+    pub orig_qty: Decimal,
+    pub status: BinanceOrderStatus,
+    pub time_in_force: BinanceTimeInForce,
+    #[serde(rename = "type")]
+    pub type_: BinanceOrderType,
+    pub side: BinanceSide,
+}
+
 #[derive(Debug, Deserialize, Serialize, Clone, Eq, PartialEq)]
 #[serde(rename_all = "UPPERCASE")]
 pub enum BinanceOrderStatus {
@@ -191,12 +226,12 @@ impl fmt::Display for BinanceOrderStatus {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let status_str = match self {
             BinanceOrderStatus::New => "NEW",
-            BinanceOrderStatus::PartiallyFilled => "partiallyFilled",
-            BinanceOrderStatus::Filled => "filled",
-            BinanceOrderStatus::Canceled => "canceled",
-            BinanceOrderStatus::PendingCancel => "pendingCancel",
-            BinanceOrderStatus::Rejected => "rejected",
-            BinanceOrderStatus::Expired => "expired",
+            BinanceOrderStatus::PartiallyFilled => "PARTIALLY_FILLED",
+            BinanceOrderStatus::Filled => "FILLED",
+            BinanceOrderStatus::Canceled => "CANCELED",
+            BinanceOrderStatus::PendingCancel => "PENDING_CANCEL",
+            BinanceOrderStatus::Rejected => "REJECTED",
+            BinanceOrderStatus::Expired => "EXPIRED",
         };
         write!(f, "{}", status_str)
     }
@@ -285,23 +320,6 @@ impl fmt::Display for BinanceSide {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct OrderResponse {
-    pub symbol: Pair,
-    pub order_id: u64,
-    pub client_order_id: OrderId,
-    pub transact_time: u64,
-    pub price: Decimal,
-    pub orig_qty: Decimal,
-    pub executed_qty: Decimal,
-    pub cummulative_quote_qty: Decimal,
-    pub status: BinanceOrderStatus,
-    pub order_type: OrderType,
-    pub side: Side,
-    pub working_time: u64,
-}
-
 #[derive(Debug, PartialEq, Eq, Deserialize, Serialize, Clone)]
 pub enum BinancePublicEndpoint {
     Orderbook {
@@ -360,6 +378,18 @@ pub enum BinancePrivateEndpoint {
         )]
         time_in_force: Option<SmolStr>,
     },
+    CancelOrder {
+        #[serde(
+            serialize_with = "serialize_smol_str",
+            deserialize_with = "deserialize_smol_str"
+        )]
+        symbol: SmolStr,
+        order_id: u64,
+        status: BinanceOrderStatus,
+        time_in_force: BinanceTimeInForce,
+        order_type: BinanceOrderType,
+        side: BinanceSide,
+    },
 }
 
 impl BinancePrivateEndpoint {
@@ -367,6 +397,7 @@ impl BinancePrivateEndpoint {
         match self {
             BinancePrivateEndpoint::AccountInfo => "account",
             BinancePrivateEndpoint::PlaceOrder { .. } => "order",
+            BinancePrivateEndpoint::CancelOrder { .. } => "order",
         }
     }
 
@@ -394,6 +425,24 @@ impl BinancePrivateEndpoint {
                 if let Some(tif) = time_in_force {
                     params.insert("timeInForce".into(), tif.clone());
                 }
+
+                params
+            }
+            BinancePrivateEndpoint::CancelOrder {
+                symbol,
+                order_id,
+                status,
+                time_in_force,
+                order_type,
+                side,
+            } => {
+                let mut params = HashMap::new();
+                params.insert("symbol".into(), symbol.clone());
+                params.insert("orderId".into(), order_id.clone().to_smolstr());
+                params.insert("side".into(), side.clone().to_smolstr());
+                params.insert("type".into(), order_type.clone().to_smolstr());
+                params.insert("status".into(), status.clone().to_smolstr());
+                params.insert("timeInForce".into(), time_in_force.clone().into());
 
                 params
             }

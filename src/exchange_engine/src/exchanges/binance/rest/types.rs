@@ -329,6 +329,7 @@ pub enum BinancePublicEndpoint {
     Trade {
         symbol: BinanceSymbol,
     },
+    ServerTime,
 }
 
 impl BinancePublicEndpoint {
@@ -336,6 +337,7 @@ impl BinancePublicEndpoint {
         match self {
             BinancePublicEndpoint::Orderbook { .. } => "depth",
             BinancePublicEndpoint::Trade { .. } => "trades",
+            BinancePublicEndpoint::ServerTime => "time",
         }
     }
 
@@ -354,6 +356,7 @@ impl BinancePublicEndpoint {
                 params.insert("symbol".into(), symbol.to_symbol());
                 params
             }
+            BinancePublicEndpoint::ServerTime => HashMap::new(),
         }
     }
 }
@@ -361,7 +364,6 @@ impl BinancePublicEndpoint {
 #[derive(Debug, PartialEq, Eq, Deserialize, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub enum BinancePrivateEndpoint {
-    AccountInfo,
     PlaceOrder {
         #[serde(
             serialize_with = "serialize_smol_str",
@@ -395,7 +397,6 @@ pub enum BinancePrivateEndpoint {
 impl BinancePrivateEndpoint {
     pub fn get_endpoint(&self) -> &str {
         match self {
-            BinancePrivateEndpoint::AccountInfo => "account",
             BinancePrivateEndpoint::PlaceOrder { .. } => "order",
             BinancePrivateEndpoint::CancelOrder { .. } => "order",
         }
@@ -403,7 +404,6 @@ impl BinancePrivateEndpoint {
 
     pub fn get_params(&self) -> HashMap<SmolStr, SmolStr> {
         match self {
-            BinancePrivateEndpoint::AccountInfo => HashMap::new(),
             BinancePrivateEndpoint::PlaceOrder {
                 symbol,
                 side,
@@ -491,6 +491,7 @@ impl From<Pair> for BinanceSymbol {
 pub enum BinanceDataType {
     Orderbook,
     Trade,
+    ServerTime,
 }
 
 impl From<DataType> for BinanceDataType {

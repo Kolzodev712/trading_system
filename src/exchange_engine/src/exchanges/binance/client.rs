@@ -5,8 +5,8 @@ use super::{
     rest::{
         binance_rest::BinanceExchangeHandler,
         types::{
-            AccountInfo, BinanceDataType, BinanceOrderRequest, BinanceOrderbookSnapshot,
-            BinancePrivateEndpoint, BinanceTradeSnapshot,
+            BinanceDataType, BinanceOrderRequest, BinanceOrderbookSnapshot, BinancePrivateEndpoint,
+            BinanceTradeSnapshot,
         },
     },
 };
@@ -57,20 +57,6 @@ impl BinanceClient {
         let trades: Vec<Trade> = binance_trades.into_iter().map(Trade::from).collect();
 
         Ok(trades)
-    }
-
-    pub async fn get_account_data(&self) -> Result<Vec<AccountInfo>, KolzoError> {
-        let account_info_handler = BinanceExchangeHandler::new_private(
-            BinancePrivateEndpoint::AccountInfo,
-            None,
-            None,
-            self.config.api_key.clone().into(),
-            self.config.secret_key.clone().into(),
-        );
-
-        let account_info_raw: AccountInfo = account_info_handler.get().await?;
-
-        Ok(vec![account_info_raw])
     }
 
     pub async fn place_order(&self, order_request: BinanceOrderRequest) -> Result<(), KolzoError> {

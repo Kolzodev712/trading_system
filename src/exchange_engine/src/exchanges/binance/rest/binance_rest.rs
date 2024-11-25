@@ -116,6 +116,9 @@ impl BinanceExchangeHandler {
             BinanceDataType::Trade => {
                 BinanceEndpoint::Public(BinancePublicEndpoint::Trade { symbol })
             }
+            BinanceDataType::ServerTime => {
+                BinanceEndpoint::Public(BinancePublicEndpoint::ServerTime)
+            }
         };
 
         BinanceExchangeHandler {
@@ -235,6 +238,20 @@ impl BinanceExchangeHandler {
         T: DeserializeOwned,
     {
         self.request(HttpMethod::PATCH, body).await
+    }
+
+    pub async fn server_time(&self) -> Result<u64, KolzoError> {
+        let handler = BinanceExchangeHandler {
+            endpoint: BinanceEndpoint::Public(BinancePublicEndpoint::ServerTime),
+            authenticator: None,
+            recv_window: None,
+            timestamp: None,
+        };
+
+        let response: HashMap<String, u64> = handler.get().await?;
+        response.get("serverTime").cloned().ok_or_else(|| {
+            KolzoError::CustomError(anyhow::anyhow!("Missing serverTime in response"))
+        })
     }
 }
 

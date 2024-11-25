@@ -15,8 +15,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let pair: BinanceSymbol = BinanceSymbol::new("BTC", "USDT");
     let symbol = BinanceSymbol::to_symbol(&pair);
-    let side = BinanceSide::Buy;
-    let order_id = 29874231796;
+    let side = BinanceSide::Sell;
+    let order_id = 32973046410;
     let order_type = BinanceOrderType::Limit;
     let time_in_force = BinanceTimeInForce::Gtc;
     let status = BinanceOrderStatus::Filled;

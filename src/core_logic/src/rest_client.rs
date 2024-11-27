@@ -1,12 +1,8 @@
-use super::{authenticator::RestAuthenticator, error::KolzoError};
+use super::{authenticator::RestAuthenticator, error::EngineError};
 use async_trait::async_trait;
-use reqwest::{
-    header::{HeaderName, HeaderValue},
-    Client, Method, StatusCode,
-};
+use reqwest::{Method, StatusCode};
 use smol_str::SmolStr;
-use std::{collections::HashMap, process};
-use tracing::error;
+use std::collections::HashMap;
 
 #[async_trait]
 pub trait RestExchangeHandler: Send + Sync {
@@ -44,7 +40,7 @@ pub trait RestExchangeHandler: Send + Sync {
         rest_url: &str,
         status: StatusCode,
         text: &str,
-    ) -> Result<(), KolzoError>;
+    ) -> Result<(), EngineError>;
 
     /// Retrieves any additional headers needed for the request.
     ///
@@ -58,7 +54,7 @@ pub trait RestExchangeHandler: Send + Sync {
     fn get_headers(
         &self,
         authenticator: Option<&dyn RestAuthenticator>,
-    ) -> Result<Option<HashMap<SmolStr, SmolStr>>, KolzoError>;
+    ) -> Result<Option<HashMap<SmolStr, SmolStr>>, EngineError>;
 
     /// Retrieves any additional parameters needed for the request.
     ///
@@ -72,7 +68,7 @@ pub trait RestExchangeHandler: Send + Sync {
     async fn get_params(
         &self,
         authenticator: Option<&dyn RestAuthenticator>,
-    ) -> Result<Option<HashMap<SmolStr, SmolStr>>, KolzoError>;
+    ) -> Result<Option<HashMap<SmolStr, SmolStr>>, EngineError>;
 
     /// Retrieves the request body, if any.
     ///
@@ -93,7 +89,7 @@ pub trait RestExchangeHandler: Send + Sync {
     fn authenticate(
         &self,
         authenticator: Option<&dyn RestAuthenticator>,
-    ) -> Result<Option<HashMap<SmolStr, SmolStr>>, KolzoError>;
+    ) -> Result<Option<HashMap<SmolStr, SmolStr>>, EngineError>;
 }
 
 /// Represents the different HTTP methods that can be used in a REST request.
@@ -127,112 +123,5 @@ impl From<HttpMethod> for Method {
             HttpMethod::DELETE => Method::DELETE,
             HttpMethod::PATCH => Method::PATCH,
         }
-    }
-}
-
-/// Makes a REST request to the specified URL, leveraging exchange-specific logic from the handler.
-///
-/// This function constructs a full URL, prepares the request with optional headers and body content,
-/// sends the request, and handles the response based on the exchange-specific handler.
-///
-/// # Arguments
-///
-/// * `base_url` - The base URL for the request, such as "https://api.exchange.com".
-/// * `endpoint` - The specific endpoint for the request, such as "/v1/order".
-/// * `method` - The HTTP method for the request, such as GET, POST, etc.
-/// * `handler` - An optional handler that implements `RestExchangeHandler`, which defines
-///   exchange-specific behavior for the request.
-/// * `authenticator` - An optional authenticator used to sign the request and provide headers.
-///
-/// # Returns
-///
-/// Returns a `Result` containing the `SmolStr` response if the request is successful, or a `KolzoError`
-/// if there was a failure during the request or response handling.
-///
-/// # Errors
-///
-/// This function can return a `KolzoError` in cases such as:
-/// - Network failures or timeouts when sending the request.
-/// - Invalid headers or parameters provided by the handler or authenticator.
-/// - Non-success HTTP status codes returned from the API.
-///
-/// # Example
-///
-/// ```rust
-/// let base_url = "https://api.exchange.com";
-/// let endpoint = "/v1/order";
-/// let method = HttpMethod::POST;
-/// let response = create_rest_request(
-///     base_url,
-///     endpoint,
-///     method,
-///     Some(&my_exchange_handler),
-///     Some(&my_authenticator)
-/// ).await?;
-/// println!("Response: {}", response);
-/// ```
-pub async fn create_rest_request<H>(
-    base_url: SmolStr,
-    endpoint: SmolStr,
-    method: HttpMethod,
-    handler: Option<&H>,
-    authenticator: Option<&dyn RestAuthenticator>,
-) -> Result<SmolStr, KolzoError>
-where
-    H: RestExchangeHandler + Send + Sync,
-{
-    let client = Client::new();
-    let method: Method = method.into();
-    let full_url = if let Some(handler) = handler {
-        handler
-            .build_full_url(&base_url, &endpoint, authenticator)
-            .await
-    } else {
-        format!("{}{}", base_url, endpoint).into()
-    };
-    let mut request_builder = client.request(method, full_url.to_string());
-
-    if let Some(handler) = handler {
-        if let Ok(Some(auth_headers)) = handler.authenticate(authenticator) {
-            for (key, value) in auth_headers {
-                let header_name = HeaderName::from_bytes(key.as_bytes())
-                    .map_err(|e| KolzoError::InvalidHeaderName(e))?;
-                let header_value = HeaderValue::from_bytes(value.as_bytes())
-                    .map_err(|e| KolzoError::InvalidHeaderValue(e))?;
-                request_builder = request_builder.header(header_name, header_value);
-            }
-        }
-
-        if let Ok(Some(headers)) = handler.get_headers(authenticator) {
-            for (key, value) in headers {
-                let header_name = HeaderName::from_bytes(key.as_bytes())
-                    .map_err(|e| KolzoError::InvalidHeaderName(e))?;
-                let header_value = HeaderValue::from_bytes(value.as_bytes())
-                    .map_err(|e| KolzoError::InvalidHeaderValue(e))?;
-                request_builder = request_builder.header(header_name, header_value);
-            }
-        }
-
-        if let Some(body) = handler.get_body() {
-            request_builder = request_builder.body(body.to_string());
-        }
-    }
-
-    let response = request_builder.send().await?;
-    let status = response.status();
-    let text = response
-        .text()
-        .await
-        .unwrap_or_else(|_| "Unknown error".into());
-
-    if let Some(handler) = handler {
-        handler.handle_response(&full_url, status, &text).await?;
-    }
-
-    if status.is_success() {
-        Ok(text.into())
-    } else {
-        error!("ERROR: {} RETURNED | {:?} | {}", full_url, status, text);
-        process::exit(1); // Set exit code to 1 to indicate an error
     }
 }

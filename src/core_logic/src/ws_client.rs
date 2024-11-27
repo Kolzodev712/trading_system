@@ -1,4 +1,4 @@
-use crate::error::KolzoError;
+use crate::error::EngineError;
 use async_trait::async_trait;
 use smol_str::SmolStr;
 use tokio::{net::TcpStream, sync::mpsc::Sender};
@@ -7,7 +7,7 @@ use tokio_tungstenite::{tungstenite::protocol::Message, MaybeTlsStream, WebSocke
 /// Trait for handling WebSocket messages.
 pub trait MessageHandler<T> {
     /// Handles a text message received from the WebSocket stream.
-    fn handle_text_message(&self, text: SmolStr) -> Result<T, KolzoError>;
+    fn handle_text_message(&self, text: SmolStr) -> Result<T, EngineError>;
 
     /// Handles a ping message received from the WebSocket stream.
     fn handle_ping(&self, ping: Vec<u8>);
@@ -26,7 +26,7 @@ pub trait WebSocketClient<T> {
     async fn make_ws_request(
         &self,
         ws_url: &str,
-    ) -> Result<WebSocketStream<MaybeTlsStream<TcpStream>>, KolzoError>;
+    ) -> Result<WebSocketStream<MaybeTlsStream<TcpStream>>, EngineError>;
 
     /// Handles messages from the WebSocket stream.
     async fn handle_messages<H>(
@@ -34,7 +34,7 @@ pub trait WebSocketClient<T> {
         ws_stream: WebSocketStream<MaybeTlsStream<TcpStream>>,
         tx: Sender<T>,
         handler: H,
-    ) -> Result<(), KolzoError>
+    ) -> Result<(), EngineError>
     where
         H: MessageHandler<T> + Send + Sync + 'static;
 
@@ -43,7 +43,7 @@ pub trait WebSocketClient<T> {
         &self,
         ws_stream: &mut WebSocketStream<MaybeTlsStream<TcpStream>>,
         subscription_handler: S,
-    ) -> Result<(), KolzoError>
+    ) -> Result<(), EngineError>
     where
         S: SubscriptionHandler + Send + Sync + 'static;
 }

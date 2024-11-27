@@ -1,82 +1,28 @@
-use std::vec;
-
+// End goal here is to implement the `TradingClient` trait on the binance client
 use super::{
-    config::BinanceConfig,
-    rest::{
-        binance_rest::BinanceExchangeHandler,
-        types::{
-            BinanceDataType, BinanceOrderRequest, BinanceOrderbookSnapshot, BinancePrivateEndpoint,
-            BinanceTradeSnapshot,
-        },
-    },
+    config::BinanceConfig, rest::http_client::BinanceHttpClient,
+    types::open_order::BinanceOrderRequest,
 };
-use core_logic::{
-    data::public_data::{OrderBook, Trade},
-    error::KolzoError,
-};
-use serde::{Deserialize, Serialize};
+use core_logic::error::EngineError;
+use reqwest::Method;
+use smol_str::SmolStr;
 
-#[derive(Debug, PartialEq, Eq, Deserialize, Serialize, Clone)]
+const OPEN_ORDER: &str = "order/test";
 
-pub struct BinanceClient {
-    pub config: BinanceConfig,
-    pub http_client: BinanceExchangeHandler,
+#[derive(Clone)]
+pub struct BinanceDriver {
+    client: BinanceHttpClient,
+    _config: BinanceConfig,
 }
 
-impl BinanceClient {
-    pub fn new(config: BinanceConfig, http_client: BinanceExchangeHandler) -> Self {
-        Self {
-            config,
-            http_client,
-        }
+impl BinanceDriver {
+    pub fn new(client: BinanceHttpClient, _config: BinanceConfig) -> Self {
+        BinanceDriver { client, _config }
     }
 
-    pub async fn get_rest_orderbooks(&self) -> Result<Vec<OrderBook>, KolzoError> {
-        let orderbook_handler = BinanceExchangeHandler::new_public(
-            BinanceDataType::Orderbook,
-            self.config.symbol.clone(),
-            self.config.limit,
-            None,
-            None,
-        );
-        let orderbook_snapshots: BinanceOrderbookSnapshot = orderbook_handler.get().await?;
-        let orderbook: OrderBook = orderbook_snapshots.into();
+    pub async fn open_order(&self, order: BinanceOrderRequest) -> Result<SmolStr, EngineError> {
+        let body = Some(&order);
 
-        Ok(vec![orderbook])
-    }
-
-    pub async fn get_rest_trades(&self) -> Result<Vec<Trade>, KolzoError> {
-        let trade_handler = BinanceExchangeHandler::new_public(
-            BinanceDataType::Trade,
-            self.config.symbol.clone(),
-            None,
-            None,
-            None,
-        );
-        let binance_trades: Vec<BinanceTradeSnapshot> = trade_handler.get().await?;
-        let trades: Vec<Trade> = binance_trades.into_iter().map(Trade::from).collect();
-
-        Ok(trades)
-    }
-
-    pub async fn place_order(&self, order_request: BinanceOrderRequest) -> Result<(), KolzoError> {
-        let private_endpoint = BinancePrivateEndpoint::PlaceOrder {
-            symbol: order_request.symbol.into(),
-            side: order_request.side.into(),
-            order_type: order_request.order_type.into(),
-            quantity: order_request.quantity.unwrap_or_default(),
-            price: order_request.price,
-            time_in_force: order_request.time_in_force.map(|tif| tif.into()),
-        };
-
-        let order_handler = BinanceExchangeHandler::new_private(
-            private_endpoint,
-            None,
-            Some(order_request.timestamp),
-            self.config.api_key.clone().into(),
-            self.config.secret_key.clone().into(),
-        );
-
-        order_handler.post::<()>(None).await
+        self.client.call(OPEN_ORDER, Method::POST, None, body).await
     }
 }

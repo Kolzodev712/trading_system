@@ -5,7 +5,7 @@ use super::{
         base_data::{OrderId, Pair},
         private_data::{Order, OrderRequest},
     },
-    error::KolzoError,
+    error::EngineError,
     Exchange,
 };
 use std::fmt::Debug;
@@ -23,7 +23,7 @@ where
     const EXCHANGE_ID: Exchange;
 
     /// Creates a single order
-    async fn open_order(&self, req: OrderRequest) -> Result<Order, KolzoError>;
+    async fn open_order(&self, req: OrderRequest) -> Result<Order, EngineError>;
 
     /// Cancels a single order by pair & order_id
     ///
@@ -33,13 +33,13 @@ where
     ///
     /// If the exchange rejects the cancel due to non-existent order,
     /// order already being completed or cancelled, the kolzo is
-    /// expected to return appropriate [`KolzoError`] ([`KolzoError::OrderNotFound`],
-    /// [`KolzoError::OrderAlreadyFilled`] and [`KolzoError::OrderAlreadyCancelled`] respectively).
+    /// expected to return appropriate [`EngineError`] ([`EngineError::OrderNotFound`],
+    /// [`EngineError::OrderAlreadyFilled`] and [`EngineError::OrderAlreadyCancelled`] respectively).
     async fn cancel_order_by_id(
         &self,
         pair: &InstrumentId,
         order_id: OrderId,
-    ) -> Result<(), KolzoError>;
+    ) -> Result<(), EngineError>;
 }
 
 /// Trait that defines the MarketDataClient interactions with the exchange
@@ -51,11 +51,11 @@ pub trait MarketDataClient<InstrumentId = Pair>: Debug + Send + Sync + 'static
 where
     InstrumentId: Clone + Debug + Send + 'static,
 {
-    async fn orderbook_snapshot(&self, _pair: InstrumentId) -> Result<Vec<OrderBook>, KolzoError> {
+    async fn orderbook_snapshot(&self, _pair: InstrumentId) -> Result<Vec<OrderBook>, EngineError> {
         unimplemented!()
     }
 
-    async fn trade_snapshot(&self, _pair: InstrumentId) -> Result<Vec<Trade>, KolzoError> {
+    async fn trade_snapshot(&self, _pair: InstrumentId) -> Result<Vec<Trade>, EngineError> {
         unimplemented!()
     }
 }

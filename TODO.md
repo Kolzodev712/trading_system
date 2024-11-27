@@ -1,4 +1,2 @@
-- Migrate all `String` to `SmolStr` where possible - `DONE`
-- Add `open_order` and `cancel_order` functionality for binance
-- Create tests for all available rest functionality and setup a testing architectures
-- Create the config logic and pass all params to the software from a json file, instead of env variables
+- create http client for binance for signed and not signed messages
+- implement open order, cancel order by id and cancel all orders

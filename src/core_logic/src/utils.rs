@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use smol_str::SmolStr;
@@ -65,4 +67,11 @@ where
 {
     let opt: Option<String> = Option::deserialize(deserializer)?;
     Ok(opt.map(SmolStr::new))
+}
+
+pub fn generate_string_params(params: &mut HashMap<SmolStr, SmolStr>) -> HashMap<String, String> {
+    params
+        .iter_mut()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect()
 }

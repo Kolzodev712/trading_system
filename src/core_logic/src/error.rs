@@ -11,7 +11,7 @@ use tokio_tungstenite::tungstenite;
 use url::ParseError;
 
 #[derive(Error, Debug)]
-pub enum KolzoError {
+pub enum EngineError {
     #[error("Channel send error: {0}")]
     ChannelSendError(#[from] SendError<SmolStr>),
 
@@ -24,8 +24,14 @@ pub enum KolzoError {
     #[error("URL parsing error: {0}")]
     UrlParseError(#[from] ParseError),
 
+    #[error("Authentication error: {0}")]
+    AuthenticationError(Error),
+
     #[error("HTTP request error: {0}")]
     HttpRequestError(#[from] reqwest::Error),
+
+    #[error("HTTP custom error: {0}")]
+    HttpCustomError(String),
 
     #[error("Invalid header name: {0}")]
     InvalidHeaderName(#[from] InvalidHeaderName),
@@ -35,6 +41,9 @@ pub enum KolzoError {
 
     #[error("JSON serialization/deserialization error: {0}")]
     JsonError(#[from] serde_json::Error),
+
+    #[error("JSON QS error: {0}")]
+    JsonQueryStringError(#[from] serde_qs::Error),
 
     #[error("Order not found error: {0}")]
     OrderNotFound(Error),
@@ -49,8 +58,8 @@ pub enum KolzoError {
     CustomError(Error),
 }
 
-impl KolzoError {
+impl EngineError {
     pub fn new_custom_error(msg: SmolStr) -> Self {
-        KolzoError::CustomError(anyhow::anyhow!(msg))
+        EngineError::CustomError(anyhow::anyhow!(msg))
     }
 }

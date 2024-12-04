@@ -3,13 +3,15 @@ use super::{
 };
 use async_trait::async_trait;
 use core_logic::{
-    authenticator::RestAuthenticator, error::EngineError, rest_client::RestExchangeHandler,
-    utils::generate_string_params,
+    authenticator::RestAuthenticator,
+    error::EngineError,
+    rest_client::RestExchangeHandler,
+    utils::{generate_string_params, struct_to_query_map},
 };
 use reqwest::{Client, Method};
 use serde::Serialize;
 use smol_str::SmolStr;
-use std::collections::HashMap;
+use std::{collections::HashMap, fmt::Debug};
 
 const BINANCE_SPOT_URL: &str = "https://api.binance.com/api/v3/";
 
@@ -34,7 +36,57 @@ impl BinanceHttpClient {
         }
     }
 
-    pub async fn call<T>(
+    pub async fn unsigned_call<T, R>(
+        &self,
+        endpoint: &str,
+        params: Option<&T>,
+    ) -> Result<R, EngineError>
+    where
+        T: Serialize + Sized + Debug,
+        R: for<'de> serde::Deserialize<'de>,
+    {
+        let url = self
+            .handler
+            .build_full_url(&self.base_url, endpoint, None)
+            .await;
+
+        let mut request_builder = self.client.request(Method::GET, url.to_string());
+
+        let mut final_params = self.handler.get_params(None).await?.unwrap_or_default();
+
+        if let Some(query_params) = params {
+            let mut query_params = struct_to_query_map(query_params)?;
+
+            final_params.extend(
+                query_params
+                    .iter_mut()
+                    .map(|(k, v)| (SmolStr::new(k), SmolStr::new(v))),
+            );
+        }
+
+        request_builder = request_builder.query(&generate_string_params(&mut final_params));
+
+        let response = request_builder.send().await?;
+        let status = response.status();
+        let text = response
+            .text()
+            .await
+            .map_err(|e| EngineError::HttpRequestError(e))?;
+
+        if !status.is_success() {
+            return Err(EngineError::HttpCustomError(format!(
+                "Request failed with status {} and body: {}",
+                status, text
+            )));
+        }
+
+        let mapped_response: R =
+            serde_json::from_str(&text).map_err(|e| EngineError::JsonError(e))?;
+
+        Ok(mapped_response)
+    }
+
+    pub async fn signed_call<T>(
         &self,
         endpoint: &str,
         method: Method,
@@ -42,7 +94,7 @@ impl BinanceHttpClient {
         body: Option<&T>,
     ) -> Result<SmolStr, EngineError>
     where
-        T: Serialize + ?Sized + std::fmt::Debug,
+        T: Serialize + ?Sized + Debug,
     {
         if let Some(payload) = body {
             let serialized_payload =
@@ -147,9 +199,7 @@ impl RestExchangeHandler for BinanceHandler {
         &self,
         authenticator: Option<&dyn RestAuthenticator>,
     ) -> Result<Option<HashMap<SmolStr, SmolStr>>, EngineError> {
-        let mut params = HashMap::new();
-        params.insert("recvWindow".into(), "60000".into());
-
+        let params = HashMap::new();
         if let Some(auth) = authenticator {
             let signed_params = auth
                 .build_signed_params(params, Some(60000), Some(fetch_server_time().await?))

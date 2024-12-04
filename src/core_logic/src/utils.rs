@@ -1,9 +1,13 @@
 use std::collections::HashMap;
 
+use anyhow::anyhow;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use smol_str::SmolStr;
 use uuid::Uuid;
+
+use crate::error::EngineError;
 
 pub fn current_timestamp() -> u64 {
     let now = Utc::now();
@@ -74,4 +78,20 @@ pub fn generate_string_params(params: &mut HashMap<SmolStr, SmolStr>) -> HashMap
         .iter_mut()
         .map(|(k, v)| (k.to_string(), v.to_string()))
         .collect()
+}
+
+/// Serialize a struct into a `HashMap<String, String>` for query parameters
+pub fn struct_to_query_map<T>(value: &T) -> Result<HashMap<String, String>, EngineError>
+where
+    T: Serialize,
+{
+    let json_value = serde_json::to_value(value).map_err(|e| EngineError::JsonError(e))?;
+
+    if let Value::Object(map) = json_value {
+        Ok(map.into_iter().map(|(k, v)| (k, v.to_string())).collect())
+    } else {
+        Err(EngineError::CustomError(anyhow!(
+            "Could not convert struct to HashMap"
+        )))
+    }
 }

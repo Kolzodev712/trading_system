@@ -15,8 +15,6 @@ pub trait RestAuthenticator: Send + Sync {
     async fn build_signed_params(
         &self,
         params: HashMap<SmolStr, SmolStr>,
-        recv_window: Option<u64>,
-        timestamp: Option<u64>,
     ) -> Result<HashMap<SmolStr, SmolStr>, EngineError>;
 
     /// Retrieves the necessary headers for authenticated requests.

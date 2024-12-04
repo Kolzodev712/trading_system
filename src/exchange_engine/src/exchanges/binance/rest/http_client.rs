@@ -1,26 +1,24 @@
-use super::{
-    super::config::BinanceConfig, super::utils::fetch_server_time, sign::BinanceAuthenticator,
-};
+use super::{super::config::BinanceConfig, sign::BinanceAuthenticator};
 use async_trait::async_trait;
 use core_logic::{
-    authenticator::RestAuthenticator,
-    error::EngineError,
-    rest_client::RestExchangeHandler,
-    utils::{generate_string_params, struct_to_query_map},
+    authenticator::RestAuthenticator, error::EngineError, rest_client::RestExchangeHandler,
+    utils::generate_string_params,
 };
 use reqwest::{Client, Method};
 use serde::Serialize;
 use smol_str::SmolStr;
-use std::{collections::HashMap, fmt::Debug};
+use std::{collections::HashMap, fmt::Debug, time::Instant};
+use tokio::{sync::Mutex, time::Duration};
 
 const BINANCE_SPOT_URL: &str = "https://api.binance.com/api/v3/";
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct BinanceHttpClient {
     pub base_url: SmolStr,
     pub handler: BinanceHandler,
     pub authenticator: BinanceAuthenticator,
     pub client: Client,
+    pub server_time: Mutex<Option<(u64, Instant)>>,
 }
 
 impl BinanceHttpClient {
@@ -33,16 +31,56 @@ impl BinanceHttpClient {
                 secret_key: config.secret_key,
             },
             client: Client::new(),
+            server_time: Mutex::new(None),
+        }
+    }
+
+    pub async fn get_server_time(&self) -> Result<u64, EngineError> {
+        let mut cache = self.server_time.lock().await;
+        let now = Instant::now();
+
+        if let Some((cached_time, timestamp)) = *cache {
+            if now.duration_since(timestamp) < Duration::from_secs(60) {
+                return Ok(cached_time);
+            }
+        }
+
+        let response: HashMap<String, u64> = self
+            .unsigned_call::<(), HashMap<String, u64>>("/api/v3/time", None)
+            .await?;
+        let server_time = response
+            .get("serverTime")
+            .ok_or_else(|| EngineError::HttpCustomError("Missing serverTime in response".into()))?;
+
+        *cache = Some((*server_time, now));
+        Ok(*server_time)
+    }
+
+    async fn prepare_params(
+        &self,
+        params: Option<HashMap<SmolStr, SmolStr>>,
+        signed: bool,
+    ) -> Result<HashMap<SmolStr, SmolStr>, EngineError> {
+        let mut final_params = params.unwrap_or_default();
+
+        if signed {
+            let server_time = self.get_server_time().await?;
+            final_params.insert("recvWindow".into(), "60000".into());
+            final_params.insert("timestamp".into(), server_time.to_string().into());
+
+            let signed_params = self.authenticator.build_signed_params(final_params).await?;
+            Ok(signed_params)
+        } else {
+            Ok(final_params)
         }
     }
 
     pub async fn unsigned_call<T, R>(
         &self,
         endpoint: &str,
-        params: Option<&T>,
+        params: Option<HashMap<SmolStr, SmolStr>>,
     ) -> Result<R, EngineError>
     where
-        T: Serialize + Sized + Debug,
         R: for<'de> serde::Deserialize<'de>,
     {
         let url = self
@@ -50,28 +88,19 @@ impl BinanceHttpClient {
             .build_full_url(&self.base_url, endpoint, None)
             .await;
 
-        let mut request_builder = self.client.request(Method::GET, url.to_string());
+        // Directly use `params` without calling `prepare_params`
+        let mut final_params = params.unwrap_or_default();
+        let query_string = generate_string_params(&mut final_params);
 
-        let mut final_params = self.handler.get_params(None).await?.unwrap_or_default();
+        let response = self
+            .client
+            .get(url.to_string())
+            .query(&query_string)
+            .send()
+            .await?;
 
-        if let Some(query_params) = params {
-            let mut query_params = struct_to_query_map(query_params)?;
-
-            final_params.extend(
-                query_params
-                    .iter_mut()
-                    .map(|(k, v)| (SmolStr::new(k), SmolStr::new(v))),
-            );
-        }
-
-        request_builder = request_builder.query(&generate_string_params(&mut final_params));
-
-        let response = request_builder.send().await?;
         let status = response.status();
-        let text = response
-            .text()
-            .await
-            .map_err(|e| EngineError::HttpRequestError(e))?;
+        let text = response.text().await?;
 
         if !status.is_success() {
             return Err(EngineError::HttpCustomError(format!(
@@ -80,8 +109,8 @@ impl BinanceHttpClient {
             )));
         }
 
-        let mapped_response: R =
-            serde_json::from_str(&text).map_err(|e| EngineError::JsonError(e))?;
+        let mapped_response =
+            serde_json::from_str::<R>(&text).map_err(|e| EngineError::JsonError(e))?;
 
         Ok(mapped_response)
     }
@@ -90,41 +119,27 @@ impl BinanceHttpClient {
         &self,
         endpoint: &str,
         method: Method,
-        mut params: Option<HashMap<SmolStr, SmolStr>>,
+        params: Option<HashMap<SmolStr, SmolStr>>,
         body: Option<&T>,
     ) -> Result<SmolStr, EngineError>
     where
         T: Serialize + ?Sized + Debug,
     {
-        if let Some(payload) = body {
-            let serialized_payload =
-                serde_json::to_string(payload).unwrap_or_else(|_| "{}".to_string());
-
-            let serialized_payload: HashMap<String, String> =
-                serde_json::from_str(&serialized_payload).unwrap_or_default();
-
-            let params_mut = params.get_or_insert_with(HashMap::new);
-            for (key, value) in serialized_payload {
-                params_mut.insert(SmolStr::new(key), SmolStr::new(value));
-            }
-        }
-
         let url = self
             .handler
             .build_full_url(&self.base_url, endpoint, Some(&self.authenticator))
             .await;
 
-        let signed_params = self
-            .handler
-            .get_params(Some(&self.authenticator))
-            .await?
-            .unwrap_or_default();
+        let mut final_params = self.prepare_params(params, true).await?;
 
-        if let Some(ref mut query_params) = params {
-            query_params.extend(signed_params);
-        } else {
-            params = Some(signed_params);
+        if let Some(payload) = body {
+            let serialized_payload =
+                serde_json::to_string(payload).map_err(|e| EngineError::JsonError(e))?;
+
+            final_params.insert("payload".into(), serialized_payload.into());
         }
+
+        let query_string = generate_string_params(&mut final_params);
 
         let mut request_builder = self.client.request(method.clone(), url.to_string());
 
@@ -134,17 +149,18 @@ impl BinanceHttpClient {
             }
         }
 
-        request_builder =
-            request_builder.query(&generate_string_params(&mut params.unwrap_or_default()));
+        let response = request_builder.query(&query_string).send().await?;
 
-        let response = request_builder.send().await?;
         let status = response.status();
-        let text = response
-            .text()
-            .await
-            .unwrap_or_else(|_| "Unknown error".into());
+        let text = response.text().await?;
 
-        self.handler.handle_response(&url, status, &text).await?;
+        if !status.is_success() {
+            return Err(EngineError::HttpCustomError(format!(
+                "Request failed with status {} and body: {}",
+                status, text
+            )));
+        }
+
         Ok(text.into())
     }
 }
@@ -201,9 +217,7 @@ impl RestExchangeHandler for BinanceHandler {
     ) -> Result<Option<HashMap<SmolStr, SmolStr>>, EngineError> {
         let params = HashMap::new();
         if let Some(auth) = authenticator {
-            let signed_params = auth
-                .build_signed_params(params, Some(60000), Some(fetch_server_time().await?))
-                .await?;
+            let signed_params = auth.build_signed_params(params).await?;
             Ok(Some(signed_params))
         } else {
             Ok(Some(params))

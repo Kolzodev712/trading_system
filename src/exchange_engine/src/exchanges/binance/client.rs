@@ -11,7 +11,7 @@ use smol_str::SmolStr;
 const TIME: &str = "time";
 const OPEN_ORDER: &str = "order/test";
 
-#[derive(Clone)]
+#[derive(Debug)]
 pub struct BinanceDriver {
     client: BinanceHttpClient,
     _config: BinanceConfig,

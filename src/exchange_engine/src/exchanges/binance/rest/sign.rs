@@ -29,16 +29,7 @@ impl RestAuthenticator for BinanceAuthenticator {
     async fn build_signed_params(
         &self,
         mut params: HashMap<SmolStr, SmolStr>,
-        recv_window: Option<u64>,
-        timestamp: Option<u64>,
     ) -> Result<HashMap<SmolStr, SmolStr>, EngineError> {
-        if let Some(ts) = timestamp {
-            params.insert("timestamp".into(), ts.to_string().into());
-        }
-        if let Some(window) = recv_window {
-            params.insert("recvWindow".into(), window.to_string().into());
-        }
-
         let query_string: String = serde_qs::to_string(&generate_string_params(&mut params))
             .map_err(|e| EngineError::JsonQueryStringError(e.into()))?;
         if let Some(signature) = self.generate_signature(&query_string).await? {

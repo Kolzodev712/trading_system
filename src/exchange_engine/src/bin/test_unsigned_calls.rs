@@ -17,6 +17,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let client = BinanceHttpClient::new(config.clone());
     let driver = BinanceDriver::new(client, config.clone());
 
+    match driver.get_orderbook().await {
+        Ok(response) => {
+            println!("Time: {:?}", response);
+        }
+        Err(e) => {
+            eprintln!("Failed to get time: {}", e);
+        }
+    }
+
     match driver.get_time().await {
         Ok(response) => {
             println!("Time: {}", response.server_time);

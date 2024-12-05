@@ -1,13 +1,11 @@
 use anyhow::anyhow;
-use core_logic::{
-    authenticator::RestAuthenticator, error::EngineError, utils::generate_string_params,
-};
+use core_logic::{authenticator::RestAuthenticator, error::EngineError};
 
 use async_trait::async_trait;
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
 use smol_str::SmolStr;
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 #[derive(Clone, Debug)]
 pub struct BinanceAuthenticator {
@@ -28,18 +26,25 @@ impl RestAuthenticator for BinanceAuthenticator {
 
     async fn build_signed_params(
         &self,
-        mut params: HashMap<SmolStr, SmolStr>,
-    ) -> Result<HashMap<SmolStr, SmolStr>, EngineError> {
-        let query_string: String = serde_qs::to_string(&generate_string_params(&mut params))
-            .map_err(|e| EngineError::JsonQueryStringError(e.into()))?;
+        mut params: BTreeMap<SmolStr, SmolStr>,
+    ) -> Result<BTreeMap<SmolStr, SmolStr>, EngineError> {
+        let sorted_params: BTreeMap<String, String> = params
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+
+        let query_string = serde_urlencoded::to_string(&sorted_params)
+            .map_err(|e| EngineError::JsonUrlEncodedSerError(e.into()))?;
+
         if let Some(signature) = self.generate_signature(&query_string).await? {
             params.insert("signature".into(), signature);
         }
+
         Ok(params)
     }
 
-    fn get_headers(&self) -> Result<Option<HashMap<SmolStr, SmolStr>>, EngineError> {
-        let mut headers = HashMap::new();
+    fn get_headers(&self) -> Result<Option<BTreeMap<SmolStr, SmolStr>>, EngineError> {
+        let mut headers = BTreeMap::new();
         headers.insert("X-MBX-APIKEY".into(), self.api_key.clone());
         Ok(Some(headers))
     }

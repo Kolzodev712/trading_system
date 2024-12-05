@@ -1,3 +1,4 @@
+use core_logic::utils::current_timestamp;
 use exchange_engine::exchanges::binance::{
     client::BinanceDriver,
     config::BinanceConfig,
@@ -24,6 +25,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let client = BinanceHttpClient::new(config.clone());
     let driver = BinanceDriver::new(client, config.clone());
 
+    let time = driver.get_time().await?;
+
     let test_order = BinanceOrderRequest {
         symbol: "BTCUSDT".into(),
         side: BinanceSide::Buy,
@@ -31,11 +34,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         quantity: Some(Decimal::new(10, 2)),
         price: Some(Decimal::new(90000, 0)),
         time_in_force: Some(BinanceTimeInForce::Gtc),
+        timestamp: time.server_time,
     };
 
-    match driver.open_order(test_order).await {
+    match driver.open_order_test(test_order).await {
         Ok(response) => {
-            println!("Test order placed successfully: {}", response);
+            println!("Test order placed successfully: {:?}", response);
         }
         Err(e) => {
             eprintln!("Failed to place test order: {}", e);

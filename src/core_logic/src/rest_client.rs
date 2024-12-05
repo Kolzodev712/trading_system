@@ -1,4 +1,4 @@
-use super::{authenticator::RestAuthenticator, error::EngineError};
+use super::error::EngineError;
 use async_trait::async_trait;
 use reqwest::{Method, StatusCode};
 use smol_str::SmolStr;
@@ -6,23 +6,17 @@ use std::collections::HashMap;
 
 #[async_trait]
 pub trait RestExchangeHandler: Send + Sync {
-    /// Builds the full URL for the request, including the base URL, endpoint, and any query parameters.
+    /// Builds the URL for the request, including the base URL and endpoint.
     ///
     /// # Arguments
     ///
     /// * `base_url` - The base URL for the API.
     /// * `endpoint` - The specific endpoint for the request.
-    /// * `authenticator` - An optional authenticator used to sign the request and provide headers.
     ///
     /// # Returns
     ///
-    /// Returns the full URL as a `String`.
-    async fn build_full_url(
-        &self,
-        base_url: &str,
-        endpoint: &str,
-        authenticator: Option<&dyn RestAuthenticator>,
-    ) -> SmolStr;
+    /// Returns the URL as a `String`.
+    async fn build_url(&self, base_url: &str, endpoint: &str) -> SmolStr;
 
     /// Handles the response from the REST API.
     ///
@@ -42,54 +36,19 @@ pub trait RestExchangeHandler: Send + Sync {
         text: &str,
     ) -> Result<(), EngineError>;
 
-    /// Retrieves any additional headers needed for the request.
-    ///
-    /// # Arguments
-    ///
-    /// * `authenticator` - An optional authenticator that may provide additional headers.
-    ///
-    /// # Returns
-    ///
-    /// Returns an `Option<HashMap<SmolStr, SmolStr>>` containing the headers, or `None` if no additional headers are needed.
-    fn get_headers(
-        &self,
-        authenticator: Option<&dyn RestAuthenticator>,
-    ) -> Result<Option<HashMap<SmolStr, SmolStr>>, EngineError>;
-
     /// Retrieves any additional parameters needed for the request.
-    ///
-    /// # Arguments
-    ///
-    /// * `authenticator` - An optional authenticator that may provide additional parameters.
     ///
     /// # Returns
     ///
     /// Returns an `Option<HashMap<SmolStr, SmolStr>>` containing the parameters, or `None` if no additional parameters are needed.
-    async fn get_params(
-        &self,
-        authenticator: Option<&dyn RestAuthenticator>,
-    ) -> Result<Option<HashMap<SmolStr, SmolStr>>, EngineError>;
+    async fn get_params(&self) -> Result<Option<HashMap<SmolStr, SmolStr>>, EngineError>;
 
     /// Retrieves the request body, if any.
     ///
     /// # Returns
     ///
     /// Returns an `Option<SmolStr>` containing the body as a string, or `None` if there is no body.
-    fn get_body(&self) -> Option<SmolStr>;
-
-    /// Authenticates the request by adding any necessary authentication headers.
-    ///
-    /// # Arguments
-    ///
-    /// * `authenticator` - An optional authenticator used to provide authentication headers.
-    ///
-    /// # Returns
-    ///
-    /// Returns an `Option<HashMap<SmolStr, SmolStr>>` containing the authentication headers, or `None` if no authentication is needed.
-    fn authenticate(
-        &self,
-        authenticator: Option<&dyn RestAuthenticator>,
-    ) -> Result<Option<HashMap<SmolStr, SmolStr>>, EngineError>;
+    fn get_body(&self) -> Result<Option<HashMap<SmolStr, SmolStr>>, EngineError>;
 }
 
 /// Represents the different HTTP methods that can be used in a REST request.

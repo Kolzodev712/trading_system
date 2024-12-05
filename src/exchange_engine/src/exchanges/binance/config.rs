@@ -16,6 +16,5 @@ pub struct BinanceConfig {
         deserialize_with = "deserialize_smol_str"
     )]
     pub secret_key: SmolStr,
-    pub recv_window: u64,
     pub limit: Option<u64>,
 }

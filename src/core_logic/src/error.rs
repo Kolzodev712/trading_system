@@ -45,6 +45,12 @@ pub enum EngineError {
     #[error("JSON QS error: {0}")]
     JsonQueryStringError(#[from] serde_qs::Error),
 
+    #[error("JSON encoded error: {0}")]
+    JsonUrlEncodedDeserError(#[from] serde_urlencoded::de::Error),
+
+    #[error("JSON encoded serialization error: {0}")]
+    JsonUrlEncodedSerError(#[from] serde_urlencoded::ser::Error),
+
     #[error("Order not found error: {0}")]
     OrderNotFound(Error),
 

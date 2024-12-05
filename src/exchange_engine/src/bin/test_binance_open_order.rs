@@ -1,4 +1,3 @@
-use core_logic::utils::current_timestamp;
 use exchange_engine::exchanges::binance::{
     client::BinanceDriver,
     config::BinanceConfig,

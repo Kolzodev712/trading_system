@@ -9,6 +9,7 @@ use super::{
     },
 };
 use core_logic::{error::EngineError, rest_client::HttpMethod};
+use tracing::{error, info};
 
 const TIME: &str = "time";
 const ORDERBOOK: &str = "depth";
@@ -26,20 +27,24 @@ impl BinanceDriver {
     }
 
     pub async fn get_time(&self) -> Result<BinanceServerTime, EngineError> {
-        let response: BinanceServerTime = self
+        let response: Option<Option<BinanceServerTime>> = self
             .client
-            .call::<(), BinanceServerTime>(TIME, HttpMethod::GET, None, None, false)
+            .call::<(), Option<BinanceServerTime>>(TIME, HttpMethod::GET, None, None, false)
             .await?;
-        Ok(response)
-    }
 
+        response.flatten().ok_or_else(|| {
+            EngineError::CustomError(anyhow::anyhow!(
+                "Expected BinanceServerTime, but received None"
+            ))
+        })
+    }
     pub async fn get_orderbook(&self) -> Result<BinanceOrderbookSnapshotResponse, EngineError> {
         let params = BinanceOrderbookSnapshotRequest {
             symbol: self.config.symbol.convert_to_smolstr(),
             limit: None,
         };
 
-        let response: Option<BinanceOrderbookSnapshotResponse> = self
+        let response = self
             .client
             .call::<BinanceOrderbookSnapshotRequest, Option<BinanceOrderbookSnapshotResponse>>(
                 ORDERBOOK,
@@ -50,7 +55,7 @@ impl BinanceDriver {
             )
             .await?;
 
-        response.ok_or_else(|| {
+        response.flatten().ok_or_else(|| {
             EngineError::CustomError(anyhow::anyhow!(
                 "Expected orderbook snapshot, but received None"
             ))
@@ -61,26 +66,49 @@ impl BinanceDriver {
         &self,
         order: BinanceOrderRequest,
     ) -> Result<BinanceOrderResponse, EngineError> {
-        let params = Some(&order);
+        let params = Some(order);
 
-        self.client
-            .call(ORDER, HttpMethod::POST, params, None, true)
-            .await
-    }
-
-    pub async fn open_order_test(&self, order: BinanceOrderRequest) -> Result<(), EngineError> {
-        let params = Some(&order).unwrap().clone();
-
-        let _: Option<BinanceOrderResponse> = self
+        let response = self
             .client
             .call::<BinanceOrderRequest, Option<BinanceOrderResponse>>(
                 ORDER,
                 HttpMethod::POST,
-                Some(params),
+                params,
+                None,
+                false,
+            )
+            .await?;
+
+        response.flatten().ok_or_else(|| {
+            EngineError::CustomError(anyhow::anyhow!(
+                "Expected order response, but received None"
+            ))
+        })
+    }
+
+    pub async fn open_order_test(&self, order: BinanceOrderRequest) -> Result<(), EngineError> {
+        let params = Some(order);
+
+        match self
+            .client
+            .call::<BinanceOrderRequest, Option<BinanceOrderResponse>>(
+                ORDER,
+                HttpMethod::POST,
+                params,
                 None,
                 true,
             )
-            .await?;
-        Ok(())
+            .await
+        {
+            Ok(Some(_)) => Ok(()),
+            Ok(None) => {
+                info!("Binance order test call returned no content as expected.");
+                Ok(())
+            }
+            Err(e) => {
+                error!("Error during Binance order test call: {}", e);
+                Err(e)
+            }
+        }
     }
 }

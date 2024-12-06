@@ -1,4 +1,7 @@
-use super::{super::config::BinanceConfig, sign::BinanceAuthenticator};
+use super::{
+    super::{config::BinanceConfig, utils::deserialize_or_none},
+    sign::BinanceAuthenticator,
+};
 use async_trait::async_trait;
 use core_logic::{
     authenticator::RestAuthenticator,
@@ -44,10 +47,10 @@ impl BinanceHttpClient {
         params: Option<Req>,
         _body: Option<Req>,
         signed: bool,
-    ) -> Result<Res, EngineError>
+    ) -> Result<Option<Res>, EngineError>
     where
         Req: Serialize + Sized + Debug + Sync,
-        Res: for<'de> Deserialize<'de> + Debug + Send,
+        Res: for<'de> Deserialize<'de> + Debug + Send + Default,
     {
         let url = self.handler.build_url(&self.base_url, endpoint).await;
         let mut request_builder = self.client.request(method.into(), url.as_str());
@@ -104,8 +107,8 @@ impl BinanceHttpClient {
             )));
         }
 
-        let mapped_response =
-            serde_json::from_str::<Res>(&text).map_err(|e| EngineError::JsonError(e))?;
+        let mapped_response = deserialize_or_none::<Res>(&text)?;
+
         Ok(mapped_response)
     }
 }

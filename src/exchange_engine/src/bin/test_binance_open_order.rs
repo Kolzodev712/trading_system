@@ -27,7 +27,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let time = driver.get_time().await?;
 
     let test_order = BinanceOrderRequest {
-        symbol: "BTCUSDT".into(),
+        symbol: config.symbol.convert_to_smolstr(),
         side: BinanceSide::Buy,
         order_type: BinanceOrderType::Limit,
         quantity: Some(Decimal::new(10, 2)),

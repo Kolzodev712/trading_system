@@ -1,5 +1,5 @@
 use core_logic::{
-    data::public_data::OrderBook,
+    data::public_data::Orderbook,
     utils::{deserialize_smol_str, serialize_smol_str},
 };
 
@@ -28,9 +28,9 @@ pub struct BinanceOrderbookSnapshotResponse {
     pub asks: Vec<[Decimal; 2]>,
 }
 
-impl From<BinanceOrderbookSnapshotResponse> for OrderBook {
+impl From<BinanceOrderbookSnapshotResponse> for Orderbook {
     fn from(snapshot: BinanceOrderbookSnapshotResponse) -> Self {
-        OrderBook {
+        Orderbook {
             bids: snapshot
                 .bids
                 .into_iter()

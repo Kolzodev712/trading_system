@@ -1,0 +1,51 @@
+[package]
+name = "market_data_engine"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+core_logic = { path = "../core_logic" }
+
+# Logging
+tracing = { workspace = true }
+
+# SerDe
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_with = { workspace = true }
+serde_urlencoded = { workspace = true }
+serde_qs = { workspace = true }
+
+# Async 
+tokio = { workspace = true }
+tokio-tungstenite = { workspace = true }
+async-trait = { workspace = true }
+
+# HTTP
+reqwest = { workspace = true }
+url = { workspace = true }
+urlencoding = { workspace = true }
+
+# Errors
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+
+# Authentication
+hmac = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+ring = { workspace = true }
+pem = { workspace = true }
+uuid = { workspace = true }
+
+# Utrils
+smol_str = { workspace = true }
+futures-util = { workspace = true }
+chrono = { workspace = true }
+rust_decimal = { workspace = true }
+base64 = { workspace = true }
+
+# Testing
+tokio-test = { workspace = true }
+
+

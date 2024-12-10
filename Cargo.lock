@@ -985,6 +985,39 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a7a70ba024b9dc04c27ea2f0c0548feb474ec5c54bba33a7f72f873a39d07b24"
 
 [[package]]
+name = "market_data_engine"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "base64 0.22.1",
+ "chrono",
+ "core_logic",
+ "futures-util",
+ "hex",
+ "hmac",
+ "pem",
+ "reqwest",
+ "ring 0.17.8",
+ "rust_decimal",
+ "serde",
+ "serde_json",
+ "serde_qs",
+ "serde_urlencoded",
+ "serde_with",
+ "sha2",
+ "smol_str",
+ "thiserror",
+ "tokio",
+ "tokio-test",
+ "tokio-tungstenite",
+ "tracing",
+ "url",
+ "urlencoding",
+ "uuid",
+]
+
+[[package]]
 name = "memchr"
 version = "2.7.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"

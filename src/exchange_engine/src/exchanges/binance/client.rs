@@ -4,6 +4,7 @@ use super::{
     rest::http_client::BinanceHttpClient,
     types::{
         cancel_all::{BinanceCancelAllOrdersRequest, BinanceCancelAllOrdersResponse},
+        cancel_order::{BinanceCancelOrderByIdRequest, BinanceCancelOrderByIdResponse},
         common::BinanceServerTime,
         open_order::{BinanceOrderRequest, BinanceOrderResponse},
         orderbook::{BinanceOrderbookSnapshotRequest, BinanceOrderbookSnapshotResponse},
@@ -115,16 +116,46 @@ impl BinanceDriver {
     }
 
     pub async fn cancel_all(&self) -> Result<Vec<BinanceCancelAllOrdersResponse>, EngineError> {
-        let time = self.get_time().await?.server_time;
+        let time = self.get_time().await?;
 
         let params = BinanceCancelAllOrdersRequest {
             symbol: self.config.symbol.convert_to_smolstr(),
-            timestamp: time,
+            timestamp: time.server_time,
         };
 
         let response = self
             .client
             .call::<BinanceCancelAllOrdersRequest, Option<Vec<BinanceCancelAllOrdersResponse>>>(
+                CANCEL_ALL,
+                HttpMethod::DELETE,
+                Some(params),
+                None,
+                true,
+            )
+            .await?;
+
+        response.flatten().ok_or_else(|| {
+            EngineError::CustomError(anyhow::anyhow!(
+                "Expected order response, but received None"
+            ))
+        })
+    }
+
+    pub async fn cancel_order_by_id(
+        &self,
+        order_id: u64,
+    ) -> Result<Vec<BinanceCancelOrderByIdResponse>, EngineError> {
+        let time = self.get_time().await?;
+
+        let params = BinanceCancelOrderByIdRequest {
+            symbol: self.config.symbol.convert_to_smolstr(),
+            order_id,
+            timestamp: time.server_time,
+        };
+
+        let response = self
+            .client
+            .call::<BinanceCancelOrderByIdRequest, Option<Vec<BinanceCancelOrderByIdResponse>>>(
                 CANCEL_ALL,
                 HttpMethod::DELETE,
                 Some(params),

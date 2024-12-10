@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 // Market data structs:
 #[derive(Debug, Deserialize, Serialize, Clone, Eq, PartialEq)]
 #[serde(rename_all = "camelCase")]
-pub struct OrderBook {
+pub struct Orderbook {
     pub bids: Vec<Decimal>,
     pub asks: Vec<Decimal>,
 }

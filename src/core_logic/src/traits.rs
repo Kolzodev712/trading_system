@@ -1,4 +1,4 @@
-use crate::data::public_data::{OrderBook, Trade};
+use crate::data::public_data::{Orderbook, Trade};
 
 use super::{
     data::{
@@ -51,7 +51,7 @@ pub trait MarketDataClient<InstrumentId = Pair>: Debug + Send + Sync + 'static
 where
     InstrumentId: Clone + Debug + Send + 'static,
 {
-    async fn orderbook_snapshot(&self, _pair: InstrumentId) -> Result<Vec<OrderBook>, EngineError> {
+    async fn orderbook_snapshot(&self, _pair: InstrumentId) -> Result<Vec<Orderbook>, EngineError> {
         unimplemented!()
     }
 

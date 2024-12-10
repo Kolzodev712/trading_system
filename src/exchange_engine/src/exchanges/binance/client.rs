@@ -3,6 +3,7 @@ use super::{
     config::BinanceConfig,
     rest::http_client::BinanceHttpClient,
     types::{
+        cancel_all::{BinanceCancelAllOrdersRequest, BinanceCancelAllOrdersResponse},
         common::BinanceServerTime,
         open_order::{BinanceOrderRequest, BinanceOrderResponse},
         orderbook::{BinanceOrderbookSnapshotRequest, BinanceOrderbookSnapshotResponse},
@@ -14,6 +15,7 @@ use tracing::{error, info};
 const TIME: &str = "time";
 const ORDERBOOK: &str = "depth";
 const ORDER: &str = "order/test";
+const CANCEL_ALL: &str = "openOrders";
 
 #[derive(Debug)]
 pub struct BinanceDriver {
@@ -75,7 +77,7 @@ impl BinanceDriver {
                 HttpMethod::POST,
                 params,
                 None,
-                false,
+                true,
             )
             .await?;
 
@@ -110,5 +112,31 @@ impl BinanceDriver {
                 Err(e)
             }
         }
+    }
+
+    pub async fn cancel_all(&self) -> Result<Vec<BinanceCancelAllOrdersResponse>, EngineError> {
+        let time = self.get_time().await?.server_time;
+
+        let params = BinanceCancelAllOrdersRequest {
+            symbol: self.config.symbol.convert_to_smolstr(),
+            timestamp: time,
+        };
+
+        let response = self
+            .client
+            .call::<BinanceCancelAllOrdersRequest, Option<Vec<BinanceCancelAllOrdersResponse>>>(
+                CANCEL_ALL,
+                HttpMethod::DELETE,
+                Some(params),
+                None,
+                true,
+            )
+            .await?;
+
+        response.flatten().ok_or_else(|| {
+            EngineError::CustomError(anyhow::anyhow!(
+                "Expected order response, but received None"
+            ))
+        })
     }
 }

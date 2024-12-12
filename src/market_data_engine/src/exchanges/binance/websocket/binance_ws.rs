@@ -117,8 +117,8 @@ impl MessageHandler<ParsedBinanceMessage> for DataHandler {
         }
     }
 
-    fn handle_ping(&self, _ping: Vec<u8>) {
-        println!("Ping received");
+    fn handle_ping(&self, ping: Vec<u8>) {
+        println!("Ping received: {:?}", ping);
     }
 }
 

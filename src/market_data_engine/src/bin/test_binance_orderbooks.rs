@@ -22,6 +22,9 @@ async fn main() -> Result<(), EngineError> {
 
     while let Some(message) = rx.recv().await {
         match message {
+            ParsedBinanceMessage::InitialResponse(init_resp) => {
+                println!("Initial Response: {:?}", init_resp);
+            }
             ParsedBinanceMessage::Trade(trade) => {
                 println!("Received Trade: {:?}", trade);
             }

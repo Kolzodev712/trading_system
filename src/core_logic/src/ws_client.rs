@@ -2,15 +2,27 @@ use crate::error::EngineError;
 use async_trait::async_trait;
 use smol_str::SmolStr;
 use tokio::{net::TcpStream, sync::mpsc::Sender};
-use tokio_tungstenite::{tungstenite::protocol::Message, MaybeTlsStream, WebSocketStream};
+use tokio_tungstenite::{
+    tungstenite::protocol::{CloseFrame, Message},
+    MaybeTlsStream, WebSocketStream,
+};
 
 /// Trait for handling WebSocket messages.
 pub trait MessageHandler<T> {
     /// Handles a text message received from the WebSocket stream.
     fn handle_text_message(&self, text: SmolStr) -> Result<T, EngineError>;
 
+    /// Handles a binary message received from the WebSocket stream.
+    fn handle_binary(&self, binary: Vec<u8>);
+
     /// Handles a ping message received from the WebSocket stream.
     fn handle_ping(&self, ping: Vec<u8>);
+
+    /// Handles a pong message sent to the WebSocket stream.
+    fn handle_pong(&self, pong: Vec<u8>);
+
+    /// Handles a close messsage received from the WebScoket stream.
+    fn handle_close(&self, close: Option<CloseFrame>);
 }
 
 /// Trait for creating WebSocket subscription requests.

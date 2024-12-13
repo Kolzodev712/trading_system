@@ -1,5 +1,6 @@
 use super::types::{
-    BinanceOrderbook, BinanceTrade, BinanceWSMessage, BinanceWsEventType, ParsedBinanceMessage,
+    BinanceOrderbook, BinanceTrade, BinanceWSMessage, BinanceWsEventType, InitialResponse,
+    ParsedBinanceMessage,
 };
 use async_trait::async_trait;
 use core_logic::{
@@ -13,10 +14,12 @@ use core_logic::{
 };
 use futures_util::{stream::StreamExt, SinkExt};
 use serde_json::Value;
-use smol_str::{SmolStr, ToSmolStr};
+use smol_str::SmolStr;
 use tokio::{net::TcpStream, sync::mpsc};
 use tokio_tungstenite::{
-    connect_async, tungstenite::protocol::Message, MaybeTlsStream, WebSocketStream,
+    connect_async,
+    tungstenite::protocol::{CloseFrame, Message},
+    MaybeTlsStream, WebSocketStream,
 };
 use tracing::{debug, error};
 
@@ -66,6 +69,12 @@ impl SubscriptionHandler for BinanceSubscriptionHandler {
 struct DataHandler;
 
 impl DataHandler {
+    fn handle_initial_response(&self, v: Value) -> Result<ParsedBinanceMessage, EngineError> {
+        let init_resp: InitialResponse =
+            serde_json::from_value(v).map_err(EngineError::JsonError)?;
+        Ok(ParsedBinanceMessage::InitialResponse(init_resp))
+    }
+
     fn handle_orderbook_event(&self, v: Value) -> Result<ParsedBinanceMessage, EngineError> {
         let orderbook: BinanceOrderbook =
             serde_json::from_value(v).map_err(EngineError::JsonError)?;
@@ -85,6 +94,7 @@ impl DataHandler {
         v: Value,
     ) -> Result<ParsedBinanceMessage, EngineError> {
         match event_type {
+            BinanceWsEventType::InitialResponse => self.handle_initial_response(v),
             BinanceWsEventType::DepthUpdate => self.handle_orderbook_event(v),
             BinanceWsEventType::Trade => self.handle_trade_event(v),
             BinanceWsEventType::Unknown => {
@@ -103,22 +113,38 @@ impl MessageHandler<ParsedBinanceMessage> for DataHandler {
 
         let v: Value = serde_json::from_str(&text).map_err(EngineError::JsonError)?;
 
-        if let Some(event_type_str) = v.get("e").and_then(|e| e.as_str()) {
-            let event_type = match event_type_str {
+        if let (Some(_), Some(_)) = (v.get("result"), v.get("id")) {
+            debug!("Subscription acknowledgment received: {}", text);
+            return Ok(serde_json::from_value(v).map(ParsedBinanceMessage::InitialResponse)?);
+        }
+
+        if let Some(data) = v.get("e").and_then(|e| e.as_str()) {
+            let event_type = match data {
                 "depthUpdate" => BinanceWsEventType::DepthUpdate,
                 "trade" => BinanceWsEventType::Trade,
                 _ => BinanceWsEventType::Unknown,
             };
-            self.handle_event(event_type, v)
-        } else {
-            Ok(ParsedBinanceMessage::Raw(
-                "No event type found in message. Not processing.".to_smolstr(),
-            ))
+            return self.handle_event(event_type, v);
         }
+
+        debug!("Unknown or unsupported message format: {}", text);
+        Ok(ParsedBinanceMessage::Raw(text))
+    }
+
+    fn handle_binary(&self, binary: Vec<u8>) {
+        println!("Received binary message: {:?}", binary)
     }
 
     fn handle_ping(&self, ping: Vec<u8>) {
         println!("Ping received: {:?}", ping);
+    }
+
+    fn handle_pong(&self, pong: Vec<u8>) {
+        println!("Seding Pong: {:?}", pong);
+    }
+
+    fn handle_close(&self, _close: Option<CloseFrame>) {
+        unimplemented!()
     }
 }
 
@@ -184,11 +210,17 @@ impl WebSocketClient<ParsedBinanceMessage> for BinanceWSClient {
                             }
                         }
                     }
+                    Ok(Message::Binary(binary)) => {
+                        handler.handle_binary(binary);
+                    }
                     Ok(Message::Ping(ping)) => {
                         handler.handle_ping(ping.clone());
                         if let Err(e) = ws_stream.send(Message::Pong(ping)).await {
                             error!("Error sending pong: {}", e);
                         }
+                    }
+                    Ok(Message::Pong(pong)) => {
+                        handler.handle_pong(pong);
                     }
                     Err(e) => {
                         error!("Error while receiving a message: {}", e);

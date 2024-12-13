@@ -3,7 +3,8 @@
 use core_logic::{
     data::public_data::{Orderbook, Trade},
     utils::{
-        deserialize_smol_str, deserialize_vec_smol_str, serialize_smol_str, serialize_vec_smol_str,
+        deserialize_option_smol_str, deserialize_smol_str, deserialize_vec_smol_str,
+        serialize_option_smol_str, serialize_smol_str, serialize_vec_smol_str,
     },
 };
 use rust_decimal::Decimal;
@@ -118,7 +119,19 @@ impl From<BinanceTrade> for Trade {
 }
 
 #[derive(Debug, PartialEq, Eq, Deserialize, Serialize, Clone)]
+pub struct InitialResponse {
+    #[serde(
+        serialize_with = "serialize_option_smol_str",
+        deserialize_with = "deserialize_option_smol_str"
+    )]
+    result: Option<SmolStr>,
+    id: u64,
+}
+
+#[derive(Debug, PartialEq, Eq, Deserialize, Serialize, Clone)]
 pub enum BinanceWsEventType {
+    #[serde(rename = "initialResponse")]
+    InitialResponse,
     #[serde(rename = "depthUpdate")]
     DepthUpdate,
     #[serde(rename = "trade")]
@@ -128,6 +141,7 @@ pub enum BinanceWsEventType {
 
 #[derive(Debug, PartialEq, Eq, Deserialize, Serialize, Clone)]
 pub enum ParsedBinanceMessage {
+    InitialResponse(InitialResponse),
     OrderBook(Orderbook),
     Trade(Trade),
     Raw(

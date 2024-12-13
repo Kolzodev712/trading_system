@@ -1,11 +1,10 @@
+use core_logic::data::base_data::{OrderType, Side};
+
 use exchange_engine::exchanges::binance::{
-    client::BinanceDriver,
+    client::BinanceClient,
     config::BinanceConfig,
-    rest::http_client::BinanceHttpClient,
-    types::{
-        common::{BinanceOrderType, BinanceSide, BinanceTimeInForce},
-        open_order::BinanceOrderRequest,
-    },
+    rest::client::BinanceHttpClient,
+    types::{common::BinanceTimeInForce, open_order::BinanceOrderRequest},
 };
 use rust_decimal::Decimal;
 use std::fs;
@@ -22,14 +21,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = load_binance_config("config/binance_config.json")?;
 
     let client = BinanceHttpClient::new(config.clone());
-    let driver = BinanceDriver::new(client, config.clone());
+    let driver = BinanceClient::new(client, config.clone());
 
     let time = driver.get_time().await?;
 
     let test_order = BinanceOrderRequest {
         symbol: config.symbol.convert_to_smolstr(),
-        side: BinanceSide::Buy,
-        order_type: BinanceOrderType::Limit,
+        side: Side::Buy.into(),
+        order_type: OrderType::Limit.into(),
         quantity: Some(Decimal::new(10, 2)),
         price: Some(Decimal::new(90000, 0)),
         time_in_force: Some(BinanceTimeInForce::Gtc),

@@ -1,5 +1,5 @@
 use exchange_engine::exchanges::binance::{
-    client::BinanceDriver, config::BinanceConfig, rest::http_client::BinanceHttpClient,
+    client::BinanceClient, config::BinanceConfig, rest::client::BinanceHttpClient,
 };
 use std::fs;
 
@@ -15,7 +15,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = load_binance_config("config/binance_config.json")?;
 
     let client = BinanceHttpClient::new(config.clone());
-    let driver = BinanceDriver::new(client, config.clone());
+    let driver = BinanceClient::new(client, config.clone());
 
     match driver.cancel_all().await {
         Ok(response) => {

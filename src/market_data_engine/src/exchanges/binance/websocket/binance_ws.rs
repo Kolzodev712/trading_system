@@ -1,6 +1,7 @@
 use super::types::{
-    BinanceOrderbook, BinanceTrade, BinanceWSMessage, BinanceWsEventType, InitialResponse,
-    ParsedBinanceMessage,
+    common::{BinanceWSMessage, BinanceWsEventType, InitialResponse, ParsedBinanceMessage},
+    orderbook::BinanceOrderbook,
+    trade::BinanceTrade,
 };
 use async_trait::async_trait;
 use core_logic::{

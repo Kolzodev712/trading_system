@@ -1,7 +1,7 @@
 // End goal here is to implement the `TradingClient` trait on the binance client
 use super::{
     config::BinanceConfig,
-    rest::http_client::BinanceHttpClient,
+    rest::client::BinanceHttpClient,
     types::{
         cancel_all::{BinanceCancelAllOrdersRequest, BinanceCancelAllOrdersResponse},
         cancel_order::{BinanceCancelOrderByIdRequest, BinanceCancelOrderByIdResponse},
@@ -19,19 +19,22 @@ const ORDER: &str = "order/test";
 const CANCEL_ALL: &str = "openOrders";
 
 #[derive(Debug)]
-pub struct BinanceDriver {
-    client: BinanceHttpClient,
+pub struct BinanceClient {
+    http_client: BinanceHttpClient,
     config: BinanceConfig,
 }
 
-impl BinanceDriver {
-    pub fn new(client: BinanceHttpClient, config: BinanceConfig) -> Self {
-        BinanceDriver { client, config }
+impl BinanceClient {
+    pub fn new(http_client: BinanceHttpClient, config: BinanceConfig) -> Self {
+        BinanceClient {
+            http_client,
+            config,
+        }
     }
 
     pub async fn get_time(&self) -> Result<BinanceServerTime, EngineError> {
         let response: Option<Option<BinanceServerTime>> = self
-            .client
+            .http_client
             .call::<(), Option<BinanceServerTime>>(TIME, HttpMethod::GET, None, None, false)
             .await?;
 
@@ -48,7 +51,7 @@ impl BinanceDriver {
         };
 
         let response = self
-            .client
+            .http_client
             .call::<BinanceOrderbookSnapshotRequest, Option<BinanceOrderbookSnapshotResponse>>(
                 ORDERBOOK,
                 HttpMethod::GET,
@@ -72,7 +75,7 @@ impl BinanceDriver {
         let params = Some(order);
 
         let response = self
-            .client
+            .http_client
             .call::<BinanceOrderRequest, Option<BinanceOrderResponse>>(
                 ORDER,
                 HttpMethod::POST,
@@ -93,7 +96,7 @@ impl BinanceDriver {
         let params = Some(order);
 
         match self
-            .client
+            .http_client
             .call::<BinanceOrderRequest, Option<BinanceOrderResponse>>(
                 ORDER,
                 HttpMethod::POST,
@@ -124,7 +127,7 @@ impl BinanceDriver {
         };
 
         let response = self
-            .client
+            .http_client
             .call::<BinanceCancelAllOrdersRequest, Option<Vec<BinanceCancelAllOrdersResponse>>>(
                 CANCEL_ALL,
                 HttpMethod::DELETE,
@@ -154,7 +157,7 @@ impl BinanceDriver {
         };
 
         let response = self
-            .client
+            .http_client
             .call::<BinanceCancelOrderByIdRequest, Option<Vec<BinanceCancelOrderByIdResponse>>>(
                 CANCEL_ALL,
                 HttpMethod::DELETE,

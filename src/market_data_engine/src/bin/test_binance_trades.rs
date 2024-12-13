@@ -1,40 +1,21 @@
-use core_logic::{data::base_data::DataType, error::EngineError};
-use market_data_engine::exchanges::binance::websocket::{
-    binance_ws::{BinanceChannel, BinanceWSClient},
-    types::ParsedBinanceMessage,
-};
-use tokio::sync::mpsc;
+use market_data_engine::exchanges::binance::{client::BinanceClient, config::BinanceConfig};
+use std::fs;
+use tracing::error;
+
+fn load_binance_config(file_path: &str) -> Result<BinanceConfig, Box<dyn std::error::Error>> {
+    let config_data = fs::read_to_string(file_path)?;
+
+    let config: BinanceConfig = serde_json::from_str(&config_data)?;
+    Ok(config)
+}
 
 #[tokio::main]
-async fn main() -> Result<(), EngineError> {
-    let (tx, mut rx) = mpsc::channel(100);
-    let base = "btc";
-    let quote = "usdt";
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let config = load_binance_config("config/binance_config.json")?;
+    let client = BinanceClient::new(config);
 
-    let trade_channel_info = BinanceChannel {
-        channel: DataType::Trade,
-        base: base.into(),
-        quote: quote.into(),
-    };
-
-    let client = BinanceWSClient::new(trade_channel_info);
-    client.run(tx).await?;
-
-    while let Some(message) = rx.recv().await {
-        match message {
-            ParsedBinanceMessage::InitialResponse(init_resp) => {
-                println!("Initial Response: {:?}", init_resp);
-            }
-            ParsedBinanceMessage::Trade(trade) => {
-                println!("Received Trade: {:?}", trade);
-            }
-            ParsedBinanceMessage::OrderBook(orderbook) => {
-                println!("Received OrderBook: {:?}", orderbook);
-            }
-            ParsedBinanceMessage::Raw(raw) => {
-                println!("Received Raw message: {}", raw);
-            }
-        }
+    if let Err(e) = client.trades().await {
+        error!("Error in orderbook stream: {}", e);
     }
 
     Ok(())

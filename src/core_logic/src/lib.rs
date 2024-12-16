@@ -1,4 +1,5 @@
 pub mod authenticator;
+pub mod channels;
 pub mod data;
 pub mod error;
 pub mod rest_client;

@@ -5,24 +5,26 @@ use super::{
         types::common::ParsedBinanceMessage,
     },
 };
-use core_logic::{data::base_data::DataType, error::EngineError};
-use tokio::sync::mpsc;
+use crate::channels::ChannelManager;
+
+use core_logic::{channels::ChannelHandler, data::base_data::DataType, error::EngineError};
 
 pub struct BinanceClient {
     pub config: BinanceConfig,
+    pub channel_manager: ChannelManager,
 }
 
 impl BinanceClient {
-    pub fn new(config: BinanceConfig) -> Self {
-        BinanceClient { config }
+    pub fn new(config: BinanceConfig, buffer_size: usize) -> Self {
+        let channel_manager = ChannelManager::new(buffer_size);
+        BinanceClient {
+            config,
+            channel_manager,
+        }
     }
 
-    async fn start_stream(
-        &self,
-        data_type: DataType,
-        buffer_size: usize,
-    ) -> Result<mpsc::Receiver<ParsedBinanceMessage>, EngineError> {
-        let (tx, rx) = mpsc::channel(buffer_size);
+    async fn start_stream(&mut self, data_type: DataType) -> Result<(), EngineError> {
+        let (tx, mut rx) = self.channel_manager.create_channel();
 
         let channel = BinanceChannel {
             channel: data_type.clone(),
@@ -33,33 +35,12 @@ impl BinanceClient {
         let client = BinanceWSClient::new(channel);
         client.run(tx).await?;
 
-        Ok(rx)
-    }
-
-    pub async fn orderbook(&self) -> Result<(), EngineError> {
-        let mut rx = self.start_stream(DataType::Orderbook, 100).await?;
-
-        while let Some(message) = rx.recv().await {
-            match message {
-                ParsedBinanceMessage::OrderBook(orderbook) => {
+        while let Ok(message) = self.channel_manager.receive(&mut rx).await {
+            match (data_type.clone(), message.clone()) {
+                (DataType::Orderbook, ParsedBinanceMessage::OrderBook(orderbook)) => {
                     println!("Received OrderBook: {:?}", orderbook);
                 }
-                _ => {
-                    println!("Received other message: {:?}", message);
-                }
-            }
-        }
-
-        Ok(())
-    }
-
-    pub async fn trades(&self) -> Result<(), EngineError> {
-        let mut rx = self.start_stream(DataType::Trade, 100).await?;
-
-        // TODO: This is just sample code. We need to do something with this data from here.
-        while let Some(message) = rx.recv().await {
-            match message {
-                ParsedBinanceMessage::Trade(trade) => {
+                (DataType::Trade, ParsedBinanceMessage::Trade(trade)) => {
                     println!("Received Trade: {:?}", trade);
                 }
                 _ => {
@@ -67,6 +48,15 @@ impl BinanceClient {
                 }
             }
         }
+
         Ok(())
+    }
+
+    pub async fn orderbook(&mut self) -> Result<(), EngineError> {
+        self.start_stream(DataType::Orderbook).await
+    }
+
+    pub async fn trades(&mut self) -> Result<(), EngineError> {
+        self.start_stream(DataType::Trade).await
     }
 }

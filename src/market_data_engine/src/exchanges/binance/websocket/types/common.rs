@@ -6,7 +6,7 @@ use core_logic::{
     },
 };
 use serde::{Deserialize, Serialize};
-use smol_str::SmolStr;
+use smol_str::{SmolStr, ToSmolStr};
 use std::primitive::str;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -61,6 +61,17 @@ pub enum ParsedBinanceMessage {
         )]
         SmolStr,
     ),
+}
+
+impl ToSmolStr for ParsedBinanceMessage {
+    fn to_smolstr(&self) -> SmolStr {
+        match self {
+            ParsedBinanceMessage::InitialResponse(_) => SmolStr::new("InitialResponse"),
+            ParsedBinanceMessage::OrderBook(_) => SmolStr::new("OrderBook"),
+            ParsedBinanceMessage::Trade(_) => SmolStr::new("Trade"),
+            ParsedBinanceMessage::Raw(smol_str) => smol_str.clone(),
+        }
+    }
 }
 
 #[derive(Debug, PartialEq, Eq, Deserialize, Serialize, Clone)]

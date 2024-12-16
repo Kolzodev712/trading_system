@@ -12,7 +12,7 @@ fn load_binance_config(file_path: &str) -> Result<BinanceConfig, Box<dyn std::er
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = load_binance_config("config/binance_config.json")?;
-    let client = BinanceClient::new(config);
+    let mut client = BinanceClient::new(config, 100);
 
     if let Err(e) = client.orderbook().await {
         error!("Error in orderbook stream: {}", e);

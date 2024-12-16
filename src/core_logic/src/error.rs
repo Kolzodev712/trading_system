@@ -6,14 +6,20 @@ use reqwest::{
 };
 use smol_str::SmolStr;
 use thiserror::Error;
-use tokio::sync::mpsc::error::SendError;
+use tokio::sync::mpsc::error::TryRecvError;
 use tokio_tungstenite::tungstenite;
 use url::ParseError;
 
 #[derive(Error, Debug)]
 pub enum EngineError {
     #[error("Channel send error: {0}")]
-    ChannelSendError(#[from] SendError<SmolStr>),
+    ChannelSendError(SmolStr),
+
+    #[error("Channel receive error: {0}")]
+    ChannelReceiveError(#[from] TryRecvError),
+
+    #[error("Channel Closed error.")]
+    ChannelClosedError,
 
     #[error("WebSocket connection error: {0}")]
     WsConnectionError(#[from] tungstenite::Error),

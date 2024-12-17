@@ -31,6 +31,7 @@ pub struct BinanceChannel {
     pub channel: DataType,
     pub base: SmolStr,
     pub quote: SmolStr,
+    pub limit: u64,
 }
 
 #[derive(Debug, Clone)]

@@ -1,17 +1,18 @@
-use market_data_engine::exchanges::binance::{client::BinanceClient, config::BinanceConfig};
-use std::fs;
+use market_data_engine::exchanges::binance::{
+    client::BinanceClient, config::BinanceConfig, websocket::types::common::BinanceSymbol,
+};
 use tracing::error;
-
-fn load_binance_config(file_path: &str) -> Result<BinanceConfig, Box<dyn std::error::Error>> {
-    let config_data = fs::read_to_string(file_path)?;
-
-    let config: BinanceConfig = serde_json::from_str(&config_data)?;
-    Ok(config)
-}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let config = load_binance_config("config/binance_config.json")?;
+    let config = BinanceConfig {
+        symbol: BinanceSymbol {
+            base: "BTC".into(),
+            quote: "USDT".into(),
+        },
+        limit: 10,
+    };
+
     let mut client = BinanceClient::new(config, 100);
 
     if let Err(e) = client.trades().await {

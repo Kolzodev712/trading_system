@@ -7,6 +7,8 @@ edition = "2021"
 
 [dependencies]
 core_logic = { path = "../core_logic" }
+market_data_engine = { path = "../market_data_engine" }
+exchange_engine = { path = "../exchange_engine" }
 
 # Logging
 tracing = { workspace = true }

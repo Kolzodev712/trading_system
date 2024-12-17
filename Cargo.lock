@@ -947,10 +947,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "kolzo_trading_system"
-version = "0.1.0"
-
-[[package]]
 name = "libc"
 version = "0.2.167"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1440,6 +1436,37 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 1.0.109",
+]
+
+[[package]]
+name = "runner"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "base64 0.22.1",
+ "chrono",
+ "futures-util",
+ "hex",
+ "hmac",
+ "pem",
+ "reqwest",
+ "ring 0.17.8",
+ "rust_decimal",
+ "serde",
+ "serde_json",
+ "serde_with",
+ "sha2",
+ "smol_str",
+ "thiserror",
+ "tokio",
+ "tokio-test",
+ "tokio-tungstenite",
+ "tracing",
+ "trading_engine",
+ "url",
+ "urlencoding",
+ "uuid",
 ]
 
 [[package]]
@@ -2117,9 +2144,11 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "core_logic",
+ "exchange_engine",
  "futures-util",
  "hex",
  "hmac",
+ "market_data_engine",
  "pem",
  "reqwest",
  "ring 0.17.8",
@@ -2138,6 +2167,10 @@ dependencies = [
  "urlencoding",
  "uuid",
 ]
+
+[[package]]
+name = "trading_system"
+version = "0.1.0"
 
 [[package]]
 name = "try-lock"

@@ -6,8 +6,8 @@ use super::{
     },
 };
 use crate::channels::ChannelManager;
-
 use core_logic::{channels::ChannelHandler, data::base_data::DataType, error::EngineError};
+use tokio::sync::mpsc;
 
 pub struct BinanceClient {
     pub config: BinanceConfig,
@@ -23,13 +23,17 @@ impl BinanceClient {
         }
     }
 
-    async fn start_stream(&mut self, data_type: DataType) -> Result<(), EngineError> {
+    async fn start_stream(
+        &mut self,
+        data_type: DataType,
+    ) -> Result<mpsc::Receiver<ParsedBinanceMessage>, EngineError> {
         let (tx, mut rx) = self.channel_manager.create_channel();
 
         let channel = BinanceChannel {
             channel: data_type.clone(),
             base: self.config.symbol.base.clone().to_lowercase().into(),
             quote: self.config.symbol.quote.clone().to_lowercase().into(),
+            limit: self.config.limit,
         };
 
         let client = BinanceWSClient::new(channel);
@@ -49,14 +53,16 @@ impl BinanceClient {
             }
         }
 
-        Ok(())
+        Ok(rx)
     }
 
-    pub async fn orderbook(&mut self) -> Result<(), EngineError> {
+    /// Expose Receiver to whoever needs this data:
+    pub async fn orderbook(&mut self) -> Result<mpsc::Receiver<ParsedBinanceMessage>, EngineError> {
         self.start_stream(DataType::Orderbook).await
     }
 
-    pub async fn trades(&mut self) -> Result<(), EngineError> {
+    /// Expose Receiver to whoever needs this data:
+    pub async fn trades(&mut self) -> Result<mpsc::Receiver<ParsedBinanceMessage>, EngineError> {
         self.start_stream(DataType::Trade).await
     }
 }

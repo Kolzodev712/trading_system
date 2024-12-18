@@ -1,7 +1,11 @@
-use exchange_engine::exchanges::binance::{
-    client::BinanceClient, config::BinanceConfig, rest::client::BinanceHttpClient,
+use core_logic::Exchange;
+use exchange_engine::{
+    config::{ExchangeConfig, ExchangeEngineConfig},
+    driver::{ExchangeEngineDriver, Method},
+    exchanges::binance::config::BinanceConfig,
 };
 use std::fs;
+use tracing::error;
 
 fn load_binance_config(file_path: &str) -> Result<BinanceConfig, Box<dyn std::error::Error>> {
     let config_data = fs::read_to_string(file_path)?;
@@ -12,22 +16,21 @@ fn load_binance_config(file_path: &str) -> Result<BinanceConfig, Box<dyn std::er
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let config = load_binance_config("config/binance_config.json")?;
+    let binance_config = load_binance_config("config/binance_config.json")?;
 
-    let client = BinanceHttpClient::new(config.clone());
-    let driver = BinanceClient::new(client, config.clone());
+    let exchange_config = ExchangeEngineConfig {
+        exchange: Exchange::Binance,
+        exchange_config: ExchangeConfig::Binance(binance_config),
+    };
 
-    match driver.cancel_all().await {
-        Ok(response) => {
-            response.iter().for_each(|inner_response| {
-                println!(
-                    "Cancel All Orders for pair: {} was successful: {:?}",
-                    inner_response.symbol, inner_response
-                );
-            });
+    let driver = ExchangeEngineDriver::new(Exchange::Binance, exchange_config);
+
+    match driver.run(Method::CancelAllOrders).await {
+        Ok(_) => {
+            println!("Successfully canceled all orders.");
         }
         Err(e) => {
-            eprintln!("Failed to cancel all orders: {:?}", e);
+            error!("Failed to cancel all orders: {:?}", e);
         }
     }
 

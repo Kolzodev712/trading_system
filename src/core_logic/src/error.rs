@@ -66,6 +66,9 @@ pub enum EngineError {
     #[error("Order already cancelled error: {0}")]
     OrderAlreadyCanceled(Error),
 
+    #[error("Invalid config")]
+    InvalidConfig,
+
     #[error("Custom error: {0}")]
     CustomError(Error),
 }

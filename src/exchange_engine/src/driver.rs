@@ -36,7 +36,7 @@ impl ExchangeEngineDriver {
                 match method {
                     Method::OpenOrder(mut order_request) => {
                         let time = client.get_time().await?;
-                        order_request.timestamp = time.server_time;
+                        order_request.timestamp = Some(time.server_time);
 
                         match client.open_order_test(order_request).await {
                             Ok(response) => {

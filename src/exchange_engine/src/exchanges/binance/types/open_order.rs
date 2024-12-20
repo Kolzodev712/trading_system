@@ -18,7 +18,7 @@ pub struct BinanceOrderRequest {
     pub time_in_force: Option<BinanceTimeInForce>,
     pub quantity: Option<Decimal>,
     pub price: Option<Decimal>,
-    pub timestamp: u64,
+    pub timestamp: Option<u64>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

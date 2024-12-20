@@ -40,7 +40,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         quantity: Some(Decimal::new(10, 2)),
         price: Some(Decimal::new(90000, 0)),
         time_in_force: Some(BinanceTimeInForce::Gtc),
-        timestamp: 0,
+        timestamp: None,
     };
 
     if let Err(e) = driver.run(Method::OpenOrder(test_order)).await {

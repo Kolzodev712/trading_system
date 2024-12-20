@@ -44,7 +44,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     if let Err(e) = driver.run(Method::OpenOrder(test_order)).await {
-        println!("SHIIT");
         error!("Failed to place test order: {}", e);
     }
 

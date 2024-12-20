@@ -7,27 +7,24 @@ use exchange_engine::{
     driver::{ExchangeEngineDriver, Method},
     exchanges::binance::{
         config::BinanceConfig,
-        types::{
-            common::{BinanceSymbol, BinanceTimeInForce},
-            open_order::BinanceOrderRequest,
-        },
+        types::{common::BinanceTimeInForce, open_order::BinanceOrderRequest},
     },
 };
 use rust_decimal::Decimal;
+use std::fs;
 use tokio;
 use tracing::error;
 
+fn load_binance_config(file_path: &str) -> Result<BinanceConfig, Box<dyn std::error::Error>> {
+    let config_data = fs::read_to_string(file_path)?;
+
+    let config: BinanceConfig = serde_json::from_str(&config_data)?;
+    Ok(config)
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let binance_config = BinanceConfig {
-        symbol: BinanceSymbol {
-            base: "BTC".into(),
-            quote: "USDT".into(),
-        },
-        api_key: "YQkiaZqcvbLdtqJ2V50xzkq2y44vX8HLCxALeQeSn35eyd0UpCdG6hhHS68L6GFI".into(),
-        secret_key: "IVhqo9ZdafbgdxGmXex6tpx77JqmTKwp57dadWv06VIk4Ce4WNQBQRM3cKqkXMCn".into(),
-        limit: None,
-    };
+    let binance_config = load_binance_config("config/exchange.json")?;
 
     let exchange_config = ExchangeEngineConfig {
         exchange: Exchange::Binance,

@@ -2,20 +2,22 @@ use core_logic::Exchange;
 use market_data_engine::{
     config::{ExchangeConfig, MarketDataConfig},
     driver::{MarketDataDriver, Method},
-    exchanges::binance::{config::BinanceConfig, websocket::types::common::BinanceSymbol},
+    exchanges::binance::config::BinanceConfig,
 };
 
+use std::fs;
 use tracing::error;
+
+fn load_binance_config(file_path: &str) -> Result<BinanceConfig, Box<dyn std::error::Error>> {
+    let config_data = fs::read_to_string(file_path)?;
+
+    let config: BinanceConfig = serde_json::from_str(&config_data)?;
+    Ok(config)
+}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let binance_config = BinanceConfig {
-        symbol: BinanceSymbol {
-            base: "BTC".into(),
-            quote: "USDT".into(),
-        },
-        limit: 10,
-    };
+    let binance_config = load_binance_config("config/market_data.json")?;
 
     let market_data_config = MarketDataConfig {
         exchange: Exchange::Binance,

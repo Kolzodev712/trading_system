@@ -1,0 +1,9 @@
+{
+    "symbol": {
+        "base": "BTC",
+        "quote": "USDT"
+    },
+    "api_key": "xyF64Z8xFIGb80l9ROFWwf2vdeCnaVjFjg3WHE0KpUSH9IO84gdWeEWTbcadDfqA",
+    "secret_key": "IDOhoyfzAJ3CU8vRK75xYT08u0r9O1OubRAawI3XB1IoRwToxIRKoxELY4WsjwHJ",
+    "limit": 100
+}

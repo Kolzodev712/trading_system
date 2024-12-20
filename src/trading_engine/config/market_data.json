@@ -1,0 +1,7 @@
+{
+    "symbol": {
+        "base": "BTC",
+        "quote": "USDT"
+    },
+    "limit": 100
+}

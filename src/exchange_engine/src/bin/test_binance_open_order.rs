@@ -31,7 +31,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         exchange_config: ExchangeConfig::Binance(binance_config.clone()),
     };
 
-    let driver = ExchangeEngineDriver::new(Exchange::Binance, exchange_config);
+    let driver = ExchangeEngineDriver::new(exchange_config);
 
     let test_order = BinanceOrderRequest {
         symbol: binance_config.symbol.convert_to_smolstr(),
@@ -43,7 +43,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         timestamp: None,
     };
 
-    if let Err(e) = driver.run(Method::OpenOrder(test_order)).await {
+    if let Err(e) = driver.run(Method::TestOpenOrder(test_order)).await {
         error!("Failed to place test order: {}", e);
     }
 

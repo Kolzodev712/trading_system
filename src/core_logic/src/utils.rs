@@ -73,6 +73,30 @@ where
     Ok(opt.map(SmolStr::new))
 }
 
+use serde::ser::Serializer;
+
+pub fn serialize_enum_as_display<S, T>(value: &T, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+    T: std::fmt::Display,
+{
+    serializer.serialize_str(&value.to_string())
+}
+
+pub fn serialize_option_enum_as_display<S, T>(
+    value: &Option<T>,
+    serializer: S,
+) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+    T: std::fmt::Display,
+{
+    match value {
+        Some(v) => serializer.serialize_some(&v.to_string()),
+        None => serializer.serialize_none(),
+    }
+}
+
 pub fn generate_string_params(params: &mut HashMap<SmolStr, SmolStr>) -> HashMap<String, String> {
     params
         .iter_mut()

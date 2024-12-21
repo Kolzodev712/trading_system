@@ -21,7 +21,7 @@ pub async fn test_binance_stream() -> Result<(), Box<dyn std::error::Error>> {
         exchange_config: ExchangeConfig::Binance(binance_config),
     };
 
-    let driver = MarketDataDriver::new(Exchange::Binance, market_data_config);
+    let mut driver = MarketDataDriver::new(market_data_config);
 
     if let Err(e) = driver.run(Method::Orderbooks).await {
         error!("Error running market data driver: {}", e);

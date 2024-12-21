@@ -90,6 +90,16 @@ impl OrderId {
     pub fn new(value: SmolStr) -> Self {
         OrderId(value)
     }
+
+    pub fn as_str(&self) -> &str {
+        self.0.as_str()
+    }
+}
+
+impl From<u64> for OrderId {
+    fn from(value: u64) -> Self {
+        OrderId(SmolStr::new(value.to_string()))
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]

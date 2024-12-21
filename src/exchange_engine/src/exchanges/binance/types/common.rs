@@ -44,6 +44,20 @@ impl From<OrderType> for BinanceOrderType {
     }
 }
 
+impl From<BinanceOrderType> for OrderType {
+    fn from(binance_order_type: BinanceOrderType) -> Self {
+        match binance_order_type {
+            BinanceOrderType::Limit => OrderType::Limit,
+            BinanceOrderType::Market => OrderType::Market,
+            BinanceOrderType::LimitMaker => OrderType::PostOnly,
+            BinanceOrderType::StopLoss => OrderType::Ioc,
+            BinanceOrderType::TakeProfit => OrderType::Fok,
+            BinanceOrderType::StopLossLimit => OrderType::Limit, // Example fallback
+            BinanceOrderType::TakeProfitLimit => OrderType::Limit, // Example fallback
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum BinanceOrderStatus {
@@ -69,9 +83,10 @@ impl From<OrderStatus> for BinanceOrderStatus {
 }
 
 /// To be removed when using common Side
-#[derive(Debug, Deserialize, Serialize, Clone, Eq, PartialEq)]
+#[derive(Debug, Default, Deserialize, Serialize, Clone, Eq, PartialEq)]
 #[serde(rename_all = "UPPERCASE")]
 pub enum BinanceSide {
+    #[default]
     Buy,
     Sell,
 }
@@ -91,6 +106,15 @@ impl From<Side> for BinanceSide {
         match side {
             Side::Buy => BinanceSide::Buy,
             Side::Sell => BinanceSide::Sell,
+        }
+    }
+}
+
+impl From<BinanceSide> for Side {
+    fn from(binance_side: BinanceSide) -> Self {
+        match binance_side {
+            BinanceSide::Buy => Side::Buy,
+            BinanceSide::Sell => Side::Sell,
         }
     }
 }
@@ -144,6 +168,15 @@ impl BinanceSymbol {
 impl From<BinanceSymbol> for Pair {
     fn from(symbol: BinanceSymbol) -> Self {
         Pair {
+            base: symbol.base,
+            quote: symbol.quote,
+        }
+    }
+}
+
+impl From<Pair> for BinanceSymbol {
+    fn from(symbol: Pair) -> Self {
+        BinanceSymbol {
             base: symbol.base,
             quote: symbol.quote,
         }

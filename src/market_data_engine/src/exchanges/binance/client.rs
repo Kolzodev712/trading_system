@@ -6,7 +6,12 @@ use super::{
     },
 };
 use crate::channels::ChannelManager;
-use core_logic::{channels::ChannelHandler, data::base_data::DataType, error::EngineError};
+use core_logic::{
+    channels::ChannelHandler,
+    data::base_data::DataType,
+    data::public_data::{Orderbook, Trade},
+    error::EngineError,
+};
 use tokio::sync::mpsc;
 
 pub struct BinanceClient {
@@ -56,13 +61,31 @@ impl BinanceClient {
         Ok(rx)
     }
 
-    /// Expose Receiver to whoever needs this data:
-    pub async fn orderbook(&mut self) -> Result<mpsc::Receiver<ParsedBinanceMessage>, EngineError> {
-        self.start_stream(DataType::Orderbook).await
+    pub async fn orderbook(&mut self) -> Result<Vec<Orderbook>, EngineError> {
+        let mut receiver = self.start_stream(DataType::Orderbook).await?;
+        let mut orderbooks = Vec::new();
+
+        while let Some(message) = receiver.recv().await {
+            if let ParsedBinanceMessage::OrderBook(binance_orderbook) = message {
+                let orderbook: Orderbook = binance_orderbook.into();
+                orderbooks.push(orderbook);
+            }
+        }
+
+        Ok(orderbooks)
     }
 
-    /// Expose Receiver to whoever needs this data:
-    pub async fn trades(&mut self) -> Result<mpsc::Receiver<ParsedBinanceMessage>, EngineError> {
-        self.start_stream(DataType::Trade).await
+    pub async fn trades(&mut self) -> Result<Vec<Trade>, EngineError> {
+        let mut receiver = self.start_stream(DataType::Trade).await?;
+        let mut trades = Vec::new();
+
+        while let Some(message) = receiver.recv().await {
+            if let ParsedBinanceMessage::Trade(binance_trade) = message {
+                let trade: Trade = binance_trade.into();
+                trades.push(trade);
+            }
+        }
+
+        Ok(trades)
     }
 }

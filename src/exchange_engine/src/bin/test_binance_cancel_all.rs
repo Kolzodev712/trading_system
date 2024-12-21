@@ -20,12 +20,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let exchange_config = ExchangeEngineConfig {
         exchange: Exchange::Binance,
-        exchange_config: ExchangeConfig::Binance(binance_config),
+        exchange_config: ExchangeConfig::Binance(binance_config.clone()),
     };
 
-    let driver = ExchangeEngineDriver::new(Exchange::Binance, exchange_config);
+    let driver = ExchangeEngineDriver::new(exchange_config);
 
-    match driver.run(Method::CancelAllOrders).await {
+    match driver
+        .run(Method::CancelAllOrders(binance_config.symbol.into()))
+        .await
+    {
         Ok(_) => {
             println!("Successfully canceled all orders.");
         }

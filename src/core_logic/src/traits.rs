@@ -3,7 +3,7 @@ use crate::data::public_data::{Orderbook, Trade};
 use super::{
     data::{
         base_data::{OrderId, Pair},
-        private_data::{Order, OrderRequest},
+        private_data::Order,
     },
     error::EngineError,
     Exchange,
@@ -15,31 +15,59 @@ use std::fmt::Debug;
 /// Each Bot is expected to implement the `TradingClient` trait to provide
 /// an abstraction over the exchange APIs.
 #[async_trait::async_trait]
-pub trait TradingClient<InstrumentId = Pair>: Debug + Send + Sync + 'static
+pub trait TradingClient<OrderRequest, InstrumentId = Pair>: Debug + Send + Sync + 'static
 where
+    OrderRequest: Send + Sync + 'static,
     InstrumentId: Clone + Debug + Send + 'static,
 {
-    /// Keyrock universal identifier of the exchange this client serves
+    /// Universal identifier of the exchange this client serves
     const EXCHANGE_ID: Exchange;
 
-    /// Creates a single order
+    /// Paper test an oper order request if applicable on the given exchange.
+    ///
+    /// # Parameters
+    /// - `req`: The order request (`OrderRequest`) containing order details.
+    ///
+    /// # Returns
+    /// - `Ok(Order)`: The successfully created order.
+    /// - `Err(EngineError)`: If the order creation fails due to validation or exchange errors.
+    async fn test_open_order(&self, req: OrderRequest) -> Result<(), EngineError>;
+
+    /// Creates a single order on the exchange.
+    ///
+    /// # Parameters
+    /// - `req`: The order request (`OrderRequest`) containing order details.
+    ///
+    /// # Returns
+    /// - `Ok(Order)`: The successfully created order.
+    /// - `Err(EngineError)`: If the order creation fails due to validation or exchange errors.
     async fn open_order(&self, req: OrderRequest) -> Result<Order, EngineError>;
 
-    /// Cancels a single order by pair & order_id
+    /// Cancels a single order identified by trading pair and order ID.
     ///
-    /// When exchange requires an additional parameters to cancel the order (for example
-    /// order side), the client should take care of it using some form of open order
-    /// cache.
+    /// # Parameters
+    /// - `order_id`: The unique ID of the order to cancel.
     ///
-    /// If the exchange rejects the cancel due to non-existent order,
-    /// order already being completed or cancelled, the kolzo is
-    /// expected to return appropriate [`EngineError`] ([`EngineError::OrderNotFound`],
-    /// [`EngineError::OrderAlreadyFilled`] and [`EngineError::OrderAlreadyCancelled`] respectively).
-    async fn cancel_order_by_id(
-        &self,
-        pair: &InstrumentId,
-        order_id: OrderId,
-    ) -> Result<(), EngineError>;
+    /// # Returns
+    /// - `Ok(())`: If the order is successfully canceled.
+    /// - `Err(EngineError)`: If the cancellation fails due to an invalid order or exchange error.
+    ///
+    /// # Notes
+    /// - Errors may include `OrderNotFound`, `OrderAlreadyFilled`, or `OrderAlreadyCancelled`.
+    async fn cancel_order_by_id(&self, order_id: OrderId) -> Result<(), EngineError>;
+
+    /// Cancels all open orders for the specified trading pair.
+    ///
+    /// # Parameters
+    /// - `pair`: The trading pair (`InstrumentId`) for which all orders should be canceled.
+    ///
+    /// # Returns
+    /// - `Ok(())`: If all orders are successfully canceled or there are no open orders.
+    /// - `Err(EngineError)`: If the cancellation fails due to an exchange or network error.
+    ///
+    /// # Notes
+    /// - May return successfully even if no orders exist for the given pair.
+    async fn cancel_all_orders(&self, pair: &InstrumentId) -> Result<(), EngineError>;
 }
 
 /// Trait that defines the MarketDataClient interactions with the exchange
@@ -51,11 +79,17 @@ pub trait MarketDataClient<InstrumentId = Pair>: Debug + Send + Sync + 'static
 where
     InstrumentId: Clone + Debug + Send + 'static,
 {
-    async fn orderbook_snapshot(&self, _pair: InstrumentId) -> Result<Vec<Orderbook>, EngineError> {
+    /// Universal identifier of the exchange this client serves
+    const EXCHANGE_ID: Exchange;
+
+    async fn orderbooks(&mut self) -> Result<Vec<Orderbook>, EngineError>;
+
+    async fn trades(&mut self) -> Result<Vec<Trade>, EngineError>;
+
+    async fn orderbook_snapshot(&self, _pair: InstrumentId) -> Result<Orderbook, EngineError> {
         unimplemented!()
     }
-
-    async fn trade_snapshot(&self, _pair: InstrumentId) -> Result<Vec<Trade>, EngineError> {
+    async fn trade_snapshot(&self, _pair: InstrumentId) -> Result<Trade, EngineError> {
         unimplemented!()
     }
 }

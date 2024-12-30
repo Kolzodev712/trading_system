@@ -10,3 +10,5 @@
 - create a basic indicator from the Binance orderbook or trades data - Not started
 
 - create a basic strategy and run it in the runner.rs module - Not started
+
+- run the entire application on a docker container

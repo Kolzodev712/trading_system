@@ -64,12 +64,10 @@ impl MarketDataClient for MarketDataDriver {
     }
 
     async fn orderbook_snapshot(&self, _pair: Pair) -> Result<Orderbook, EngineError> {
-        // Optional: implement specific logic for orderbook snapshots, or leave as unimplemented
         unimplemented!()
     }
 
     async fn trade_snapshot(&self, _pair: Pair) -> Result<Trade, EngineError> {
-        // Optional: implement specific logic for trade snapshots, or leave as unimplemented
         unimplemented!()
     }
 }

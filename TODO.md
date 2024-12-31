@@ -7,6 +7,10 @@
 
 - create the indicator/computation module logic where we get raw data from an exchange and compute it into a trigger value - Planning
 
+- create orderbook parsing logic that derives a mid_price and spread value - DONE
+
+- create trades parsing logic that derives relevant data - WIP
+
 - create a basic indicator from the Binance orderbook or trades data - Not started
 
 - create a basic strategy and run it in the runner.rs module - Not started

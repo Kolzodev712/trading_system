@@ -40,6 +40,9 @@ ring = { workspace = true }
 pem = { workspace = true }
 uuid = { workspace = true }
 
+# Storage
+redis = { workspace = true }
+
 # Utrils
 smol_str = { workspace = true }
 futures-util = { workspace = true }

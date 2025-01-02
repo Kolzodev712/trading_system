@@ -1,5 +1,6 @@
 // General level error abstraction for the trading system
 use anyhow::Error;
+use redis::RedisError;
 use reqwest::{
     self,
     header::{InvalidHeaderName, InvalidHeaderValue},
@@ -68,6 +69,9 @@ pub enum EngineError {
 
     #[error("Invalid config")]
     InvalidConfig,
+
+    #[error("Redis error: {0}")]
+    RedisError(RedisError),
 
     #[error("Custom error: {0}")]
     CustomError(Error),

@@ -5,6 +5,8 @@ use serde::{Deserialize, Serialize};
 
 use tracing::warn;
 
+// TODO: Consider how to adjust this client based on the the Redis architecture when it's ready.
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct OrderbookProcessor {
     data: Vec<Orderbook>,
@@ -13,9 +15,10 @@ pub struct OrderbookProcessor {
 
 impl OrderbookProcessor {
     pub fn new(data: Vec<Orderbook>) -> Self {
+        let data_len = data.len();
         let mut processor = Self {
             data,
-            processed_data: Vec::new(),
+            processed_data: Vec::with_capacity(data_len),
         };
         processor.sort_orderbook();
         processor.process_data();

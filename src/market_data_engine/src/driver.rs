@@ -34,11 +34,13 @@ impl MarketDataDriver {
         match method {
             Method::Orderbooks => {
                 if let Err(e) = self.orderbooks().await {
+                    // Use the Redis client here to push the WS data to the persistent store
                     error!("Error in fetching orderbooks: {}", e);
                 }
             }
             Method::Trades => {
                 if let Err(e) = self.trades().await {
+                    // Use the Redis client here to push the WS data to the persistent store
                     error!("Error in fetching trades: {}", e);
                 }
             }

@@ -19,6 +19,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let binance_config = load_binance_config("config/binance_config.json")?;
 
     let market_data_config = MarketDataConfig {
+        redis_url: "redis://127.0.0.1/".into(),
         exchange: Exchange::Binance,
         exchange_config: ExchangeConfig::Binance(binance_config),
     };

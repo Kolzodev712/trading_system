@@ -71,7 +71,7 @@ pub enum EngineError {
     InvalidConfig,
 
     #[error("Redis error: {0}")]
-    RedisError(RedisError),
+    RedisError(#[from] RedisError),
 
     #[error("Custom error: {0}")]
     CustomError(Error),

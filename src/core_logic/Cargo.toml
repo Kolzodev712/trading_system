@@ -18,6 +18,7 @@ serde_qs = { workspace = true }
 
 # Async 
 tokio = { workspace = true }
+tokio-stream = { workspace = true }
 tokio-tungstenite = { workspace = true }
 async-trait = { workspace = true }
 

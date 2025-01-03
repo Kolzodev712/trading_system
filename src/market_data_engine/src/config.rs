@@ -9,6 +9,7 @@ pub trait ConfigGetter<T> {
 
 #[derive(Debug, PartialEq, Eq, Deserialize, Serialize, Clone)]
 pub struct MarketDataConfig {
+    pub redis_url: String,
     pub exchange: Exchange,
     pub exchange_config: ExchangeConfig,
 }

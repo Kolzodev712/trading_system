@@ -27,6 +27,7 @@ serde_qs = "0.12.0"
 
 # Async
 tokio = { version = "1.32.0", features = ["full"] }
+tokio-stream = "0.1.17"
 async-trait = "0.1.73"
 tokio-tungstenite = { version = "0.14", features = ["rustls-tls"] }
 
@@ -48,7 +49,7 @@ pem = "3.0.4"
 uuid = { version = "1.10.0", features = [ "v4", "fast-rng", "macro-diagnostics" ]}
 
 # Storage
-redis = "0.27.6"
+redis = { version = "0.27.6", features = ["tokio-comp"] }
 
 # Utrils
 futures-util = "0.3"

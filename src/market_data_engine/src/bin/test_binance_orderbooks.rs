@@ -9,7 +9,6 @@ use tracing::error;
 
 fn load_binance_config(file_path: &str) -> Result<BinanceConfig, Box<dyn std::error::Error>> {
     let config_data = fs::read_to_string(file_path)?;
-
     let config: BinanceConfig = serde_json::from_str(&config_data)?;
     Ok(config)
 }
@@ -23,7 +22,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         exchange_config: ExchangeConfig::Binance(binance_config),
     };
 
-    let mut driver = MarketDataDriver::new(market_data_config);
+    let exchange_client = MarketDataDriver::create_exchange_client(&market_data_config)?;
+
+    let mut driver = MarketDataDriver::new(market_data_config, exchange_client);
 
     if let Err(e) = driver.run(Method::Orderbooks).await {
         error!("Error running market data driver: {}", e);

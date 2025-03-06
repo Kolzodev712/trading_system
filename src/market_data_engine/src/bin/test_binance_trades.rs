@@ -24,10 +24,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         exchange_config: ExchangeConfig::Binance(binance_config),
     };
 
-    let mut driver = MarketDataDriver::new(market_data_config);
+    let mut driver = MarketDataDriver::new(market_data_config)?;
 
     if let Err(e) = driver.run(Method::Trades).await {
-        error!("Error running market data driver: {}", e);
+        error!("❌ Error running market data driver: {}", e);
     }
 
     Ok(())

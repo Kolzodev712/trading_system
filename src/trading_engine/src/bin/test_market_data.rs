@@ -4,13 +4,11 @@ use market_data_engine::{
     driver::{MarketDataDriver, Method},
     exchanges::binance::config::BinanceConfig,
 };
-
 use std::fs;
 use tracing::error;
 
 fn load_binance_config(file_path: &str) -> Result<BinanceConfig, Box<dyn std::error::Error>> {
     let config_data = fs::read_to_string(file_path)?;
-
     let config: BinanceConfig = serde_json::from_str(&config_data)?;
     Ok(config)
 }
@@ -25,10 +23,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         exchange_config: ExchangeConfig::Binance(binance_config),
     };
 
-    let mut driver = MarketDataDriver::new(market_data_config);
+    let mut driver = MarketDataDriver::new(market_data_config)?;
 
     if let Err(e) = driver.run(Method::Orderbooks).await {
-        error!("Error running market data driver: {}", e);
+        error!("❌ Error running market data driver: {}", e);
     }
 
     Ok(())

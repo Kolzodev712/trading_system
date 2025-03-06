@@ -22,6 +22,12 @@ pub enum EngineError {
     #[error("Channel Closed error.")]
     ChannelClosedError,
 
+    #[error("Connection Closed")]
+    ConnectionClosed,
+
+    #[error("Missing Message Handler")]
+    NoMessageHandler,
+
     #[error("WebSocket connection error: {0}")]
     WsConnectionError(#[from] tungstenite::Error),
 
@@ -72,6 +78,9 @@ pub enum EngineError {
 
     #[error("Redis error: {0}")]
     RedisError(#[from] RedisError),
+
+    #[error("Unsupported Exchange")]
+    UnsupportedExchange,
 
     #[error("Custom error: {0}")]
     CustomError(Error),

@@ -80,11 +80,11 @@ where
     InstrumentId: Clone + Debug + Send + 'static,
 {
     /// Universal identifier of the exchange this client serves
-    const EXCHANGE_ID: Exchange;
+    fn exchange_id(&self) -> Exchange;
 
-    async fn orderbooks(&mut self) -> Result<Vec<Orderbook>, EngineError>;
+    async fn orderbooks(&mut self) -> Result<(), EngineError>;
 
-    async fn trades(&mut self) -> Result<Vec<Trade>, EngineError>;
+    async fn trades(&mut self) -> Result<(), EngineError>;
 
     async fn orderbook_snapshot(&self, _pair: InstrumentId) -> Result<Orderbook, EngineError> {
         unimplemented!()

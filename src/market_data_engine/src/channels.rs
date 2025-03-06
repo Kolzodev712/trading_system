@@ -4,6 +4,7 @@ use smol_str::ToSmolStr;
 use std::fmt::Debug;
 use tokio::sync::mpsc::{self, Receiver, Sender};
 
+#[derive(Debug)]
 pub struct ChannelManager {
     buffer_size: usize,
 }

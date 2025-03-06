@@ -21,7 +21,7 @@ where
     InstrumentId: Clone + Debug + Send + 'static,
 {
     /// Universal identifier of the exchange this client serves
-    const EXCHANGE_ID: Exchange;
+    fn exchange_id(&self) -> Exchange;
 
     /// Paper test an oper order request if applicable on the given exchange.
     ///

@@ -19,6 +19,18 @@ pub struct Pair {
     pub quote: SmolStr,
 }
 
+impl Pair {
+    pub fn new(base: &str, quote: &str) -> Self {
+        Pair {
+            base: base.into(),
+            quote: quote.into(),
+        }
+    }
+
+    pub fn convert_to_smolstr(&self) -> SmolStr {
+        format!("{}{}", self.base, self.quote).into()
+    }
+}
 #[derive(Debug, Deserialize, Serialize, Clone, Eq, PartialEq)]
 pub struct Instrument {
     pub instrument_type: InstrumentType,

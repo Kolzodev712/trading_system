@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use smol_str::SmolStr;
 use std::fmt::{Display, Formatter, Result};
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum BinanceOrderType {
     Limit,
@@ -58,7 +58,7 @@ impl From<BinanceOrderType> for OrderType {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum BinanceOrderStatus {
     New,
@@ -119,7 +119,7 @@ impl From<BinanceSide> for Side {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum BinanceTimeInForce {
     Gtc,

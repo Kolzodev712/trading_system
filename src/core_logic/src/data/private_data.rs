@@ -1,5 +1,7 @@
+use std::collections::HashMap;
+
 // A general level data abstraction for External data types, using in the external system logic for authenticated requests.
-use super::base_data::{OrderId, Side};
+use super::base_data::{OrderId, OrderType, Side};
 use crate::utils::{deserialize_smol_str, serialize_smol_str};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
@@ -27,4 +29,27 @@ pub struct Order {
     pub internal_created_at: u64,
     /// Exchange's timestamp of the order
     pub exchange_created_at: Option<u64>,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OrderRequest {
+    /// Symbol for the open order response
+    #[serde(
+        serialize_with = "serialize_smol_str",
+        deserialize_with = "deserialize_smol_str"
+    )]
+    pub symbol: Symbol,
+    /// Side of the book to place the order
+    pub side: Side,
+    /// Type of the order to place
+    pub order_type: OrderType,
+    /// Price at which the order will be placed
+    pub price: Decimal,
+    /// Order size. This is the full, original order amount. Not the remaining amount.
+    pub amount: Decimal,
+    /// Exchange's timestamp of the order
+    pub timestamp: Option<u64>,
+    /// Custom params specific to exchanges:
+    pub exchange_params: HashMap<String, String>,
 }

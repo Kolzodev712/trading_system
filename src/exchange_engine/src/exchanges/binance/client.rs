@@ -10,7 +10,17 @@ use super::{
         orderbook::{BinanceOrderbookSnapshotRequest, BinanceOrderbookSnapshotResponse},
     },
 };
-use core_logic::{error::EngineError, rest_client::HttpMethod};
+use async_trait::async_trait;
+use core_logic::{
+    data::{
+        base_data::{OrderId, Pair},
+        private_data::{Order, OrderRequest},
+    },
+    error::EngineError,
+    rest_client::HttpMethod,
+    traits::TradingClient,
+    Exchange,
+};
 use tracing::{error, info};
 
 const TIME: &str = "time";
@@ -93,7 +103,7 @@ impl BinanceClient {
     }
 
     pub async fn open_order_test(&self, order: BinanceOrderRequest) -> Result<(), EngineError> {
-        let params = Some(order);
+        let params = Some(order.clone());
 
         match self
             .http_client
@@ -108,11 +118,11 @@ impl BinanceClient {
         {
             Ok(Some(_)) => Ok(()),
             Ok(None) => {
-                info!("Binance order test call returned no content as expected.");
+                info!("✅ Binance order test call returned no content as expected.");
                 Ok(())
             }
             Err(e) => {
-                error!("Error during Binance order test call: {}", e);
+                error!("❌ Error during Binance order test call: {}", e);
                 Err(e)
             }
         }
@@ -172,5 +182,67 @@ impl BinanceClient {
                 "Expected order response, but received None"
             ))
         })
+    }
+}
+
+#[async_trait]
+impl TradingClient<OrderRequest, Pair> for BinanceClient {
+    fn exchange_id(&self) -> Exchange {
+        Exchange::Binance
+    }
+
+    /// ✅ Test an order before actually submitting it
+    async fn test_open_order(&self, req: OrderRequest) -> Result<(), EngineError> {
+        let binance_order: BinanceOrderRequest = req.into();
+
+        let time = self.get_time().await?;
+        let mut order_request = binance_order;
+        order_request.timestamp = Some(time.server_time);
+
+        self.open_order_test(order_request).await?;
+        Ok(())
+    }
+
+    /// ✅ Submit an actual order to Binance
+    async fn open_order(&self, req: OrderRequest) -> Result<Order, EngineError> {
+        let binance_order: BinanceOrderRequest = req.into();
+
+        let time = self.get_time().await?;
+        let mut order_request = binance_order;
+        order_request.timestamp = Some(time.server_time);
+
+        let response = self.open_order(order_request).await?;
+        Ok(response.into())
+    }
+
+    /// ✅ Cancel a specific order by order ID
+    async fn cancel_order_by_id(&self, order_id: OrderId) -> Result<(), EngineError> {
+        let binance_order_id = order_id.as_str().parse::<u64>().map_err(|e| {
+            EngineError::CustomError(anyhow::anyhow!("Failed to parse OrderId into u64: {}", e))
+        })?;
+
+        let response = self.cancel_order_by_id(binance_order_id).await?;
+
+        if response.is_empty() {
+            return Err(EngineError::CustomError(anyhow::anyhow!(
+                "No matching order found to cancel."
+            )));
+        }
+
+        Ok(())
+    }
+
+    /// ✅ Cancel all open orders for a trading pair
+    async fn cancel_all_orders(&self, pair: &Pair) -> Result<(), EngineError> {
+        let response = self.cancel_all().await?;
+
+        if response.is_empty() {
+            tracing::warn!(
+                "No open orders to cancel for pair: {}",
+                pair.convert_to_smolstr()
+            );
+        }
+
+        Ok(())
     }
 }

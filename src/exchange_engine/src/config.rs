@@ -34,3 +34,99 @@ impl ConfigGetter<BinanceConfig> for ExchangeConfig {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use core_logic::data::base_data::Pair;
+    use serde_json;
+
+    // Sample config JSON for deserialization
+    const CONFIG_JSON: &str = r#"
+        {
+        "exchange": "Binance",
+        "exchange_config": {
+            "Binance": {
+            "symbol": {
+                "base": "BTC",
+                "quote": "USDT"
+            },
+            "apiKey": "some_key",
+            "secretKey": "some_secret",
+            "limit": 100
+            }
+        }
+    }
+    "#;
+
+    // Test for deserializing the entire ExchangeEngineConfig
+    #[test]
+    fn test_exchange_engine_config_deserialization() {
+        let config: ExchangeEngineConfig = serde_json::from_str(CONFIG_JSON).unwrap();
+
+        assert_eq!(config.exchange, Exchange::Binance);
+
+        match config.exchange_config {
+            ExchangeConfig::Binance(ref binance_config) => {
+                assert_eq!(binance_config.symbol.base, "BTC");
+                assert_eq!(binance_config.symbol.quote, "USDT");
+                assert_eq!(binance_config.api_key, "some_key");
+                assert_eq!(binance_config.secret_key, "some_secret");
+                assert_eq!(binance_config.limit, Some(100));
+            }
+        }
+    }
+
+    // Test for serializing the ExchangeEngineConfig
+    #[test]
+    fn test_exchange_engine_config_serialization() {
+        let binance_config = BinanceConfig {
+            symbol: Pair {
+                base: "BTC".into(),
+                quote: "USDT".into(),
+            }
+            .into(),
+            api_key: "some_key".into(),
+            secret_key: "some_secret".into(),
+            limit: Some(100),
+        };
+
+        let exchange_engine_config = ExchangeEngineConfig {
+            exchange: Exchange::Binance,
+            exchange_config: ExchangeConfig::Binance(binance_config),
+        };
+
+        let json = serde_json::to_string(&exchange_engine_config).unwrap();
+        assert!(json.contains("\"exchange\":\"Binance\""));
+        assert!(json.contains("\"apiKey\":\"some_key\""));
+        assert!(json.contains("\"symbol\":{\"base\":\"BTC\",\"quote\":\"USDT\"}"));
+    }
+
+    // Test for retrieving the BinanceConfig from the ExchangeEngineConfig
+    #[test]
+    fn test_get_exchange_config() {
+        let binance_config = BinanceConfig {
+            symbol: Pair {
+                base: "BTC".into(),
+                quote: "USDT".into(),
+            }
+            .into(),
+            api_key: "some_key".into(),
+            secret_key: "some_secret".into(),
+            limit: Some(100),
+        };
+
+        let exchange_engine_config = ExchangeEngineConfig {
+            exchange: Exchange::Binance,
+            exchange_config: ExchangeConfig::Binance(binance_config),
+        };
+
+        let retrieved_config: BinanceConfig = exchange_engine_config.get_exchange_config().unwrap();
+
+        assert_eq!(retrieved_config.symbol.base, "BTC");
+        assert_eq!(retrieved_config.symbol.quote, "USDT");
+        assert_eq!(retrieved_config.api_key, "some_key");
+        assert_eq!(retrieved_config.secret_key, "some_secret");
+        assert_eq!(retrieved_config.limit, Some(100));
+    }
+}

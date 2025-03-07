@@ -13,4 +13,5 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Deserialize, Serialize, Clone, Eq, PartialEq)]
 pub enum Exchange {
     Binance,
+    Unsupported,
 }

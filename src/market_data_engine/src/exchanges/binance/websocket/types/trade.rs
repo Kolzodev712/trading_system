@@ -45,3 +45,38 @@ impl From<BinanceTrade> for Trade {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rust_decimal::Decimal;
+    use serde_json;
+
+    // Test for deserialization of a BinanceTrade struct
+    #[test]
+    fn test_binance_trade_deserialization() {
+        let json = r#"
+        {
+            "e": "trade",
+            "E": 1625158399000,
+            "s": "BTCUSDT",
+            "t": 123456789,
+            "p": "3000.00000000",
+            "q": "10.00000000",
+            "T": 1625158399000,
+            "m": true
+        }
+        "#;
+
+        let trade: BinanceTrade = serde_json::from_str(json).unwrap();
+
+        assert_eq!(trade.event_type, SmolStr::new("trade"));
+        assert_eq!(trade.event_time, 1625158399000);
+        assert_eq!(trade.symbol, SmolStr::new("BTCUSDT"));
+        assert_eq!(trade.trade_id, 123456789);
+        assert_eq!(trade.price, Decimal::new(30000000000, 7));
+        assert_eq!(trade.quantity, Decimal::new(1000000000, 8));
+        assert_eq!(trade.trade_time, 1625158399000);
+        assert_eq!(trade.is_market_maker, true);
+    }
+}

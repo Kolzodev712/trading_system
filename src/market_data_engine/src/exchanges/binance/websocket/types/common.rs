@@ -1,5 +1,8 @@
 use core_logic::{
-    data::public_data::{Orderbook, Trade},
+    data::{
+        base_data::Pair,
+        public_data::{Orderbook, Trade},
+    },
     utils::{
         deserialize_option_smol_str, deserialize_smol_str, deserialize_vec_smol_str,
         serialize_option_smol_str, serialize_smol_str, serialize_vec_smol_str,
@@ -87,4 +90,13 @@ pub struct BinanceSymbol {
         deserialize_with = "deserialize_smol_str"
     )]
     pub quote: SmolStr,
+}
+
+impl From<Pair> for BinanceSymbol {
+    fn from(pair: Pair) -> Self {
+        BinanceSymbol {
+            base: pair.base,
+            quote: pair.quote,
+        }
+    }
 }

@@ -62,6 +62,8 @@ impl From<BinanceOrderType> for OrderType {
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum BinanceOrderStatus {
     New,
+    PartiallyFilled,
+    Filled,
     Canceled,
     Replaced,
     Rejected,

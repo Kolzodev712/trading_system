@@ -35,3 +35,71 @@ impl ConfigGetter<BinanceConfig> for ExchangeConfig {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use core_logic::{data::base_data::Pair, error::EngineError, Exchange};
+    use serde_json;
+
+    // Test for deserialization of MarketDataConfig
+    #[test]
+    fn test_market_data_config_deserialization() {
+        let json = r#"
+        {
+            "redis_url": "redis://localhost:6379",
+            "exchange": "Binance",
+            "exchange_config": {
+                "Binance": {
+                    "symbol": {
+                        "base": "BTC",
+                        "quote": "USDT"
+                    },
+                    "limit": 100
+                }
+            }
+        }
+        "#;
+
+        let config: MarketDataConfig = serde_json::from_str(json).unwrap();
+
+        assert_eq!(config.redis_url, "redis://localhost:6379");
+        assert_eq!(config.exchange, Exchange::Binance);
+        assert_eq!(
+            config.exchange_config,
+            ExchangeConfig::Binance(BinanceConfig {
+                symbol: Pair {
+                    base: "BTC".into(),
+                    quote: "USDT".into()
+                }
+                .into(),
+                limit: 100,
+            })
+        );
+    }
+
+    // Test for successful retrieval of exchange config
+    #[test]
+    fn test_get_exchange_config_success() {
+        let config = MarketDataConfig {
+            redis_url: "redis://localhost:6379".into(),
+            exchange: Exchange::Binance,
+            exchange_config: ExchangeConfig::Binance(BinanceConfig {
+                symbol: Pair {
+                    base: "BTC".into(),
+                    quote: "USDT".into(),
+                }
+                .into(),
+                limit: 100,
+            }),
+        };
+
+        let result: Result<BinanceConfig, EngineError> = config.get_exchange_config();
+        assert!(result.is_ok());
+        let binance_config = result.unwrap();
+
+        assert_eq!(binance_config.symbol.base, "BTC");
+        assert_eq!(binance_config.symbol.quote, "USDT");
+        assert_eq!(binance_config.limit, 100);
+    }
+}

@@ -1,14 +1,16 @@
 // End goal here is to implement the `TradingClient` trait on the binance client
 use super::{
     config::BinanceConfig,
-    rest::client::BinanceHttpClient,
-    types::{
-        balance::{BinanceAccountInfo, BinanceBalanceRequest},
-        cancel_all::{BinanceCancelAllOrdersRequest, BinanceCancelAllOrdersResponse},
-        cancel_order::{BinanceCancelOrderByIdRequest, BinanceCancelOrderByIdResponse},
-        common::BinanceServerTime,
-        open_order::{BinanceOrderRequest, BinanceOrderResponse},
-        orderbook::{BinanceOrderbookSnapshotRequest, BinanceOrderbookSnapshotResponse},
+    rest::{
+        client::BinanceHttpClient,
+        types::{
+            balance::{BinanceAccountInfo, BinanceBalanceRequest},
+            cancel_all::{BinanceCancelAllOrdersRequest, BinanceCancelAllOrdersResponse},
+            cancel_order::{BinanceCancelOrderByIdRequest, BinanceCancelOrderByIdResponse},
+            common::BinanceServerTime,
+            open_order::{BinanceOrderRequest, BinanceOrderResponse},
+            orderbook::{BinanceOrderbookSnapshotRequest, BinanceOrderbookSnapshotResponse},
+        },
     },
 };
 use async_trait::async_trait;

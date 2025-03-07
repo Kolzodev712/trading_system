@@ -3,7 +3,7 @@
         "base": "BTC",
         "quote": "USDT"
     },
-    "api_key": "BerLhwYn5pSuG2XFy8KkCfO9HUklWiPvuAUtgAqeLFJx9T0VgZdnaUDj5yyBHknZ",
-    "secret_key": "GaA3WdX2AJDxH1MvLR9kzdNANCtVwBbyqbWagTfpQFEsm192vwhc5TXbdBp0vLSl",
+    "api_key": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "secret_key": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
     "limit": 100
 }

@@ -8,6 +8,10 @@ use std::fs;
 use tracing::error;
 
 fn load_binance_config(file_path: &str) -> Result<BinanceConfig, Box<dyn std::error::Error>> {
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::INFO)
+        .init();
+
     let config_data = fs::read_to_string(file_path)?;
     let config: BinanceConfig = serde_json::from_str(&config_data)?;
     Ok(config)

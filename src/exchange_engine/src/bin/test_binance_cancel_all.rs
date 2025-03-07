@@ -16,6 +16,10 @@ fn load_binance_config(file_path: &str) -> Result<BinanceConfig, Box<dyn std::er
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::INFO)
+        .init();
+
     let binance_config = load_binance_config("config/binance_config.json")?;
 
     let exchange_config = ExchangeEngineConfig {
@@ -23,7 +27,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         exchange_config: ExchangeConfig::Binance(binance_config.clone()),
     };
 
-    let driver = ExchangeEngineDriver::new(exchange_config);
+    let driver = ExchangeEngineDriver::new(exchange_config)?;
 
     match driver
         .run(Method::CancelAllOrders(binance_config.symbol.into()))

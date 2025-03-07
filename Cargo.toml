@@ -16,7 +16,8 @@ members = [
 
 [workspace.dependencies]
 # Logging
-tracing = { version = "0.1.40" }
+tracing = "0.1.40" 
+tracing-subscriber = "0.3.19"
 
 # SerDe
 serde = { version = "1.0", features = ["derive"] }

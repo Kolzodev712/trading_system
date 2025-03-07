@@ -24,6 +24,10 @@ fn load_binance_config(file_path: &str) -> Result<BinanceConfig, Box<dyn std::er
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::INFO)
+        .init();
+
     let binance_config = load_binance_config("config/binance_config.json")?;
 
     let exchange_config = ExchangeEngineConfig {

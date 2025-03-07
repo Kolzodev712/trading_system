@@ -1,3 +1,4 @@
+pub mod balance;
 pub mod cancel_all;
 pub mod cancel_order;
 pub mod common;

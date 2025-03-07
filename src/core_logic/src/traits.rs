@@ -3,7 +3,7 @@ use crate::data::public_data::{Orderbook, Trade};
 use super::{
     data::{
         base_data::{OrderId, Pair},
-        private_data::Order,
+        private_data::{Balance, Order},
     },
     error::EngineError,
     Exchange,
@@ -68,6 +68,13 @@ where
     /// # Notes
     /// - May return successfully even if no orders exist for the given pair.
     async fn cancel_all_orders(&self, pair: &InstrumentId) -> Result<(), EngineError>;
+
+    /// Fetches the balances for the account.
+    ///
+    /// # Returns
+    /// - `Ok(Vec<Balance>)`: The list of balances for the account.
+    /// - `Err(EngineError)`: If the retrieval of balances fails.
+    async fn fetch_balance(&self) -> Result<Vec<Balance>, EngineError>;
 }
 
 /// Trait that defines the MarketDataClient interactions with the exchange

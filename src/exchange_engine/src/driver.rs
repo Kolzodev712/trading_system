@@ -16,6 +16,7 @@ pub enum Method {
     OpenOrder(OrderRequest),
     CancelOrderById(OrderId),
     CancelAllOrders(Pair),
+    FetchBalance,
 }
 
 pub struct ExchangeEngineDriver {
@@ -59,6 +60,10 @@ impl ExchangeEngineDriver {
             Method::CancelAllOrders(pair) => {
                 self.exchange_client.cancel_all_orders(&pair).await?;
                 debug!("All orders canceled successfully.");
+            }
+            Method::FetchBalance => {
+                self.exchange_client.fetch_balance().await?;
+                debug!("Balances successfuly fetched.");
             }
         }
         Ok(())

@@ -3,6 +3,7 @@ use super::{
     config::BinanceConfig,
     rest::client::BinanceHttpClient,
     types::{
+        balance::{BinanceAccountInfo, BinanceBalanceRequest},
         cancel_all::{BinanceCancelAllOrdersRequest, BinanceCancelAllOrdersResponse},
         cancel_order::{BinanceCancelOrderByIdRequest, BinanceCancelOrderByIdResponse},
         common::BinanceServerTime,
@@ -14,7 +15,8 @@ use async_trait::async_trait;
 use core_logic::{
     data::{
         base_data::{OrderId, Pair},
-        private_data::{Order, OrderRequest},
+        macros::MillisecondTimestamp,
+        private_data::{Balance, Order, OrderRequest},
     },
     error::EngineError,
     rest_client::HttpMethod,
@@ -27,6 +29,7 @@ const TIME: &str = "time";
 const ORDERBOOK: &str = "depth";
 const ORDER: &str = "order/test";
 const CANCEL_ALL: &str = "openOrders";
+const BALANCE: &str = "account";
 
 #[derive(Debug)]
 pub struct BinanceClient {
@@ -183,6 +186,45 @@ impl BinanceClient {
             ))
         })
     }
+
+    pub async fn fetch_balance(&self) -> Result<Vec<Balance>, EngineError> {
+        let time = self.get_time().await?;
+
+        let params = BinanceBalanceRequest {
+            omit_zero_balances: Some(true),
+            timestamp: MillisecondTimestamp(time.server_time),
+        };
+
+        let response = self
+            .http_client
+            .call::<BinanceBalanceRequest, Option<BinanceAccountInfo>>(
+                BALANCE,
+                HttpMethod::GET,
+                Some(params),
+                None,
+                true,
+            )
+            .await?;
+
+        let binance_account_info = response.flatten().ok_or_else(|| {
+            EngineError::CustomError(anyhow::anyhow!(
+                "Expected order response, but received None"
+            ))
+        })?;
+
+        let balances: Vec<Balance> = binance_account_info
+            .balances
+            .into_iter()
+            .map(|binance_balance| Balance {
+                symbol: binance_balance.asset,
+                free: binance_balance.free,
+                used: binance_balance.locked,
+                total: binance_balance.free + binance_balance.locked,
+            })
+            .collect();
+
+        Ok(balances)
+    }
 }
 
 #[async_trait]
@@ -244,5 +286,16 @@ impl TradingClient<OrderRequest, Pair> for BinanceClient {
         }
 
         Ok(())
+    }
+
+    /// ✅ Fetch the account balances
+    async fn fetch_balance(&self) -> Result<Vec<Balance>, EngineError> {
+        let response = self.fetch_balance().await?;
+
+        if response.is_empty() {
+            tracing::warn!("No balances found");
+        }
+
+        Ok(response)
     }
 }

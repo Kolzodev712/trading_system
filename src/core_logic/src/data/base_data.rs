@@ -119,3 +119,13 @@ pub enum DataType {
     Orderbook,
     Trade,
 }
+
+#[derive(Debug, Deserialize, Serialize, Clone, Eq, PartialEq)]
+pub enum AccountType {
+    Spot,
+    Margin,
+    Futures,
+    Savings,
+    Wallet,
+    Unknown,
+}

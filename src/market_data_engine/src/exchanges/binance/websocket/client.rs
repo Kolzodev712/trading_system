@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use super::types::{
     common::{BinanceWSMessage, BinanceWsEventType, InitialResponse, ParsedBinanceMessage},
     orderbook::BinanceOrderbook,
@@ -46,10 +48,11 @@ impl BinanceSubscriptionHandler {
 }
 
 impl SubscriptionHandler for BinanceSubscriptionHandler {
-    fn create_subscription_request(&self) -> Message {
+    fn create_subscription_request(&self) -> Option<Message> {
         let channel_name = match self.channel_info.channel {
             DataType::Orderbook => "depth",
             DataType::Trade => "trade",
+            _ => "unknown",
         };
 
         let subscription_msg = BinanceWSMessage {
@@ -63,7 +66,11 @@ impl SubscriptionHandler for BinanceSubscriptionHandler {
         };
 
         let json_msg = serde_json::to_string(&subscription_msg).unwrap();
-        Message::Text(json_msg)
+        Some(Message::Text(json_msg))
+    }
+
+    fn create_authenticated_request(&self, _params: BTreeMap<SmolStr, SmolStr>) -> Option<Message> {
+        None
     }
 }
 
@@ -242,8 +249,12 @@ impl WebSocketClient<ParsedBinanceMessage> for BinanceWSClient {
     where
         S: SubscriptionHandler + Send + Sync + 'static,
     {
-        let subscription_message = subscription_handler.create_subscription_request();
-        ws_stream.send(subscription_message).await?;
+        if let Some(subscription_message) = subscription_handler.create_subscription_request() {
+            ws_stream.send(subscription_message).await?;
+        } else {
+            error!("Subscription message not found");
+        }
+
         Ok(())
     }
 }

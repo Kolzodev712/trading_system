@@ -25,3 +25,38 @@ where
             .map_err(|e| EngineError::JsonError(e))
     }
 }
+
+use reqwest::Client;
+#[derive(Deserialize)]
+struct BinanceTimestampResponse {
+    server_time: u64,
+}
+
+pub struct BinanceTimestampService {
+    client: Client,
+}
+
+impl BinanceTimestampService {
+    pub fn new() -> Self {
+        BinanceTimestampService {
+            client: Client::new(),
+        }
+    }
+
+    /// Temporary workaround for the binance timestamp:
+    pub async fn get_server_timestamp(&self) -> Result<u64, EngineError> {
+        let response = self
+            .client
+            .get("https://api.binance.com/api/v3/time")
+            .send()
+            .await
+            .map_err(|e| EngineError::CustomError(e.into()))?;
+
+        let timestamp_response: BinanceTimestampResponse = response
+            .json()
+            .await
+            .map_err(|e| EngineError::CustomError(e.into()))?;
+
+        Ok(timestamp_response.server_time)
+    }
+}

@@ -1,2 +1,2 @@
-pub mod binance_ws;
+pub mod client;
 pub mod types;

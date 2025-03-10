@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 
 /// Trait for authenticators, allowing the use of different signature strategies.
 #[async_trait]
-pub trait RestAuthenticator: Send + Sync {
+pub trait ExchangeAuthenticator: Send + Sync {
     /// Generates a signature for a given query string using the provided strategy.
     /// This method is asynchronous to allow for non-blocking cryptographic operations.
     async fn generate_signature(&self, query_string: &str) -> Result<Option<SmolStr>, EngineError>;

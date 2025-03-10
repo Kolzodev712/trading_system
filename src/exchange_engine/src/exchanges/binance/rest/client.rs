@@ -1,10 +1,8 @@
-use super::{
-    super::{config::BinanceConfig, utils::deserialize_or_none},
-    sign::BinanceAuthenticator,
-};
+use super::super::{config::BinanceConfig, utils::deserialize_or_none};
+use crate::exchanges::binance::sign::BinanceAuthenticator;
 use async_trait::async_trait;
 use core_logic::{
-    authenticator::RestAuthenticator,
+    authenticator::ExchangeAuthenticator,
     error::EngineError,
     rest_client::{HttpMethod, RestExchangeHandler},
 };

@@ -1,14 +1,14 @@
 use super::{
     config::BinanceConfig,
     websocket::{
-        binance_ws::{BinanceChannel, BinanceWSClient},
+        client::{BinanceChannel, BinanceWSClient},
         types::common::ParsedBinanceMessage,
     },
 };
-use crate::{channels::ChannelManager, messages::WSMessageHandler};
+use crate::messages::WSMessageHandler;
 use async_trait::async_trait;
 use core_logic::{
-    channels::ChannelHandler,
+    channels::{ChannelHandler, ChannelManager},
     data::{
         base_data::{DataType, Pair},
         public_data::{Orderbook, Trade},

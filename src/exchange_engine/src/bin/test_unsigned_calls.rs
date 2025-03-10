@@ -1,5 +1,5 @@
 use exchange_engine::exchanges::binance::{
-    client::BinanceClient, config::BinanceConfig, rest::client::BinanceHttpClient,
+    config::BinanceConfig, rest::client::BinanceHttpClient, rest_client::BinanceClient,
 };
 use std::fs;
 

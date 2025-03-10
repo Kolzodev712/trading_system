@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use crate::error::EngineError;
 use async_trait::async_trait;
 use smol_str::SmolStr;
@@ -28,7 +30,10 @@ pub trait MessageHandler<T> {
 /// Trait for creating WebSocket subscription requests.
 pub trait SubscriptionHandler {
     /// Creates a WebSocket subscription request message.
-    fn create_subscription_request(&self) -> Message;
+    fn create_subscription_request(&self) -> Option<Message>;
+
+    /// Creates a WebSocket authenticated request message.
+    fn create_authenticated_request(&self, params: BTreeMap<SmolStr, SmolStr>) -> Option<Message>;
 }
 
 #[async_trait]
@@ -58,4 +63,15 @@ pub trait WebSocketClient<T> {
     ) -> Result<(), EngineError>
     where
         S: SubscriptionHandler + Send + Sync + 'static;
+
+    /// Optionally authenticate the WebSocket connection (e.g., for Binance).
+    async fn authenticate_ws(
+        &self,
+        _ws_stream: &mut WebSocketStream<MaybeTlsStream<TcpStream>>,
+        _api_key: &SmolStr,
+        _secret_key: &SmolStr,
+        _timestamp: u64,
+    ) -> Result<(), EngineError> {
+        Ok(())
+    }
 }

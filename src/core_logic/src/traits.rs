@@ -100,3 +100,17 @@ where
         unimplemented!()
     }
 }
+/// Trait that defines the PrivateDataClient interactions with the exchange
+///
+/// Each Bot is expected to implement the `PrivateDataClient` trait to provide
+/// an abstraction over the exchange APIs.
+#[async_trait::async_trait]
+pub trait PrivateDataClient<InstrumentId = Pair>: Debug + Send + Sync + Clone + 'static
+where
+    InstrumentId: Clone + Debug + Send + 'static,
+{
+    /// Universal identifier of the exchange this client serves
+    fn exchange_id(&self) -> Exchange;
+
+    async fn balances(&mut self) -> Result<(), EngineError>;
+}

@@ -118,6 +118,8 @@ impl From<u64> for OrderId {
 pub enum DataType {
     Orderbook,
     Trade,
+    Account,
+    Order,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Eq, PartialEq)]

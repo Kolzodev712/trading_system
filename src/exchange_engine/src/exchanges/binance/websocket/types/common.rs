@@ -1,13 +1,12 @@
+use super::{balance::OutboundAccountPosition, orders::ExecutionReport};
 use core_logic::{
     data::{base_data::Pair, private_data::Balance},
     utils::{
-        deserialize_option_smol_str, deserialize_smol_str, deserialize_vec_smol_str,
-        serialize_option_smol_str, serialize_smol_str, serialize_vec_smol_str,
+        deserialize_smol_str, deserialize_vec_smol_str, serialize_smol_str, serialize_vec_smol_str,
     },
 };
 use serde::{Deserialize, Serialize};
 use smol_str::{SmolStr, ToSmolStr};
-use std::primitive::str;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct BinanceWSMessage {
@@ -29,49 +28,59 @@ pub struct BinanceWSMessage {
 }
 
 #[derive(Debug, PartialEq, Eq, Deserialize, Serialize, Clone)]
-pub struct Login {
-    #[serde(
-        serialize_with = "serialize_option_smol_str",
-        deserialize_with = "deserialize_option_smol_str"
-    )]
-    result: Option<SmolStr>,
-    id: u64,
-}
-
-#[derive(Debug, PartialEq, Eq, Deserialize, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
 pub enum BinanceWsEventType {
-    #[serde(rename = "session.logon")]
-    Login,
-    #[serde(rename = "account.status")]
-    Balance,
+    OutboundAccountPosition,
+    BalanceUpdate,
+    ExecutionReport,
+    ListenKeyExpired,
+    EventStreamTerminated,
     Unknown,
 }
 
 #[derive(Debug, PartialEq, Eq, Deserialize, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ListenKeyExpired {
+    pub event_time: u64,
+    pub listen_key: String,
+}
+
+#[derive(Debug, PartialEq, Eq, Deserialize, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct EventStreamTerminated {
+    pub event_time: u64,
+}
+
+#[derive(Debug, PartialEq, Eq, Deserialize, Serialize, Clone)]
 pub enum ParsedBinanceMessage {
-    Login(Login),
-    Balance(Balance),
-    Raw(
-        #[serde(
-            serialize_with = "serialize_smol_str",
-            deserialize_with = "deserialize_smol_str"
-        )]
-        SmolStr,
-    ),
+    OutboundAccountPosition(OutboundAccountPosition),
+    BalanceUpdate(Balance),
+    ExecutionReport(ExecutionReport),
+    ListenKeyExpired(ListenKeyExpired),
+    EventStreamTerminated(EventStreamTerminated),
+    #[serde(
+        serialize_with = "serialize_smol_str",
+        deserialize_with = "deserialize_smol_str"
+    )]
+    Raw(SmolStr),
 }
 
 impl ToSmolStr for ParsedBinanceMessage {
     fn to_smolstr(&self) -> SmolStr {
         match self {
-            ParsedBinanceMessage::Login(_) => SmolStr::new("LoginResponse"),
-            ParsedBinanceMessage::Balance(_) => SmolStr::new("Balances"),
+            ParsedBinanceMessage::OutboundAccountPosition(_) => {
+                SmolStr::new("outboundAccountPosition")
+            }
+            ParsedBinanceMessage::BalanceUpdate(_) => SmolStr::new("balanceUpdate"),
+            ParsedBinanceMessage::ExecutionReport(_) => SmolStr::new("executionReport"),
+            ParsedBinanceMessage::ListenKeyExpired(_) => SmolStr::new("listenKeyExpired"),
+            ParsedBinanceMessage::EventStreamTerminated(_) => SmolStr::new("eventStreamTerminated"),
             ParsedBinanceMessage::Raw(smol_str) => smol_str.clone(),
         }
     }
 }
 
 #[derive(Debug, PartialEq, Eq, Deserialize, Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
 pub struct BinanceSymbol {
     #[serde(
         serialize_with = "serialize_smol_str",

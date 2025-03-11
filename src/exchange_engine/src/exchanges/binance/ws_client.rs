@@ -1,21 +1,41 @@
 use super::{
     config::BinanceConfig,
-    utils::BinanceTimestampService,
     websocket::{
         client::{BinanceChannel, BinanceWSClient},
-        types::common::ParsedBinanceMessage,
+        types::common::{BinanceWsEventType, ParsedBinanceMessage},
     },
 };
 use async_trait::async_trait;
 use core_logic::{
     channels::{ChannelHandler, ChannelManager},
-    data::base_data::DataType,
     error::EngineError,
     traits::PrivateDataClient,
     Exchange,
 };
 use std::fmt::Debug;
-use tracing::{error, info, trace};
+use tracing::{debug, error, info, warn};
+
+// To be removed when client if fixed
+use anyhow::{Context, Result};
+use reqwest::Client;
+async fn create_listen_key(api_key: &str) -> Result<String> {
+    let client = Client::new();
+    let url = "https://api.binance.com/api/v3/userDataStream";
+    let res = client
+        .post(url)
+        .header("X-MBX-APIKEY", api_key)
+        .send()
+        .await?
+        .json::<serde_json::Value>()
+        .await?;
+
+    let listen_key = res["listenKey"]
+        .as_str()
+        .context("Missing listenKey in response")?
+        .to_string();
+
+    Ok(listen_key)
+}
 
 #[derive(Debug, Clone)]
 pub struct BinanceClient {
@@ -32,7 +52,7 @@ impl BinanceClient {
         }
     }
 
-    async fn start_stream(&mut self, data_type: DataType) -> Result<(), EngineError> {
+    async fn start_stream(&mut self, data_type: BinanceWsEventType) -> Result<(), EngineError> {
         let (tx, mut rx) = self.channel_manager.create_channel();
 
         let channel = BinanceChannel {
@@ -42,32 +62,30 @@ impl BinanceClient {
             limit: self.config.limit.unwrap_or_default(),
         };
 
-        let timestamp_service = BinanceTimestampService::new();
-        let server_time = timestamp_service.get_server_timestamp().await?;
+        let listen_key = create_listen_key(&self.config.api_key).await.unwrap();
 
-        let client = BinanceWSClient::new(channel);
-        client
-            .run(
-                tx,
-                self.config.api_key.clone(),
-                self.config.secret_key.clone(),
-                server_time,
-            )
-            .await?;
+        let client = BinanceWSClient::new(listen_key.into(), channel);
+        client.run(tx).await?;
         info!("✅ WebSocket stream started for {:?}", data_type);
 
         while let Ok(message) = self.channel_manager.receive(&mut rx).await {
-            trace!("📩 Received message: {:?}", message);
+            debug!("📩 Received message: {:?}", message);
 
             match message {
-                ParsedBinanceMessage::Login(login) => {
-                    info!("Login response: {:?}", login);
+                ParsedBinanceMessage::OutboundAccountPosition(position) => {
+                    info!("Account position update: {:?}", position);
                 }
-                ParsedBinanceMessage::Balance(balance) => {
+                ParsedBinanceMessage::BalanceUpdate(balance) => {
                     info!("Balance update: {:?}", balance);
+                }
+                ParsedBinanceMessage::ExecutionReport(exec_report) => {
+                    info!("Execution report update: {:?}", exec_report);
                 }
                 ParsedBinanceMessage::Raw(raw) => {
                     info!("Received raw message: {:?}", raw);
+                }
+                _ => {
+                    warn!("❌ Unhandled message type: {:?}", message);
                 }
             }
         }
@@ -87,6 +105,6 @@ impl PrivateDataClient for BinanceClient {
     }
 
     async fn balances(&mut self) -> Result<(), EngineError> {
-        self.start_stream(DataType::Account).await
+        self.start_stream(BinanceWsEventType::BalanceUpdate).await
     }
 }

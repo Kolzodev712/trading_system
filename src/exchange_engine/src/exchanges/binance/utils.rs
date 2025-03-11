@@ -1,4 +1,5 @@
 use core_logic::error::EngineError;
+use reqwest::Client;
 use serde::Deserialize;
 
 /// Deserializes a JSON string into an optional type.
@@ -26,37 +27,79 @@ where
     }
 }
 
-use reqwest::Client;
+// #[derive(Deserialize)]
+// struct BinanceTimestampResponse {
+//     server_time: u64,
+// }
+
+// pub struct BinanceTimestampService {
+//     client: Client,
+// }
+
+// impl BinanceTimestampService {
+//     pub fn new() -> Self {
+//         BinanceTimestampService {
+//             client: Client::new(),
+//         }
+//     }
+
+//     /// Temporary workaround for the binance timestamp:
+//     pub async fn get_server_timestamp(&self) -> Result<u64, EngineError> {
+//         let response = self
+//             .client
+//             .get("https://api.binance.com/api/v3/time")
+//             .send()
+//             .await
+//             .map_err(|e| EngineError::CustomError(e.into()))?;
+
+//         let timestamp_response: BinanceTimestampResponse = response
+//             .json()
+//             .await
+//             .map_err(|e| EngineError::CustomError(e.into()))?;
+
+//         Ok(timestamp_response.server_time)
+//     }
+// }
+
 #[derive(Deserialize)]
-struct BinanceTimestampResponse {
-    server_time: u64,
+struct BinanceListenKeyResponse {
+    listen_key: String,
 }
 
-pub struct BinanceTimestampService {
+pub struct BinanceListenKeyService {
     client: Client,
 }
 
-impl BinanceTimestampService {
+impl BinanceListenKeyService {
     pub fn new() -> Self {
-        BinanceTimestampService {
+        BinanceListenKeyService {
             client: Client::new(),
         }
     }
 
-    /// Temporary workaround for the binance timestamp:
-    pub async fn get_server_timestamp(&self) -> Result<u64, EngineError> {
+    /// Create a new listenKey from the Binance REST API.
+    pub async fn create_listen_key(&self, api_key: &str) -> Result<String, EngineError> {
+        let url = "https://api.binance.com/api/v3/userDataStream";
+
         let response = self
             .client
-            .get("https://api.binance.com/api/v3/time")
+            .post(url)
+            .header("X-MBX-APIKEY", api_key)
             .send()
             .await
             .map_err(|e| EngineError::CustomError(e.into()))?;
 
-        let timestamp_response: BinanceTimestampResponse = response
+        if !response.status().is_success() {
+            return Err(EngineError::new_custom_error(
+                "Failed to create listenKey".into(),
+            ));
+        }
+
+        let listen_key_response: BinanceListenKeyResponse = response
             .json()
             .await
             .map_err(|e| EngineError::CustomError(e.into()))?;
 
-        Ok(timestamp_response.server_time)
+        Ok(listen_key_response.listen_key)
     }
 }

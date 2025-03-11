@@ -105,10 +105,7 @@ where
 /// Each Bot is expected to implement the `PrivateDataClient` trait to provide
 /// an abstraction over the exchange APIs.
 #[async_trait::async_trait]
-pub trait PrivateDataClient<InstrumentId = Pair>: Debug + Send + Sync + Clone + 'static
-where
-    InstrumentId: Clone + Debug + Send + 'static,
-{
+pub trait PrivateDataClient: Debug + Send + Sync + Clone + 'static {
     /// Universal identifier of the exchange this client serves
     fn exchange_id(&self) -> Exchange;
 

@@ -1,6 +1,9 @@
-use super::{balance::OutboundAccountPosition, orders::ExecutionReport};
+use super::{
+    balance::{BalanceUpdate, OutboundAccountPosition},
+    orders::ExecutionReport,
+};
 use core_logic::{
-    data::{base_data::Pair, private_data::Balance},
+    data::base_data::Pair,
     utils::{
         deserialize_smol_str, deserialize_vec_smol_str, serialize_smol_str, serialize_vec_smol_str,
     },
@@ -54,7 +57,7 @@ pub struct EventStreamTerminated {
 #[derive(Debug, PartialEq, Eq, Deserialize, Serialize, Clone)]
 pub enum ParsedBinanceMessage {
     OutboundAccountPosition(OutboundAccountPosition),
-    BalanceUpdate(Balance),
+    BalanceUpdate(BalanceUpdate),
     ExecutionReport(ExecutionReport),
     ListenKeyExpired(ListenKeyExpired),
     EventStreamTerminated(EventStreamTerminated),

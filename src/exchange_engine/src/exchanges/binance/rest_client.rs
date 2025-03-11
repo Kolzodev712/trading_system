@@ -7,12 +7,13 @@ use super::{
             balance::{BinanceAccountInfo, BinanceBalanceRequest},
             cancel_all::{BinanceCancelAllOrdersRequest, BinanceCancelAllOrdersResponse},
             cancel_order::{BinanceCancelOrderByIdRequest, BinanceCancelOrderByIdResponse},
-            common::BinanceServerTime,
+            common::{BinanceListenKey, BinanceServerTime},
             open_order::{BinanceOrderRequest, BinanceOrderResponse},
             orderbook::{BinanceOrderbookSnapshotRequest, BinanceOrderbookSnapshotResponse},
         },
     },
 };
+use anyhow::anyhow;
 use async_trait::async_trait;
 use core_logic::{
     data::{
@@ -25,6 +26,7 @@ use core_logic::{
     traits::TradingClient,
     Exchange,
 };
+use std::collections::HashMap;
 use tracing::{error, info};
 
 const TIME: &str = "time";
@@ -32,8 +34,9 @@ const ORDERBOOK: &str = "depth";
 const ORDER: &str = "order/test";
 const CANCEL_ALL: &str = "openOrders";
 const BALANCE: &str = "account";
+const LISTEN_KEY: &str = "userDataStream";
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct BinanceClient {
     http_client: BinanceHttpClient,
     config: BinanceConfig,
@@ -50,7 +53,7 @@ impl BinanceClient {
     pub async fn get_time(&self) -> Result<BinanceServerTime, EngineError> {
         let response: Option<Option<BinanceServerTime>> = self
             .http_client
-            .call::<(), Option<BinanceServerTime>>(TIME, HttpMethod::GET, None, None, false)
+            .call::<(), Option<BinanceServerTime>>(TIME, HttpMethod::GET, None, None, None, false)
             .await?;
 
         response.flatten().ok_or_else(|| {
@@ -59,6 +62,31 @@ impl BinanceClient {
             ))
         })
     }
+
+    pub async fn create_listen_key(&self, api_key: &str) -> Result<String, EngineError> {
+        let mut custom_headers = HashMap::new();
+        custom_headers.insert("X-MBX-APIKEY".to_string(), api_key.into());
+
+        let response = self
+            .http_client
+            .call::<(), BinanceListenKey>(
+                LISTEN_KEY,
+                HttpMethod::POST,
+                None,
+                None,
+                Some(custom_headers),
+                false,
+            )
+            .await?;
+
+        match response {
+            Some(resp) => Ok(resp.listen_key),
+            None => Err(EngineError::AuthenticationError(anyhow!(
+                "ListenKey generation error"
+            ))),
+        }
+    }
+
     pub async fn get_orderbook(&self) -> Result<BinanceOrderbookSnapshotResponse, EngineError> {
         let params = BinanceOrderbookSnapshotRequest {
             symbol: self.config.symbol.convert_to_smolstr(),
@@ -71,6 +99,7 @@ impl BinanceClient {
                 ORDERBOOK,
                 HttpMethod::GET,
                 Some(params),
+                None,
                 None,
                 false,
             )
@@ -96,6 +125,7 @@ impl BinanceClient {
                 HttpMethod::POST,
                 params,
                 None,
+                None,
                 true,
             )
             .await?;
@@ -116,6 +146,7 @@ impl BinanceClient {
                 ORDER,
                 HttpMethod::POST,
                 params,
+                None,
                 None,
                 true,
             )
@@ -148,6 +179,7 @@ impl BinanceClient {
                 HttpMethod::DELETE,
                 Some(params),
                 None,
+                None,
                 true,
             )
             .await?;
@@ -178,6 +210,7 @@ impl BinanceClient {
                 HttpMethod::DELETE,
                 Some(params),
                 None,
+                None,
                 true,
             )
             .await?;
@@ -203,6 +236,7 @@ impl BinanceClient {
                 BALANCE,
                 HttpMethod::GET,
                 Some(params),
+                None,
                 None,
                 true,
             )

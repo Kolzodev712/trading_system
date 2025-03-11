@@ -3,7 +3,7 @@
         "base": "BTC",
         "quote": "USDT"
     },
-    "apiKey": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
-    "secretKey": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "apiKey": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "secretKey": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
     "limit": 100
 }

@@ -7,16 +7,18 @@ use smol_str::SmolStr;
 /// See: <https://developers.binance.com/docs/binance-spot-api-docs/user-data-stream>
 
 #[derive(Debug, Clone, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct OutboundAccountPosition {
     #[serde(rename = "u")]
     pub last_update: u64,
     #[serde(rename = "B")]
-    pub updated_balances: Vec<BalanceUpdate>,
+    pub updated_balances: Vec<Balances>,
 }
 
 /// See: <https://developers.binance.com/docs/binance-spot-api-docs/user-data-stream>
 #[derive(Debug, Clone, Eq, PartialEq, Deserialize, Serialize)]
-pub struct BalanceUpdate {
+#[serde(rename_all = "camelCase")]
+pub struct Balances {
     #[serde(rename = "a")]
     #[serde(
         serialize_with = "serialize_smol_str",
@@ -29,8 +31,23 @@ pub struct BalanceUpdate {
     pub locked: Decimal,
 }
 
-impl From<BalanceUpdate> for Balance {
-    fn from(balance_update: BalanceUpdate) -> Self {
+#[derive(Debug, Clone, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BalanceUpdate {
+    #[serde(rename = "a")]
+    #[serde(
+        serialize_with = "serialize_smol_str",
+        deserialize_with = "deserialize_smol_str"
+    )]
+    pub asset: SmolStr,
+    #[serde(rename = "d")]
+    pub delta: Decimal,
+    #[serde(rename = "T", default)]
+    pub clear_time: Option<u64>,
+}
+
+impl From<Balances> for Balance {
+    fn from(balance_update: Balances) -> Self {
         Balance {
             symbol: balance_update.asset.into(),
             free: balance_update.free,
@@ -89,18 +106,37 @@ mod tests {
         assert_eq!(outbound_position.updated_balances[1].asset, "USDT");
     }
 
+    #[test]
+    fn test_deserialization_balance_update() {
+        let json = r#"
+        {
+            "e": "balanceUpdate",
+            "E": 1573200697110,
+            "a": "BTC",
+            "d": "100.000000",
+            "T": 1573200697068
+        }
+        "#;
+
+        let balance_update: BalanceUpdate = serde_json::from_str(json).unwrap();
+
+        assert_eq!(balance_update.asset, "BTC");
+        assert_eq!(balance_update.delta, Decimal::new(10_000_000_000, 8));
+        assert_eq!(balance_update.clear_time, Some(1573200697068));
+    }
+
     // Test case for the conversion of OutboundAccountPosition to Vec<Balance>
     #[test]
     fn test_outbound_account_position_to_balance_vec_conversion() {
         let outbound_position = OutboundAccountPosition {
             last_update: 1628000000000,
             updated_balances: vec![
-                BalanceUpdate {
+                Balances {
                     asset: "BTC".into(),
                     free: Decimal::new(10, 2),
                     locked: Decimal::new(0, 0),
                 },
-                BalanceUpdate {
+                Balances {
                     asset: "USDT".into(),
                     free: Decimal::new(1000, 0),
                     locked: Decimal::new(0, 0),
@@ -144,12 +180,12 @@ mod tests {
         let outbound_position = OutboundAccountPosition {
             last_update: 1628000000000,
             updated_balances: vec![
-                BalanceUpdate {
+                Balances {
                     asset: "ETH".into(),
                     free: Decimal::new(5, 2),
                     locked: Decimal::new(1, 2),
                 },
-                BalanceUpdate {
+                Balances {
                     asset: "BNB".into(),
                     free: Decimal::new(0, 2),
                     locked: Decimal::new(0, 2),

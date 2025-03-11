@@ -1,6 +1,6 @@
 use super::config::{ExchangeConfig, ExchangeEngineConfig};
 use crate::exchanges::binance::{
-    rest::client::BinanceHttpClient, rest_client::BinanceClient,
+    rest::client::BinanceHttpClient, rest_client::BinanceClient as BinanceRestClient,
     ws_client::BinanceClient as BinanceWSClient,
 };
 use core_logic::{
@@ -29,49 +29,45 @@ pub struct ExchangeEngineDriver {
 
 impl ExchangeEngineDriver {
     pub fn new(config: ExchangeEngineConfig) -> Result<Self, EngineError> {
-        let rest_trading_client = Self::create_trading_client(&config)?;
-        let private_data_client = Self::create_private_data_client(&config)?;
+        let (rest_trading_client, private_data_client) = Self::create_clients(&config)?;
         Ok(Self {
             rest_trading_client,
             private_data_client,
         })
     }
 
-    pub fn create_trading_client(
+    pub fn create_clients(
         config: &ExchangeEngineConfig,
-    ) -> Result<Box<dyn TradingClient<OrderRequest>>, EngineError> {
+    ) -> Result<(Box<dyn TradingClient<OrderRequest>>, BinanceWSClient), EngineError> {
         match &config.exchange_config {
             ExchangeConfig::Binance(binance_config) => {
-                let http_client = BinanceHttpClient::new(binance_config.clone());
-                Ok(Box::new(BinanceClient::new(
-                    http_client,
+                let rest_client = BinanceRestClient::new(
+                    BinanceHttpClient::new(binance_config.clone()),
                     binance_config.clone(),
-                )))
-            } // _ => Err(EngineError::UnsupportedExchange)
-        }
-    }
+                );
 
-    pub fn create_private_data_client(
-        config: &ExchangeEngineConfig,
-    ) -> Result<BinanceWSClient, EngineError> {
-        match &config.exchange_config {
-            ExchangeConfig::Binance(binance_config) => {
-                let client = BinanceWSClient::new(binance_config.clone(), 100);
-                Ok(client)
-            }
+                let ws_client =
+                    BinanceWSClient::new(binance_config.clone(), 100, rest_client.clone());
+
+                Ok((Box::new(rest_client), ws_client))
+            } // _ => Err(EngineError::CustomError(anyhow::anyhow!("Unsupported exchange"))),
         }
     }
 
     pub async fn run(&self, method: Method) -> Result<(), EngineError> {
-        let mut client = self.private_data_client.clone();
-
-        tokio::select! {
-            res = client.balances() => {
-                if let Err(e) = res {
+        let mut ws_client = self.private_data_client.clone();
+        let ws_task = tokio::spawn(async move {
+            match ws_client.balances().await {
+                Ok(_) => {
+                    debug!("WebSocket loop successfully running");
+                }
+                Err(e) => {
                     error!("WebSocket client failed: {}", e);
                 }
             }
+        });
 
+        let _res = tokio::select! {
             res = async {
                 match method {
                     Method::TestOpenOrder(order_request) => {
@@ -99,7 +95,9 @@ impl ExchangeEngineDriver {
             } => {
                 res?;
             }
-        }
+        };
+
+        ws_task.await?;
 
         Ok(())
     }

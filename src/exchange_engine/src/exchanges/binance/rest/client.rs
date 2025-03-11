@@ -17,7 +17,7 @@ use tracing::debug;
 
 const BINANCE_SPOT_URL: &str = "https://api.binance.com/api/v3/";
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct BinanceHttpClient {
     pub base_url: SmolStr,
     pub handler: BinanceHandler,
@@ -44,6 +44,7 @@ impl BinanceHttpClient {
         method: HttpMethod,
         params: Option<Req>,
         _body: Option<Req>,
+        custom_headers: Option<HashMap<String, String>>,
         signed: bool,
     ) -> Result<Option<Res>, EngineError>
     where
@@ -58,6 +59,12 @@ impl BinanceHttpClient {
                 request_builder = headers.iter().fold(request_builder, |builder, (k, v)| {
                     builder.header(k.as_str(), v.as_str())
                 });
+            }
+        }
+
+        if let Some(headers) = custom_headers {
+            for (key, value) in headers {
+                request_builder = request_builder.header(key, value);
             }
         }
 

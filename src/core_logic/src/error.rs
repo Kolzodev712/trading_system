@@ -8,6 +8,7 @@ use reqwest::{
 use smol_str::SmolStr;
 use thiserror::Error;
 use tokio::sync::mpsc::error::TryRecvError;
+use tokio::task::JoinError;
 use tokio_tungstenite::tungstenite;
 use url::ParseError;
 
@@ -24,6 +25,9 @@ pub enum EngineError {
 
     #[error("Connection Closed")]
     ConnectionClosed,
+
+    #[error("Task join error: {0}")]
+    JoinError(#[from] JoinError),
 
     #[error("Missing Message Handler")]
     NoMessageHandler,

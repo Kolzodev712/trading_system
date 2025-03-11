@@ -5,7 +5,6 @@ use super::types::{
 };
 use async_trait::async_trait;
 use core_logic::{
-    data::private_data::Balance,
     error::EngineError,
     utils::generate_custom_uuid,
     ws_client::{MessageHandler, SubscriptionHandler, WebSocketClient},
@@ -20,9 +19,9 @@ use tokio_tungstenite::{
     tungstenite::protocol::{CloseFrame, Message},
     MaybeTlsStream, WebSocketStream,
 };
-use tracing::{debug, error};
+use tracing::{debug, error, trace};
 
-pub const BINANCE_WS_URL: &str = "wss://stream.binance.com:9443/ws";
+pub const BINANCE_WS_URL: &str = "wss://stream.binance.com:443/ws";
 
 #[derive(Debug, Clone)]
 pub struct BinanceChannel {
@@ -45,6 +44,10 @@ impl BinanceSubscriptionHandler {
 
 impl SubscriptionHandler for BinanceSubscriptionHandler {
     fn create_authenticated_request(&self, _params: BTreeMap<SmolStr, SmolStr>) -> Option<Message> {
+        None
+    }
+
+    fn create_subscription_request(&self) -> Option<Message> {
         let method = match self.channel_info.channel {
             BinanceWsEventType::OutboundAccountPosition => "outboundAccountPosition",
             BinanceWsEventType::BalanceUpdate => "balanceUpdate",
@@ -58,11 +61,8 @@ impl SubscriptionHandler for BinanceSubscriptionHandler {
             id: generate_custom_uuid().into(),
         };
 
-        let json_msg = serde_json::to_string(&subscription_msg).unwrap();
+        let json_msg = serde_json::to_string(&subscription_msg).ok()?;
         Some(Message::Text(json_msg))
-    }
-    fn create_subscription_request(&self) -> Option<Message> {
-        None
     }
 }
 
@@ -74,8 +74,6 @@ impl DataHandler {
         &self,
         v: Value,
     ) -> Result<ParsedBinanceMessage, EngineError> {
-        debug!("Raw outbound account position response: {:?}", v);
-
         let outbound_account_position: OutboundAccountPosition = serde_json::from_value(v)
             .map_err(|e| {
                 error!("Error deserializing outbound account position: {}", e);
@@ -90,8 +88,7 @@ impl DataHandler {
     fn handle_balance_update(&self, v: Value) -> Result<ParsedBinanceMessage, EngineError> {
         let balance_update: BalanceUpdate =
             serde_json::from_value(v).map_err(EngineError::JsonError)?;
-        let general_balance: Balance = balance_update.into();
-        Ok(ParsedBinanceMessage::BalanceUpdate(general_balance.into()))
+        Ok(ParsedBinanceMessage::BalanceUpdate(balance_update))
     }
 
     fn handle_execution_report(&self, v: Value) -> Result<ParsedBinanceMessage, EngineError> {
@@ -110,7 +107,6 @@ impl DataHandler {
     }
 
     fn handle_event(&self, method: &str, v: Value) -> Result<ParsedBinanceMessage, EngineError> {
-        debug!("Raw event received: {:?}", v);
         let event_type = self.convert_method_to_event_type(method);
 
         match event_type {
@@ -135,28 +131,26 @@ impl DataHandler {
 
 impl MessageHandler<ParsedBinanceMessage> for DataHandler {
     fn handle_text_message(&self, text: SmolStr) -> Result<ParsedBinanceMessage, EngineError> {
-        debug!("Received text message: {}", text);
-
         let v: Value = serde_json::from_str(&text).map_err(EngineError::JsonError)?;
 
-        if let Some(method) = v.clone().get("method").and_then(|m| m.as_str()) {
-            return self.handle_event(method, v);
+        if let Some(event_type) = v.clone().get("e").and_then(|e| e.as_str()) {
+            return self.handle_event(event_type, v);
+        } else {
+            trace!("Unknown or unsupported message format: {}", text);
+            Ok(ParsedBinanceMessage::Raw(text))
         }
-
-        debug!("Unknown or unsupported message format: {}", text);
-        Ok(ParsedBinanceMessage::Raw(text))
     }
 
     fn handle_binary(&self, binary: Vec<u8>) {
-        println!("Received binary message: {:?}", binary)
+        debug!("Received binary message: {:?}", binary)
     }
 
     fn handle_ping(&self, ping: Vec<u8>) {
-        println!("Ping received: {:?}", ping);
+        debug!("Ping received: {:?}", ping);
     }
 
     fn handle_pong(&self, pong: Vec<u8>) {
-        println!("Seding Pong: {:?}", pong);
+        debug!("Seding Pong: {:?}", pong);
     }
 
     fn handle_close(&self, _close: Option<CloseFrame>) {
@@ -189,16 +183,12 @@ impl BinanceWSClient {
     pub async fn run(&self, tx: mpsc::Sender<ParsedBinanceMessage>) -> Result<(), EngineError> {
         let mut ws_stream = self.create_ws_stream().await?;
 
-        let params = BTreeMap::<SmolStr, SmolStr>::new(); // Add parameters like channel to subscribe to
-        if let Some(subscription_message) = self
-            .subscription_handler
-            .create_authenticated_request(params)
+        if let Some(subscription_message) = self.subscription_handler.create_subscription_request()
         {
             ws_stream.send(subscription_message).await?;
         } else {
-            error!("Failed to create subscription message");
             return Err(EngineError::new_custom_error(
-                "failed to do some crap".into(),
+                "Failed to create subscription message".into(),
             ));
         }
 
@@ -231,7 +221,6 @@ impl WebSocketClient<ParsedBinanceMessage> for BinanceWSClient {
             while let Some(message) = ws_stream.next().await {
                 match message {
                     Ok(Message::Text(text)) => {
-                        debug!("Received WebSocket message: {}", text);
                         match handler.handle_text_message(text.clone().into()) {
                             Ok(parsed_message) => {
                                 if let Err(e) = tx.send(parsed_message).await {
@@ -273,9 +262,7 @@ impl WebSocketClient<ParsedBinanceMessage> for BinanceWSClient {
     where
         S: SubscriptionHandler + Send + Sync + 'static,
     {
-        if let Some(subscription_message) =
-            subscription_handler.create_authenticated_request(BTreeMap::new())
-        {
+        if let Some(subscription_message) = subscription_handler.create_subscription_request() {
             debug!("Sending subscription message: {:?}", subscription_message);
             ws_stream.send(subscription_message).await?
         } else {
@@ -285,88 +272,3 @@ impl WebSocketClient<ParsedBinanceMessage> for BinanceWSClient {
         Ok(())
     }
 }
-
-// use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
-// use tokio::{sync::mpsc};
-// use tokio_tungstenite::WebSocketStream;
-// use futures_util::stream::StreamExt;
-// use futures_util::SinkExt;
-// use smol_str::SmolStr;
-// use tracing::{debug, error};
-
-// // Binance WebSocket URL
-// pub const BINANCE_WS_URL: &str = "wss://stream.binance.com:9443/ws";
-
-// pub struct BinanceWSClient {
-//     url: SmolStr,
-//     listen_key: SmolStr,
-// }
-
-// impl BinanceWSClient {
-//     pub fn new(listen_key: SmolStr) -> Self {
-//         Self {
-//             url: BINANCE_WS_URL.into(),
-//             listen_key,
-//         }
-//     }
-
-//     // Create WebSocket stream and start listening
-//     pub async fn create_ws_stream(&self) -> Result<WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>, String>{
-//         let ws_url = format!("{}/{}", self.url, self.listen_key);
-//         self.make_ws_request(&ws_url).await
-//     }
-
-//     // Run WebSocket client: connect, listen and process messages
-//     pub async fn run(&self, tx: mpsc::Sender<String>) -> Result<(), String> {
-//         let ws_stream = self.create_ws_stream().await?;
-
-//         // Handle incoming messages
-//         self.handle_messages(ws_stream, tx).await?;
-
-//         Ok(())
-//     }
-
-//     // Handle incoming WebSocket messages
-//     async fn handle_messages(
-//         &self,
-//         mut ws_stream: WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
-//         tx: mpsc::Sender<String>,
-//     ) -> Result<(), String> {
-//         // Listen for messages from the WebSocket stream
-//         tokio::spawn(async move {
-//             while let Some(message) = ws_stream.next().await {
-//                 match message {
-//                     Ok(Message::Text(text)) => {
-//                         debug!("Received WebSocket message: {}", text);
-//                         // Send received message as raw text
-//                         if let Err(e) = tx.send(text).await {
-//                             error!("Error sending message to channel: {}", e);
-//                         }
-//                     }
-//                     Ok(Message::Ping(ping)) => {
-//                         // Respond with pong if a ping is received
-//                         debug!("Received ping: {:?}", ping);
-//                         if let Err(e) = ws_stream.send(Message::Pong(ping)).await {
-//                             error!("Error sending pong: {}", e);
-//                         }
-//                     }
-//                     Ok(Message::Pong(_pong)) => {
-//                         debug!("Received pong");
-//                     }
-//                     Err(e) => {
-//                         error!("Error during WebSocket communication: {}", e);
-//                     }
-//                     _ => {}
-//                 }
-//             }
-//         });
-
-//         Ok(())
-//     }
-
-//     // Make the WebSocket request
-//     async fn make_ws_request(&self, ws_url: &str) -> Result<WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>, String> {
-//         let (ws_stream, _) = connect_async(ws_url).await.map_err(|e| e.to_string())?;
-//         Ok(ws_stream)
-//     }
-// }

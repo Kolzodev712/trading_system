@@ -1,3 +1,1 @@
-- Add authenticated Websocket support as a general abstraction
-- Add Websocket support for binance orders, balances and trades streams
-- Create data parsing module in trading_engine (pull data from redis => compute => create indicators and produce them so that exchange_engine can make desisions based on that logic)
+- REFACTOR binance authenticated WS client!!!

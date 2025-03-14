@@ -87,6 +87,54 @@ impl BinanceClient {
         }
     }
 
+    pub async fn refresh_listen_key(&self, listen_key: &str) -> Result<(), EngineError> {
+        let params = BinanceListenKey {
+            listen_key: listen_key.into(),
+        };
+
+        match self
+            .http_client
+            .call::<BinanceListenKey, ()>(
+                LISTEN_KEY,
+                HttpMethod::PUT,
+                Some(params),
+                None,
+                None,
+                false,
+            )
+            .await?
+        {
+            Some(_) => Ok(()),
+            None => Err(EngineError::CustomError(anyhow::anyhow!(
+                "Failed to refresh listen key"
+            ))),
+        }
+    }
+
+    pub async fn delete_listen_key(&self, listen_key: &str) -> Result<(), EngineError> {
+        let params = BinanceListenKey {
+            listen_key: listen_key.into(),
+        };
+
+        match self
+            .http_client
+            .call::<BinanceListenKey, ()>(
+                LISTEN_KEY,
+                HttpMethod::DELETE,
+                Some(params),
+                None,
+                None,
+                false,
+            )
+            .await?
+        {
+            Some(_) => Ok(()),
+            None => Err(EngineError::CustomError(anyhow::anyhow!(
+                "Failed to delete listen key"
+            ))),
+        }
+    }
+
     pub async fn get_orderbook(&self) -> Result<BinanceOrderbookSnapshotResponse, EngineError> {
         let params = BinanceOrderbookSnapshotRequest {
             symbol: self.config.symbol.convert_to_smolstr(),

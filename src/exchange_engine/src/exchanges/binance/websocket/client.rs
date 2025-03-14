@@ -1,6 +1,9 @@
 use super::types::{
     balance::{BalanceUpdate, OutboundAccountPosition},
-    common::{BinanceWSMessage, BinanceWsEventType, ParsedBinanceMessage},
+    common::{
+        BinanceWSMessage, BinanceWsEventType, EventStreamTerminated, ExternalLockUpdate,
+        ListStatus, ListenKeyExpired, ParsedBinanceMessage,
+    },
     orders::ExecutionReport,
 };
 use async_trait::async_trait;
@@ -52,6 +55,10 @@ impl SubscriptionHandler for BinanceSubscriptionHandler {
             BinanceWsEventType::OutboundAccountPosition => "outboundAccountPosition",
             BinanceWsEventType::BalanceUpdate => "balanceUpdate",
             BinanceWsEventType::ExecutionReport => "executionReport",
+            BinanceWsEventType::ListStatus => "listStatus",
+            BinanceWsEventType::ListenKeyExpired => "listenKeyExpired",
+            BinanceWsEventType::EventStreamTerminated => "eventStreamTerminated",
+            BinanceWsEventType::ExternalLockUpdate => "externalLockUpdate",
             _ => return None,
         };
 
@@ -97,11 +104,55 @@ impl DataHandler {
         Ok(ParsedBinanceMessage::ExecutionReport(execution_report))
     }
 
+    fn handle_list_status(&self, v: Value) -> Result<ParsedBinanceMessage, EngineError> {
+        let list_status: ListStatus = serde_json::from_value(v).map_err(|e| {
+            error!("Error deserializing list status: {}", e);
+            EngineError::JsonError(e)
+        })?;
+        Ok(ParsedBinanceMessage::ListStatus(list_status))
+    }
+
+    fn handle_listen_key_expired(&self, v: Value) -> Result<ParsedBinanceMessage, EngineError> {
+        let listen_key_expired: ListenKeyExpired = serde_json::from_value(v).map_err(|e| {
+            error!("Error deserializing listen key expired: {}", e);
+            EngineError::JsonError(e)
+        })?;
+        Ok(ParsedBinanceMessage::ListenKeyExpired(listen_key_expired))
+    }
+
+    fn handle_event_stream_terminated(
+        &self,
+        v: Value,
+    ) -> Result<ParsedBinanceMessage, EngineError> {
+        let event_stream_terminated: EventStreamTerminated =
+            serde_json::from_value(v).map_err(|e| {
+                error!("Error deserializing event stream terminated: {}", e);
+                EngineError::JsonError(e)
+            })?;
+        Ok(ParsedBinanceMessage::EventStreamTerminated(
+            event_stream_terminated,
+        ))
+    }
+
+    fn handle_external_lock_update(&self, v: Value) -> Result<ParsedBinanceMessage, EngineError> {
+        let external_lock_update: ExternalLockUpdate = serde_json::from_value(v).map_err(|e| {
+            error!("Error deserializing external lock update: {}", e);
+            EngineError::JsonError(e)
+        })?;
+        Ok(ParsedBinanceMessage::ExternalLockUpdate(
+            external_lock_update,
+        ))
+    }
+
     fn convert_method_to_event_type(&self, method: &str) -> BinanceWsEventType {
         match method {
             "outboundAccountPosition" => BinanceWsEventType::OutboundAccountPosition,
             "balanceUpdate" => BinanceWsEventType::BalanceUpdate,
             "executionReport" => BinanceWsEventType::ExecutionReport,
+            "listStatus" => BinanceWsEventType::ListStatus,
+            "listenKeyExpired" => BinanceWsEventType::ListenKeyExpired,
+            "eventStreamTerminated" => BinanceWsEventType::EventStreamTerminated,
+            "externalLockUpdate" => BinanceWsEventType::ExternalLockUpdate,
             _ => BinanceWsEventType::Unknown,
         }
     }
@@ -113,16 +164,14 @@ impl DataHandler {
             BinanceWsEventType::OutboundAccountPosition => self.handle_outbound_account_position(v),
             BinanceWsEventType::BalanceUpdate => self.handle_balance_update(v),
             BinanceWsEventType::ExecutionReport => self.handle_execution_report(v),
+            BinanceWsEventType::ListStatus => self.handle_list_status(v),
+            BinanceWsEventType::ListenKeyExpired => self.handle_listen_key_expired(v),
+            BinanceWsEventType::EventStreamTerminated => self.handle_event_stream_terminated(v),
+            BinanceWsEventType::ExternalLockUpdate => self.handle_external_lock_update(v),
             BinanceWsEventType::Unknown => {
                 debug!("Unknown event type: {:?}", v);
                 Err(EngineError::new_custom_error(
                     "Could not find relevant Binance WS message type".into(),
-                ))
-            }
-            _ => {
-                debug!("Unsupported event type: {:?}", v);
-                Err(EngineError::new_custom_error(
-                    "Unsupported Binance WS message type".into(),
                 ))
             }
         }
@@ -251,6 +300,7 @@ impl WebSocketClient<ParsedBinanceMessage> for BinanceWSClient {
                 }
             }
         });
+
         Ok(())
     }
 

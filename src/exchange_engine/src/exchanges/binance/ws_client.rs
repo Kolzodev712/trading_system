@@ -16,28 +16,6 @@ use core_logic::{
 use std::fmt::Debug;
 use tracing::{debug, error, info, trace, warn};
 
-// // To be removed when client if fixed
-// use anyhow::{Context, Result};
-// use reqwest::Client;
-// async fn create_listen_key(api_key: &str) -> Result<String> {
-//     let client = Client::new();
-//     let url = "https://api.binance.com/api/v3/userDataStream";
-//     let res = client
-//         .post(url)
-//         .header("X-MBX-APIKEY", api_key)
-//         .send()
-//         .await?
-//         .json::<serde_json::Value>()
-//         .await?;
-
-//     let listen_key = res["listenKey"]
-//         .as_str()
-//         .context("Missing listenKey in response")?
-//         .to_string();
-
-//     Ok(listen_key)
-// }
-
 #[derive(Debug, Clone)]
 pub struct BinanceClient {
     pub config: BinanceConfig,
@@ -113,5 +91,9 @@ impl PrivateDataClient for BinanceClient {
     async fn balances(&mut self) -> Result<(), EngineError> {
         self.start_stream(BinanceWsEventType::OutboundAccountPosition)
             .await
+    }
+
+    async fn orders(&mut self) -> Result<(), EngineError> {
+        self.start_stream(BinanceWsEventType::ExecutionReport).await
     }
 }

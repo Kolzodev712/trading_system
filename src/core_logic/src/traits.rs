@@ -110,4 +110,6 @@ pub trait PrivateDataClient: Debug + Send + Sync + Clone + 'static {
     fn exchange_id(&self) -> Exchange;
 
     async fn balances(&mut self) -> Result<(), EngineError>;
+
+    async fn orders(&mut self) -> Result<(), EngineError>;
 }

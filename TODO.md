@@ -1,1 +1,2 @@
-- REFACTOR binance authenticated WS client!!!
+- Add support for Order fetching via WS
+- Design the architecture of the exchange_engine and how it would work with rest. It should have a fallback to rest and an event loop logic needs to be introduced. 

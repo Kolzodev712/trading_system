@@ -63,15 +63,4 @@ pub trait WebSocketClient<T> {
     ) -> Result<(), EngineError>
     where
         S: SubscriptionHandler + Send + Sync + 'static;
-
-    /// Optionally authenticate the WebSocket connection (e.g., for Binance).
-    async fn authenticate_ws(
-        &self,
-        _ws_stream: &mut WebSocketStream<MaybeTlsStream<TcpStream>>,
-        _api_key: &SmolStr,
-        _secret_key: &SmolStr,
-        _timestamp: u64,
-    ) -> Result<(), EngineError> {
-        Ok(())
-    }
 }

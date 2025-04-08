@@ -7,13 +7,12 @@ use super::{
             balance::{BinanceAccountInfo, BinanceBalanceRequest},
             cancel_all::{BinanceCancelAllOrdersRequest, BinanceCancelAllOrdersResponse},
             cancel_order::{BinanceCancelOrderByIdRequest, BinanceCancelOrderByIdResponse},
-            common::{BinanceListenKey, BinanceServerTime},
+            common::BinanceServerTime,
             open_order::{BinanceOrderRequest, BinanceOrderResponse},
             orderbook::{BinanceOrderbookSnapshotRequest, BinanceOrderbookSnapshotResponse},
         },
     },
 };
-use anyhow::anyhow;
 use async_trait::async_trait;
 use core_logic::{
     data::{
@@ -26,7 +25,6 @@ use core_logic::{
     traits::TradingClient,
     Exchange,
 };
-use std::collections::HashMap;
 use tracing::{error, info};
 
 const TIME: &str = "time";
@@ -34,7 +32,6 @@ const ORDERBOOK: &str = "depth";
 const ORDER: &str = "order/test";
 const CANCEL_ALL: &str = "openOrders";
 const BALANCE: &str = "account";
-const LISTEN_KEY: &str = "userDataStream";
 
 #[derive(Debug, Clone)]
 pub struct BinanceClient {
@@ -61,78 +58,6 @@ impl BinanceClient {
                 "Expected BinanceServerTime, but received None"
             ))
         })
-    }
-
-    pub async fn create_listen_key(&self, api_key: &str) -> Result<String, EngineError> {
-        let mut custom_headers = HashMap::new();
-        custom_headers.insert("X-MBX-APIKEY".to_string(), api_key.into());
-
-        let response = self
-            .http_client
-            .call::<(), BinanceListenKey>(
-                LISTEN_KEY,
-                HttpMethod::POST,
-                None,
-                None,
-                Some(custom_headers),
-                false,
-            )
-            .await?;
-
-        match response {
-            Some(resp) => Ok(resp.listen_key),
-            None => Err(EngineError::AuthenticationError(anyhow!(
-                "ListenKey generation error"
-            ))),
-        }
-    }
-
-    pub async fn refresh_listen_key(&self, listen_key: &str) -> Result<(), EngineError> {
-        let params = BinanceListenKey {
-            listen_key: listen_key.into(),
-        };
-
-        match self
-            .http_client
-            .call::<BinanceListenKey, ()>(
-                LISTEN_KEY,
-                HttpMethod::PUT,
-                Some(params),
-                None,
-                None,
-                false,
-            )
-            .await?
-        {
-            Some(_) => Ok(()),
-            None => Err(EngineError::CustomError(anyhow::anyhow!(
-                "Failed to refresh listen key"
-            ))),
-        }
-    }
-
-    pub async fn delete_listen_key(&self, listen_key: &str) -> Result<(), EngineError> {
-        let params = BinanceListenKey {
-            listen_key: listen_key.into(),
-        };
-
-        match self
-            .http_client
-            .call::<BinanceListenKey, ()>(
-                LISTEN_KEY,
-                HttpMethod::DELETE,
-                Some(params),
-                None,
-                None,
-                false,
-            )
-            .await?
-        {
-            Some(_) => Ok(()),
-            None => Err(EngineError::CustomError(anyhow::anyhow!(
-                "Failed to delete listen key"
-            ))),
-        }
     }
 
     pub async fn get_orderbook(&self) -> Result<BinanceOrderbookSnapshotResponse, EngineError> {

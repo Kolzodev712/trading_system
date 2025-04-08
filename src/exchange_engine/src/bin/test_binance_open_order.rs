@@ -12,7 +12,6 @@ use exchange_engine::{
 };
 use rust_decimal::Decimal;
 use std::fs;
-use tokio;
 use tracing::error;
 
 fn load_binance_config(file_path: &str) -> Result<BinanceConfig, Box<dyn std::error::Error>> {

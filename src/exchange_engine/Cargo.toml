@@ -41,6 +41,7 @@ hex = { workspace = true }
 ring = { workspace = true }
 pem = { workspace = true }
 uuid = { workspace = true }
+ed25519-dalek = { workspace = true }
 
 # Storage
 redis = { workspace = true }

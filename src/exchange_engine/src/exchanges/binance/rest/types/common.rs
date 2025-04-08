@@ -190,17 +190,3 @@ impl From<Pair> for BinanceSymbol {
 pub struct BinanceServerTime {
     pub server_time: u64,
 }
-
-#[derive(Debug, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct BinanceListenKey {
-    pub listen_key: String,
-}
-
-impl Default for BinanceListenKey {
-    fn default() -> Self {
-        BinanceListenKey {
-            listen_key: String::new(), // Default to an empty string
-        }
-    }
-}

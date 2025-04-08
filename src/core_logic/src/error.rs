@@ -33,7 +33,7 @@ pub enum EngineError {
     NoMessageHandler,
 
     #[error("WebSocket connection error: {0}")]
-    WsConnectionError(#[from] tungstenite::Error),
+    WsConnectionError(#[from] Box<tungstenite::Error>),
 
     #[error("TCP stream error: {0}")]
     TcpStreamError(#[from] tokio::io::Error),
@@ -93,5 +93,11 @@ pub enum EngineError {
 impl EngineError {
     pub fn new_custom_error(msg: SmolStr) -> Self {
         EngineError::CustomError(anyhow::anyhow!(msg))
+    }
+}
+
+impl From<tungstenite::Error> for EngineError {
+    fn from(err: tungstenite::Error) -> Self {
+        EngineError::WsConnectionError(Box::new(err))
     }
 }

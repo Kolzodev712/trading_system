@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
-/// See: <https://developers.binance.com/docs/binance-spot-api-docs/user-data-stream>
+/// See: <https://developers.binance.com/docs/binance-spot-api-docs/web-socket-api/authentication-requests>
 pub struct ExecutionReport {
     #[serde(rename = "e")]
     pub event_type: String,
@@ -80,7 +80,7 @@ mod tests {
         assert_eq!(exec_report.event_type, "executionReport");
         assert_eq!(exec_report.symbol, "BTCUSDT");
         assert_eq!(exec_report.side, BinanceSide::Buy);
-        assert_eq!(exec_report.price, Decimal::new(45000, 2));
+        assert_eq!(exec_report.price, Decimal::new(4500000, 2));
         assert_eq!(exec_report.quantity, Decimal::new(1, 0));
         assert_eq!(exec_report.order_id, 4293153);
         assert_eq!(exec_report.transaction_time, 1628000000000);

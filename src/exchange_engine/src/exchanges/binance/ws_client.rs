@@ -1,8 +1,9 @@
+use crate::exchanges::binance::sign::BinanceWsAuthenticator;
+
 use super::{
     config::BinanceConfig,
-    rest_client::BinanceClient as RestClient,
     websocket::{
-        client::{BinanceChannel, BinanceWSClient},
+        client::BinanceWSClient,
         types::common::{BinanceWsEventType, ParsedBinanceMessage},
     },
 };
@@ -14,41 +15,32 @@ use core_logic::{
     Exchange,
 };
 use std::fmt::Debug;
-use tracing::{debug, error, info, trace, warn};
+use tracing::{debug, error, info, trace};
 
 #[derive(Debug, Clone)]
 pub struct BinanceClient {
     pub config: BinanceConfig,
     pub channel_manager: ChannelManager,
-    rest_client: RestClient,
 }
 
 impl BinanceClient {
-    pub fn new(config: BinanceConfig, buffer_size: usize, rest_client: RestClient) -> Self {
+    pub fn new(config: BinanceConfig, buffer_size: usize) -> Self {
         let channel_manager = ChannelManager::new(buffer_size);
         BinanceClient {
             config,
             channel_manager,
-            rest_client,
         }
     }
 
     async fn start_stream(&mut self, data_type: BinanceWsEventType) -> Result<(), EngineError> {
         let (tx, mut rx) = self.channel_manager.create_channel();
 
-        let channel = BinanceChannel {
-            channel: data_type.clone(),
-            base: self.config.symbol.base.clone().to_lowercase().into(),
-            quote: self.config.symbol.quote.clone().to_lowercase().into(),
-            limit: self.config.limit.unwrap_or_default(),
-        };
+        let signer = BinanceWsAuthenticator::new(
+            self.config.api_key.clone(),
+            self.config.secret_key.clone(),
+        );
 
-        let listen_key = self
-            .rest_client
-            .create_listen_key(&self.config.api_key)
-            .await?;
-
-        let client = BinanceWSClient::new(listen_key.into(), channel);
+        let client = BinanceWSClient::new(signer);
         client.run(tx).await?;
         info!("✅ WebSocket stream started for {:?}", data_type);
 
@@ -67,9 +59,6 @@ impl BinanceClient {
                 }
                 ParsedBinanceMessage::Raw(raw) => {
                     debug!("Received raw message: {:?}", raw);
-                }
-                _ => {
-                    warn!("❌ Unhandled message type: {:?}", message);
                 }
             }
         }

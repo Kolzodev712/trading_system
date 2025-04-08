@@ -134,7 +134,7 @@ impl From<BinanceOrderResponse> for Order {
             amount: binance_res.executed_qty.unwrap_or_default(),
             order_id: binance_res.order_id.into(),
             exchange_created_at: binance_res.transact_time,
-            internal_created_at: binance_res.working_time.unwrap_or_default().into(),
+            internal_created_at: binance_res.working_time.unwrap_or_default(),
         }
     }
 }

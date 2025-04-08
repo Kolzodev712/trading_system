@@ -1,5 +1,3 @@
-use std::collections::BTreeMap;
-
 use super::types::{
     common::{BinanceWSMessage, BinanceWsEventType, InitialResponse, ParsedBinanceMessage},
     orderbook::BinanceOrderbook,
@@ -67,10 +65,6 @@ impl SubscriptionHandler for BinanceSubscriptionHandler {
 
         let json_msg = serde_json::to_string(&subscription_msg).unwrap();
         Some(Message::Text(json_msg))
-    }
-
-    fn create_authenticated_request(&self, _params: BTreeMap<SmolStr, SmolStr>) -> Option<Message> {
-        None
     }
 }
 

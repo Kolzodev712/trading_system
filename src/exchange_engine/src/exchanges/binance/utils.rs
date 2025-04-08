@@ -22,6 +22,6 @@ where
     } else {
         serde_json::from_str::<Res>(text)
             .map(Some)
-            .map_err(|e| EngineError::JsonError(e))
+            .map_err(EngineError::JsonError)
     }
 }

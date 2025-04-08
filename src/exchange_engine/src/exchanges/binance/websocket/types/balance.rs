@@ -4,7 +4,7 @@ use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use smol_str::SmolStr;
 
-/// See: <https://developers.binance.com/docs/binance-spot-api-docs/user-data-stream>
+/// See: <https://developers.binance.com/docs/binance-spot-api-docs/web-socket-api/authentication-requests>
 
 #[derive(Debug, Clone, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -15,7 +15,7 @@ pub struct OutboundAccountPosition {
     pub updated_balances: Vec<Balances>,
 }
 
-/// See: <https://developers.binance.com/docs/binance-spot-api-docs/user-data-stream>
+/// See: <https://developers.binance.com/docs/binance-spot-api-docs/web-socket-api/authentication-requests>
 #[derive(Debug, Clone, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Balances {

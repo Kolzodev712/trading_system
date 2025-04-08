@@ -5,7 +5,6 @@ use exchange_engine::{
     exchanges::binance::config::BinanceConfig,
 };
 use std::fs;
-use tokio;
 use tracing::error;
 
 fn load_binance_config(file_path: &str) -> Result<BinanceConfig, Box<dyn std::error::Error>> {

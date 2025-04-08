@@ -1,8 +1,10 @@
+use crate::exchanges::binance::sign::BinanceWsAuthenticator;
+
 use super::types::{
     balance::{BalanceUpdate, OutboundAccountPosition},
     common::{
-        BinanceWSMessage, BinanceWsEventType, EventStreamTerminated, ExternalLockUpdate,
-        ListStatus, ListenKeyExpired, ParsedBinanceMessage,
+        BinanceWSMessage, BinanceWsEventType, ParsedBinanceMessage, SessionLogonMessage,
+        SessionLogonParams,
     },
     orders::ExecutionReport,
 };
@@ -15,7 +17,6 @@ use core_logic::{
 use futures_util::{stream::StreamExt, SinkExt};
 use serde_json::Value;
 use smol_str::SmolStr;
-use std::collections::BTreeMap;
 use tokio::{net::TcpStream, sync::mpsc};
 use tokio_tungstenite::{
     connect_async,
@@ -24,7 +25,7 @@ use tokio_tungstenite::{
 };
 use tracing::{debug, error, trace};
 
-pub const BINANCE_WS_URL: &str = "wss://stream.binance.com:443/ws";
+pub const BINANCE_WS_URL: &str = "wss://ws-api.binance.com:443/ws-api/v3";
 
 #[derive(Debug, Clone)]
 pub struct BinanceChannel {
@@ -36,40 +37,42 @@ pub struct BinanceChannel {
 
 #[derive(Debug, Clone)]
 pub struct BinanceSubscriptionHandler {
-    channel_info: BinanceChannel,
+    signer: BinanceWsAuthenticator,
 }
 
 impl BinanceSubscriptionHandler {
-    pub fn new(channel_info: BinanceChannel) -> Self {
-        Self { channel_info }
+    pub fn new(signer: BinanceWsAuthenticator) -> Self {
+        Self { signer }
+    }
+
+    fn create_logon_message(&self) -> Result<Message, EngineError> {
+        let timestamp = chrono::Utc::now().timestamp_millis();
+
+        let logon_msg = SessionLogonMessage {
+            id: generate_custom_uuid().into(),
+            method: "session.logon".into(),
+            params: SessionLogonParams {
+                api_key: self.signer.api_key.clone(),
+                timestamp,
+                signature: self.signer.sign_logon_payload(timestamp)?.into(),
+                algo: "ED25519".into(),
+            },
+        };
+
+        Ok(Message::Text(serde_json::to_string(&logon_msg)?))
     }
 }
 
 impl SubscriptionHandler for BinanceSubscriptionHandler {
-    fn create_authenticated_request(&self, _params: BTreeMap<SmolStr, SmolStr>) -> Option<Message> {
-        None
-    }
-
     fn create_subscription_request(&self) -> Option<Message> {
-        let method = match self.channel_info.channel {
-            BinanceWsEventType::OutboundAccountPosition => "outboundAccountPosition",
-            BinanceWsEventType::BalanceUpdate => "balanceUpdate",
-            BinanceWsEventType::ExecutionReport => "executionReport",
-            BinanceWsEventType::ListStatus => "listStatus",
-            BinanceWsEventType::ListenKeyExpired => "listenKeyExpired",
-            BinanceWsEventType::EventStreamTerminated => "eventStreamTerminated",
-            BinanceWsEventType::ExternalLockUpdate => "externalLockUpdate",
-            _ => return None,
-        };
-
         let subscription_msg = BinanceWSMessage {
-            method: "SUBSCRIBE".into(),
-            params: vec![method.into()],
             id: generate_custom_uuid().into(),
+            method: "userDataStream.subscribe".into(),
         };
 
-        let json_msg = serde_json::to_string(&subscription_msg).ok()?;
-        Some(Message::Text(json_msg))
+        Some(Message::Text(
+            serde_json::to_string(&subscription_msg).ok()?,
+        ))
     }
 }
 
@@ -104,55 +107,11 @@ impl DataHandler {
         Ok(ParsedBinanceMessage::ExecutionReport(execution_report))
     }
 
-    fn handle_list_status(&self, v: Value) -> Result<ParsedBinanceMessage, EngineError> {
-        let list_status: ListStatus = serde_json::from_value(v).map_err(|e| {
-            error!("Error deserializing list status: {}", e);
-            EngineError::JsonError(e)
-        })?;
-        Ok(ParsedBinanceMessage::ListStatus(list_status))
-    }
-
-    fn handle_listen_key_expired(&self, v: Value) -> Result<ParsedBinanceMessage, EngineError> {
-        let listen_key_expired: ListenKeyExpired = serde_json::from_value(v).map_err(|e| {
-            error!("Error deserializing listen key expired: {}", e);
-            EngineError::JsonError(e)
-        })?;
-        Ok(ParsedBinanceMessage::ListenKeyExpired(listen_key_expired))
-    }
-
-    fn handle_event_stream_terminated(
-        &self,
-        v: Value,
-    ) -> Result<ParsedBinanceMessage, EngineError> {
-        let event_stream_terminated: EventStreamTerminated =
-            serde_json::from_value(v).map_err(|e| {
-                error!("Error deserializing event stream terminated: {}", e);
-                EngineError::JsonError(e)
-            })?;
-        Ok(ParsedBinanceMessage::EventStreamTerminated(
-            event_stream_terminated,
-        ))
-    }
-
-    fn handle_external_lock_update(&self, v: Value) -> Result<ParsedBinanceMessage, EngineError> {
-        let external_lock_update: ExternalLockUpdate = serde_json::from_value(v).map_err(|e| {
-            error!("Error deserializing external lock update: {}", e);
-            EngineError::JsonError(e)
-        })?;
-        Ok(ParsedBinanceMessage::ExternalLockUpdate(
-            external_lock_update,
-        ))
-    }
-
     fn convert_method_to_event_type(&self, method: &str) -> BinanceWsEventType {
         match method {
             "outboundAccountPosition" => BinanceWsEventType::OutboundAccountPosition,
             "balanceUpdate" => BinanceWsEventType::BalanceUpdate,
             "executionReport" => BinanceWsEventType::ExecutionReport,
-            "listStatus" => BinanceWsEventType::ListStatus,
-            "listenKeyExpired" => BinanceWsEventType::ListenKeyExpired,
-            "eventStreamTerminated" => BinanceWsEventType::EventStreamTerminated,
-            "externalLockUpdate" => BinanceWsEventType::ExternalLockUpdate,
             _ => BinanceWsEventType::Unknown,
         }
     }
@@ -164,10 +123,6 @@ impl DataHandler {
             BinanceWsEventType::OutboundAccountPosition => self.handle_outbound_account_position(v),
             BinanceWsEventType::BalanceUpdate => self.handle_balance_update(v),
             BinanceWsEventType::ExecutionReport => self.handle_execution_report(v),
-            BinanceWsEventType::ListStatus => self.handle_list_status(v),
-            BinanceWsEventType::ListenKeyExpired => self.handle_listen_key_expired(v),
-            BinanceWsEventType::EventStreamTerminated => self.handle_event_stream_terminated(v),
-            BinanceWsEventType::ExternalLockUpdate => self.handle_external_lock_update(v),
             BinanceWsEventType::Unknown => {
                 debug!("Unknown event type: {:?}", v);
                 Err(EngineError::new_custom_error(
@@ -183,7 +138,7 @@ impl MessageHandler<ParsedBinanceMessage> for DataHandler {
         let v: Value = serde_json::from_str(&text).map_err(EngineError::JsonError)?;
 
         if let Some(event_type) = v.clone().get("e").and_then(|e| e.as_str()) {
-            return self.handle_event(event_type, v);
+            self.handle_event(event_type, v)
         } else {
             trace!("Unknown or unsupported message format: {}", text);
             Ok(ParsedBinanceMessage::Raw(text))
@@ -209,28 +164,29 @@ impl MessageHandler<ParsedBinanceMessage> for DataHandler {
 
 pub struct BinanceWSClient {
     url: SmolStr,
-    listen_key: SmolStr,
     subscription_handler: BinanceSubscriptionHandler,
 }
 
 impl BinanceWSClient {
-    pub fn new(listen_key: SmolStr, channel_info: BinanceChannel) -> Self {
+    pub fn new(signer: BinanceWsAuthenticator) -> Self {
         Self {
             url: BINANCE_WS_URL.into(),
-            listen_key,
-            subscription_handler: BinanceSubscriptionHandler::new(channel_info),
+            subscription_handler: BinanceSubscriptionHandler::new(signer),
         }
     }
 
     pub async fn create_ws_stream(
         &self,
     ) -> Result<WebSocketStream<MaybeTlsStream<TcpStream>>, EngineError> {
-        let ws_url = format!("{}/{}", self.url, self.listen_key);
+        let ws_url = format!("{}", self.url);
         self.make_ws_request(&ws_url).await
     }
 
     pub async fn run(&self, tx: mpsc::Sender<ParsedBinanceMessage>) -> Result<(), EngineError> {
         let mut ws_stream = self.create_ws_stream().await?;
+
+        let logon_msg = self.subscription_handler.create_logon_message()?;
+        ws_stream.send(logon_msg).await?;
 
         if let Some(subscription_message) = self.subscription_handler.create_subscription_request()
         {
@@ -242,7 +198,6 @@ impl BinanceWSClient {
         }
 
         self.handle_messages(ws_stream, tx, DataHandler).await?;
-
         Ok(())
     }
 }

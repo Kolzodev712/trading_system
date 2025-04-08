@@ -1,5 +1,3 @@
-use std::collections::BTreeMap;
-
 use crate::error::EngineError;
 use async_trait::async_trait;
 use smol_str::SmolStr;
@@ -31,9 +29,6 @@ pub trait MessageHandler<T> {
 pub trait SubscriptionHandler {
     /// Creates a WebSocket subscription request message.
     fn create_subscription_request(&self) -> Option<Message>;
-
-    /// Creates a WebSocket authenticated request message.
-    fn create_authenticated_request(&self, params: BTreeMap<SmolStr, SmolStr>) -> Option<Message>;
 }
 
 #[async_trait]

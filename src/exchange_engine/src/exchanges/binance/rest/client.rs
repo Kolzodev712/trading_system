@@ -70,8 +70,7 @@ impl BinanceHttpClient {
 
         let mut query_params: BTreeMap<String, String> = if let Some(params) = params {
             serde_qs::from_str::<BTreeMap<String, String>>(
-                &serde_qs::to_string(&params)
-                    .map_err(|e| EngineError::JsonQueryStringError(e.into()))?,
+                &serde_qs::to_string(&params).map_err(EngineError::JsonQueryStringError)?,
             )?
         } else {
             debug!("Passing empty params list. Probaly request has no params. FYI");

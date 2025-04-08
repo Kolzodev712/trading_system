@@ -35,7 +35,7 @@ where
 }
 
 // Custom serialization and deserialization for Vec<SmolStr>
-pub fn serialize_vec_smol_str<S>(value: &Vec<SmolStr>, serializer: S) -> Result<S::Ok, S::Error>
+pub fn serialize_vec_smol_str<S>(value: &[SmolStr], serializer: S) -> Result<S::Ok, S::Error>
 where
     S: serde::Serializer,
 {

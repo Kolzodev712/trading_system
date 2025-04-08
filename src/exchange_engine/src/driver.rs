@@ -46,8 +46,7 @@ impl ExchangeEngineDriver {
                     binance_config.clone(),
                 );
 
-                let ws_client =
-                    BinanceWSClient::new(binance_config.clone(), 100, rest_client.clone());
+                let ws_client = BinanceWSClient::new(binance_config.clone(), 100);
 
                 Ok((Box::new(rest_client), ws_client))
             } // _ => Err(EngineError::CustomError(anyhow::anyhow!("Unsupported exchange"))),
@@ -67,7 +66,7 @@ impl ExchangeEngineDriver {
             }
         });
 
-        let _res = tokio::select! {
+        tokio::select! {
             res = async {
                 match method {
                     Method::TestOpenOrder(order_request) => {

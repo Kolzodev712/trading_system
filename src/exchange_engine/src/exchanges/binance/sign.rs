@@ -46,10 +46,10 @@ impl ExchangeAuthenticator for BinanceAuthenticator {
         Ok(params)
     }
 
-    fn get_headers(&self) -> Result<Option<Box<BTreeMap<SmolStr, SmolStr>>>, EngineError> {
+    fn get_headers(&self) -> Result<Option<BTreeMap<SmolStr, SmolStr>>, EngineError> {
         let mut headers = BTreeMap::new();
         headers.insert("X-MBX-APIKEY".into(), self.api_key.clone());
-        Ok(Some(Box::new(headers)))
+        Ok(Some(headers))
     }
 }
 

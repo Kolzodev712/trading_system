@@ -17,5 +17,15 @@ pub struct BinanceConfig {
         deserialize_with = "deserialize_smol_str"
     )]
     pub secret_key: SmolStr,
+    #[serde(
+        serialize_with = "serialize_smol_str",
+        deserialize_with = "deserialize_smol_str"
+    )]
+    pub api_key_ws: SmolStr,
+    #[serde(
+        serialize_with = "serialize_smol_str",
+        deserialize_with = "deserialize_smol_str"
+    )]
+    pub secret_key_ws: SmolStr,
     pub limit: Option<u64>,
 }

@@ -3,7 +3,9 @@
         "base": "BTC",
         "quote": "USDT"
     },
-    "apiKey": "TjCcetPnqBokhlq8r2Z57URfJkUqn3B6ybzCdm3Oe2GTd8R4AiBLRUvvN5GHO0Do",
-    "secretKey": "wVx64crwanOMDHjZXrkWckZQxGP8lcv61rbdiEDZWlGQfWtL6MQOaqCQeUGEQeST",
+    "apiKey": "",
+    "secretKey": "",
+    "apiKeyWs": "",
+    "secretKeyWs": "",
     "limit": 100
 }

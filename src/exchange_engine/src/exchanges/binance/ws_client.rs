@@ -36,8 +36,8 @@ impl BinanceClient {
         let (tx, mut rx) = self.channel_manager.create_channel();
 
         let signer = BinanceWsAuthenticator::new(
-            self.config.api_key.clone(),
-            self.config.secret_key.clone(),
+            self.config.api_key_ws.clone(),
+            self.config.secret_key_ws.clone(),
         );
 
         let client = BinanceWSClient::new(signer);
@@ -48,11 +48,8 @@ impl BinanceClient {
             trace!("📩 Received message: {:?}", message);
 
             match message {
-                ParsedBinanceMessage::OutboundAccountPosition(position) => {
-                    debug!("Account position update: {:?}", position);
-                }
-                ParsedBinanceMessage::BalanceUpdate(balance) => {
-                    debug!("Balance update: {:?}", balance);
+                ParsedBinanceMessage::AccountStatus(account_info) => {
+                    debug!("Account update: {:?}", account_info);
                 }
                 ParsedBinanceMessage::ExecutionReport(exec_report) => {
                     debug!("Execution report update: {:?}", exec_report);
@@ -78,8 +75,7 @@ impl PrivateDataClient for BinanceClient {
     }
 
     async fn balances(&mut self) -> Result<(), EngineError> {
-        self.start_stream(BinanceWsEventType::OutboundAccountPosition)
-            .await
+        self.start_stream(BinanceWsEventType::AccountStatus).await
     }
 
     async fn orders(&mut self) -> Result<(), EngineError> {

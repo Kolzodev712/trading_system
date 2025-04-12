@@ -53,6 +53,8 @@ mod tests {
             },
             "apiKey": "some_key",
             "secretKey": "some_secret",
+            "apiKeyWs": "some_key_ws",
+            "secretKeyWs": "some_secret_ws",
             "limit": 100
             }
         }
@@ -72,6 +74,8 @@ mod tests {
                 assert_eq!(binance_config.symbol.quote, "USDT");
                 assert_eq!(binance_config.api_key, "some_key");
                 assert_eq!(binance_config.secret_key, "some_secret");
+                assert_eq!(binance_config.api_key_ws, "some_key_ws");
+                assert_eq!(binance_config.secret_key_ws, "some_secret_ws");
                 assert_eq!(binance_config.limit, Some(100));
             }
         }
@@ -88,6 +92,8 @@ mod tests {
             .into(),
             api_key: "some_key".into(),
             secret_key: "some_secret".into(),
+            api_key_ws: "some_key_ws".into(),
+            secret_key_ws: "some_secret_ws".into(),
             limit: Some(100),
         };
 
@@ -113,6 +119,8 @@ mod tests {
             .into(),
             api_key: "some_key".into(),
             secret_key: "some_secret".into(),
+            api_key_ws: "some_key_ws".into(),
+            secret_key_ws: "some_secret_ws".into(),
             limit: Some(100),
         };
 
@@ -127,6 +135,8 @@ mod tests {
         assert_eq!(retrieved_config.symbol.quote, "USDT");
         assert_eq!(retrieved_config.api_key, "some_key");
         assert_eq!(retrieved_config.secret_key, "some_secret");
+        assert_eq!(retrieved_config.api_key, "some_key_ws");
+        assert_eq!(retrieved_config.secret_key, "some_secre_ws");
         assert_eq!(retrieved_config.limit, Some(100));
     }
 }

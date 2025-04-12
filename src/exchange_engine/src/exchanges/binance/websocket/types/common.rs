@@ -1,7 +1,4 @@
-use super::{
-    balance::{BalanceUpdate, OutboundAccountPosition},
-    orders::ExecutionReport,
-};
+use super::{balance::BinanceAccountInfo, orders::ExecutionReport};
 use core_logic::utils::{deserialize_smol_str, serialize_smol_str};
 use serde::{Deserialize, Serialize};
 use smol_str::{SmolStr, ToSmolStr};
@@ -23,16 +20,14 @@ pub struct BinanceWSMessage {
 #[derive(Debug, PartialEq, Eq, Deserialize, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub enum BinanceWsEventType {
-    OutboundAccountPosition,
-    BalanceUpdate,
+    AccountStatus,
     ExecutionReport,
     Unknown,
 }
 
 #[derive(Debug, PartialEq, Eq, Deserialize, Serialize, Clone)]
 pub enum ParsedBinanceMessage {
-    OutboundAccountPosition(OutboundAccountPosition),
-    BalanceUpdate(BalanceUpdate),
+    AccountStatus(BinanceAccountInfo),
     ExecutionReport(ExecutionReport),
     #[serde(
         serialize_with = "serialize_smol_str",
@@ -44,10 +39,7 @@ pub enum ParsedBinanceMessage {
 impl ToSmolStr for ParsedBinanceMessage {
     fn to_smolstr(&self) -> SmolStr {
         match self {
-            ParsedBinanceMessage::OutboundAccountPosition(_) => {
-                SmolStr::new("outboundAccountPosition")
-            }
-            ParsedBinanceMessage::BalanceUpdate(_) => SmolStr::new("balanceUpdate"),
+            ParsedBinanceMessage::AccountStatus(_) => SmolStr::new("accountStatus"),
             ParsedBinanceMessage::ExecutionReport(_) => SmolStr::new("executionReport"),
             ParsedBinanceMessage::Raw(smol_str) => smol_str.clone(),
         }
@@ -84,11 +76,6 @@ pub struct SessionLogonParams {
         deserialize_with = "deserialize_smol_str"
     )]
     pub signature: SmolStr,
-    #[serde(
-        serialize_with = "serialize_smol_str",
-        deserialize_with = "deserialize_smol_str"
-    )]
-    pub algo: SmolStr,
 }
 
 #[cfg(test)]
@@ -106,7 +93,6 @@ mod tests {
                 "apiKey": "MY_API_KEY",
                 "timestamp": 1700000000000,
                 "signature": "BASE64_SIGNATURE",
-                "algo": "ED25519"
             }
         }
         "#;
@@ -119,6 +105,5 @@ mod tests {
         assert_eq!(logon.params.api_key, "MY_API_KEY");
         assert_eq!(logon.params.timestamp, 1700000000000);
         assert_eq!(logon.params.signature, "BASE64_SIGNATURE");
-        assert_eq!(logon.params.algo, "ED25519");
     }
 }

@@ -1,7 +1,7 @@
 use crate::exchanges::binance::sign::BinanceWsAuthenticator;
 
 use super::types::{
-    balance::{BalanceUpdate, OutboundAccountPosition},
+    balance::BinanceAccountInfo,
     common::{
         BinanceWSMessage, BinanceWsEventType, ParsedBinanceMessage, SessionLogonMessage,
         SessionLogonParams,
@@ -55,7 +55,6 @@ impl BinanceSubscriptionHandler {
                 api_key: self.signer.api_key.clone(),
                 timestamp,
                 signature: self.signer.sign_logon_payload(timestamp)?.into(),
-                algo: "ED25519".into(),
             },
         };
 
@@ -84,21 +83,12 @@ impl DataHandler {
         &self,
         v: Value,
     ) -> Result<ParsedBinanceMessage, EngineError> {
-        let outbound_account_position: OutboundAccountPosition = serde_json::from_value(v)
-            .map_err(|e| {
-                error!("Error deserializing outbound account position: {}", e);
-                EngineError::JsonError(e)
-            })?;
+        let account_status: BinanceAccountInfo = serde_json::from_value(v).map_err(|e| {
+            error!("Error deserializing outbound account position: {}", e);
+            EngineError::JsonError(e)
+        })?;
 
-        Ok(ParsedBinanceMessage::OutboundAccountPosition(
-            outbound_account_position,
-        ))
-    }
-
-    fn handle_balance_update(&self, v: Value) -> Result<ParsedBinanceMessage, EngineError> {
-        let balance_update: BalanceUpdate =
-            serde_json::from_value(v).map_err(EngineError::JsonError)?;
-        Ok(ParsedBinanceMessage::BalanceUpdate(balance_update))
+        Ok(ParsedBinanceMessage::AccountStatus(account_status))
     }
 
     fn handle_execution_report(&self, v: Value) -> Result<ParsedBinanceMessage, EngineError> {
@@ -109,8 +99,7 @@ impl DataHandler {
 
     fn convert_method_to_event_type(&self, method: &str) -> BinanceWsEventType {
         match method {
-            "outboundAccountPosition" => BinanceWsEventType::OutboundAccountPosition,
-            "balanceUpdate" => BinanceWsEventType::BalanceUpdate,
+            "outboundAccountPosition" => BinanceWsEventType::AccountStatus,
             "executionReport" => BinanceWsEventType::ExecutionReport,
             _ => BinanceWsEventType::Unknown,
         }
@@ -120,8 +109,7 @@ impl DataHandler {
         let event_type = self.convert_method_to_event_type(method);
 
         match event_type {
-            BinanceWsEventType::OutboundAccountPosition => self.handle_outbound_account_position(v),
-            BinanceWsEventType::BalanceUpdate => self.handle_balance_update(v),
+            BinanceWsEventType::AccountStatus => self.handle_outbound_account_position(v),
             BinanceWsEventType::ExecutionReport => self.handle_execution_report(v),
             BinanceWsEventType::Unknown => {
                 debug!("Unknown event type: {:?}", v);
@@ -187,6 +175,21 @@ impl BinanceWSClient {
 
         let logon_msg = self.subscription_handler.create_logon_message()?;
         ws_stream.send(logon_msg).await?;
+
+        if let Some(Ok(Message::Text(logon_response))) = ws_stream.next().await {
+            let v: Value = serde_json::from_str(&logon_response)?;
+            if v.get("status").and_then(|s| s.as_u64()) == Some(200) {
+                debug!("✅ Successfully authenticated with session.logon");
+            } else {
+                return Err(EngineError::new_custom_error(
+                    format!("❌ session.logon failed: {:?}", v).into(),
+                ));
+            }
+        } else {
+            return Err(EngineError::new_custom_error(
+                "❌ Did not receive session.logon response".into(),
+            ));
+        }
 
         if let Some(subscription_message) = self.subscription_handler.create_subscription_request()
         {

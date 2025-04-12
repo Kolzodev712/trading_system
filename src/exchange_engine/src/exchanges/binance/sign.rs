@@ -56,25 +56,34 @@ impl ExchangeAuthenticator for BinanceAuthenticator {
 #[derive(Clone, Debug)]
 pub struct BinanceWsAuthenticator {
     pub api_key: SmolStr,
-    pub secret_key_base64: SmolStr,
+    pub secret_key_ed25519: SmolStr,
 }
 
 impl BinanceWsAuthenticator {
     pub fn new(api_key: SmolStr, secret_key: SmolStr) -> Self {
         Self {
             api_key,
-            secret_key_base64: secret_key,
+            secret_key_ed25519: secret_key,
         }
     }
 
     pub fn sign_logon_payload(&self, timestamp: i64) -> Result<String, EngineError> {
-        let message = format!("{}{}", self.api_key, timestamp);
+        let message = timestamp.to_string();
+        // Decode base64 private key (must be 32 bytes)
         let private_key_bytes = general_purpose::STANDARD
-            .decode(&*self.secret_key_base64)
+            .decode(&*self.secret_key_ed25519)
             .map_err(|e| EngineError::AuthenticationError(anyhow!(e)))?;
 
-        let signing_key = SigningKey::from_bytes(&private_key_bytes[..32].try_into().unwrap());
+        if private_key_bytes.len() != 32 {
+            return Err(EngineError::AuthenticationError(anyhow!(
+                "Private key must be 32 bytes, got {}",
+                private_key_bytes.len()
+            )));
+        }
+
+        let signing_key = SigningKey::from_bytes(&private_key_bytes.try_into().unwrap());
         let signature = signing_key.sign(message.as_bytes());
-        Ok(general_purpose::STANDARD.encode(signature.to_bytes()))
+
+        Ok(hex::encode(signature.to_bytes()))
     }
 }

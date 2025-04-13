@@ -37,6 +37,8 @@ impl ConfigGetter<BinanceConfig> for ExchangeConfig {
 
 #[cfg(test)]
 mod tests {
+    use crate::exchanges::binance::config::BinanceCredentials;
+
     use super::*;
     use core_logic::data::base_data::Pair;
     use serde_json;
@@ -51,10 +53,14 @@ mod tests {
                 "base": "BTC",
                 "quote": "USDT"
             },
-            "apiKey": "some_key",
-            "secretKey": "some_secret",
-            "apiKeyWs": "some_key_ws",
-            "secretKeyWs": "some_secret_ws",
+            "rest": {
+                "apiKey": "some_key",
+                "secretKey": "some_secret"    
+            },
+            "ws": {
+                "apiKey": "some_key",
+                "secretKey": "some_secret"    
+            },
             "limit": 100
             }
         }
@@ -72,10 +78,10 @@ mod tests {
             ExchangeConfig::Binance(ref binance_config) => {
                 assert_eq!(binance_config.symbol.base, "BTC");
                 assert_eq!(binance_config.symbol.quote, "USDT");
-                assert_eq!(binance_config.api_key, "some_key");
-                assert_eq!(binance_config.secret_key, "some_secret");
-                assert_eq!(binance_config.api_key_ws, "some_key_ws");
-                assert_eq!(binance_config.secret_key_ws, "some_secret_ws");
+                assert_eq!(binance_config.rest.api_key, "some_key");
+                assert_eq!(binance_config.rest.secret_key, "some_secret");
+                assert_eq!(binance_config.ws.api_key, "some_key");
+                assert_eq!(binance_config.ws.secret_key, "some_secret");
                 assert_eq!(binance_config.limit, Some(100));
             }
         }
@@ -90,10 +96,14 @@ mod tests {
                 quote: "USDT".into(),
             }
             .into(),
-            api_key: "some_key".into(),
-            secret_key: "some_secret".into(),
-            api_key_ws: "some_key_ws".into(),
-            secret_key_ws: "some_secret_ws".into(),
+            rest: BinanceCredentials {
+                api_key: "some_key".into(),
+                secret_key: "some_secret".into(),
+            },
+            ws: BinanceCredentials {
+                api_key: "some_key".into(),
+                secret_key: "some_secret".into(),
+            },
             limit: Some(100),
         };
 
@@ -117,10 +127,14 @@ mod tests {
                 quote: "USDT".into(),
             }
             .into(),
-            api_key: "some_key".into(),
-            secret_key: "some_secret".into(),
-            api_key_ws: "some_key_ws".into(),
-            secret_key_ws: "some_secret_ws".into(),
+            rest: BinanceCredentials {
+                api_key: "some_key".into(),
+                secret_key: "some_secret".into(),
+            },
+            ws: BinanceCredentials {
+                api_key: "some_key".into(),
+                secret_key: "some_secret".into(),
+            },
             limit: Some(100),
         };
 
@@ -133,10 +147,10 @@ mod tests {
 
         assert_eq!(retrieved_config.symbol.base, "BTC");
         assert_eq!(retrieved_config.symbol.quote, "USDT");
-        assert_eq!(retrieved_config.api_key, "some_key");
-        assert_eq!(retrieved_config.secret_key, "some_secret");
-        assert_eq!(retrieved_config.api_key, "some_key_ws");
-        assert_eq!(retrieved_config.secret_key, "some_secre_ws");
+        assert_eq!(retrieved_config.rest.api_key, "some_key");
+        assert_eq!(retrieved_config.rest.secret_key, "some_secret");
+        assert_eq!(retrieved_config.ws.api_key, "some_key");
+        assert_eq!(retrieved_config.ws.secret_key, "some_secret");
         assert_eq!(retrieved_config.limit, Some(100));
     }
 }

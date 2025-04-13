@@ -31,8 +31,8 @@ impl BinanceHttpClient {
             base_url: BINANCE_SPOT_URL.into(),
             handler: BinanceHandler,
             authenticator: BinanceAuthenticator {
-                api_key: config.api_key,
-                secret_key: config.secret_key,
+                api_key: config.rest.api_key,
+                secret_key: config.rest.secret_key,
             },
             client: Client::new(),
         }
@@ -85,8 +85,7 @@ impl BinanceHttpClient {
 
             let signed_params = self
                 .authenticator
-                .build_signed_params(smol_query_params.clone())
-                .await?;
+                .build_signed_params(smol_query_params.clone())?;
 
             smol_query_params.extend(signed_params);
 

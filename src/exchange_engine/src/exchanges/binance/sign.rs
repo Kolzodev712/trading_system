@@ -18,7 +18,7 @@ pub struct BinanceAuthenticator {
 
 #[async_trait]
 impl ExchangeAuthenticator for BinanceAuthenticator {
-    async fn generate_signature(&self, query_string: &str) -> Result<Option<SmolStr>, EngineError> {
+    fn generate_signature(&self, query_string: &str) -> Result<Option<SmolStr>, EngineError> {
         let mut mac = Hmac::<Sha256>::new_from_slice(self.secret_key.as_bytes()).map_err(|e| {
             EngineError::AuthenticationError(anyhow!(format!("Invalid mac lenght: {e}")))
         })?;
@@ -27,7 +27,7 @@ impl ExchangeAuthenticator for BinanceAuthenticator {
         Ok(Some(signature.into()))
     }
 
-    async fn build_signed_params(
+    fn build_signed_params(
         &self,
         mut params: BTreeMap<SmolStr, SmolStr>,
     ) -> Result<BTreeMap<SmolStr, SmolStr>, EngineError> {
@@ -39,7 +39,7 @@ impl ExchangeAuthenticator for BinanceAuthenticator {
         let query_string = serde_urlencoded::to_string(&sorted_params)
             .map_err(EngineError::JsonUrlEncodedSerError)?;
 
-        if let Some(signature) = self.generate_signature(&query_string).await? {
+        if let Some(signature) = self.generate_signature(&query_string)? {
             params.insert("signature".into(), signature);
         }
 
@@ -63,13 +63,15 @@ impl BinanceWsAuthenticator {
     pub fn new(api_key: SmolStr, secret_key: SmolStr) -> Self {
         Self {
             api_key,
+            // to get this key use info from here <https://www.binance.com/en/support/faq/detail/6b9a63f1e3384cf48a2eedb82767a69a>
             secret_key_ed25519: secret_key,
         }
     }
+}
 
-    pub fn sign_logon_payload(&self, timestamp: i64) -> Result<String, EngineError> {
-        let message = timestamp.to_string();
-        // Decode base64 private key (must be 32 bytes)
+#[async_trait]
+impl ExchangeAuthenticator for BinanceWsAuthenticator {
+    fn generate_signature(&self, payload: &str) -> Result<Option<SmolStr>, EngineError> {
         let private_key_bytes = general_purpose::STANDARD
             .decode(&*self.secret_key_ed25519)
             .map_err(|e| EngineError::AuthenticationError(anyhow!(e)))?;
@@ -82,8 +84,31 @@ impl BinanceWsAuthenticator {
         }
 
         let signing_key = SigningKey::from_bytes(&private_key_bytes.try_into().unwrap());
-        let signature = signing_key.sign(message.as_bytes());
+        let signature = signing_key.sign(payload.as_bytes());
 
-        Ok(hex::encode(signature.to_bytes()))
+        Ok(Some(
+            general_purpose::STANDARD
+                .encode(signature.to_bytes())
+                .into(),
+        ))
+    }
+
+    fn build_signed_params(
+        &self,
+        mut params: BTreeMap<SmolStr, SmolStr>,
+    ) -> Result<BTreeMap<SmolStr, SmolStr>, EngineError> {
+        let sorted_params: BTreeMap<String, String> = params
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+
+        let query_string = serde_urlencoded::to_string(&sorted_params)
+            .map_err(EngineError::JsonUrlEncodedSerError)?;
+
+        if let Some(signature) = self.generate_signature(&query_string)? {
+            params.insert("signature".into(), signature);
+        }
+
+        Ok(params)
     }
 }

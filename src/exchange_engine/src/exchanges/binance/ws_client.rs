@@ -36,8 +36,8 @@ impl BinanceClient {
         let (tx, mut rx) = self.channel_manager.create_channel();
 
         let signer = BinanceWsAuthenticator::new(
-            self.config.api_key_ws.clone(),
-            self.config.secret_key_ws.clone(),
+            self.config.ws.api_key.clone(),
+            self.config.ws.secret_key.clone(),
         );
 
         let client = BinanceWSClient::new(signer);

@@ -92,7 +92,7 @@ mod tests {
             "params": {
                 "apiKey": "MY_API_KEY",
                 "timestamp": 1700000000000,
-                "signature": "BASE64_SIGNATURE",
+                "signature": "BASE64_SIGNATURE"
             }
         }
         "#;

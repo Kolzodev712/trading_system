@@ -10,6 +10,7 @@ use super::types::{
 };
 use async_trait::async_trait;
 use core_logic::{
+    authenticator::ExchangeAuthenticator,
     error::EngineError,
     utils::generate_custom_uuid,
     ws_client::{MessageHandler, SubscriptionHandler, WebSocketClient},
@@ -17,6 +18,7 @@ use core_logic::{
 use futures_util::{stream::StreamExt, SinkExt};
 use serde_json::Value;
 use smol_str::SmolStr;
+use std::collections::BTreeMap;
 use tokio::{net::TcpStream, sync::mpsc};
 use tokio_tungstenite::{
     connect_async,
@@ -48,13 +50,35 @@ impl BinanceSubscriptionHandler {
     fn create_logon_message(&self) -> Result<Message, EngineError> {
         let timestamp = chrono::Utc::now().timestamp_millis();
 
+        let mut params = BTreeMap::new();
+        params.insert("apiKey".into(), self.signer.api_key.clone());
+        params.insert("timestamp".into(), timestamp.to_string().into());
+
+        let signed_params = self.signer.build_signed_params(params)?;
+
+        let api_key = signed_params.get("apiKey").cloned().ok_or_else(|| {
+            EngineError::new_custom_error("Missing apiKey in signed params".into())
+        })?;
+
+        let timestamp = signed_params
+            .get("timestamp")
+            .ok_or_else(|| {
+                EngineError::new_custom_error("Missing timestamp in signed params".into())
+            })?
+            .parse::<i64>()
+            .map_err(|_| EngineError::new_custom_error("Invalid timestamp format".into()))?;
+
+        let signature = signed_params.get("signature").cloned().ok_or_else(|| {
+            EngineError::new_custom_error("Missing signature in signed params".into())
+        })?;
+
         let logon_msg = SessionLogonMessage {
             id: generate_custom_uuid().into(),
             method: "session.logon".into(),
             params: SessionLogonParams {
-                api_key: self.signer.api_key.clone(),
+                api_key,
                 timestamp,
-                signature: self.signer.sign_logon_payload(timestamp)?.into(),
+                signature,
             },
         };
 

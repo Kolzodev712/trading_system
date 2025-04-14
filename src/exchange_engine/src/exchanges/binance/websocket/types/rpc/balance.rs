@@ -1,3 +1,4 @@
+use super::super::common::SessionLogonParams;
 use core_logic::data::private_data::Balance;
 use core_logic::utils::{deserialize_smol_str, serialize_smol_str};
 use rust_decimal::Decimal;
@@ -7,7 +8,24 @@ use smol_str::SmolStr;
 /// See: <https://developers.binance.com/docs/binance-spot-api-docs/websocket-api/account-requests>
 #[derive(Debug, Clone, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct BinanceAccountInfo {
+pub struct BinanceAccountStatusRequest {
+    #[serde(
+        serialize_with = "serialize_smol_str",
+        deserialize_with = "deserialize_smol_str"
+    )]
+    pub id: SmolStr,
+    #[serde(
+        serialize_with = "serialize_smol_str",
+        deserialize_with = "deserialize_smol_str"
+    )]
+    pub method: SmolStr,
+    pub params: SessionLogonParams,
+}
+
+/// See: <https://developers.binance.com/docs/binance-spot-api-docs/websocket-api/account-requests>
+#[derive(Debug, Clone, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BinanceAccountStatusResponse {
     #[serde(
         serialize_with = "serialize_smol_str",
         deserialize_with = "deserialize_smol_str"
@@ -56,8 +74,8 @@ impl From<Balances> for Balance {
     }
 }
 
-impl From<BinanceAccountInfo> for Vec<Balance> {
-    fn from(binance_account_info: BinanceAccountInfo) -> Self {
+impl From<BinanceAccountStatusResponse> for Vec<Balance> {
+    fn from(binance_account_info: BinanceAccountStatusResponse) -> Self {
         binance_account_info
             .result
             .balances
@@ -102,7 +120,7 @@ mod tests {
         }
         "#;
 
-        let account_info: BinanceAccountInfo = serde_json::from_str(json).unwrap();
+        let account_info: BinanceAccountStatusResponse = serde_json::from_str(json).unwrap();
 
         assert_eq!(account_info.id, "12345");
         assert_eq!(account_info.status, 1);
@@ -115,7 +133,7 @@ mod tests {
 
     #[test]
     fn test_binance_account_info_to_balance_vec_conversion() {
-        let account_info = BinanceAccountInfo {
+        let account_info = BinanceAccountStatusResponse {
             id: "12345".into(),
             status: 1,
             result: BinanceAccountData {
@@ -155,7 +173,7 @@ mod tests {
 
     #[test]
     fn test_empty_balances_conversion() {
-        let account_info = BinanceAccountInfo {
+        let account_info = BinanceAccountStatusResponse {
             id: "empty".into(),
             status: 0,
             result: BinanceAccountData {

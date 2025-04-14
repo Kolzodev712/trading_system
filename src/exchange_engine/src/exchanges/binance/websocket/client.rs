@@ -2,6 +2,7 @@ use crate::exchanges::binance::sign::BinanceWsAuthenticator;
 
 use super::types::{
     common::{SessionLogonMessage, SessionLogonParams},
+    rpc::{BinanceRpcRequest, BinanceRpcResponse},
     user_data::events::{BinanceWSMessage, ParsedBinanceMessage},
 };
 use async_trait::async_trait;
@@ -22,6 +23,8 @@ use tokio_tungstenite::{
 use tracing::{debug, error};
 
 pub const BINANCE_WS_URL: &str = "wss://ws-api.binance.com:443/ws-api/v3";
+pub const LOGON_SESSION: &str = "session.logon";
+pub const ACCOUNT_STATUS: &str = "account.status";
 
 #[derive(Debug, Clone)]
 pub struct BinanceChannel {
@@ -67,7 +70,7 @@ impl BinanceSubscriptionHandler {
 
         let logon_msg = SessionLogonMessage {
             id: generate_custom_uuid().into(),
-            method: "session.logon".into(),
+            method: LOGON_SESSION.into(),
             params: SessionLogonParams {
                 api_key,
                 timestamp,
@@ -124,6 +127,16 @@ impl BinanceWSClient {
             error!("❌ Failed to create subscription message");
         }
 
+        Ok(())
+    }
+
+    pub async fn send_rpc_request(
+        &self,
+        ws_stream: &mut WebSocketStream<MaybeTlsStream<TcpStream>>,
+        request: BinanceRpcRequest,
+    ) -> Result<(), EngineError> {
+        let json = serde_json::to_string(&request)?;
+        ws_stream.send(Message::Text(json)).await?;
         Ok(())
     }
 
@@ -184,32 +197,17 @@ impl WebSocketClient<ParsedBinanceMessage> for BinanceWSClient {
             while let Some(message) = ws_stream.next().await {
                 match message {
                     Ok(Message::Text(text)) => {
-                        match handler.handle_text_message(text.clone().into()) {
-                            Ok(parsed_message) => {
-                                if let Err(e) = tx.send(parsed_message).await {
-                                    error!("Error sending message to channel: {}", e);
-                                }
-                            }
-                            Err(e) => {
-                                error!("Error processing text message: {}", e);
-                            }
-                        }
+                        handle_text_message(&handler, &tx, text).await;
                     }
-                    Ok(Message::Binary(binary)) => {
-                        handler.handle_binary(binary);
-                    }
+                    Ok(Message::Binary(binary)) => handler.handle_binary(binary),
                     Ok(Message::Ping(ping)) => {
                         handler.handle_ping(ping.clone());
                         if let Err(e) = ws_stream.send(Message::Pong(ping)).await {
                             error!("Error sending pong: {}", e);
                         }
                     }
-                    Ok(Message::Pong(pong)) => {
-                        handler.handle_pong(pong);
-                    }
-                    Err(e) => {
-                        error!("Error while receiving a message: {}", e);
-                    }
+                    Ok(Message::Pong(pong)) => handler.handle_pong(pong),
+                    Err(e) => error!("Error while receiving message: {}", e),
                     _ => {}
                 }
             }
@@ -234,5 +232,21 @@ impl WebSocketClient<ParsedBinanceMessage> for BinanceWSClient {
         }
 
         Ok(())
+    }
+}
+
+async fn handle_text_message<H>(handler: &H, tx: &mpsc::Sender<ParsedBinanceMessage>, text: String)
+where
+    H: MessageHandler<ParsedBinanceMessage> + Send + Sync + 'static,
+{
+    if let Ok(event_msg) = handler.handle_text_message(text.clone().into()) {
+        if let Err(e) = tx.send(event_msg).await {
+            error!("Error forwarding event to channel: {}", e);
+        }
+    } else if let Ok(rpc_response) = serde_json::from_str::<BinanceRpcResponse>(&text) {
+        debug!("📩 RPC Response received: {:?}", rpc_response);
+        // Optional: Send to a separate channel or handler for RPC logic
+    } else {
+        debug!("Received unrecognized message: {}", text);
     }
 }

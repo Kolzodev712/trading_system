@@ -2,7 +2,7 @@ use core_logic::utils::{deserialize_smol_str, serialize_smol_str};
 use serde::{Deserialize, Serialize};
 use smol_str::SmolStr;
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionLogonMessage {
     #[serde(
@@ -18,7 +18,7 @@ pub struct SessionLogonMessage {
     pub params: SessionLogonParams,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionLogonParams {
     #[serde(
@@ -34,7 +34,7 @@ pub struct SessionLogonParams {
     pub signature: SmolStr,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SesionStatusMessage {
     #[serde(
@@ -49,7 +49,7 @@ pub struct SesionStatusMessage {
     pub method: SmolStr,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SesionLogoutMessage {
     #[serde(
@@ -64,7 +64,7 @@ pub struct SesionLogoutMessage {
     pub method: SmolStr,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ServerTime {
     #[serde(
@@ -79,7 +79,7 @@ pub struct ServerTime {
     pub method: SmolStr,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ServerTimeResponse {
     #[serde(
@@ -91,7 +91,7 @@ pub struct ServerTimeResponse {
     pub result: TimeResponse,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TimeResponse {
     server_time: u64,

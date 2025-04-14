@@ -4,7 +4,9 @@ use super::{
 };
 
 use core_logic::utils::{deserialize_smol_str, serialize_smol_str};
+use serde::de::{self, Deserializer};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use smol_str::{SmolStr, ToSmolStr};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -30,7 +32,8 @@ pub enum BinanceWsEventType {
     Unknown,
 }
 
-#[derive(Debug, PartialEq, Eq, Deserialize, Serialize, Clone)]
+#[derive(Debug, PartialEq, Eq, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
 pub enum ParsedBinanceMessage {
     OutboundAccountPosition(OutboundAccountPosition),
     BalanceUpdate(BalanceUpdate),
@@ -42,6 +45,33 @@ pub enum ParsedBinanceMessage {
     Raw(SmolStr),
 }
 
+impl<'de> Deserialize<'de> for ParsedBinanceMessage {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let v: Value = Value::deserialize(deserializer)?;
+
+        let event_type = v.get("e").and_then(|e| e.as_str()).unwrap_or_default();
+
+        match event_type {
+            "outboundAccountPosition" => serde_json::from_value(v)
+                .map(ParsedBinanceMessage::OutboundAccountPosition)
+                .map_err(de::Error::custom),
+            "balanceUpdate" => serde_json::from_value(v)
+                .map(ParsedBinanceMessage::BalanceUpdate)
+                .map_err(de::Error::custom),
+            "executionReport" => serde_json::from_value(v)
+                .map(ParsedBinanceMessage::ExecutionReport)
+                .map_err(de::Error::custom),
+            _ => {
+                let raw = serde_json::to_string(&v).unwrap_or_else(|_| "<invalid json>".into());
+                Ok(ParsedBinanceMessage::Raw(raw.into()))
+            }
+        }
+    }
+}
+
 impl ToSmolStr for ParsedBinanceMessage {
     fn to_smolstr(&self) -> SmolStr {
         match self {
@@ -50,7 +80,20 @@ impl ToSmolStr for ParsedBinanceMessage {
             }
             ParsedBinanceMessage::BalanceUpdate(_) => SmolStr::new("balanceUpdate"),
             ParsedBinanceMessage::ExecutionReport(_) => SmolStr::new("executionReport"),
-            ParsedBinanceMessage::Raw(smol_str) => smol_str.clone(),
+            ParsedBinanceMessage::Raw(s) => s.clone(),
+        }
+    }
+}
+
+impl From<&ParsedBinanceMessage> for BinanceWsEventType {
+    fn from(msg: &ParsedBinanceMessage) -> Self {
+        match msg {
+            ParsedBinanceMessage::OutboundAccountPosition(_) => {
+                BinanceWsEventType::OutboundAccountPosition
+            }
+            ParsedBinanceMessage::BalanceUpdate(_) => BinanceWsEventType::BalanceUpdate,
+            ParsedBinanceMessage::ExecutionReport(_) => BinanceWsEventType::ExecutionReport,
+            ParsedBinanceMessage::Raw(_) => BinanceWsEventType::Unknown,
         }
     }
 }

@@ -56,7 +56,7 @@ impl ExchangeEngineDriver {
     pub async fn run(&self, method: Method) -> Result<(), EngineError> {
         let mut ws_client = self.private_data_client.clone();
         let ws_task = tokio::spawn(async move {
-            match ws_client.raw_stream().await {
+            match ws_client.stream().await {
                 Ok(_) => {
                     debug!("WebSocket loop successfully running");
                 }

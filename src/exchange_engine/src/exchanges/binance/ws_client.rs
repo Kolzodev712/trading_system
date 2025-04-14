@@ -3,10 +3,7 @@ use crate::exchanges::binance::sign::BinanceWsAuthenticator;
 use super::super::binance::websocket::types::user_data::DataHandler;
 use super::{
     config::BinanceConfig,
-    websocket::{
-        client::BinanceWSClient,
-        types::user_data::events::{BinanceWsEventType, ParsedBinanceMessage},
-    },
+    websocket::{client::BinanceWSClient, types::user_data::events::ParsedBinanceMessage},
 };
 use async_trait::async_trait;
 use core_logic::{
@@ -33,7 +30,7 @@ impl BinanceClient {
         }
     }
 
-    async fn start_stream(&mut self, data_type: BinanceWsEventType) -> Result<(), EngineError> {
+    async fn start_stream(&mut self, sub_to_user_stream: bool) -> Result<(), EngineError> {
         let (tx, mut rx) = self.channel_manager.create_channel();
         let signer = BinanceWsAuthenticator::new(
             self.config.ws.api_key.clone(),
@@ -43,7 +40,7 @@ impl BinanceClient {
         let client = BinanceWSClient::new(signer);
         let mut ws_stream = client.connect_and_authenticate().await?;
 
-        if data_type != BinanceWsEventType::Unknown {
+        if sub_to_user_stream {
             client.subscribe_to_user_stream(&mut ws_stream).await?;
         }
 
@@ -76,15 +73,7 @@ impl PrivateDataClient for BinanceClient {
         Exchange::Binance
     }
 
-    async fn raw_stream(&mut self) -> Result<(), EngineError> {
-        self.start_stream(BinanceWsEventType::Unknown).await
-    }
-
-    async fn balances(&mut self) -> Result<(), EngineError> {
-        self.start_stream(BinanceWsEventType::BalanceUpdate).await
-    }
-
-    async fn orders(&mut self) -> Result<(), EngineError> {
-        self.start_stream(BinanceWsEventType::ExecutionReport).await
+    async fn stream(&mut self) -> Result<(), EngineError> {
+        self.start_stream(false).await
     }
 }

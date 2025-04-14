@@ -2,7 +2,7 @@ use crate::exchanges::binance::sign::BinanceWsAuthenticator;
 
 use super::types::{
     common::{SessionLogonMessage, SessionLogonParams},
-    user_data::events::{BinanceWSMessage, BinanceWsEventType, ParsedBinanceMessage},
+    user_data::events::{BinanceWSMessage, ParsedBinanceMessage},
 };
 use async_trait::async_trait;
 use core_logic::{
@@ -25,7 +25,6 @@ pub const BINANCE_WS_URL: &str = "wss://ws-api.binance.com:443/ws-api/v3";
 
 #[derive(Debug, Clone)]
 pub struct BinanceChannel {
-    pub channel: BinanceWsEventType,
     pub base: SmolStr,
     pub quote: SmolStr,
     pub limit: u64,

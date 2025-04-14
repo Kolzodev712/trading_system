@@ -109,6 +109,8 @@ pub trait PrivateDataClient: Debug + Send + Sync + Clone + 'static {
     /// Universal identifier of the exchange this client serves
     fn exchange_id(&self) -> Exchange;
 
+    async fn raw_stream(&mut self) -> Result<(), EngineError>;
+
     async fn balances(&mut self) -> Result<(), EngineError>;
 
     async fn orders(&mut self) -> Result<(), EngineError>;

@@ -1,50 +1,6 @@
-use super::{balance::BinanceAccountInfo, orders::ExecutionReport};
 use core_logic::utils::{deserialize_smol_str, serialize_smol_str};
 use serde::{Deserialize, Serialize};
-use smol_str::{SmolStr, ToSmolStr};
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct BinanceWSMessage {
-    #[serde(
-        serialize_with = "serialize_smol_str",
-        deserialize_with = "deserialize_smol_str"
-    )]
-    pub id: SmolStr,
-    #[serde(
-        serialize_with = "serialize_smol_str",
-        deserialize_with = "deserialize_smol_str"
-    )]
-    pub method: SmolStr,
-}
-
-#[derive(Debug, PartialEq, Eq, Deserialize, Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub enum BinanceWsEventType {
-    AccountStatus,
-    ExecutionReport,
-    Unknown,
-}
-
-#[derive(Debug, PartialEq, Eq, Deserialize, Serialize, Clone)]
-pub enum ParsedBinanceMessage {
-    AccountStatus(BinanceAccountInfo),
-    ExecutionReport(ExecutionReport),
-    #[serde(
-        serialize_with = "serialize_smol_str",
-        deserialize_with = "deserialize_smol_str"
-    )]
-    Raw(SmolStr),
-}
-
-impl ToSmolStr for ParsedBinanceMessage {
-    fn to_smolstr(&self) -> SmolStr {
-        match self {
-            ParsedBinanceMessage::AccountStatus(_) => SmolStr::new("accountStatus"),
-            ParsedBinanceMessage::ExecutionReport(_) => SmolStr::new("executionReport"),
-            ParsedBinanceMessage::Raw(smol_str) => smol_str.clone(),
-        }
-    }
-}
+use smol_str::SmolStr;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -78,6 +34,69 @@ pub struct SessionLogonParams {
     pub signature: SmolStr,
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct SesionStatusMessage {
+    #[serde(
+        serialize_with = "serialize_smol_str",
+        deserialize_with = "deserialize_smol_str"
+    )]
+    pub id: SmolStr,
+    #[serde(
+        serialize_with = "serialize_smol_str",
+        deserialize_with = "deserialize_smol_str"
+    )]
+    pub method: SmolStr,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct SesionLogoutMessage {
+    #[serde(
+        serialize_with = "serialize_smol_str",
+        deserialize_with = "deserialize_smol_str"
+    )]
+    pub id: SmolStr,
+    #[serde(
+        serialize_with = "serialize_smol_str",
+        deserialize_with = "deserialize_smol_str"
+    )]
+    pub method: SmolStr,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ServerTime {
+    #[serde(
+        serialize_with = "serialize_smol_str",
+        deserialize_with = "deserialize_smol_str"
+    )]
+    pub id: SmolStr,
+    #[serde(
+        serialize_with = "serialize_smol_str",
+        deserialize_with = "deserialize_smol_str"
+    )]
+    pub method: SmolStr,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ServerTimeResponse {
+    #[serde(
+        serialize_with = "serialize_smol_str",
+        deserialize_with = "deserialize_smol_str"
+    )]
+    pub id: SmolStr,
+    pub status: i64,
+    pub result: TimeResponse,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct TimeResponse {
+    server_time: u64,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -105,5 +124,106 @@ mod tests {
         assert_eq!(logon.params.api_key, "MY_API_KEY");
         assert_eq!(logon.params.timestamp, 1700000000000);
         assert_eq!(logon.params.signature, "BASE64_SIGNATURE");
+    }
+
+    #[test]
+    fn test_serialize_session_logon_message() {
+        let message = SessionLogonMessage {
+            id: SmolStr::new("abc123"),
+            method: SmolStr::new("session.logon"),
+            params: SessionLogonParams {
+                api_key: SmolStr::new("KEY123"),
+                timestamp: 1700000000000,
+                signature: SmolStr::new("SIGNATURE123"),
+            },
+        };
+
+        let json = serde_json::to_string(&message).unwrap();
+        let expected = r#"{"id":"abc123","method":"session.logon","params":{"apiKey":"KEY123","timestamp":1700000000000,"signature":"SIGNATURE123"}}"#;
+
+        assert_eq!(json, expected);
+    }
+
+    #[test]
+    fn test_serialize_session_status_message() {
+        let msg = SesionStatusMessage {
+            id: SmolStr::new("id123"),
+            method: SmolStr::new("session.status"),
+        };
+
+        let json = serde_json::to_string(&msg).unwrap();
+        let expected = r#"{"id":"id123","method":"session.status"}"#;
+        assert_eq!(json, expected);
+    }
+
+    #[test]
+    fn test_deserialize_session_status_message() {
+        let json = r#"
+        {
+            "id": "status_id",
+            "method": "session.status"
+        }
+        "#;
+
+        let msg: SesionStatusMessage = serde_json::from_str(json).unwrap();
+        assert_eq!(msg.id, "status_id");
+        assert_eq!(msg.method, "session.status");
+    }
+
+    #[test]
+    fn test_serialize_session_logout_message() {
+        let msg = SesionLogoutMessage {
+            id: SmolStr::new("logout_id"),
+            method: SmolStr::new("session.logout"),
+        };
+
+        let json = serde_json::to_string(&msg).unwrap();
+        let expected = r#"{"id":"logout_id","method":"session.logout"}"#;
+        assert_eq!(json, expected);
+    }
+
+    #[test]
+    fn test_serialize_server_time() {
+        let time = ServerTime {
+            id: SmolStr::new("time_id"),
+            method: SmolStr::new("server.time"),
+        };
+
+        let json = serde_json::to_string(&time).unwrap();
+        let expected = r#"{"id":"time_id","method":"server.time"}"#;
+        assert_eq!(json, expected);
+    }
+
+    #[test]
+    fn test_serialize_server_time_response() {
+        let resp = ServerTimeResponse {
+            id: SmolStr::new("res_id"),
+            status: 0,
+            result: TimeResponse {
+                server_time: 123456789,
+            },
+        };
+
+        let json = serde_json::to_string(&resp).unwrap();
+        let expected = r#"{"id":"res_id","status":0,"result":{"serverTime":123456789}}"#;
+        assert_eq!(json, expected);
+    }
+
+    #[test]
+    fn test_deserialize_server_time_response() {
+        let json = r#"
+        {
+            "id": "res_id",
+            "status": 1,
+            "result": {
+                "serverTime": 987654321
+            }
+        }
+        "#;
+
+        let msg: ServerTimeResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(msg.id, "res_id");
+        assert_eq!(msg.status, 1);
+        assert_eq!(msg.result.server_time, 987654321);
     }
 }

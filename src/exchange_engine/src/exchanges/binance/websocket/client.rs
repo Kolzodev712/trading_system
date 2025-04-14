@@ -1,12 +1,8 @@
 use crate::exchanges::binance::sign::BinanceWsAuthenticator;
 
 use super::types::{
-    balance::BinanceAccountInfo,
-    common::{
-        BinanceWSMessage, BinanceWsEventType, ParsedBinanceMessage, SessionLogonMessage,
-        SessionLogonParams,
-    },
-    orders::ExecutionReport,
+    common::{SessionLogonMessage, SessionLogonParams},
+    user_data::events::{BinanceWSMessage, BinanceWsEventType, ParsedBinanceMessage},
 };
 use async_trait::async_trait;
 use core_logic::{
@@ -21,11 +17,9 @@ use smol_str::SmolStr;
 use std::collections::BTreeMap;
 use tokio::{net::TcpStream, sync::mpsc};
 use tokio_tungstenite::{
-    connect_async,
-    tungstenite::protocol::{CloseFrame, Message},
-    MaybeTlsStream, WebSocketStream,
+    connect_async, tungstenite::protocol::Message, MaybeTlsStream, WebSocketStream,
 };
-use tracing::{debug, error, trace};
+use tracing::{debug, error};
 
 pub const BINANCE_WS_URL: &str = "wss://ws-api.binance.com:443/ws-api/v3";
 
@@ -99,81 +93,6 @@ impl SubscriptionHandler for BinanceSubscriptionHandler {
     }
 }
 
-#[derive(Debug, Clone)]
-struct DataHandler;
-
-impl DataHandler {
-    fn handle_outbound_account_position(
-        &self,
-        v: Value,
-    ) -> Result<ParsedBinanceMessage, EngineError> {
-        let account_status: BinanceAccountInfo = serde_json::from_value(v).map_err(|e| {
-            error!("Error deserializing outbound account position: {}", e);
-            EngineError::JsonError(e)
-        })?;
-
-        Ok(ParsedBinanceMessage::AccountStatus(account_status))
-    }
-
-    fn handle_execution_report(&self, v: Value) -> Result<ParsedBinanceMessage, EngineError> {
-        let execution_report: ExecutionReport =
-            serde_json::from_value(v).map_err(EngineError::JsonError)?;
-        Ok(ParsedBinanceMessage::ExecutionReport(execution_report))
-    }
-
-    fn convert_method_to_event_type(&self, method: &str) -> BinanceWsEventType {
-        match method {
-            "outboundAccountPosition" => BinanceWsEventType::AccountStatus,
-            "executionReport" => BinanceWsEventType::ExecutionReport,
-            _ => BinanceWsEventType::Unknown,
-        }
-    }
-
-    fn handle_event(&self, method: &str, v: Value) -> Result<ParsedBinanceMessage, EngineError> {
-        let event_type = self.convert_method_to_event_type(method);
-
-        match event_type {
-            BinanceWsEventType::AccountStatus => self.handle_outbound_account_position(v),
-            BinanceWsEventType::ExecutionReport => self.handle_execution_report(v),
-            BinanceWsEventType::Unknown => {
-                debug!("Unknown event type: {:?}", v);
-                Err(EngineError::new_custom_error(
-                    "Could not find relevant Binance WS message type".into(),
-                ))
-            }
-        }
-    }
-}
-
-impl MessageHandler<ParsedBinanceMessage> for DataHandler {
-    fn handle_text_message(&self, text: SmolStr) -> Result<ParsedBinanceMessage, EngineError> {
-        let v: Value = serde_json::from_str(&text).map_err(EngineError::JsonError)?;
-
-        if let Some(event_type) = v.clone().get("e").and_then(|e| e.as_str()) {
-            self.handle_event(event_type, v)
-        } else {
-            trace!("Unknown or unsupported message format: {}", text);
-            Ok(ParsedBinanceMessage::Raw(text))
-        }
-    }
-
-    fn handle_binary(&self, binary: Vec<u8>) {
-        debug!("Received binary message: {:?}", binary)
-    }
-
-    fn handle_ping(&self, ping: Vec<u8>) {
-        debug!("Ping received: {:?}", ping);
-    }
-
-    fn handle_pong(&self, pong: Vec<u8>) {
-        debug!("Seding Pong: {:?}", pong);
-    }
-
-    fn handle_close(&self, _close: Option<CloseFrame>) {
-        unimplemented!()
-    }
-}
-
 pub struct BinanceWSClient {
     url: SmolStr,
     subscription_handler: BinanceSubscriptionHandler,
@@ -194,9 +113,25 @@ impl BinanceWSClient {
         self.make_ws_request(&ws_url).await
     }
 
-    pub async fn run(&self, tx: mpsc::Sender<ParsedBinanceMessage>) -> Result<(), EngineError> {
-        let mut ws_stream = self.create_ws_stream().await?;
+    pub async fn subscribe_to_user_stream(
+        &self,
+        ws_stream: &mut WebSocketStream<MaybeTlsStream<TcpStream>>,
+    ) -> Result<(), EngineError> {
+        if let Some(subscription_message) = self.subscription_handler.create_subscription_request()
+        {
+            debug!("📩 Subscribing to userDataStream...");
+            ws_stream.send(subscription_message).await?;
+        } else {
+            error!("❌ Failed to create subscription message");
+        }
 
+        Ok(())
+    }
+
+    pub async fn connect_and_authenticate(
+        &self,
+    ) -> Result<WebSocketStream<MaybeTlsStream<TcpStream>>, EngineError> {
+        let mut ws_stream = self.create_ws_stream().await?;
         let logon_msg = self.subscription_handler.create_logon_message()?;
         ws_stream.send(logon_msg).await?;
 
@@ -209,23 +144,21 @@ impl BinanceWSClient {
                     format!("❌ session.logon failed: {:?}", v).into(),
                 ));
             }
-        } else {
-            return Err(EngineError::new_custom_error(
-                "❌ Did not receive session.logon response".into(),
-            ));
         }
 
-        if let Some(subscription_message) = self.subscription_handler.create_subscription_request()
-        {
-            ws_stream.send(subscription_message).await?;
-        } else {
-            return Err(EngineError::new_custom_error(
-                "Failed to create subscription message".into(),
-            ));
-        }
+        Ok(ws_stream)
+    }
 
-        self.handle_messages(ws_stream, tx, DataHandler).await?;
-        Ok(())
+    pub async fn start_event_loop<H>(
+        &self,
+        ws_stream: WebSocketStream<MaybeTlsStream<TcpStream>>,
+        tx: mpsc::Sender<ParsedBinanceMessage>,
+        handler: H,
+    ) -> Result<(), EngineError>
+    where
+        H: MessageHandler<ParsedBinanceMessage> + Send + Sync + 'static,
+    {
+        self.handle_messages(ws_stream, tx, handler).await
     }
 }
 

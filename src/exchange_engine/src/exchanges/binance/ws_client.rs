@@ -1,10 +1,11 @@
 use crate::exchanges::binance::sign::BinanceWsAuthenticator;
 
+use super::super::binance::websocket::types::user_data::DataHandler;
 use super::{
     config::BinanceConfig,
     websocket::{
         client::BinanceWSClient,
-        types::common::{BinanceWsEventType, ParsedBinanceMessage},
+        types::user_data::events::{BinanceWsEventType, ParsedBinanceMessage},
     },
 };
 use async_trait::async_trait;
@@ -15,7 +16,7 @@ use core_logic::{
     Exchange,
 };
 use std::fmt::Debug;
-use tracing::{debug, error, info, trace};
+use tracing::debug;
 
 #[derive(Debug, Clone)]
 pub struct BinanceClient {
@@ -34,22 +35,27 @@ impl BinanceClient {
 
     async fn start_stream(&mut self, data_type: BinanceWsEventType) -> Result<(), EngineError> {
         let (tx, mut rx) = self.channel_manager.create_channel();
-
         let signer = BinanceWsAuthenticator::new(
             self.config.ws.api_key.clone(),
             self.config.ws.secret_key.clone(),
         );
 
         let client = BinanceWSClient::new(signer);
-        client.run(tx).await?;
-        info!("✅ WebSocket stream started for {:?}", data_type);
+        let mut ws_stream = client.connect_and_authenticate().await?;
+
+        if data_type != BinanceWsEventType::Unknown {
+            client.subscribe_to_user_stream(&mut ws_stream).await?;
+        }
+
+        client.start_event_loop(ws_stream, tx, DataHandler).await?;
 
         while let Ok(message) = self.channel_manager.receive(&mut rx).await {
-            trace!("📩 Received message: {:?}", message);
-
             match message {
-                ParsedBinanceMessage::AccountStatus(account_info) => {
-                    debug!("Account update: {:?}", account_info);
+                ParsedBinanceMessage::OutboundAccountPosition(position) => {
+                    debug!("Outbound Account Position update: {:?}", position);
+                }
+                ParsedBinanceMessage::BalanceUpdate(balance) => {
+                    debug!("Balance update: {:?}", balance);
                 }
                 ParsedBinanceMessage::ExecutionReport(exec_report) => {
                     debug!("Execution report update: {:?}", exec_report);
@@ -60,10 +66,6 @@ impl BinanceClient {
             }
         }
 
-        error!(
-            "❌ WebSocket stream unexpectedly stopped for {:?}",
-            data_type
-        );
         Err(EngineError::ConnectionClosed)
     }
 }
@@ -74,8 +76,12 @@ impl PrivateDataClient for BinanceClient {
         Exchange::Binance
     }
 
+    async fn raw_stream(&mut self) -> Result<(), EngineError> {
+        self.start_stream(BinanceWsEventType::Unknown).await
+    }
+
     async fn balances(&mut self) -> Result<(), EngineError> {
-        self.start_stream(BinanceWsEventType::AccountStatus).await
+        self.start_stream(BinanceWsEventType::BalanceUpdate).await
     }
 
     async fn orders(&mut self) -> Result<(), EngineError> {

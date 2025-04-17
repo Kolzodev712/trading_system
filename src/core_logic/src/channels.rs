@@ -5,7 +5,7 @@ use std::fmt::Debug;
 use tokio::sync::mpsc::{self, Receiver, Sender};
 
 #[async_trait]
-pub trait ChannelHandler<T: Send + Sync + Debug + ToSmolStr + 'static> {
+pub trait ChannelHandler<T: Send + Sync + Debug + 'static> {
     type SenderType;
     type ReceiverType;
 

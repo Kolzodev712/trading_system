@@ -1,7 +1,2 @@
 - Add trading requests to WS client and figure out how to design the event loop
 - Design the architecture of the exchange_engine and how it would work with rest. It should have a fallback to rest and an event loop logic needs to be introduced. 
-
-
-
-
-- Implement RPC calls to the authenticated WS client for binance! 

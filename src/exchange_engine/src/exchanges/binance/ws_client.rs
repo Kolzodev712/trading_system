@@ -4,7 +4,13 @@ use super::super::binance::websocket::types::user_data::DataHandler;
 use super::websocket::client::{BinanceSubscriptionHandler, ConnectionSession};
 use super::{
     config::BinanceConfig,
-    websocket::{client::BinanceWSClient, types::user_data::events::ParsedBinanceMessage},
+    websocket::{
+        client::BinanceWSClient,
+        types::{
+            rpc::{BinanceRpcRequest, BinanceRpcResponse},
+            user_data::events::ParsedBinanceMessage,
+        },
+    },
 };
 use async_trait::async_trait;
 use core_logic::{
@@ -14,7 +20,10 @@ use core_logic::{
     Exchange,
 };
 use std::{fmt::Debug, sync::Arc};
-use tokio::{sync::RwLock, time::Duration};
+use tokio::{
+    sync::{broadcast, mpsc, RwLock},
+    time::{sleep, Duration},
+};
 use tracing::{debug, error};
 
 #[derive(Debug, Clone)]
@@ -39,9 +48,37 @@ impl BinanceClient {
     }
 
     async fn start_event_loop(&mut self, sub_to_user_stream: bool) -> Result<(), EngineError> {
-        let (event_tx, mut event_rx) = self.channel_manager.create_channel();
-        let (rpc_tx, _) = self.channel_manager.create_channel();
+        loop {
+            let (event_tx, event_rx) = self.channel_manager.create_channel();
+            let (rpc_tx, _) = self.channel_manager.create_channel();
+            let (shutdown_tx, _) = broadcast::channel(1);
 
+            let result = self
+                .connect_and_start_stream(
+                    sub_to_user_stream,
+                    event_tx.clone(),
+                    event_rx,
+                    rpc_tx.clone(),
+                    shutdown_tx.clone(),
+                )
+                .await;
+
+            if let Err(e) = result {
+                error!("Connection or stream failed: {:?}", e);
+            }
+
+            self.exponential_backoff_wait().await;
+        }
+    }
+
+    async fn connect_and_start_stream(
+        &self,
+        sub_to_user_stream: bool,
+        event_tx: mpsc::Sender<ParsedBinanceMessage>,
+        event_rx: mpsc::Receiver<ParsedBinanceMessage>,
+        rpc_tx: mpsc::Sender<BinanceRpcResponse>,
+        shutdown_tx: broadcast::Sender<()>,
+    ) -> Result<(), EngineError> {
         let signer = BinanceWsAuthenticator::new(
             self.config.ws.api_key.clone(),
             self.config.ws.secret_key.clone(),
@@ -55,49 +92,92 @@ impl BinanceClient {
         }
 
         let session = client
-            .split_stream(ws_stream, event_tx.clone(), rpc_tx, DataHandler)
+            .split_stream(ws_stream, event_tx.clone(), rpc_tx.clone(), DataHandler)
             .await?;
 
         *self.connection_session.write().await = Some(session.clone());
 
-        // ✅ spawn periodic task inside the stream method itself
-        let outbound = session.outbound_tx.clone();
+        self.spawn_rpc_sender(session.outbound_tx.clone(), signer, shutdown_tx.subscribe())
+            .await;
+        self.run_stream_loop(event_rx, shutdown_tx.subscribe())
+            .await
+    }
+
+    async fn run_stream_loop(
+        &self,
+        mut event_rx: mpsc::Receiver<ParsedBinanceMessage>,
+        mut shutdown_rx: broadcast::Receiver<()>,
+    ) -> Result<(), EngineError> {
+        loop {
+            tokio::select! {
+                _ = shutdown_rx.recv() => {
+                    debug!("Shutdown received, exiting event loop");
+                    return Ok(());
+                }
+                message = self.channel_manager.receive(&mut event_rx) => {
+                    match message {
+                        Ok(msg) => {
+                            match msg {
+                                ParsedBinanceMessage::OutboundAccountPosition(position) => {
+                                    debug!("Outbound Account Position update: {:?}", position);
+                                }
+                                ParsedBinanceMessage::BalanceUpdate(balance) => {
+                                    debug!("Balance update: {:?}", balance);
+                                }
+                                ParsedBinanceMessage::ExecutionReport(exec_report) => {
+                                    debug!("Execution report update: {:?}", exec_report);
+                                }
+                                ParsedBinanceMessage::Raw(raw) => {
+                                    debug!("Received raw message: {:?}", raw);
+                                }
+                            }
+                        }
+                        Err(_) => {
+                            error!("Event channel closed");
+                            return Err(EngineError::ConnectionClosed);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    async fn exponential_backoff_wait(&mut self) {
+        let base_delay = Duration::from_secs(self.config.base_delay.unwrap_or(2));
+        let max_delay = Duration::from_secs(self.config.max_delay.unwrap_or(60));
+
+        let jitter = Duration::from_millis(rand::random::<u64>() % 1000);
+        let sleep_time = (base_delay + jitter).min(max_delay);
+
+        debug!("Reconnecting after {:?}", sleep_time);
+        sleep(sleep_time).await;
+    }
+
+    // Test function to showcase the rpc sending logic
+    async fn spawn_rpc_sender(
+        &self,
+        outbound_tx: mpsc::Sender<BinanceRpcRequest>,
+        signer: BinanceWsAuthenticator,
+        mut shutdown_rx: broadcast::Receiver<()>,
+    ) {
         tokio::spawn(async move {
             let subscription_handler = BinanceSubscriptionHandler::new(signer);
             loop {
-                tokio::time::sleep(Duration::from_secs(5)).await;
-
-                match subscription_handler.create_account_status_request() {
-                    Ok(rpc) => {
-                        if outbound.send(rpc).await.is_err() {
-                            error!("Failed to send account.status RPC");
-                        }
+                tokio::select! {
+                    _ = shutdown_rx.recv() => {
+                        debug!("Shutdown received in RPC sender");
+                        break;
                     }
-                    Err(e) => {
-                        error!("Failed to create account.status RPC: {:?}", e);
+                    _ = tokio::time::sleep(Duration::from_secs(5)) => {
+                        if let Ok(rpc) = subscription_handler.create_account_status_request() {
+                            if outbound_tx.send(rpc).await.is_err() {
+                                error!("Failed to send account.status RPC");
+                            }
+                        }
                     }
                 }
             }
         });
-
-        while let Ok(message) = self.channel_manager.receive(&mut event_rx).await {
-            match message {
-                ParsedBinanceMessage::OutboundAccountPosition(position) => {
-                    debug!("Outbound Account Position update: {:?}", position);
-                }
-                ParsedBinanceMessage::BalanceUpdate(balance) => {
-                    debug!("Balance update: {:?}", balance);
-                }
-                ParsedBinanceMessage::ExecutionReport(exec_report) => {
-                    debug!("Execution report update: {:?}", exec_report);
-                }
-                ParsedBinanceMessage::Raw(raw) => {
-                    debug!("Received message: {:?}", raw);
-                }
-            }
-        }
-
-        Err(EngineError::ConnectionClosed)
     }
 }
 

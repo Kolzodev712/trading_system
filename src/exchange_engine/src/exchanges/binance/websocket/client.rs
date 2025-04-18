@@ -153,6 +153,42 @@ impl BinanceWSClient {
         self.make_ws_request(&ws_url).await
     }
 
+    pub async fn connect_and_authenticate(
+        &self,
+    ) -> Result<WebSocketStream<MaybeTlsStream<TcpStream>>, EngineError> {
+        let mut ws_stream = self.create_ws_stream().await?;
+        let logon_msg = self.subscription_handler.create_logon_message()?;
+        ws_stream.send(logon_msg).await?;
+
+        if let Some(Ok(Message::Text(logon_response))) = ws_stream.next().await {
+            let v: Value = serde_json::from_str(&logon_response)?;
+            if v.get("status").and_then(|s| s.as_u64()) == Some(200) {
+                debug!("✅ Successfully authenticated with session.logon");
+            } else {
+                return Err(EngineError::new_custom_error(
+                    format!("❌ session.logon failed: {:?}", v).into(),
+                ));
+            }
+        }
+
+        Ok(ws_stream)
+    }
+
+    pub async fn subscribe_to_user_stream(
+        &self,
+        ws_stream: &mut WebSocketStream<MaybeTlsStream<TcpStream>>,
+    ) -> Result<(), EngineError> {
+        if let Some(subscription_message) = self.subscription_handler.create_subscription_request()
+        {
+            debug!("📩 Subscribing to userDataStream...");
+            ws_stream.send(subscription_message).await?;
+        } else {
+            error!("❌ Failed to create subscription message");
+        }
+
+        Ok(())
+    }
+
     async fn handle_read_steam_msg<H, R>(
         &self,
         mut reader: R,
@@ -233,42 +269,6 @@ impl BinanceWSClient {
             .await?;
 
         Ok(ConnectionSession { outbound_tx })
-    }
-
-    pub async fn subscribe_to_user_stream(
-        &self,
-        ws_stream: &mut WebSocketStream<MaybeTlsStream<TcpStream>>,
-    ) -> Result<(), EngineError> {
-        if let Some(subscription_message) = self.subscription_handler.create_subscription_request()
-        {
-            debug!("📩 Subscribing to userDataStream...");
-            ws_stream.send(subscription_message).await?;
-        } else {
-            error!("❌ Failed to create subscription message");
-        }
-
-        Ok(())
-    }
-
-    pub async fn connect_and_authenticate(
-        &self,
-    ) -> Result<WebSocketStream<MaybeTlsStream<TcpStream>>, EngineError> {
-        let mut ws_stream = self.create_ws_stream().await?;
-        let logon_msg = self.subscription_handler.create_logon_message()?;
-        ws_stream.send(logon_msg).await?;
-
-        if let Some(Ok(Message::Text(logon_response))) = ws_stream.next().await {
-            let v: Value = serde_json::from_str(&logon_response)?;
-            if v.get("status").and_then(|s| s.as_u64()) == Some(200) {
-                debug!("✅ Successfully authenticated with session.logon");
-            } else {
-                return Err(EngineError::new_custom_error(
-                    format!("❌ session.logon failed: {:?}", v).into(),
-                ));
-            }
-        }
-
-        Ok(ws_stream)
     }
 }
 

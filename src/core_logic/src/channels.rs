@@ -4,6 +4,10 @@ use smol_str::ToSmolStr;
 use std::fmt::Debug;
 use tokio::sync::mpsc::{self, Receiver, Sender};
 
+// THIS IS COMPLETE CRAP and if it's to be used, it needs to be re-done! 
+
+// it needs to offer the creation and management of mpsc, watch, oneshot, broadcast and also the message flow management
+
 #[async_trait]
 pub trait ChannelHandler<T: Send + Sync + Debug + 'static> {
     type SenderType;

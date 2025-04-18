@@ -18,7 +18,8 @@ use core_logic::{
     Exchange,
 };
 use std::fmt::Debug;
-use tracing::{error, info, trace};
+use tokio::sync::mpsc;
+use tracing::{debug, error, info};
 
 #[derive(Debug)]
 pub struct BinanceClient {
@@ -45,49 +46,101 @@ impl BinanceClient {
         self.message_handler = Some(handler);
     }
 
-    async fn start_stream(&mut self, data_type: DataType) -> Result<(), EngineError> {
-        let (tx, mut rx) = self.channel_manager.create_channel();
+    pub async fn start_stream(&mut self, data_type: DataType) -> Result<(), EngineError> {
+        let (tx, rx) = self.channel_manager.create_channel();
+        let channel = self.build_channel(data_type.clone());
 
-        let channel = BinanceChannel {
-            channel: data_type.clone(),
-            base: self.config.symbol.base.clone().to_lowercase().into(),
-            quote: self.config.symbol.quote.clone().to_lowercase().into(),
+        self.run_with_reconnect(channel, tx, rx, data_type).await
+    }
+
+    fn build_channel(&self, data_type: DataType) -> BinanceChannel {
+        BinanceChannel {
+            channel: data_type,
+            base: self.config.symbol.base.to_lowercase().into(),
+            quote: self.config.symbol.quote.to_lowercase().into(),
             limit: self.config.limit,
-        };
+        }
+    }
 
+    async fn run_with_reconnect(
+        &self,
+        channel: BinanceChannel,
+        tx: mpsc::Sender<ParsedBinanceMessage>,
+        mut rx: mpsc::Receiver<ParsedBinanceMessage>,
+        data_type: DataType,
+    ) -> Result<(), EngineError> {
+        let mut base_delay = std::time::Duration::from_secs(self.config.base_delay.unwrap_or(2));
+        let max_delay = std::time::Duration::from_secs(self.config.max_delay.unwrap_or(60));
+
+        loop {
+            match self
+                .connect_and_stream(channel.clone(), tx.clone(), &mut rx, data_type.clone())
+                .await
+            {
+                Ok(_) => debug!("WebSocket stream closed cleanly"),
+                Err(e) => error!("WebSocket error: {:?}", e),
+            }
+
+            self.wait_before_reconnect(&mut base_delay, max_delay).await;
+        }
+    }
+
+    async fn connect_and_stream(
+        &self,
+        channel: BinanceChannel,
+        tx: mpsc::Sender<ParsedBinanceMessage>,
+        rx: &mut mpsc::Receiver<ParsedBinanceMessage>,
+        data_type: DataType,
+    ) -> Result<(), EngineError> {
         let client = BinanceWSClient::new(channel);
-        client.run(tx).await?;
+        client.run(tx.clone()).await?;
+
         info!("✅ WebSocket stream started for {:?}", data_type);
 
-        while let Ok(message) = self.channel_manager.receive(&mut rx).await {
-            trace!("📩 Received message: {:?}", message);
+        self.event_loop(rx).await
+    }
 
-            if let Some(handler) = &self.message_handler {
-                match message {
-                    ParsedBinanceMessage::OrderBook(orderbook) => {
-                        if let Err(e) = handler.handle_orderbook(orderbook).await {
-                            error!("❌ Failed to handle orderbook: {}", e);
-                        }
-                    }
-                    ParsedBinanceMessage::Trade(trade) => {
-                        if let Err(e) = handler.handle_trade(trade).await {
-                            error!("❌ Failed to handle trade: {}", e);
-                        }
-                    }
-                    _ => {
-                        error!("⚠️ Received unknown message type.");
-                    }
-                }
-            } else {
-                error!("❌ No message handler assigned. Messages will be lost!");
-            }
+    async fn event_loop(
+        &self,
+        rx: &mut mpsc::Receiver<ParsedBinanceMessage>,
+    ) -> Result<(), EngineError> {
+        while let Ok(message) = self.channel_manager.receive(rx).await {
+            self.handle_message(message).await?;
         }
 
-        error!(
-            "❌ WebSocket stream unexpectedly stopped for {:?}",
-            data_type
-        );
+        error!("❌ Event channel closed unexpectedly");
         Err(EngineError::ConnectionClosed)
+    }
+
+    async fn handle_message(&self, message: ParsedBinanceMessage) -> Result<(), EngineError> {
+        if let Some(handler) = &self.message_handler {
+            match message {
+                ParsedBinanceMessage::OrderBook(orderbook) => {
+                    handler.handle_orderbook(orderbook).await?
+                }
+                ParsedBinanceMessage::Trade(trade) => handler.handle_trade(trade).await?,
+                _ => {
+                    debug!("⚠️ Ignored unknown message: {:?}", message);
+                }
+            }
+        } else {
+            error!("❌ No message handler assigned!");
+        }
+        Ok(())
+    }
+
+    async fn wait_before_reconnect(
+        &self,
+        base_delay: &mut std::time::Duration,
+        max_delay: std::time::Duration,
+    ) {
+        let jitter = std::time::Duration::from_millis(rand::random::<u64>() % 1000);
+        let sleep_time = (*base_delay + jitter).min(max_delay);
+
+        debug!("🔁 Reconnecting after {:?}", sleep_time);
+        tokio::time::sleep(sleep_time).await;
+
+        *base_delay = (*base_delay * 2).min(max_delay);
     }
 }
 

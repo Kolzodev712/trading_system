@@ -3,5 +3,7 @@
         "base": "BTC",
         "quote": "USDT"
     },
-    "limit": 100
+    "limit": 100,
+    "baseDelay": 2,
+    "maxDelay": 60
 }

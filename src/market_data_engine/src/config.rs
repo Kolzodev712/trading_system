@@ -55,7 +55,9 @@ mod tests {
                         "base": "BTC",
                         "quote": "USDT"
                     },
-                    "limit": 100
+                    "limit": 100,
+                    "baseDelay": 2,
+                    "maxDelay": 60
                 }
             }
         }
@@ -74,6 +76,8 @@ mod tests {
                 }
                 .into(),
                 limit: 100,
+                base_delay: None,
+                max_delay: None
             })
         );
     }
@@ -91,6 +95,8 @@ mod tests {
                 }
                 .into(),
                 limit: 100,
+                base_delay: Some(2),
+                max_delay: Some(60),
             }),
         };
 
@@ -101,5 +107,7 @@ mod tests {
         assert_eq!(binance_config.symbol.base, "BTC");
         assert_eq!(binance_config.symbol.quote, "USDT");
         assert_eq!(binance_config.limit, 100);
+        assert_eq!(binance_config.base_delay, Some(2));
+        assert_eq!(binance_config.max_delay, Some(60));
     }
 }

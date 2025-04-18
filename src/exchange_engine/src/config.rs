@@ -61,7 +61,9 @@ mod tests {
                 "apiKey": "some_key",
                 "secretKey": "some_secret"    
             },
-            "limit": 100
+            "limit": 100,
+            "baseDelay": 2,
+            "maxDelay": 60
             }
         }
     }
@@ -83,6 +85,8 @@ mod tests {
                 assert_eq!(binance_config.ws.api_key, "some_key");
                 assert_eq!(binance_config.ws.secret_key, "some_secret");
                 assert_eq!(binance_config.limit, Some(100));
+                assert_eq!(binance_config.base_delay, Some(2));
+                assert_eq!(binance_config.max_delay, Some(60));
             }
         }
     }
@@ -105,6 +109,8 @@ mod tests {
                 secret_key: "some_secret".into(),
             },
             limit: Some(100),
+            base_delay: Some(2),
+            max_delay: Some(60),
         };
 
         let exchange_engine_config = ExchangeEngineConfig {
@@ -136,6 +142,8 @@ mod tests {
                 secret_key: "some_secret".into(),
             },
             limit: Some(100),
+            base_delay: Some(2),
+            max_delay: Some(60),
         };
 
         let exchange_engine_config = ExchangeEngineConfig {
@@ -152,5 +160,7 @@ mod tests {
         assert_eq!(retrieved_config.ws.api_key, "some_key");
         assert_eq!(retrieved_config.ws.secret_key, "some_secret");
         assert_eq!(retrieved_config.limit, Some(100));
+        assert_eq!(retrieved_config.base_delay, Some(2));
+        assert_eq!(retrieved_config.max_delay, Some(60));
     }
 }

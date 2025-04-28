@@ -1,6 +1,12 @@
 use crate::exchanges::binance::sign::BinanceWsAuthenticator;
 
-use super::super::binance::websocket::types::user_data::DataHandler;
+use super::super::binance::websocket::types::{
+    rpc::{
+        cancel_all::BinanceWsCancelAllOrdersReqParams, cancel_order::BinanceWsCancelOrderReqParams,
+        open_order::BinanceWsOrderReqParams,
+    },
+    user_data::DataHandler,
+};
 use super::websocket::client::{BinanceSubscriptionHandler, ConnectionSession};
 use super::{
     config::BinanceConfig,
@@ -30,16 +36,25 @@ use tracing::{debug, error};
 pub struct BinanceClient {
     pub config: BinanceConfig,
     pub channel_manager: ChannelManager,
+    pub outbound_rpc_tx: Option<mpsc::Sender<BinanceRpcRequest>>,
     connection_session: Arc<RwLock<Option<ConnectionSession>>>,
+    subscription_handler: BinanceSubscriptionHandler,
 }
 
 impl BinanceClient {
     pub fn new(config: BinanceConfig, buffer_size: usize) -> Self {
         let channel_manager = ChannelManager::new(buffer_size);
+        let signer =
+            BinanceWsAuthenticator::new(config.ws.api_key.clone(), config.ws.secret_key.clone());
+
+        let subscription_handler = BinanceSubscriptionHandler::new(signer);
+
         BinanceClient {
             config,
             channel_manager,
+            outbound_rpc_tx: None,
             connection_session: Arc::new(RwLock::new(None)),
+            subscription_handler,
         }
     }
 
@@ -50,7 +65,7 @@ impl BinanceClient {
     async fn start_event_loop(&mut self, sub_to_user_stream: bool) -> Result<(), EngineError> {
         loop {
             let (event_tx, event_rx) = self.channel_manager.create_channel();
-            let (rpc_tx, _) = self.channel_manager.create_channel();
+            let (rpc_tx, rpc_rx) = self.channel_manager.create_channel();
             let (shutdown_tx, _) = broadcast::channel(1);
 
             let result = self
@@ -59,6 +74,7 @@ impl BinanceClient {
                     event_tx.clone(),
                     event_rx,
                     rpc_tx.clone(),
+                    rpc_rx,
                     shutdown_tx.clone(),
                 )
                 .await;
@@ -72,11 +88,12 @@ impl BinanceClient {
     }
 
     async fn connect_and_start_stream(
-        &self,
+        &mut self,
         sub_to_user_stream: bool,
         event_tx: mpsc::Sender<ParsedBinanceMessage>,
         event_rx: mpsc::Receiver<ParsedBinanceMessage>,
         rpc_tx: mpsc::Sender<BinanceRpcResponse>,
+        rpc_rx: mpsc::Receiver<BinanceRpcResponse>,
         shutdown_tx: broadcast::Sender<()>,
     ) -> Result<(), EngineError> {
         let signer = BinanceWsAuthenticator::new(
@@ -95,17 +112,21 @@ impl BinanceClient {
             .split_stream(ws_stream, event_tx.clone(), rpc_tx.clone(), DataHandler)
             .await?;
 
-        *self.connection_session.write().await = Some(session.clone());
+        {
+            let mut session_guard = self.connection_session.write().await;
+            *session_guard = Some(session.clone());
+        }
 
-        self.spawn_rpc_sender(session.outbound_tx.clone(), signer, shutdown_tx.subscribe())
-            .await;
-        self.run_stream_loop(event_rx, shutdown_tx.subscribe())
+        self.outbound_rpc_tx = Some(session.outbound_tx.clone());
+
+        self.run_stream_loop(event_rx, rpc_rx, shutdown_tx.subscribe())
             .await
     }
 
     async fn run_stream_loop(
         &self,
         mut event_rx: mpsc::Receiver<ParsedBinanceMessage>,
+        mut rpc_rx: mpsc::Receiver<BinanceRpcResponse>,
         mut shutdown_rx: broadcast::Receiver<()>,
     ) -> Result<(), EngineError> {
         loop {
@@ -114,9 +135,9 @@ impl BinanceClient {
                     debug!("Shutdown received, exiting event loop");
                     return Ok(());
                 }
-                message = self.channel_manager.receive(&mut event_rx) => {
-                    match message {
-                        Ok(msg) => {
+                maybe_msg = event_rx.recv() => {
+                    match maybe_msg {
+                        Some(msg) => {
                             match msg {
                                 ParsedBinanceMessage::OutboundAccountPosition(position) => {
                                     debug!("Outbound Account Position update: {:?}", position);
@@ -132,14 +153,27 @@ impl BinanceClient {
                                 }
                             }
                         }
-                        Err(_) => {
-                            error!("Event channel closed");
-                            return Err(EngineError::ConnectionClosed);
+                        None => {
+                            error!("Event channel closed, exiting stream loop");
+                            break;
+                        }
+                    }
+                }
+                maybe_rpc = rpc_rx.recv() => {
+                    match maybe_rpc {
+                        Some(rpc_response) => {
+                            debug!("✅ RPC Response received: {:?}", rpc_response);
+                        }
+                        None => {
+                            error!("RPC channel closed");
+                            break;
                         }
                     }
                 }
             }
         }
+
+        Ok(())
     }
 
     async fn exponential_backoff_wait(&mut self) {
@@ -153,31 +187,90 @@ impl BinanceClient {
         sleep(sleep_time).await;
     }
 
-    // Test function to showcase the rpc sending logic
-    async fn spawn_rpc_sender(
+    pub async fn account_status(&self) -> Result<(), EngineError> {
+        let rpc_request = self.subscription_handler.create_account_status_request()?;
+
+        if let Some(tx) = &self.outbound_rpc_tx {
+            tx.send(rpc_request).await.map_err(|_| {
+                EngineError::new_custom_error("Failed to send account status request".into())
+            })
+        } else {
+            Err(EngineError::new_custom_error(
+                "Outbound RPC channel not initialized".into(),
+            ))
+        }
+    }
+
+    pub async fn test_order(&self, params: BinanceWsOrderReqParams) -> Result<(), EngineError> {
+        let rpc_request = self
+            .subscription_handler
+            .create_test_order_request(params)?;
+
+        debug!("Sending Test Order RPC: {:?}", rpc_request);
+
+        if let Some(tx) = &self.outbound_rpc_tx {
+            tx.send(rpc_request).await.map_err(|_| {
+                EngineError::new_custom_error("Failed to send test order request".into())
+            })
+        } else {
+            Err(EngineError::new_custom_error(
+                "Outbound RPC channel not initialized".into(),
+            ))
+        }
+    }
+
+    pub async fn open_order(&self, params: BinanceWsOrderReqParams) -> Result<(), EngineError> {
+        let rpc_request = self
+            .subscription_handler
+            .create_open_order_request(params)?;
+
+        if let Some(tx) = &self.outbound_rpc_tx {
+            tx.send(rpc_request).await.map_err(|_| {
+                EngineError::new_custom_error("Failed to send open order request".into())
+            })
+        } else {
+            Err(EngineError::new_custom_error(
+                "Outbound RPC channel not initialized".into(),
+            ))
+        }
+    }
+
+    pub async fn cancel_order(
         &self,
-        outbound_tx: mpsc::Sender<BinanceRpcRequest>,
-        signer: BinanceWsAuthenticator,
-        mut shutdown_rx: broadcast::Receiver<()>,
-    ) {
-        tokio::spawn(async move {
-            let subscription_handler = BinanceSubscriptionHandler::new(signer);
-            loop {
-                tokio::select! {
-                    _ = shutdown_rx.recv() => {
-                        debug!("Shutdown received in RPC sender");
-                        break;
-                    }
-                    _ = tokio::time::sleep(Duration::from_secs(5)) => {
-                        if let Ok(rpc) = subscription_handler.create_account_status_request() {
-                            if outbound_tx.send(rpc).await.is_err() {
-                                error!("Failed to send account.status RPC");
-                            }
-                        }
-                    }
-                }
-            }
-        });
+        params: BinanceWsCancelOrderReqParams,
+    ) -> Result<(), EngineError> {
+        let rpc_request = self
+            .subscription_handler
+            .create_cancel_order_request(params)?;
+
+        if let Some(tx) = &self.outbound_rpc_tx {
+            tx.send(rpc_request).await.map_err(|_| {
+                EngineError::new_custom_error("Failed to send cancel order request".into())
+            })
+        } else {
+            Err(EngineError::new_custom_error(
+                "Outbound RPC channel not initialized".into(),
+            ))
+        }
+    }
+
+    pub async fn cancel_all_orders(
+        &self,
+        params: BinanceWsCancelAllOrdersReqParams,
+    ) -> Result<(), EngineError> {
+        let rpc_request = self
+            .subscription_handler
+            .create_cancel_all_orders_request(params)?;
+
+        if let Some(tx) = &self.outbound_rpc_tx {
+            tx.send(rpc_request).await.map_err(|_| {
+                EngineError::new_custom_error("Failed to send cancel all orders request".into())
+            })
+        } else {
+            Err(EngineError::new_custom_error(
+                "Outbound RPC channel not initialized".into(),
+            ))
+        }
     }
 }
 

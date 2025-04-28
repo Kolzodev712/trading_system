@@ -28,16 +28,40 @@ pub struct BinanceWsOrderRequest {
 #[derive(Debug, Clone, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BinanceWsOrderReqParams {
-    symbol: BinanceSymbol,
-    side: BinanceSide,
-    order_type: BinanceOrderType,
-    time_in_force: BinanceTimeInForce,
-    price: Decimal,
-    quantity: Decimal,
-    #[serde(flatten)]
-    session: SessionLogonParams,
+    #[serde(
+        serialize_with = "serialize_smol_str",
+        deserialize_with = "deserialize_smol_str"
+    )]
+    pub symbol: SmolStr,
+    pub side: BinanceSide,
+    pub order_type: BinanceOrderType,
+    pub time_in_force: BinanceTimeInForce,
+    pub price: Decimal,
+    pub quantity: Decimal,
+    #[serde(flatten, default)]
+    pub session: SessionLogonParams,
 }
 
+impl BinanceWsOrderReqParams {
+    pub fn new(
+        symbol: SmolStr,
+        side: BinanceSide,
+        order_type: BinanceOrderType,
+        time_in_force: BinanceTimeInForce,
+        price: Decimal,
+        quantity: Decimal,
+    ) -> Self {
+        Self {
+            symbol,
+            side,
+            order_type,
+            time_in_force,
+            price,
+            quantity,
+            session: SessionLogonParams::default(),
+        }
+    }
+}
 // https://developers.binance.com/docs/binance-spot-api-docs/websocket-api/trading-requests#place-new-order-trade
 #[derive(Debug, Clone, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -90,7 +114,7 @@ mod tests {
             id: SmolStr::new("1234"),
             method: SmolStr::new("order.place"),
             params: BinanceWsOrderReqParams {
-                symbol: BinanceSymbol::new("BTC", "USDT"),
+                symbol: SmolStr::new("BTCUSDT"),
                 side: BinanceSide::Buy,
                 order_type: BinanceOrderType::Limit,
                 time_in_force: BinanceTimeInForce::Gtc,

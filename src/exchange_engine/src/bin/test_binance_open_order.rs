@@ -1,22 +1,17 @@
-use core_logic::{
-    data::base_data::{OrderType, Side},
-    Exchange,
-};
-use exchange_engine::{
-    config::{ExchangeConfig, ExchangeEngineConfig},
-    driver::{ExchangeEngineDriver, Method},
-    exchanges::binance::{
-        common_types::BinanceTimeInForce, config::BinanceConfig,
-        rest::types::open_order::BinanceOrderRequest,
-    },
+use core_logic::traits::PrivateDataClient;
+use exchange_engine::exchanges::binance::{
+    common_types::{BinanceOrderType, BinanceSide, BinanceSymbol, BinanceTimeInForce},
+    config::BinanceConfig,
+    websocket::types::rpc::open_order::BinanceWsOrderReqParams,
+    ws_client::BinanceClient,
 };
 use rust_decimal::Decimal;
-use std::fs;
+use std::{fs, sync::Arc};
+use tokio::sync::RwLock;
 use tracing::error;
 
 fn load_binance_config(file_path: &str) -> Result<BinanceConfig, Box<dyn std::error::Error>> {
     let config_data = fs::read_to_string(file_path)?;
-
     let config: BinanceConfig = serde_json::from_str(&config_data)?;
     Ok(config)
 }
@@ -29,26 +24,51 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let binance_config = load_binance_config("config/binance_config.json")?;
 
-    let exchange_config = ExchangeEngineConfig {
-        exchange: Exchange::Binance,
-        exchange_config: ExchangeConfig::Binance(binance_config.clone()),
-    };
+    let binance_client = Arc::new(RwLock::new(BinanceClient::new(binance_config.clone(), 100)));
+    let binance_client_clone = Arc::clone(&binance_client);
 
-    let driver = ExchangeEngineDriver::new(exchange_config)?;
+    let ws_task = tokio::spawn(async move {
+        let mut client = binance_client_clone.write().await;
+        if let Err(e) = client.stream().await {
+            error!("WebSocket streaming error: {}", e);
+        }
+    });
 
-    let test_order = BinanceOrderRequest {
-        symbol: binance_config.symbol.convert_to_smolstr(),
-        side: Side::Buy.into(),
-        order_type: OrderType::Limit.into(),
-        quantity: Some(Decimal::new(10, 2)),
-        price: Some(Decimal::new(90000, 0)),
-        time_in_force: Some(BinanceTimeInForce::Gtc),
-        timestamp: None,
-    };
-
-    if let Err(e) = driver.run(Method::TestOpenOrder(test_order.into())).await {
-        error!("Failed to place test order: {}", e);
+    loop {
+        if binance_client
+            .read()
+            .await
+            .get_connection_session()
+            .await
+            .is_some()
+        {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     }
+
+    let order_params = BinanceWsOrderReqParams::new(
+        BinanceSymbol::new("BTC", "USDT").convert_to_smolstr(),
+        BinanceSide::Buy,
+        BinanceOrderType::Limit,
+        BinanceTimeInForce::Gtc,
+        Decimal::new(85000, 2),
+        Decimal::new(10, 2),
+    );
+
+    {
+        let client = binance_client.read().await;
+        match client.test_order(order_params).await {
+            Ok(_) => {
+                println!("✅ Test order sent successfully!");
+            }
+            Err(e) => {
+                error!("❌ Failed to send test order: {}", e);
+            }
+        }
+    }
+
+    ws_task.await?;
 
     Ok(())
 }

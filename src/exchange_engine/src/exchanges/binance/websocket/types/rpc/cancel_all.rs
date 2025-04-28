@@ -1,5 +1,5 @@
 use crate::exchanges::binance::common_types::{
-    BinanceOrderStatus, BinanceOrderType, BinanceSide, BinanceSymbol, BinanceTimeInForce,
+    BinanceOrderStatus, BinanceOrderType, BinanceSide, BinanceTimeInForce,
 };
 
 use super::super::common::{BinanceRateLimit, SessionLogonParams};
@@ -28,9 +28,22 @@ pub struct BinanceWsCancelAllOrdersRequest {
 #[derive(Debug, Clone, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BinanceWsCancelAllOrdersReqParams {
-    symbol: BinanceSymbol,
+    #[serde(
+        serialize_with = "serialize_smol_str",
+        deserialize_with = "deserialize_smol_str"
+    )]
+    pub symbol: SmolStr,
     #[serde(flatten)]
-    session: SessionLogonParams,
+    pub session: SessionLogonParams,
+}
+
+impl BinanceWsCancelAllOrdersReqParams {
+    pub fn new(symbol: SmolStr) -> Self {
+        Self {
+            symbol,
+            session: SessionLogonParams::default(),
+        }
+    }
 }
 
 // https://developers.binance.com/docs/binance-spot-api-docs/websocket-api/trading-requests#cancel-order-trade
@@ -169,7 +182,7 @@ mod tests {
             id: SmolStr::new("cancelall-req-123"),
             method: SmolStr::new("order.cancelAll"),
             params: BinanceWsCancelAllOrdersReqParams {
-                symbol: BinanceSymbol::new("BTC", "USDT"),
+                symbol: SmolStr::new("BTCUSDT"),
                 session: SessionLogonParams {
                     api_key: SmolStr::new("api-key"),
                     timestamp: 1234567890,

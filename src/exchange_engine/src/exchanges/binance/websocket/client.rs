@@ -131,8 +131,11 @@ impl BinanceSubscriptionHandler {
 
     pub fn create_test_order_request(
         &self,
-        params: BinanceWsOrderReqParams,
+        mut params: BinanceWsOrderReqParams,
     ) -> Result<BinanceRpcRequest, EngineError> {
+        let session = self.build_session_logon_params()?;
+        params.session = session;
+
         let request = BinanceWsOrderRequest {
             id: generate_custom_uuid().into(),
             method: TEST_ORDER.into(),
@@ -144,8 +147,11 @@ impl BinanceSubscriptionHandler {
 
     pub fn create_open_order_request(
         &self,
-        params: BinanceWsOrderReqParams,
+        mut params: BinanceWsOrderReqParams,
     ) -> Result<BinanceRpcRequest, EngineError> {
+        let session = self.build_session_logon_params()?;
+        params.session = session;
+
         let request = BinanceWsOrderRequest {
             id: generate_custom_uuid().into(),
             method: OPEN_ORDER.into(),
@@ -157,8 +163,11 @@ impl BinanceSubscriptionHandler {
 
     pub fn create_cancel_order_request(
         &self,
-        params: BinanceWsCancelOrderReqParams,
+        mut params: BinanceWsCancelOrderReqParams,
     ) -> Result<BinanceRpcRequest, EngineError> {
+        let session = self.build_session_logon_params()?;
+        params.session = session;
+
         let request = BinanceWsCancelOrderRequest {
             id: generate_custom_uuid().into(),
             method: CANCEL_ORDER.into(),
@@ -170,8 +179,11 @@ impl BinanceSubscriptionHandler {
 
     pub fn create_cancel_all_orders_request(
         &self,
-        params: BinanceWsCancelAllOrdersReqParams,
+        mut params: BinanceWsCancelAllOrdersReqParams,
     ) -> Result<BinanceRpcRequest, EngineError> {
+        let session = self.build_session_logon_params()?;
+        params.session = session;
+
         let request = BinanceWsCancelAllOrdersRequest {
             id: generate_custom_uuid().into(),
             method: CANCEL_ORDER.into(),
@@ -251,14 +263,13 @@ impl BinanceWSClient {
         Ok(())
     }
 
-    async fn handle_read_steam_msg<H, R>(
+    fn handle_read_stream<H, R>(
         &self,
         mut reader: R,
         event_tx: mpsc::Sender<ParsedBinanceMessage>,
         rpc_tx: mpsc::Sender<BinanceRpcResponse>,
         handler: H,
-    ) -> Result<(), EngineError>
-    where
+    ) where
         H: MessageHandler<ParsedBinanceMessage> + Send + Sync + 'static,
         R: Stream<Item = Result<Message, tokio_tungstenite::tungstenite::Error>>
             + Unpin
@@ -278,16 +289,16 @@ impl BinanceWSClient {
                     _ => {}
                 }
             }
-        });
 
-        Ok(())
+            debug!("handle_read_stream: reader task exited.");
+        });
     }
 
-    async fn handle_write_stream(
+    fn handle_write_stream(
         &self,
         mut outbound_rx: mpsc::Receiver<BinanceRpcRequest>,
         ws_write: Arc<Mutex<SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>>>,
-    ) -> Result<(), EngineError> {
+    ) {
         tokio::spawn(async move {
             while let Some(rpc_request) = outbound_rx.recv().await {
                 let mut write = ws_write.lock().await;
@@ -297,24 +308,24 @@ impl BinanceWSClient {
                     BinanceRpcRequest::OpenOrder(ref req) => serde_json::to_string(req),
                     BinanceRpcRequest::CancelOrder(ref req) => serde_json::to_string(req),
                     BinanceRpcRequest::CancelAll(ref req) => serde_json::to_string(req),
-                    // other rpc request types here...
                 };
 
                 match json {
                     Ok(json) => {
                         if let Err(e) = write.send(Message::Text(json)).await {
-                            error!("Failed to send message: {:?}", e);
+                            error!("❌ Failed to send WebSocket message: {:?}", e);
+                            break;
                         }
                     }
                     Err(e) => {
-                        error!("Failed to serialize RPC request: {:?}", e);
-                        continue;
+                        error!("❌ Failed to serialize RPC request: {:?}", e);
+                        break;
                     }
                 }
             }
-        });
 
-        Ok(())
+            debug!("WebSocket writer task exited");
+        });
     }
 
     pub async fn split_stream(
@@ -329,10 +340,8 @@ impl BinanceWSClient {
 
         let ws_write = Arc::new(Mutex::new(ws_write));
 
-        self.handle_read_steam_msg(ws_read, event_tx, rpc_tx, handler)
-            .await?;
-        self.handle_write_stream(outbound_rx, Arc::clone(&ws_write))
-            .await?;
+        self.handle_read_stream(ws_read, event_tx, rpc_tx, handler);
+        self.handle_write_stream(outbound_rx, Arc::clone(&ws_write));
 
         Ok(ConnectionSession { outbound_tx })
     }

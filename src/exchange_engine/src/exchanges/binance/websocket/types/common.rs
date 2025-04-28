@@ -34,6 +34,16 @@ pub struct SessionLogonParams {
     pub signature: SmolStr,
 }
 
+impl Default for SessionLogonParams {
+    fn default() -> Self {
+        SessionLogonParams {
+            api_key: SmolStr::new(""),
+            timestamp: 0,
+            signature: SmolStr::new(""),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SesionStatusMessage {

@@ -1,15 +1,11 @@
-use core_logic::Exchange;
-use exchange_engine::{
-    config::{ExchangeConfig, ExchangeEngineConfig},
-    driver::{ExchangeEngineDriver, Method},
-    exchanges::binance::config::BinanceConfig,
-};
-use std::fs;
-use tracing::error;
+use core_logic::traits::PrivateDataClient;
+use exchange_engine::exchanges::binance::{config::BinanceConfig, ws_client::BinanceClient};
+use std::{fs, sync::Arc};
+use tokio::sync::RwLock;
+use tracing::{error, info};
 
 fn load_binance_config(file_path: &str) -> Result<BinanceConfig, Box<dyn std::error::Error>> {
     let config_data = fs::read_to_string(file_path)?;
-
     let config: BinanceConfig = serde_json::from_str(&config_data)?;
     Ok(config)
 }
@@ -22,16 +18,42 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let binance_config = load_binance_config("config/binance_config.json")?;
 
-    let exchange_config = ExchangeEngineConfig {
-        exchange: Exchange::Binance,
-        exchange_config: ExchangeConfig::Binance(binance_config.clone()),
-    };
+    let binance_client = Arc::new(RwLock::new(BinanceClient::new(binance_config.clone(), 100)));
+    let binance_client_clone = Arc::clone(&binance_client);
 
-    let driver = ExchangeEngineDriver::new(exchange_config)?;
+    let ws_task = tokio::spawn(async move {
+        let mut client = binance_client_clone.write().await;
+        if let Err(e) = client.stream().await {
+            error!("WebSocket streaming error: {}", e);
+        }
+    });
 
-    if let Err(e) = driver.run(Method::FetchBalance).await {
-        error!("Failed to place test order: {}", e);
+    // ✅ Wait until WebSocket session is ready
+    loop {
+        if binance_client
+            .read()
+            .await
+            .get_connection_session()
+            .await
+            .is_some()
+        {
+            info!("✅ WebSocket session ready, proceeding...");
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     }
+
+    // ✅ Send the account status request over WebSocket
+    {
+        let client = binance_client.read().await;
+        if let Err(e) = client.account_status().await {
+            error!("❌ Failed to send account status request: {}", e);
+        } else {
+            println!("✅ Account status request sent successfully!");
+        }
+    }
+
+    ws_task.await?;
 
     Ok(())
 }

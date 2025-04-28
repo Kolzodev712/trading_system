@@ -1,4 +1,6 @@
-use super::common::{BinanceOrderStatus, BinanceOrderType, BinanceSide, BinanceTimeInForce};
+use crate::exchanges::binance::common_types::{
+    BinanceOrderStatus, BinanceOrderType, BinanceSide, BinanceTimeInForce,
+};
 use core_logic::{
     data::{
         base_data::{OrderType, Side},

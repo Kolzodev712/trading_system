@@ -1,4 +1,4 @@
-use super::super::super::super::rest::types::common::{
+use crate::exchanges::binance::common_types::{
     BinanceOrderStatus, BinanceOrderType, BinanceSide, BinanceTimeInForce,
 };
 use core_logic::data::private_data::Order;

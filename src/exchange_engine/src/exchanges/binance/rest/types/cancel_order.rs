@@ -1,4 +1,6 @@
-use super::common::{BinanceOrderStatus, BinanceOrderType, BinanceSide, BinanceTimeInForce};
+use crate::exchanges::binance::common_types::{
+    BinanceOrderStatus, BinanceOrderType, BinanceSide, BinanceTimeInForce,
+};
 use core_logic::utils::{deserialize_smol_str, serialize_smol_str};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};

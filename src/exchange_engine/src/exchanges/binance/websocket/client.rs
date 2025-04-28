@@ -2,7 +2,13 @@ use crate::exchanges::binance::sign::BinanceWsAuthenticator;
 
 use super::types::{
     common::{SessionLogonMessage, SessionLogonParams},
-    rpc::{balance::BinanceAccountStatusRequest, BinanceRpcRequest, BinanceRpcResponse},
+    rpc::{
+        balance::BinanceAccountStatusRequest,
+        cancel_all::{BinanceWsCancelAllOrdersReqParams, BinanceWsCancelAllOrdersRequest},
+        cancel_order::{BinanceWsCancelOrderReqParams, BinanceWsCancelOrderRequest},
+        open_order::{BinanceWsOrderReqParams, BinanceWsOrderRequest},
+        BinanceRpcRequest, BinanceRpcResponse,
+    },
     user_data::events::{BinanceWSMessage, ParsedBinanceMessage},
 };
 use async_trait::async_trait;
@@ -32,6 +38,10 @@ use tracing::{debug, error};
 pub const BINANCE_WS_URL: &str = "wss://ws-api.binance.com:443/ws-api/v3";
 pub const LOGON_SESSION: &str = "session.logon";
 pub const ACCOUNT_STATUS: &str = "account.status";
+pub const OPEN_ORDER: &str = "order.place";
+pub const TEST_ORDER: &str = "order.test";
+pub const CANCEL_ORDER: &str = "order.cancel";
+pub const CANCEL_ALL_ORDERS: &str = "openOrders.cancelAll";
 
 #[derive(Debug, Clone)]
 pub struct BinanceChannel {
@@ -117,6 +127,58 @@ impl BinanceSubscriptionHandler {
         };
 
         Ok(BinanceRpcRequest::AccountStatus(request))
+    }
+
+    pub fn create_test_order_request(
+        &self,
+        params: BinanceWsOrderReqParams,
+    ) -> Result<BinanceRpcRequest, EngineError> {
+        let request = BinanceWsOrderRequest {
+            id: generate_custom_uuid().into(),
+            method: TEST_ORDER.into(),
+            params,
+        };
+
+        Ok(BinanceRpcRequest::OpenOrder(request))
+    }
+
+    pub fn create_open_order_request(
+        &self,
+        params: BinanceWsOrderReqParams,
+    ) -> Result<BinanceRpcRequest, EngineError> {
+        let request = BinanceWsOrderRequest {
+            id: generate_custom_uuid().into(),
+            method: OPEN_ORDER.into(),
+            params,
+        };
+
+        Ok(BinanceRpcRequest::OpenOrder(request))
+    }
+
+    pub fn create_cancel_order_request(
+        &self,
+        params: BinanceWsCancelOrderReqParams,
+    ) -> Result<BinanceRpcRequest, EngineError> {
+        let request = BinanceWsCancelOrderRequest {
+            id: generate_custom_uuid().into(),
+            method: CANCEL_ORDER.into(),
+            params,
+        };
+
+        Ok(BinanceRpcRequest::CancelOrder(request))
+    }
+
+    pub fn create_cancel_all_orders_request(
+        &self,
+        params: BinanceWsCancelAllOrdersReqParams,
+    ) -> Result<BinanceRpcRequest, EngineError> {
+        let request = BinanceWsCancelAllOrdersRequest {
+            id: generate_custom_uuid().into(),
+            method: CANCEL_ORDER.into(),
+            params,
+        };
+
+        Ok(BinanceRpcRequest::CancelAll(request))
     }
 }
 
@@ -231,6 +293,10 @@ impl BinanceWSClient {
                 let mut write = ws_write.lock().await;
                 let json = match rpc_request {
                     BinanceRpcRequest::AccountStatus(ref req) => serde_json::to_string(req),
+                    BinanceRpcRequest::TestOrder(ref req) => serde_json::to_string(req),
+                    BinanceRpcRequest::OpenOrder(ref req) => serde_json::to_string(req),
+                    BinanceRpcRequest::CancelOrder(ref req) => serde_json::to_string(req),
+                    BinanceRpcRequest::CancelAll(ref req) => serde_json::to_string(req),
                     // other rpc request types here...
                 };
 

@@ -7,7 +7,8 @@ use exchange_engine::{
     driver::{ExchangeEngineDriver, Method},
     exchanges::binance::{
         config::BinanceConfig,
-        rest::types::{common::BinanceTimeInForce, open_order::BinanceOrderRequest},
+        rest::types::open_order::BinanceOrderRequest,
+        common_types::BinanceTimeInForce
     },
 };
 use rust_decimal::Decimal;

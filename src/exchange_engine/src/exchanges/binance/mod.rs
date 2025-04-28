@@ -1,3 +1,4 @@
+pub mod common_types;
 pub mod config;
 pub mod rest;
 pub mod rest_client;

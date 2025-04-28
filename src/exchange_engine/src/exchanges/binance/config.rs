@@ -1,4 +1,4 @@
-use super::rest::types::common::BinanceSymbol;
+use crate::exchanges::binance::common_types::BinanceSymbol;
 use core_logic::utils::{deserialize_smol_str, serialize_smol_str};
 use serde::{Deserialize, Serialize};
 use smol_str::SmolStr;

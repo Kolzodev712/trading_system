@@ -6,8 +6,8 @@ use exchange_engine::{
     config::{ExchangeConfig, ExchangeEngineConfig},
     driver::{ExchangeEngineDriver, Method},
     exchanges::binance::{
-        config::BinanceConfig,
-        rest::types::{common::BinanceTimeInForce, open_order::BinanceOrderRequest},
+        common_types::BinanceTimeInForce, config::BinanceConfig,
+        rest::types::open_order::BinanceOrderRequest,
     },
 };
 use rust_decimal::Decimal;

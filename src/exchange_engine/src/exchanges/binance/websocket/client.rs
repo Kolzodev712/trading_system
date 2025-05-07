@@ -3,10 +3,16 @@ use crate::exchanges::binance::sign::BinanceWsAuthenticator;
 use super::types::{
     common::{SessionLogonMessage, SessionLogonParams},
     rpc::{
-        balance::BinanceAccountStatusRequest,
-        cancel_all::{BinanceWsCancelAllOrdersReqParams, BinanceWsCancelAllOrdersRequest},
-        cancel_order::{BinanceWsCancelOrderReqParams, BinanceWsCancelOrderRequest},
-        open_order::{BinanceWsOrderReqParams, BinanceWsOrderRequest},
+        balance::{BinanceAccountStatusRequest, BinanceAccountStatusResponse},
+        cancel_all::{
+            BinanceWsCancelAllOrdersReqParams, BinanceWsCancelAllOrdersRequest,
+            BinanceWsCancelAllOrdersResponse,
+        },
+        cancel_order::{
+            BinanceWsCancelOrderReqParams, BinanceWsCancelOrderRequest,
+            BinanceWsCancelOrderResponse,
+        },
+        open_order::{BinanceWsOrderReqParams, BinanceWsOrderRequest, BinanceWsOrderResponse},
         BinanceRpcRequest, BinanceRpcResponse,
     },
     user_data::events::{BinanceWSMessage, ParsedBinanceMessage},
@@ -28,7 +34,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use tokio::{
     net::TcpStream,
-    sync::{mpsc, Mutex},
+    sync::{mpsc, Mutex, RwLock},
 };
 use tokio_tungstenite::{
     connect_async, tungstenite::protocol::Message, MaybeTlsStream, WebSocketStream,
@@ -67,11 +73,31 @@ impl ConnectionSession {
 #[derive(Debug, Clone)]
 pub struct BinanceSubscriptionHandler {
     signer: BinanceWsAuthenticator,
+    session: Arc<RwLock<Option<SessionLogonParams>>>,
 }
 
 impl BinanceSubscriptionHandler {
-    pub fn new(signer: BinanceWsAuthenticator) -> Self {
-        Self { signer }
+    pub fn new(
+        signer: BinanceWsAuthenticator,
+        session: Arc<RwLock<Option<SessionLogonParams>>>,
+    ) -> Self {
+        Self { signer, session }
+    }
+
+    pub fn session_handle(&self) -> Arc<RwLock<Option<SessionLogonParams>>> {
+        Arc::clone(&self.session)
+    }
+
+    pub async fn set_session(&self, params: SessionLogonParams) {
+        let mut guard = self.session.write().await;
+        *guard = Some(params);
+    }
+
+    async fn get_session(&self) -> Result<SessionLogonParams, EngineError> {
+        let guard = self.session.read().await;
+        guard.clone().ok_or_else(|| {
+            EngineError::new_custom_error("No session available for RPC request".into())
+        })
     }
 
     fn build_session_logon_params(&self) -> Result<SessionLogonParams, EngineError> {
@@ -105,35 +131,38 @@ impl BinanceSubscriptionHandler {
         })
     }
 
-    pub fn create_logon_message(&self) -> Result<Message, EngineError> {
+    pub fn create_logon_message(&self) -> Result<(Message, SessionLogonParams), EngineError> {
         let logon_params = self.build_session_logon_params()?;
 
         let logon_msg = SessionLogonMessage {
             id: generate_custom_uuid().into(),
             method: LOGON_SESSION.into(),
-            params: logon_params,
+            params: logon_params.clone(),
         };
 
-        Ok(Message::Text(serde_json::to_string(&logon_msg)?))
+        Ok((
+            Message::Text(serde_json::to_string(&logon_msg)?),
+            logon_params,
+        ))
     }
 
-    pub fn create_account_status_request(&self) -> Result<BinanceRpcRequest, EngineError> {
-        let logon_params = self.build_session_logon_params()?;
+    pub async fn create_account_status_request(&self) -> Result<BinanceRpcRequest, EngineError> {
+        let session = self.get_session().await?;
 
         let request = BinanceAccountStatusRequest {
             id: generate_custom_uuid().into(),
             method: ACCOUNT_STATUS.into(),
-            params: logon_params,
+            params: session,
         };
 
         Ok(BinanceRpcRequest::AccountStatus(request))
     }
 
-    pub fn create_test_order_request(
+    pub async fn create_test_order_request(
         &self,
         mut params: BinanceWsOrderReqParams,
     ) -> Result<BinanceRpcRequest, EngineError> {
-        let session = self.build_session_logon_params()?;
+        let session = self.get_session().await?;
         params.session = session;
 
         let request = BinanceWsOrderRequest {
@@ -145,11 +174,11 @@ impl BinanceSubscriptionHandler {
         Ok(BinanceRpcRequest::OpenOrder(request))
     }
 
-    pub fn create_open_order_request(
+    pub async fn create_open_order_request(
         &self,
         mut params: BinanceWsOrderReqParams,
     ) -> Result<BinanceRpcRequest, EngineError> {
-        let session = self.build_session_logon_params()?;
+        let session = self.get_session().await?;
         params.session = session;
 
         let request = BinanceWsOrderRequest {
@@ -161,11 +190,11 @@ impl BinanceSubscriptionHandler {
         Ok(BinanceRpcRequest::OpenOrder(request))
     }
 
-    pub fn create_cancel_order_request(
+    pub async fn create_cancel_order_request(
         &self,
         mut params: BinanceWsCancelOrderReqParams,
     ) -> Result<BinanceRpcRequest, EngineError> {
-        let session = self.build_session_logon_params()?;
+        let session = self.get_session().await?;
         params.session = session;
 
         let request = BinanceWsCancelOrderRequest {
@@ -177,11 +206,11 @@ impl BinanceSubscriptionHandler {
         Ok(BinanceRpcRequest::CancelOrder(request))
     }
 
-    pub fn create_cancel_all_orders_request(
+    pub async fn create_cancel_all_orders_request(
         &self,
         mut params: BinanceWsCancelAllOrdersReqParams,
     ) -> Result<BinanceRpcRequest, EngineError> {
-        let session = self.build_session_logon_params()?;
+        let session = self.get_session().await?;
         params.session = session;
 
         let request = BinanceWsCancelAllOrdersRequest {
@@ -213,10 +242,13 @@ pub struct BinanceWSClient {
 }
 
 impl BinanceWSClient {
-    pub fn new(signer: BinanceWsAuthenticator) -> Self {
+    pub fn new(
+        signer: BinanceWsAuthenticator,
+        session: Arc<RwLock<Option<SessionLogonParams>>>,
+    ) -> Self {
         Self {
             url: BINANCE_WS_URL.into(),
-            subscription_handler: BinanceSubscriptionHandler::new(signer),
+            subscription_handler: BinanceSubscriptionHandler::new(signer, session),
         }
     }
 
@@ -231,13 +263,15 @@ impl BinanceWSClient {
         &self,
     ) -> Result<WebSocketStream<MaybeTlsStream<TcpStream>>, EngineError> {
         let mut ws_stream = self.create_ws_stream().await?;
-        let logon_msg = self.subscription_handler.create_logon_message()?;
+
+        let (logon_msg, logon_params) = self.subscription_handler.create_logon_message()?;
         ws_stream.send(logon_msg).await?;
 
         if let Some(Ok(Message::Text(logon_response))) = ws_stream.next().await {
             let v: Value = serde_json::from_str(&logon_response)?;
             if v.get("status").and_then(|s| s.as_u64()) == Some(200) {
                 debug!("✅ Successfully authenticated with session.logon");
+                self.subscription_handler.set_session(logon_params).await;
             } else {
                 return Err(EngineError::new_custom_error(
                     format!("❌ session.logon failed: {:?}", v).into(),
@@ -290,7 +324,7 @@ impl BinanceWSClient {
                 }
             }
 
-            debug!("handle_read_stream: reader task exited.");
+            debug!("💀 reader.next() returned None — stream closed.");
         });
     }
 
@@ -301,6 +335,7 @@ impl BinanceWSClient {
     ) {
         tokio::spawn(async move {
             while let Some(rpc_request) = outbound_rx.recv().await {
+                debug!("📤 GOT A REQUEST TO SEND: {:?}", rpc_request);
                 let mut write = ws_write.lock().await;
                 let json = match rpc_request {
                     BinanceRpcRequest::AccountStatus(ref req) => serde_json::to_string(req),
@@ -312,6 +347,7 @@ impl BinanceWSClient {
 
                 match json {
                     Ok(json) => {
+                        debug!("📤 Outgoing WS RPC JSON: {}", json);
                         if let Err(e) = write.send(Message::Text(json)).await {
                             error!("❌ Failed to send WebSocket message: {:?}", e);
                             break;
@@ -333,15 +369,15 @@ impl BinanceWSClient {
         ws_stream: WebSocketStream<MaybeTlsStream<TcpStream>>,
         event_tx: mpsc::Sender<ParsedBinanceMessage>,
         rpc_tx: mpsc::Sender<BinanceRpcResponse>,
+        outbound_tx: mpsc::Sender<BinanceRpcRequest>,
+        outbound_rx: mpsc::Receiver<BinanceRpcRequest>,
         handler: impl MessageHandler<ParsedBinanceMessage> + Send + Sync + 'static,
     ) -> Result<ConnectionSession, EngineError> {
         let (ws_write, ws_read) = ws_stream.split();
-        let (outbound_tx, outbound_rx) = mpsc::channel::<BinanceRpcRequest>(1024);
-
         let ws_write = Arc::new(Mutex::new(ws_write));
 
+        self.handle_write_stream(outbound_rx, Arc::clone(&ws_write));        
         self.handle_read_stream(ws_read, event_tx, rpc_tx, handler);
-        self.handle_write_stream(outbound_rx, Arc::clone(&ws_write));
 
         Ok(ConnectionSession { outbound_tx })
     }
@@ -416,25 +452,37 @@ async fn handle_text_message<H>(
 ) where
     H: MessageHandler<ParsedBinanceMessage> + Send + Sync + 'static,
 {
+    if let Some(rpc_tx) = rpc_tx {
+        if let Ok(resp) = serde_json::from_str::<BinanceAccountStatusResponse>(&text) {
+            let _ = rpc_tx.send(BinanceRpcResponse::AccountStatus(resp)).await;
+            return;
+        }
+        if let Ok(resp) = serde_json::from_str::<BinanceWsOrderResponse>(&text) {
+            let _ = rpc_tx.send(BinanceRpcResponse::OpenOrder(resp)).await;
+            return;
+        }
+        if let Ok(resp) = serde_json::from_str::<BinanceWsCancelOrderResponse>(&text) {
+            let _ = rpc_tx.send(BinanceRpcResponse::CancelOrder(resp)).await;
+            return;
+        }
+        if let Ok(resp) = serde_json::from_str::<BinanceWsCancelAllOrdersResponse>(&text) {
+            let _ = rpc_tx.send(BinanceRpcResponse::CancelAll(resp)).await;
+            return;
+        }
+    }
+
+    // Fallback to user data stream message
     match handler.handle_text_message(SmolStr::new(&text)) {
         Ok(event) => {
             if let Err(e) = event_tx.send(event).await {
-                error!("Error sending event: {:?}", e);
+                error!("❌ Failed to forward event: {:?}", e);
             }
         }
-        Err(_) => match serde_json::from_str::<BinanceRpcResponse>(&text) {
-            Ok(rpc_response) => {
-                if let Some(rpc_tx) = rpc_tx {
-                    if let Err(e) = rpc_tx.send(rpc_response).await {
-                        error!("Error sending RPC response: {:?}", e);
-                    }
-                } else {
-                    debug!("RPC response received but no rpc_tx provided, dropping response.");
-                }
-            }
-            Err(_) => {
-                debug!("Received unrecognized message: {}", text);
-            }
-        },
+        Err(_) => {
+            debug!(
+                "⚠️ Unrecognized message format (not event or rpc): {}",
+                text
+            );
+        }
     }
 }

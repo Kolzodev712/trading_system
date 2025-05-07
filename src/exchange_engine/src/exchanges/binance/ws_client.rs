@@ -13,6 +13,7 @@ use super::{
     websocket::{
         client::BinanceWSClient,
         types::{
+            common::SessionLogonParams,
             rpc::{BinanceRpcRequest, BinanceRpcResponse},
             user_data::events::ParsedBinanceMessage,
         },
@@ -39,15 +40,17 @@ pub struct BinanceClient {
     pub outbound_rpc_tx: Option<mpsc::Sender<BinanceRpcRequest>>,
     connection_session: Arc<RwLock<Option<ConnectionSession>>>,
     subscription_handler: BinanceSubscriptionHandler,
+    session: Arc<RwLock<Option<SessionLogonParams>>>,
 }
 
 impl BinanceClient {
     pub fn new(config: BinanceConfig, buffer_size: usize) -> Self {
         let channel_manager = ChannelManager::new(buffer_size);
+        let session = Arc::new(RwLock::new(None));
         let signer =
             BinanceWsAuthenticator::new(config.ws.api_key.clone(), config.ws.secret_key.clone());
 
-        let subscription_handler = BinanceSubscriptionHandler::new(signer);
+        let subscription_handler = BinanceSubscriptionHandler::new(signer, session.clone());
 
         BinanceClient {
             config,
@@ -55,6 +58,7 @@ impl BinanceClient {
             outbound_rpc_tx: None,
             connection_session: Arc::new(RwLock::new(None)),
             subscription_handler,
+            session,
         }
     }
 
@@ -62,7 +66,7 @@ impl BinanceClient {
         self.connection_session.read().await.clone()
     }
 
-    async fn start_event_loop(&mut self, sub_to_user_stream: bool) -> Result<(), EngineError> {
+    async fn start_event_loop(&mut self) -> Result<(), EngineError> {
         loop {
             let (event_tx, event_rx) = self.channel_manager.create_channel();
             let (rpc_tx, rpc_rx) = self.channel_manager.create_channel();
@@ -70,7 +74,6 @@ impl BinanceClient {
 
             let result = self
                 .connect_and_start_stream(
-                    sub_to_user_stream,
                     event_tx.clone(),
                     event_rx,
                     rpc_tx.clone(),
@@ -79,17 +82,22 @@ impl BinanceClient {
                 )
                 .await;
 
-            if let Err(e) = result {
-                error!("Connection or stream failed: {:?}", e);
+            match result {
+                Ok(_) => {
+                    debug!("🎉 start_event_loop succeeded, returning to main");
+                    return Ok(())
+                },
+                Err(e) => {
+                    error!("Connection or stream failed: {:?}", e);
+                    self.exponential_backoff_wait().await;
+                    continue;
+                }
             }
-
-            self.exponential_backoff_wait().await;
         }
     }
 
     async fn connect_and_start_stream(
         &mut self,
-        sub_to_user_stream: bool,
         event_tx: mpsc::Sender<ParsedBinanceMessage>,
         event_rx: mpsc::Receiver<ParsedBinanceMessage>,
         rpc_tx: mpsc::Sender<BinanceRpcResponse>,
@@ -101,15 +109,23 @@ impl BinanceClient {
             self.config.ws.secret_key.clone(),
         );
 
-        let client = BinanceWSClient::new(signer.clone());
+        let client = BinanceWSClient::new(signer.clone(), Arc::clone(&self.session));
         let mut ws_stream = client.connect_and_authenticate().await?;
 
-        if sub_to_user_stream {
-            client.subscribe_to_user_stream(&mut ws_stream).await?;
-        }
+        client.subscribe_to_user_stream(&mut ws_stream).await?;
+
+        let (outbound_tx, outbound_rx) = mpsc::channel::<BinanceRpcRequest>(1024);
+        self.outbound_rpc_tx = Some(outbound_tx.clone());
 
         let session = client
-            .split_stream(ws_stream, event_tx.clone(), rpc_tx.clone(), DataHandler)
+            .split_stream(
+                ws_stream,
+                event_tx.clone(),
+                rpc_tx.clone(),
+                outbound_tx,
+                outbound_rx,
+                DataHandler,
+            )
             .await?;
 
         {
@@ -117,14 +133,18 @@ impl BinanceClient {
             *session_guard = Some(session.clone());
         }
 
-        self.outbound_rpc_tx = Some(session.outbound_tx.clone());
+        let event_handle = tokio::spawn({
+            let shutdown_rx = shutdown_tx.subscribe();
+            let event_rx = event_rx;
+            let rpc_rx = rpc_rx;
 
-        self.run_stream_loop(event_rx, rpc_rx, shutdown_tx.subscribe())
-            .await
+            async move { Self::run_stream_loop_static(event_rx, rpc_rx, shutdown_rx).await }
+        });
+        event_handle.await??;
+        Ok(())
     }
 
-    async fn run_stream_loop(
-        &self,
+    async fn run_stream_loop_static(
         mut event_rx: mpsc::Receiver<ParsedBinanceMessage>,
         mut rpc_rx: mpsc::Receiver<BinanceRpcResponse>,
         mut shutdown_rx: broadcast::Receiver<()>,
@@ -188,8 +208,12 @@ impl BinanceClient {
     }
 
     pub async fn account_status(&self) -> Result<(), EngineError> {
-        let rpc_request = self.subscription_handler.create_account_status_request()?;
+        let rpc_request = self
+            .subscription_handler
+            .create_account_status_request()
+            .await?;
 
+        debug!("🔄 Attempting to send account status request...");
         if let Some(tx) = &self.outbound_rpc_tx {
             tx.send(rpc_request).await.map_err(|_| {
                 EngineError::new_custom_error("Failed to send account status request".into())
@@ -204,7 +228,8 @@ impl BinanceClient {
     pub async fn test_order(&self, params: BinanceWsOrderReqParams) -> Result<(), EngineError> {
         let rpc_request = self
             .subscription_handler
-            .create_test_order_request(params)?;
+            .create_test_order_request(params)
+            .await?;
 
         debug!("Sending Test Order RPC: {:?}", rpc_request);
 
@@ -222,7 +247,8 @@ impl BinanceClient {
     pub async fn open_order(&self, params: BinanceWsOrderReqParams) -> Result<(), EngineError> {
         let rpc_request = self
             .subscription_handler
-            .create_open_order_request(params)?;
+            .create_open_order_request(params)
+            .await?;
 
         if let Some(tx) = &self.outbound_rpc_tx {
             tx.send(rpc_request).await.map_err(|_| {
@@ -241,7 +267,8 @@ impl BinanceClient {
     ) -> Result<(), EngineError> {
         let rpc_request = self
             .subscription_handler
-            .create_cancel_order_request(params)?;
+            .create_cancel_order_request(params)
+            .await?;
 
         if let Some(tx) = &self.outbound_rpc_tx {
             tx.send(rpc_request).await.map_err(|_| {
@@ -260,7 +287,8 @@ impl BinanceClient {
     ) -> Result<(), EngineError> {
         let rpc_request = self
             .subscription_handler
-            .create_cancel_all_orders_request(params)?;
+            .create_cancel_all_orders_request(params)
+            .await?;
 
         if let Some(tx) = &self.outbound_rpc_tx {
             tx.send(rpc_request).await.map_err(|_| {
@@ -281,6 +309,6 @@ impl PrivateDataClient for BinanceClient {
     }
 
     async fn stream(&mut self) -> Result<(), EngineError> {
-        self.start_event_loop(false).await
+        self.start_event_loop().await
     }
 }

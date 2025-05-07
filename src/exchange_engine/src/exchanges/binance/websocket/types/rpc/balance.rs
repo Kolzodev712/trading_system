@@ -51,15 +51,12 @@ pub struct BinanceAccountData {
 #[derive(Debug, Clone, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Balances {
-    #[serde(rename = "a")]
     #[serde(
         serialize_with = "serialize_smol_str",
         deserialize_with = "deserialize_smol_str"
     )]
     pub asset: SmolStr,
-    #[serde(rename = "f")]
     pub free: Decimal,
-    #[serde(rename = "l")]
     pub locked: Decimal,
 }
 

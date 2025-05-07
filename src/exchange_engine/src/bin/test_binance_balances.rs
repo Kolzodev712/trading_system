@@ -46,7 +46,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Send account status request
     {
-        let client = binance_client.read().await;
+        let client = binance_client.write().await;
         info!("🟢 Sending account status request...");
         if let Err(e) = client.account_status().await {
             error!("❌ Failed to send account status request: {}", e);

@@ -85,8 +85,8 @@ impl BinanceClient {
             match result {
                 Ok(_) => {
                     debug!("🎉 start_event_loop succeeded, returning to main");
-                    return Ok(())
-                },
+                    return Ok(());
+                }
                 Err(e) => {
                     error!("Connection or stream failed: {:?}", e);
                     self.exponential_backoff_wait().await;

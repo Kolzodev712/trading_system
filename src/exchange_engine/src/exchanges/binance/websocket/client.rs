@@ -3,7 +3,9 @@ use crate::exchanges::binance::sign::BinanceWsAuthenticator;
 use super::types::{
     common::{SessionLogonMessage, SessionLogonParams},
     rpc::{
-        balance::{BinanceAccountStatusRequest, BinanceAccountStatusResponse},
+        balance::{
+            BinanceAccountStatusParams, BinanceAccountStatusRequest, BinanceAccountStatusResponse,
+        },
         cancel_all::{
             BinanceWsCancelAllOrdersReqParams, BinanceWsCancelAllOrdersRequest,
             BinanceWsCancelAllOrdersResponse,
@@ -152,7 +154,11 @@ impl BinanceSubscriptionHandler {
         let request = BinanceAccountStatusRequest {
             id: generate_custom_uuid().into(),
             method: ACCOUNT_STATUS.into(),
-            params: session,
+            params: BinanceAccountStatusParams {
+                session_logon_params: session,
+                recv_window: Some(60_000),
+                omit_zero_balances: Some(true),
+            },
         };
 
         Ok(BinanceRpcRequest::AccountStatus(request))
@@ -376,7 +382,7 @@ impl BinanceWSClient {
         let (ws_write, ws_read) = ws_stream.split();
         let ws_write = Arc::new(Mutex::new(ws_write));
 
-        self.handle_write_stream(outbound_rx, Arc::clone(&ws_write));        
+        self.handle_write_stream(outbound_rx, Arc::clone(&ws_write));
         self.handle_read_stream(ws_read, event_tx, rpc_tx, handler);
 
         Ok(ConnectionSession { outbound_tx })
@@ -471,7 +477,6 @@ async fn handle_text_message<H>(
         }
     }
 
-    // Fallback to user data stream message
     match handler.handle_text_message(SmolStr::new(&text)) {
         Ok(event) => {
             if let Err(e) = event_tx.send(event).await {
@@ -485,4 +490,6 @@ async fn handle_text_message<H>(
             );
         }
     }
+
+    debug!("❓ Message not parsed as known RPC response: {}", text);
 }

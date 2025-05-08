@@ -115,3 +115,108 @@ impl From<&ParsedBinanceMessage> for BinanceWsEventType {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json;
+    use smol_str::SmolStr;
+
+    #[test]
+    fn test_deserialize_binance_ws_message() {
+        let json = r#"{"id":"test-id","method":"userDataStream.subscribe"}"#;
+        let msg: BinanceWSMessage = serde_json::from_str(json).unwrap();
+        assert_eq!(msg.id, SmolStr::new("test-id"));
+        assert_eq!(msg.method, SmolStr::new("userDataStream.subscribe"));
+    }
+
+    #[test]
+    fn test_deserialize_parsed_outbound_account_position() {
+        // minimal stub of the event wrapper; your real OutboundAccountPosition
+        // struct will fill in the fields
+        let json = r#"
+        {
+            "event": {
+                "e": "outboundAccountPosition",
+                "u": 1620000000000,
+                "B": []
+            }
+        }
+        "#;
+        let parsed: ParsedBinanceMessage = serde_json::from_str(json).unwrap();
+        match parsed {
+            ParsedBinanceMessage::OutboundAccountPosition(_) => { /* ok */ }
+            other => panic!("expected OutboundAccountPosition, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_deserialize_parsed_balance_update() {
+        let json = r#"
+        {
+            "e":"balanceUpdate",
+            "E":1620000000001,
+            "a":"BTC",
+            "d":"0.123",
+            "T":1620000000002
+        }
+        "#;
+        let parsed: ParsedBinanceMessage = serde_json::from_str(json).unwrap();
+        match parsed {
+            ParsedBinanceMessage::BalanceUpdate(_) => { /* ok */ }
+            other => panic!("expected BalanceUpdate, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_deserialize_parsed_execution_report() {
+        let json = r#"
+        {
+            "e":"executionReport",
+            "E":1620000000003,
+            "s":"BTCUSDT",
+            "c":"myClientOrderId",
+            "S":"BUY",
+            "o":"LIMIT",
+            "f":"GTC",
+            "q":"0.01",
+            "p":"50000.00",
+            "F":"0",
+            "g":-1,
+            "C":null,
+            "x":"NEW",
+            "X":"NEW",
+            "r":"NONE",
+            "i":1,
+            "l":"0.00",
+            "z":"0.00",
+            "L":"0.00",
+            "n":null,
+            "T":1620000000004,
+            "t":-1,
+            "I":1620000000005,
+            "w":false,
+            "m":false,
+            "M":false
+        }
+        "#;
+        let parsed: ParsedBinanceMessage = serde_json::from_str(json).unwrap();
+        match parsed {
+            ParsedBinanceMessage::ExecutionReport(_) => { /* ok */ }
+            other => panic!("expected ExecutionReport, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_deserialize_parsed_raw_fallback() {
+        let json = r#"{"foo":"bar","baz":123}"#;
+        let parsed: ParsedBinanceMessage = serde_json::from_str(json).unwrap();
+        if let ParsedBinanceMessage::Raw(s) = parsed {
+            let got_val: Value = serde_json::from_str(&s).unwrap();
+            let want_val: Value = serde_json::from_str(json).unwrap();
+            assert_eq!(got_val, want_val);
+        } else {
+            panic!("expected Raw, got {:?}", parsed);
+        }
+    }
+}

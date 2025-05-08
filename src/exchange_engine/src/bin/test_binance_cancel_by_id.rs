@@ -5,9 +5,10 @@ use exchange_engine::exchanges::binance::{
     websocket::types::rpc::cancel_order::BinanceWsCancelOrderReqParams,
     ws_client::BinanceClient,
 };
+use smol_str::ToSmolStr;
 use std::{fs, sync::Arc};
 use tokio::sync::RwLock;
-use tracing::{error, info};
+use tracing::{debug, error, info};
 
 fn load_binance_config(file_path: &str) -> Result<BinanceConfig, Box<dyn std::error::Error>> {
     let config_data = fs::read_to_string(file_path)?;
@@ -21,19 +22,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_max_level(tracing::Level::DEBUG)
         .init();
 
-    let binance_config = load_binance_config("config/binance_config.json")?;
+    // 1) build the shared client
+    let cfg = load_binance_config("config/binance_config.json")?;
+    let binance_client = Arc::new(RwLock::new(BinanceClient::new(cfg, 100)));
 
-    let binance_client = Arc::new(RwLock::new(BinanceClient::new(binance_config.clone(), 100)));
-    let binance_client_clone = Arc::clone(&binance_client);
-
-    let ws_task = tokio::spawn(async move {
-        let mut client = binance_client_clone.write().await;
-        if let Err(e) = client.stream().await {
+    // 2) clone a snapshot for streaming, _then_ drop the lock and run
+    let mut stream_client = {
+        let guard = binance_client.read().await;
+        guard.clone()
+    };
+    let ws_handle = tokio::spawn(async move {
+        if let Err(e) = stream_client.stream().await {
             error!("WebSocket streaming error: {}", e);
         }
     });
 
-    // ✅ Wait for WebSocket session to be ready
+    // 3) wait for the in‐memory session to be populated
     loop {
         if binance_client
             .read()
@@ -42,30 +46,37 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .await
             .is_some()
         {
-            info!("✅ WebSocket session ready, proceeding...");
+            info!("✅ WebSocket session ready");
             break;
         }
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     }
 
-    // ✅ Build the BinanceWsCancelOrderReqParams
+    // 4) build and send your cancel‐order RPC
     let params = BinanceWsCancelOrderReqParams::new(
         BinanceSymbol::new("BTC", "USDT").convert_to_smolstr(),
-        "myClientOrderId",
+        "myClientOrderId".to_smolstr(),
         BinanceOrderType::Limit,
     );
-
-    // ✅ Send the cancel order over WS RPC
     {
         let client = binance_client.read().await;
-        if let Err(e) = client.cancel_order(params).await {
-            error!("Failed to send cancel order: {}", e);
-        } else {
-            println!("✅ Cancel order request sent successfully!");
+        debug!("📤 Sending cancel-order request: {:?}", params);
+        match client.cancel_order(params).await {
+            Ok(_) => info!("✅ Cancel order request sent!"),
+            Err(e) => error!("❌ Failed to send cancel order: {}", e),
         }
     }
 
-    ws_task.await?;
+    // 5) wait for Ctrl-C → fire the shutdown broadcast
+    tokio::signal::ctrl_c().await?;
+    info!("🔌 Ctrl-C received, shutting down WS client");
+    {
+        let client = binance_client.read().await;
+        client.shutdown();
+    }
 
+    // 6) finally await the WS task’s exit
+    let _ = ws_handle.await;
+    info!("👋 Goodbye");
     Ok(())
 }

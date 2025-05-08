@@ -20,18 +20,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .init();
 
     let binance_config = load_binance_config("config/binance_config.json")?;
+    let binance_client = Arc::new(RwLock::new(BinanceClient::new(binance_config, 100)));
 
-    let binance_client = Arc::new(RwLock::new(BinanceClient::new(binance_config.clone(), 100)));
-    let binance_client_clone = Arc::clone(&binance_client);
-
+    // 1) clone a lightweight handle for the WS loop, _then_ drop the lock
+    let mut stream_handle = {
+        let client_guard = binance_client.read().await;
+        client_guard.clone()
+    };
+    // now spawn without holding any locks
     let ws_task = tokio::spawn(async move {
-        let mut client = binance_client_clone.write().await;
-        if let Err(e) = client.stream().await {
+        if let Err(e) = stream_handle.stream().await {
             error!("WebSocket streaming error: {}", e);
         }
     });
 
-    // ✅ Wait until session is ready
+    // 2) wait until we have an active ConnectionSession
     loop {
         if binance_client
             .read()
@@ -40,28 +43,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .await
             .is_some()
         {
-            info!("✅ WebSocket session ready, proceeding...");
+            info!("✅ WebSocket session ready");
             break;
         }
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     }
 
-    // ✅ Build the BinanceWsCancelAllOrdersReqParams
+    // 3) build & send the “cancel all” RPC
     let cancel_all_params = BinanceWsCancelAllOrdersReqParams::new(
         BinanceSymbol::new("BTC", "USDT").convert_to_smolstr(),
     );
-
-    // ✅ Send the cancel all orders over WS RPC
     {
         let client = binance_client.read().await;
         if let Err(e) = client.cancel_all_orders(cancel_all_params).await {
-            error!("❌ Failed to send cancel all orders: {}", e);
+            error!("❌ Failed to send cancel-all request: {}", e);
         } else {
-            println!("✅ Cancel all orders request sent successfully!");
+            info!("✅ Cancel-all request sent");
         }
+        // 4) signal the WS loop to shut down
+        client.shutdown();
     }
 
+    // 5) wait for the WS task to exit
     ws_task.await?;
-
     Ok(())
 }

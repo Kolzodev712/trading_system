@@ -8,7 +8,7 @@ use exchange_engine::exchanges::binance::{
 use rust_decimal::Decimal;
 use std::{fs, sync::Arc};
 use tokio::sync::RwLock;
-use tracing::error;
+use tracing::{error, info};
 
 fn load_binance_config(file_path: &str) -> Result<BinanceConfig, Box<dyn std::error::Error>> {
     let config_data = fs::read_to_string(file_path)?;
@@ -22,18 +22,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_max_level(tracing::Level::DEBUG)
         .init();
 
-    let binance_config = load_binance_config("config/binance_config.json")?;
+    let cfg = load_binance_config("config/binance_config.json")?;
+    let binance_client = Arc::new(RwLock::new(BinanceClient::new(cfg, 100)));
 
-    let binance_client = Arc::new(RwLock::new(BinanceClient::new(binance_config.clone(), 100)));
-    let binance_client_clone = Arc::clone(&binance_client);
-
-    let ws_task = tokio::spawn(async move {
-        let mut client = binance_client_clone.write().await;
-        if let Err(e) = client.stream().await {
+    // -- spawn the WS loop on a *clone* of the client, not on the locked instance --
+    let mut ws_client_clone = {
+        let r = binance_client.read().await;
+        r.clone()
+    };
+    let ws_handle = tokio::spawn(async move {
+        if let Err(e) = ws_client_clone.stream().await {
             error!("WebSocket streaming error: {}", e);
         }
     });
 
+    // -- wait until the subscription handshake finished and we have a session --
     loop {
         if binance_client
             .read()
@@ -42,12 +45,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .await
             .is_some()
         {
+            info!("✅ WebSocket session ready, proceeding...");
             break;
         }
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     }
 
-    let order_params = BinanceWsOrderReqParams::new(
+    // -- now we can send RPCs freely --
+    let params = BinanceWsOrderReqParams::new(
         BinanceSymbol::new("BTC", "USDT").convert_to_smolstr(),
         BinanceSide::Buy,
         BinanceOrderType::Limit,
@@ -58,17 +63,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     {
         let client = binance_client.read().await;
-        match client.test_order(order_params).await {
-            Ok(_) => {
-                println!("✅ Test order sent successfully!");
-            }
-            Err(e) => {
-                error!("❌ Failed to send test order: {}", e);
-            }
+        match client.test_order(params).await {
+            Ok(_) => info!("✅ Test order sent successfully!"),
+            Err(e) => error!("❌ Failed to send test order: {}", e),
         }
     }
 
-    ws_task.await?;
+    // wait for CTRL-C or whatever
+    tokio::signal::ctrl_c().await?;
+    // optionally signal the client to shut down cleanly:
+    {
+        let client = binance_client.read().await;
+        client.shutdown();
+    }
+    // wait for the websocket task to finish
+    ws_handle.await?;
 
     Ok(())
 }

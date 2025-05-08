@@ -111,4 +111,7 @@ pub trait PrivateDataClient: Debug + Send + Sync + Clone + 'static {
 
     /// Initiate an authenticated WS stream
     async fn stream(&mut self) -> Result<(), EngineError>;
+
+    /// Tell the client to gracefully stop its background task
+    fn shutdown(&self);
 }

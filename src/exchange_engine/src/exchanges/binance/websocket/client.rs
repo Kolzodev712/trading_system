@@ -289,6 +289,7 @@ impl SubscriptionHandler for BinanceSubscriptionHandler {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct BinanceWSClient {
     url: SmolStr,
     subscription_handler: BinanceSubscriptionHandler,
@@ -408,7 +409,6 @@ impl BinanceWSClient {
                         };
                         match json {
                             Ok(payload) => {
-                                debug!("📤 Sending RPC JSON: {}", payload);
                                 let mut w = ws_write.lock().await;
                                 if let Err(e) = w.send(Message::Text(payload)).await {
                                     error!("❌ Failed to send RPC: {:?}", e);
@@ -440,6 +440,7 @@ impl BinanceWSClient {
         });
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn split_stream(
         &self,
         ws_stream: WebSocketStream<MaybeTlsStream<TcpStream>>,
@@ -472,13 +473,50 @@ impl WebSocketClient<ParsedBinanceMessage> for BinanceWSClient {
 
     async fn handle_messages<H>(
         &self,
-        mut _ws_stream: WebSocketStream<MaybeTlsStream<TcpStream>>,
-        _event_tx: mpsc::Sender<ParsedBinanceMessage>,
-        _handler: H,
+        mut ws_stream: WebSocketStream<MaybeTlsStream<TcpStream>>,
+        event_tx: mpsc::Sender<ParsedBinanceMessage>,
+        handler: H,
     ) -> Result<(), EngineError>
     where
         H: MessageHandler<ParsedBinanceMessage> + Send + Sync + 'static,
     {
+        tokio::spawn(async move {
+            while let Some(msg) = ws_stream.next().await {
+                match msg {
+                    Ok(Message::Text(txt)) => match handler.handle_text_message(txt.into()) {
+                        Ok(parsed) => {
+                            if let Err(e) = event_tx.send(parsed).await {
+                                error!("❌ failed to forward parsed event: {:?}", e);
+                            }
+                        }
+                        Err(e) => {
+                            error!("❌ WS parse error: {:?}", e);
+                        }
+                    },
+
+                    Ok(Message::Binary(bin)) => handler.handle_binary(bin),
+
+                    Ok(Message::Ping(ping)) => {
+                        handler.handle_ping(ping.clone());
+                        // echo back
+                        if let Err(e) = ws_stream.send(Message::Pong(ping)).await {
+                            error!("❌ error sending pong: {:?}", e);
+                        }
+                    }
+
+                    Ok(Message::Pong(pong)) => handler.handle_pong(pong),
+
+                    Ok(Message::Close(cf)) => handler.handle_close(cf),
+
+                    Err(e) => {
+                        error!("⚠️ error while receiving ws message: {}", e);
+                        break;
+                    }
+                }
+            }
+            debug!("💀 handle_messages: stream closed");
+        });
+
         Ok(())
     }
 

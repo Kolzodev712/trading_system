@@ -9,7 +9,7 @@ use core_logic::{
         private_data::OrderRequest,
     },
     error::EngineError,
-    traits::{PrivateDataClient, TradingClient},
+    traits::TradingClient,
 };
 use tracing::{debug, error};
 

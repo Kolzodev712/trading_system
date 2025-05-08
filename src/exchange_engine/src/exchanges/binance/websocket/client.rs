@@ -1,7 +1,7 @@
 use crate::exchanges::binance::sign::BinanceWsAuthenticator;
 
 use super::types::{
-    common::{SessionLogonMessage, SessionLogonParams},
+    common::{BinanceInbound, SessionLogonMessage, SessionLogonParams},
     rpc::{
         balance::{
             BinanceAccountStatusParams, BinanceAccountStatusRequest, BinanceAccountStatusResponse,
@@ -39,7 +39,8 @@ use tokio::{
     sync::{mpsc, Mutex, RwLock},
 };
 use tokio_tungstenite::{
-    connect_async, tungstenite::protocol::Message, MaybeTlsStream, WebSocketStream,
+    connect_async, tungstenite::protocol::frame::CloseFrame, tungstenite::protocol::Message,
+    MaybeTlsStream, WebSocketStream,
 };
 use tracing::{debug, error};
 
@@ -56,6 +57,52 @@ pub struct BinanceChannel {
     pub base: SmolStr,
     pub quote: SmolStr,
     pub limit: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct InboundHandler;
+
+impl MessageHandler<BinanceInbound> for InboundHandler {
+    fn handle_text_message(&self, text: SmolStr) -> Result<BinanceInbound, EngineError> {
+        if let Ok(resp) = serde_json::from_str::<BinanceAccountStatusResponse>(&text) {
+            return Ok(BinanceInbound::Rpc(BinanceRpcResponse::AccountStatus(resp)));
+        }
+
+        if let Ok(resp) = serde_json::from_str::<BinanceWsOrderResponse>(&text) {
+            return Ok(BinanceInbound::Rpc(BinanceRpcResponse::OpenOrder(resp)));
+        }
+
+        if let Ok(resp) = serde_json::from_str::<BinanceWsCancelOrderResponse>(&text) {
+            return Ok(BinanceInbound::Rpc(BinanceRpcResponse::CancelOrder(resp)));
+        }
+
+        if let Ok(resp) = serde_json::from_str::<BinanceWsCancelAllOrdersResponse>(&text) {
+            return Ok(BinanceInbound::Rpc(BinanceRpcResponse::CancelAll(resp)));
+        }
+
+        let event = serde_json::from_str::<ParsedBinanceMessage>(&text)
+            .map(BinanceInbound::Event)
+            .unwrap_or(BinanceInbound::Event(ParsedBinanceMessage::Raw(
+                text.clone(),
+            )));
+        Ok(event)
+    }
+
+    fn handle_binary(&self, binary: Vec<u8>) {
+        debug!(?binary, "ws binary message received");
+    }
+
+    fn handle_ping(&self, ping: Vec<u8>) {
+        debug!(?ping, "ws ping received");
+    }
+
+    fn handle_pong(&self, pong: Vec<u8>) {
+        debug!(?pong, "ws pong received");
+    }
+
+    fn handle_close(&self, close: Option<CloseFrame>) {
+        debug!(?close, "ws close received");
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -306,11 +353,11 @@ impl BinanceWSClient {
     fn handle_read_stream<H, R>(
         &self,
         mut reader: R,
-        event_tx: mpsc::Sender<ParsedBinanceMessage>,
-        rpc_tx: mpsc::Sender<BinanceRpcResponse>,
+        inbound_tx: mpsc::Sender<BinanceInbound>,
+        ping_tx: mpsc::Sender<Vec<u8>>,
         handler: H,
     ) where
-        H: MessageHandler<ParsedBinanceMessage> + Send + Sync + 'static,
+        H: MessageHandler<BinanceInbound> + Send + Sync + 'static,
         R: Stream<Item = Result<Message, tokio_tungstenite::tungstenite::Error>>
             + Unpin
             + Send
@@ -319,17 +366,25 @@ impl BinanceWSClient {
         tokio::spawn(async move {
             while let Some(message) = reader.next().await {
                 match message {
-                    Ok(Message::Text(text)) => {
-                        handle_text_message(&handler, &event_tx, Some(&rpc_tx), text).await;
+                    Ok(Message::Text(txt)) => match handler.handle_text_message(txt.into()) {
+                        Ok(BinanceInbound::Rpc(rpc)) => {
+                            let _ = inbound_tx.send(BinanceInbound::Rpc(rpc)).await;
+                        }
+                        Ok(BinanceInbound::Event(evt)) => {
+                            let _ = inbound_tx.send(BinanceInbound::Event(evt)).await;
+                        }
+                        Err(e) => error!("WS parse error: {}", e),
+                    },
+                    Ok(Message::Binary(bin)) => handler.handle_binary(bin),
+                    Ok(Message::Ping(payload)) => {
+                        handler.handle_ping(payload.clone());
+                        let _ = ping_tx.send(payload).await;
                     }
-                    Ok(Message::Binary(binary)) => handler.handle_binary(binary),
-                    Ok(Message::Ping(_ping)) => {}
-                    Ok(Message::Pong(pong)) => handler.handle_pong(pong),
-                    Err(e) => error!("Error while receiving message: {}", e),
-                    _ => {}
+                    Ok(Message::Pong(p)) => handler.handle_pong(p),
+                    Ok(Message::Close(c)) => handler.handle_close(c),
+                    Err(e) => error!("WS read error: {}", e),
                 }
             }
-
             debug!("💀 reader.next() returned None — stream closed.");
         });
     }
@@ -337,30 +392,45 @@ impl BinanceWSClient {
     fn handle_write_stream(
         &self,
         mut outbound_rx: mpsc::Receiver<BinanceRpcRequest>,
+        mut ping_rx: mpsc::Receiver<Vec<u8>>,
         ws_write: Arc<Mutex<SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>>>,
     ) {
         tokio::spawn(async move {
-            while let Some(rpc_request) = outbound_rx.recv().await {
-                debug!("📤 GOT A REQUEST TO SEND: {:?}", rpc_request);
-                let mut write = ws_write.lock().await;
-                let json = match rpc_request {
-                    BinanceRpcRequest::AccountStatus(ref req) => serde_json::to_string(req),
-                    BinanceRpcRequest::TestOrder(ref req) => serde_json::to_string(req),
-                    BinanceRpcRequest::OpenOrder(ref req) => serde_json::to_string(req),
-                    BinanceRpcRequest::CancelOrder(ref req) => serde_json::to_string(req),
-                    BinanceRpcRequest::CancelAll(ref req) => serde_json::to_string(req),
-                };
-
-                match json {
-                    Ok(json) => {
-                        debug!("📤 Outgoing WS RPC JSON: {}", json);
-                        if let Err(e) = write.send(Message::Text(json)).await {
-                            error!("❌ Failed to send WebSocket message: {:?}", e);
+            loop {
+                tokio::select! {
+                    Some(rpc) = outbound_rx.recv() => {
+                        let json = match rpc {
+                            BinanceRpcRequest::AccountStatus(req) => serde_json::to_string(&req),
+                            BinanceRpcRequest::TestOrder(req)     => serde_json::to_string(&req),
+                            BinanceRpcRequest::OpenOrder(req)     => serde_json::to_string(&req),
+                            BinanceRpcRequest::CancelOrder(req)   => serde_json::to_string(&req),
+                            BinanceRpcRequest::CancelAll(req)     => serde_json::to_string(&req),
+                        };
+                        match json {
+                            Ok(payload) => {
+                                debug!("📤 Sending RPC JSON: {}", payload);
+                                let mut w = ws_write.lock().await;
+                                if let Err(e) = w.send(Message::Text(payload)).await {
+                                    error!("❌ Failed to send RPC: {:?}", e);
+                                    break;
+                                }
+                            }
+                            Err(e) => {
+                                error!("❌ Serialization error: {:?}", e);
+                                break;
+                            }
+                        }
+                    }
+                        Some(p) = ping_rx.recv() => {
+                        let mut w = ws_write.lock().await;
+                        if let Err(e) = w.send(Message::Pong(p)).await {
+                            error!("❌ Failed to send Pong: {:?}", e);
                             break;
                         }
                     }
-                    Err(e) => {
-                        error!("❌ Failed to serialize RPC request: {:?}", e);
+
+                    else => {
+                        debug!("Both RPC and ping channels closed, writer exiting");
                         break;
                     }
                 }
@@ -373,17 +443,18 @@ impl BinanceWSClient {
     pub async fn split_stream(
         &self,
         ws_stream: WebSocketStream<MaybeTlsStream<TcpStream>>,
-        event_tx: mpsc::Sender<ParsedBinanceMessage>,
-        rpc_tx: mpsc::Sender<BinanceRpcResponse>,
+        inbound_tx: mpsc::Sender<BinanceInbound>,
         outbound_tx: mpsc::Sender<BinanceRpcRequest>,
         outbound_rx: mpsc::Receiver<BinanceRpcRequest>,
-        handler: impl MessageHandler<ParsedBinanceMessage> + Send + Sync + 'static,
+        ping_tx: mpsc::Sender<Vec<u8>>,
+        ping_rx: mpsc::Receiver<Vec<u8>>,
+        handler: impl MessageHandler<BinanceInbound> + Send + Sync + 'static,
     ) -> Result<ConnectionSession, EngineError> {
         let (ws_write, ws_read) = ws_stream.split();
         let ws_write = Arc::new(Mutex::new(ws_write));
 
-        self.handle_write_stream(outbound_rx, Arc::clone(&ws_write));
-        self.handle_read_stream(ws_read, event_tx, rpc_tx, handler);
+        self.handle_write_stream(outbound_rx, ping_rx, Arc::clone(&ws_write));
+        self.handle_read_stream(ws_read, inbound_tx, ping_tx, handler);
 
         Ok(ConnectionSession { outbound_tx })
     }
@@ -401,33 +472,13 @@ impl WebSocketClient<ParsedBinanceMessage> for BinanceWSClient {
 
     async fn handle_messages<H>(
         &self,
-        mut ws_stream: WebSocketStream<MaybeTlsStream<TcpStream>>,
-        event_tx: mpsc::Sender<ParsedBinanceMessage>,
-        handler: H,
+        mut _ws_stream: WebSocketStream<MaybeTlsStream<TcpStream>>,
+        _event_tx: mpsc::Sender<ParsedBinanceMessage>,
+        _handler: H,
     ) -> Result<(), EngineError>
     where
         H: MessageHandler<ParsedBinanceMessage> + Send + Sync + 'static,
     {
-        tokio::spawn(async move {
-            while let Some(message) = ws_stream.next().await {
-                match message {
-                    Ok(Message::Text(text)) => {
-                        handle_text_message(&handler, &event_tx, None, text).await;
-                    }
-                    Ok(Message::Binary(binary)) => handler.handle_binary(binary),
-                    Ok(Message::Ping(ping)) => {
-                        handler.handle_ping(ping.clone());
-                        if let Err(e) = ws_stream.send(Message::Pong(ping)).await {
-                            error!("Error sending pong: {}", e);
-                        }
-                    }
-                    Ok(Message::Pong(pong)) => handler.handle_pong(pong),
-                    Err(e) => error!("Error while receiving message: {}", e),
-                    _ => {}
-                }
-            }
-        });
-
         Ok(())
     }
 
@@ -448,48 +499,4 @@ impl WebSocketClient<ParsedBinanceMessage> for BinanceWSClient {
 
         Ok(())
     }
-}
-
-async fn handle_text_message<H>(
-    handler: &H,
-    event_tx: &mpsc::Sender<ParsedBinanceMessage>,
-    rpc_tx: Option<&mpsc::Sender<BinanceRpcResponse>>,
-    text: String,
-) where
-    H: MessageHandler<ParsedBinanceMessage> + Send + Sync + 'static,
-{
-    if let Some(rpc_tx) = rpc_tx {
-        if let Ok(resp) = serde_json::from_str::<BinanceAccountStatusResponse>(&text) {
-            let _ = rpc_tx.send(BinanceRpcResponse::AccountStatus(resp)).await;
-            return;
-        }
-        if let Ok(resp) = serde_json::from_str::<BinanceWsOrderResponse>(&text) {
-            let _ = rpc_tx.send(BinanceRpcResponse::OpenOrder(resp)).await;
-            return;
-        }
-        if let Ok(resp) = serde_json::from_str::<BinanceWsCancelOrderResponse>(&text) {
-            let _ = rpc_tx.send(BinanceRpcResponse::CancelOrder(resp)).await;
-            return;
-        }
-        if let Ok(resp) = serde_json::from_str::<BinanceWsCancelAllOrdersResponse>(&text) {
-            let _ = rpc_tx.send(BinanceRpcResponse::CancelAll(resp)).await;
-            return;
-        }
-    }
-
-    match handler.handle_text_message(SmolStr::new(&text)) {
-        Ok(event) => {
-            if let Err(e) = event_tx.send(event).await {
-                error!("❌ Failed to forward event: {:?}", e);
-            }
-        }
-        Err(_) => {
-            debug!(
-                "⚠️ Unrecognized message format (not event or rpc): {}",
-                text
-            );
-        }
-    }
-
-    debug!("❓ Message not parsed as known RPC response: {}", text);
 }

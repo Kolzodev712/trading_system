@@ -18,10 +18,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let binance_config = load_binance_config("config/binance_config.json")?;
 
-    let binance_client = Arc::new(RwLock::new(BinanceClient::new(binance_config.clone(), 100)));
+    let binance_client = Arc::new(RwLock::new(BinanceClient::new(
+        binance_config.clone(),
+        1024,
+    )));
     let binance_client_clone = Arc::clone(&binance_client);
 
-    // Spawn and don't await
     tokio::spawn(async move {
         let mut client = binance_client_clone.write().await;
         if let Err(e) = client.stream().await {
@@ -29,7 +31,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
-    // Wait for session to be ready
     loop {
         if binance_client
             .read()
@@ -44,9 +45,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     }
 
-    // Send account status request
     {
-        let client = binance_client.write().await;
+        let client = binance_client.read().await;
         info!("🟢 Sending account status request...");
         if let Err(e) = client.account_status().await {
             error!("❌ Failed to send account status request: {}", e);
@@ -55,7 +55,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    // Keep program alive to receive response
     tokio::signal::ctrl_c().await?;
     Ok(())
 }

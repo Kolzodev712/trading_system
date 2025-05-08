@@ -5,14 +5,12 @@ pub mod open_order;
 
 use cancel_all::{BinanceWsCancelAllOrdersRequest, BinanceWsCancelAllOrdersResponse};
 use cancel_order::{BinanceWsCancelOrderRequest, BinanceWsCancelOrderResponse};
-use serde::{Deserialize, Serialize};
 use smol_str::{SmolStr, ToSmolStr};
 
 use balance::{BinanceAccountStatusRequest, BinanceAccountStatusResponse};
 use open_order::{BinanceWsOrderRequest, BinanceWsOrderResponse};
 
-#[derive(Debug, Clone, Eq, PartialEq, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub enum BinanceRpcRequest {
     AccountStatus(BinanceAccountStatusRequest),
     TestOrder(BinanceWsOrderRequest),
@@ -33,8 +31,7 @@ impl ToSmolStr for BinanceRpcRequest {
     }
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub enum BinanceRpcResponse {
     AccountStatus(BinanceAccountStatusResponse),
     TestOrder(BinanceWsOrderResponse),

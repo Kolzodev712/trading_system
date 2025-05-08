@@ -1,30 +1,24 @@
 use crate::exchanges::binance::sign::BinanceWsAuthenticator;
 
-use super::super::binance::websocket::types::{
-    rpc::{
-        cancel_all::BinanceWsCancelAllOrdersReqParams, cancel_order::BinanceWsCancelOrderReqParams,
-        open_order::BinanceWsOrderReqParams,
-    },
-    user_data::DataHandler,
+use super::super::binance::websocket::types::rpc::{
+    cancel_all::BinanceWsCancelAllOrdersReqParams, cancel_order::BinanceWsCancelOrderReqParams,
+    open_order::BinanceWsOrderReqParams,
 };
 use super::websocket::client::{BinanceSubscriptionHandler, ConnectionSession};
 use super::{
     config::BinanceConfig,
     websocket::{
-        client::BinanceWSClient,
+        client::{BinanceWSClient, InboundHandler},
         types::{
-            common::SessionLogonParams,
-            rpc::{BinanceRpcRequest, BinanceRpcResponse},
+            common::{BinanceInbound, SessionLogonParams},
+            rpc::BinanceRpcRequest,
             user_data::events::ParsedBinanceMessage,
         },
     },
 };
 use async_trait::async_trait;
 use core_logic::{
-    channels::{ChannelHandler, ChannelManager},
-    error::EngineError,
-    traits::PrivateDataClient,
-    Exchange,
+    channels::ChannelManager, error::EngineError, traits::PrivateDataClient, Exchange,
 };
 use std::{fmt::Debug, sync::Arc};
 use tokio::{
@@ -68,16 +62,16 @@ impl BinanceClient {
 
     async fn start_event_loop(&mut self) -> Result<(), EngineError> {
         loop {
-            let (event_tx, event_rx) = self.channel_manager.create_channel();
-            let (rpc_tx, rpc_rx) = self.channel_manager.create_channel();
+            let (inbound_tx, inbound_rx) = mpsc::channel(1024);
+            let (ping_tx, ping_rx) = mpsc::channel::<Vec<u8>>(16);
             let (shutdown_tx, _) = broadcast::channel(1);
 
             let result = self
                 .connect_and_start_stream(
-                    event_tx.clone(),
-                    event_rx,
-                    rpc_tx.clone(),
-                    rpc_rx,
+                    inbound_tx.clone(),
+                    inbound_rx,
+                    ping_tx.clone(),
+                    ping_rx,
                     shutdown_tx.clone(),
                 )
                 .await;
@@ -98,20 +92,18 @@ impl BinanceClient {
 
     async fn connect_and_start_stream(
         &mut self,
-        event_tx: mpsc::Sender<ParsedBinanceMessage>,
-        event_rx: mpsc::Receiver<ParsedBinanceMessage>,
-        rpc_tx: mpsc::Sender<BinanceRpcResponse>,
-        rpc_rx: mpsc::Receiver<BinanceRpcResponse>,
+        inbound_tx: mpsc::Sender<BinanceInbound>,
+        inbound_rx: mpsc::Receiver<BinanceInbound>,
+        ping_tx: mpsc::Sender<Vec<u8>>,
+        ping_rx: mpsc::Receiver<Vec<u8>>,
         shutdown_tx: broadcast::Sender<()>,
     ) -> Result<(), EngineError> {
         let signer = BinanceWsAuthenticator::new(
             self.config.ws.api_key.clone(),
             self.config.ws.secret_key.clone(),
         );
-
-        let client = BinanceWSClient::new(signer.clone(), Arc::clone(&self.session));
+        let client = BinanceWSClient::new(signer, Arc::clone(&self.session));
         let mut ws_stream = client.connect_and_authenticate().await?;
-
         client.subscribe_to_user_stream(&mut ws_stream).await?;
 
         let (outbound_tx, outbound_rx) = mpsc::channel::<BinanceRpcRequest>(1024);
@@ -120,91 +112,73 @@ impl BinanceClient {
         let session = client
             .split_stream(
                 ws_stream,
-                event_tx.clone(),
-                rpc_tx.clone(),
+                inbound_tx.clone(),
                 outbound_tx,
                 outbound_rx,
-                DataHandler,
+                ping_tx,
+                ping_rx,
+                InboundHandler,
             )
             .await?;
+        *self.connection_session.write().await = Some(session);
 
-        {
-            let mut session_guard = self.connection_session.write().await;
-            *session_guard = Some(session.clone());
-        }
+        // 4) Drive the inbound loop
+        let shutdown_rx = shutdown_tx.subscribe();
+        tokio::spawn(async move {
+            if let Err(e) = BinanceClient::run_stream_loop(inbound_rx, shutdown_rx).await {
+                error!("Stream loop exited with error: {:?}", e);
+            }
+        })
+        .await?;
 
-        let event_handle = tokio::spawn({
-            let shutdown_rx = shutdown_tx.subscribe();
-            let event_rx = event_rx;
-            let rpc_rx = rpc_rx;
-
-            async move { Self::run_stream_loop_static(event_rx, rpc_rx, shutdown_rx).await }
-        });
-        event_handle.await??;
         Ok(())
     }
 
-    async fn run_stream_loop_static(
-        mut event_rx: mpsc::Receiver<ParsedBinanceMessage>,
-        mut rpc_rx: mpsc::Receiver<BinanceRpcResponse>,
+    async fn run_stream_loop(
+        mut inbound_rx: mpsc::Receiver<BinanceInbound>,
         mut shutdown_rx: broadcast::Receiver<()>,
     ) -> Result<(), EngineError> {
         loop {
             tokio::select! {
                 _ = shutdown_rx.recv() => {
-                    debug!("Shutdown received, exiting event loop");
-                    return Ok(());
+                    debug!("Shutdown received, exiting stream loop");
+                    break;
                 }
-                maybe_msg = event_rx.recv() => {
-                    match maybe_msg {
-                        Some(msg) => {
-                            match msg {
-                                ParsedBinanceMessage::OutboundAccountPosition(position) => {
-                                    debug!("Outbound Account Position update: {:?}", position);
-                                }
-                                ParsedBinanceMessage::BalanceUpdate(balance) => {
-                                    debug!("Balance update: {:?}", balance);
-                                }
-                                ParsedBinanceMessage::ExecutionReport(exec_report) => {
-                                    debug!("Execution report update: {:?}", exec_report);
-                                }
-                                ParsedBinanceMessage::Raw(raw) => {
-                                    debug!("Received raw message: {:?}", raw);
-                                }
-                            }
+                maybe_msg = inbound_rx.recv() => match maybe_msg {
+                    Some(BinanceInbound::Event(evt)) => match evt {
+                        ParsedBinanceMessage::OutboundAccountPosition(pos) => {
+                            debug!("Position update: {:?}", pos);
                         }
-                        None => {
-                            error!("Event channel closed, exiting stream loop");
-                            break;
+                        ParsedBinanceMessage::BalanceUpdate(bal) => {
+                            debug!("Balance update: {:?}", bal);
                         }
+                        ParsedBinanceMessage::ExecutionReport(rep) => {
+                            debug!("Execution report: {:?}", rep);
+                        }
+                        ParsedBinanceMessage::Raw(raw) => {
+                            debug!("Raw user-data message: {}", raw);
+                        }
+                    },
+                    Some(BinanceInbound::Rpc(resp)) => {
+                        debug!("✅ RPC Response: {:?}", resp);
                     }
-                }
-                maybe_rpc = rpc_rx.recv() => {
-                    match maybe_rpc {
-                        Some(rpc_response) => {
-                            debug!("✅ RPC Response received: {:?}", rpc_response);
-                        }
-                        None => {
-                            error!("RPC channel closed");
-                            break;
-                        }
+                    None => {
+                        error!("Inbound channel closed");
+                        break;
                     }
                 }
             }
         }
-
         Ok(())
     }
 
     async fn exponential_backoff_wait(&mut self) {
-        let base_delay = Duration::from_secs(self.config.base_delay.unwrap_or(2));
-        let max_delay = Duration::from_secs(self.config.max_delay.unwrap_or(60));
-
+        let base = Duration::from_secs(self.config.base_delay.unwrap_or(2));
+        let max = Duration::from_secs(self.config.max_delay.unwrap_or(60));
         let jitter = Duration::from_millis(rand::random::<u64>() % 1000);
-        let sleep_time = (base_delay + jitter).min(max_delay);
-
-        debug!("Reconnecting after {:?}", sleep_time);
-        sleep(sleep_time).await;
+        let delay = (base + jitter).min(max);
+        debug!("Reconnecting after {:?}", delay);
+        sleep(delay).await;
     }
 
     pub async fn account_status(&self) -> Result<(), EngineError> {

@@ -1,6 +1,13 @@
+use super::{rpc::BinanceRpcResponse, user_data::events::ParsedBinanceMessage};
 use core_logic::utils::{deserialize_smol_str, serialize_smol_str};
 use serde::{Deserialize, Serialize};
 use smol_str::SmolStr;
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub enum BinanceInbound {
+    Event(ParsedBinanceMessage),
+    Rpc(BinanceRpcResponse),
+}
 
 #[derive(Debug, Clone, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]

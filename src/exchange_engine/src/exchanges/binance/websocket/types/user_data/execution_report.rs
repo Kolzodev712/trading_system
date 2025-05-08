@@ -2,20 +2,30 @@ use crate::exchanges::binance::common_types::{
     BinanceOrderStatus, BinanceOrderType, BinanceSide, BinanceTimeInForce,
 };
 use core_logic::data::private_data::Order;
+use core_logic::utils::{deserialize_smol_str, serialize_smol_str};
 
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
+use smol_str::SmolStr;
 
 #[derive(Debug, Clone, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 /// See: <https://developers.binance.com/docs/binance-spot-api-docs/web-socket-api/authentication-requests>
 pub struct ExecutionReport {
-    #[serde(rename = "e")]
-    pub event_type: String,
+    #[serde(
+        rename = "e",
+        serialize_with = "serialize_smol_str",
+        deserialize_with = "deserialize_smol_str"
+    )]
+    pub event_type: SmolStr,
     #[serde(rename = "E")]
     pub event_time: u64,
-    #[serde(rename = "s")]
-    pub symbol: String,
+    #[serde(
+        rename = "s",
+        serialize_with = "serialize_smol_str",
+        deserialize_with = "deserialize_smol_str"
+    )]
+    pub symbol: SmolStr,
     #[serde(rename = "S")]
     pub side: BinanceSide,
     #[serde(rename = "o")]
@@ -89,9 +99,9 @@ mod tests {
     #[test]
     fn test_execution_report_to_order_conversion() {
         let exec_report = ExecutionReport {
-            event_type: "executionReport".to_string(),
+            event_type: "executionReport".into(),
             event_time: 1628000000000,
-            symbol: "BTCUSDT".to_string(),
+            symbol: "BTCUSDT".into(),
             side: BinanceSide::Buy,
             order_type: BinanceOrderType::Limit,
             time_in_force: BinanceTimeInForce::Gtc,
@@ -117,9 +127,9 @@ mod tests {
     #[test]
     fn test_execution_report_invalid_side() {
         let exec_report = ExecutionReport {
-            event_type: "executionReport".to_string(),
+            event_type: "executionReport".into(),
             event_time: 1628000000000,
-            symbol: "BTCUSDT".to_string(),
+            symbol: "BTCUSDT".into(),
             side: BinanceSide::Sell,
             order_type: BinanceOrderType::Limit,
             time_in_force: BinanceTimeInForce::Gtc,
@@ -139,9 +149,9 @@ mod tests {
     #[test]
     fn test_execution_report_with_no_exchange_created_at() {
         let exec_report = ExecutionReport {
-            event_type: "executionReport".to_string(),
+            event_type: "executionReport".into(),
             event_time: 1628000000000,
-            symbol: "BTCUSDT".to_string(),
+            symbol: "BTCUSDT".into(),
             side: BinanceSide::Buy,
             order_type: BinanceOrderType::Limit,
             time_in_force: BinanceTimeInForce::Gtc,

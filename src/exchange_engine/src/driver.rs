@@ -46,7 +46,7 @@ impl ExchangeEngineDriver {
                     binance_config.clone(),
                 );
 
-                let ws_client = BinanceWSClient::new(binance_config.clone(), 100);
+                let ws_client = BinanceWSClient::new(binance_config.clone(), 1024);
 
                 Ok((Box::new(rest_client), ws_client))
             } // _ => Err(EngineError::CustomError(anyhow::anyhow!("Unsupported exchange"))),

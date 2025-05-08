@@ -50,23 +50,41 @@ impl<'de> Deserialize<'de> for ParsedBinanceMessage {
     where
         D: Deserializer<'de>,
     {
-        let v: Value = Value::deserialize(deserializer)?;
+        // Deserialize the raw JSON value
+        let raw: Value = Value::deserialize(deserializer)?;
+        // If it's a wrapper with an "event" field, drill in one level
+        let v = if let Some(inner) = raw.get("event") {
+            inner.clone()
+        } else {
+            raw
+        };
 
+        // Now we can find the "e" field on that inner object
         let event_type = v.get("e").and_then(|e| e.as_str()).unwrap_or_default();
 
         match event_type {
-            "outboundAccountPosition" => serde_json::from_value(v)
-                .map(ParsedBinanceMessage::OutboundAccountPosition)
-                .map_err(de::Error::custom),
-            "balanceUpdate" => serde_json::from_value(v)
-                .map(ParsedBinanceMessage::BalanceUpdate)
-                .map_err(de::Error::custom),
-            "executionReport" => serde_json::from_value(v)
-                .map(ParsedBinanceMessage::ExecutionReport)
-                .map_err(de::Error::custom),
+            "outboundAccountPosition" => {
+                let pos = serde_json::from_value(v)
+                    .map(ParsedBinanceMessage::OutboundAccountPosition)
+                    .map_err(de::Error::custom)?;
+                Ok(pos)
+            }
+            "balanceUpdate" => {
+                let upd = serde_json::from_value(v)
+                    .map(ParsedBinanceMessage::BalanceUpdate)
+                    .map_err(de::Error::custom)?;
+                Ok(upd)
+            }
+            "executionReport" => {
+                let rep = serde_json::from_value(v)
+                    .map(ParsedBinanceMessage::ExecutionReport)
+                    .map_err(de::Error::custom)?;
+                Ok(rep)
+            }
             _ => {
-                let raw = serde_json::to_string(&v).unwrap_or_else(|_| "<invalid json>".into());
-                Ok(ParsedBinanceMessage::Raw(raw.into()))
+                // Unknown event: keep whatever inner JSON we found
+                let raw_str = serde_json::to_string(&v).unwrap_or_else(|_| "<invalid json>".into());
+                Ok(ParsedBinanceMessage::Raw(raw_str.into()))
             }
         }
     }

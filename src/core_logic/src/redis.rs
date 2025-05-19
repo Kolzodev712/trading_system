@@ -12,7 +12,7 @@ use tracing::debug;
 pub const ORDERBOOK_CHANNEL: &str = "orderbook";
 pub const TRADE_CHANNEL: &str = "trade";
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub enum RedisMessage {
     OrderbookMessage(Orderbook),
     TradeMessage(Trade),

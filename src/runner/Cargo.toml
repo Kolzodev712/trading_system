@@ -11,6 +11,7 @@ market_data_engine = { path = "../market_data_engine" }
 
 # Logging
 tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
 
 # SerDe
 serde = { workspace = true }

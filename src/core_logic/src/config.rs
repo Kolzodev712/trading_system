@@ -8,16 +8,16 @@ use serde_json::Value as JsonValue;
 pub struct TradingSystemConfig {
     /// System-wide settings
     pub system: SystemConfig,
-    
+
     /// Exchange configuration
     pub exchange: ExchangeConfig,
-    
+
     /// Strategy configuration
     pub strategy: StrategyConfig,
-    
+
     /// HTTP server configuration
     pub server: ServerConfig,
-    
+
     /// Redis configuration
     pub redis: RedisConfig,
 }
@@ -26,7 +26,7 @@ pub struct TradingSystemConfig {
 pub struct SystemConfig {
     /// Log level: "trace", "debug", "info", "warn", "error"
     pub log_level: String,
-    
+
     /// Graceful shutdown timeout in seconds
     pub shutdown_timeout_secs: u64,
 }
@@ -37,7 +37,7 @@ pub struct SystemConfig {
 pub struct ExchangeConfig {
     /// Exchange name
     pub exchange: Exchange,
-    
+
     /// Exchange-specific configuration stored as JSON
     /// This will be deserialized by the exchange-specific engine
     /// The JSON should contain the exchange name as a key (e.g., "binance": {...})
@@ -49,31 +49,31 @@ pub struct ExchangeConfig {
 pub struct StrategyConfig {
     /// Strategy type: "BuyLowSellHigh", "MeanReversion", etc.
     pub strategy_type: String,
-    
+
     /// Position size per trade
     pub position_size: Decimal,
-    
+
     /// Maximum total position size
     pub max_position: Decimal,
-    
+
     /// Buy threshold percentage (e.g., 2.0 for 2%)
     pub buy_threshold_percent: Decimal,
-    
+
     /// Sell threshold percentage (e.g., 2.0 for 2%)
     pub sell_threshold_percent: Decimal,
-    
+
     /// Stop loss percentage (e.g., 5.0 for 5% loss)
     pub stop_loss_percent: Option<Decimal>,
-    
+
     /// Take profit percentage (e.g., 10.0 for 10% profit)
     pub take_profit_percent: Option<Decimal>,
-    
+
     /// Maximum active orders
     pub max_active_orders: usize,
-    
+
     /// Price history size for moving average
     pub price_history_size: usize,
-    
+
     /// Minimum price history before trading
     pub min_price_history: usize,
 }
@@ -82,7 +82,7 @@ pub struct StrategyConfig {
 pub struct ServerConfig {
     /// HTTP server bind address
     pub bind_address: String,
-    
+
     /// HTTP server port
     pub port: u16,
 }
@@ -129,4 +129,3 @@ impl TradingSystemConfig {
         Ok(())
     }
 }
-

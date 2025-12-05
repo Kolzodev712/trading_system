@@ -43,7 +43,7 @@ impl TradingState {
 
     pub fn update_position(&mut self, symbol: Pair, quantity: Decimal, price: Decimal) {
         let position = self.positions.entry(symbol.clone()).or_insert(Position {
-            symbol,
+            symbol: symbol.clone(),
             quantity: Decimal::ZERO,
             avg_price: Decimal::ZERO,
         });
@@ -57,9 +57,10 @@ impl TradingState {
             }
         } else {
             // Reducing position
+            let symbol_to_remove = position.symbol.clone();
             position.quantity += quantity; // quantity is negative for sells
             if position.quantity <= Decimal::ZERO {
-                self.positions.remove(&position.symbol);
+                self.positions.remove(&symbol_to_remove);
             }
         }
     }
@@ -69,9 +70,10 @@ impl TradingState {
     }
 
     pub fn get_active_order_count(&self, symbol: &Pair) -> usize {
+        let symbol_str = symbol.convert_to_smolstr();
         self.active_orders
             .values()
-            .filter(|o| &o.symbol == symbol)
+            .filter(|o| o.symbol.as_ref() == symbol_str.as_str())
             .count()
     }
 }
@@ -92,7 +94,6 @@ pub trait Strategy: Send + Sync {
     async fn on_execution_report(
         &mut self,
         order: &Order,
-        state: &mut TradingState,
     ) -> Result<(), EngineError>;
 
     /// Get the trading state (for external access)

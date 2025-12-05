@@ -1,8 +1,5 @@
 use super::strategy::Strategy;
-use core_logic::{
-    data::public_data::Orderbook,
-    error::EngineError,
-};
+use core_logic::{data::public_data::Orderbook, error::EngineError};
 use rust_decimal::Decimal;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -45,7 +42,7 @@ impl<S: Strategy> BacktestEngine<S> {
                 let strat = self.strategy.read().await;
                 strat.get_state().clone()
             };
-            
+
             let order_request = {
                 let mut strat = self.strategy.write().await;
                 strat.on_orderbook(&orderbook, &state).await?
@@ -60,7 +57,7 @@ impl<S: Strategy> BacktestEngine<S> {
                 };
 
                 let cost = mid_price * req.amount;
-                
+
                 match req.side {
                     core_logic::data::base_data::Side::Buy => {
                         if self.balance >= cost {
@@ -70,7 +67,7 @@ impl<S: Strategy> BacktestEngine<S> {
                             if self.position > Decimal::ZERO {
                                 self.avg_price = total_cost / self.position;
                             }
-                            
+
                             self.trades.push(TradeResult {
                                 side: "BUY".to_string(),
                                 price: mid_price,
@@ -84,10 +81,10 @@ impl<S: Strategy> BacktestEngine<S> {
                         if self.position >= req.amount {
                             let revenue = mid_price * req.amount;
                             let pnl = (mid_price - self.avg_price) * req.amount;
-                            
+
                             self.balance += revenue;
                             self.position -= req.amount;
-                            
+
                             self.trades.push(TradeResult {
                                 side: "SELL".to_string(),
                                 price: mid_price,
@@ -128,4 +125,3 @@ pub struct BacktestResult {
     pub total_trades: usize,
     pub trades: Vec<TradeResult>,
 }
-

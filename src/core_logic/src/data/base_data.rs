@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use smol_str::SmolStr;
 use std::fmt;
 
-#[derive(Debug, Deserialize, Serialize, Clone, Eq, PartialEq)]
+#[derive(Debug, Deserialize, Serialize, Clone, Eq, PartialEq, Hash)]
 pub struct Pair {
     #[serde(
         serialize_with = "serialize_smol_str",
@@ -29,6 +29,12 @@ impl Pair {
 
     pub fn convert_to_smolstr(&self) -> SmolStr {
         format!("{}{}", self.base, self.quote).into()
+    }
+}
+
+impl fmt::Display for Pair {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}/{}", self.base, self.quote)
     }
 }
 #[derive(Debug, Deserialize, Serialize, Clone, Eq, PartialEq)]

@@ -1,9 +1,7 @@
 use super::strategy::Strategy;
 use core_logic::{
-    data::base_data::Pair,
+    data::private_data::Order, data::public_data::Orderbook,
     error::EngineError,
-    data::public_data::Orderbook,
-    data::private_data::Order,
 };
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -24,24 +22,27 @@ impl StrategyManager {
         self.strategies.push(strategy);
     }
 
-    pub async fn on_orderbook(&self, orderbook: &Orderbook) -> Result<Vec<core_logic::data::private_data::OrderRequest>, EngineError> {
+    pub async fn on_orderbook(
+        &self,
+        orderbook: &Orderbook,
+    ) -> Result<Vec<core_logic::data::private_data::OrderRequest>, EngineError> {
         let mut requests = Vec::new();
-        
+
         for strategy in &self.strategies {
             let mut strat = strategy.write().await;
-            let state = strat.get_state();
-            if let Some(req) = strat.on_orderbook(orderbook, state).await? {
+            let state = strat.get_state().clone();
+            if let Some(req) = strat.on_orderbook(orderbook, &state).await? {
                 requests.push(req);
             }
         }
-        
+
         Ok(requests)
     }
 
     pub async fn on_execution_report(&self, order: &Order) -> Result<(), EngineError> {
         for strategy in &self.strategies {
-            let mut strat = strategy.write().await;
-            strat.on_execution_report(order, strat.get_state_mut()).await?;
+            let mut strat_guard = strategy.write().await;
+            strat_guard.on_execution_report(order).await?;
         }
         Ok(())
     }
@@ -56,4 +57,3 @@ impl Default for StrategyManager {
         Self::new()
     }
 }
-

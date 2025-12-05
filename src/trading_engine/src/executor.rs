@@ -1,4 +1,5 @@
 use super::strategy::Strategy;
+use anyhow;
 use core_logic::{
     data::{base_data::Pair, private_data::Order},
     error::EngineError,
@@ -7,7 +8,6 @@ use core_logic::{
     traits::TradingClient,
 };
 use exchange_engine::exchanges::binance::websocket::types::user_data::execution_report::ExecutionReport;
-use redis::AsyncCommands;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio_stream::StreamExt;
@@ -45,7 +45,7 @@ impl<S: Strategy> StrategyExecutor<S> {
     /// Main execution loop - consumes orderbooks from Redis and executes strategy
     pub async fn run(&self) -> Result<(), EngineError> {
         info!(
-            "Starting strategy executor for {symbol}",
+            "Starting strategy executor for {symbol:?}",
             symbol = self.symbol
         );
 
@@ -54,7 +54,9 @@ impl<S: Strategy> StrategyExecutor<S> {
         let symbol = self.symbol.clone();
 
         // Subscribe to orderbook channel
-        let mut pubsub_conn = redis::Client::open(&self.redis_url)?
+        let redis_url: redis::ConnectionInfo = self.redis_url.parse()
+            .map_err(|e| EngineError::CustomError(anyhow::anyhow!("Invalid Redis URL: {e}")))?;
+        let mut pubsub_conn = redis::Client::open(redis_url)?
             .get_async_pubsub()
             .await?;
         pubsub_conn.subscribe(ORDERBOOK_CHANNEL).await?;
@@ -70,8 +72,8 @@ impl<S: Strategy> StrategyExecutor<S> {
                     // Get strategy decision
                     let order_request = {
                         let mut strat = strategy.write().await;
-                        let state = strat.get_state();
-                        strat.on_orderbook(&orderbook, state).await?
+                        let state = strat.get_state().clone();
+                        strat.on_orderbook(&orderbook, &state).await?
                     };
 
                     // If strategy wants to place an order, do it
@@ -91,13 +93,11 @@ impl<S: Strategy> StrategyExecutor<S> {
                         let retry_config = order_retry_config();
                         let client_clone = Arc::clone(&trading_client);
                         let req_clone = req.clone();
-                        
+
                         match retry_with_backoff(&retry_config, || {
                             let client = Arc::clone(&client_clone);
                             let req = req_clone.clone();
-                            Box::pin(async move {
-                                client.write().await.open_order(req).await
-                            })
+                            Box::pin(async move { client.write().await.open_order(req).await })
                         })
                         .await
                         {
@@ -132,13 +132,9 @@ impl<S: Strategy> StrategyExecutor<S> {
     ) -> Result<(), EngineError> {
         let order: Order = report.clone().into();
 
-        let mut strategy = self.strategy.write().await;
-        strategy
-            .on_execution_report(&order, strategy.get_state_mut())
-            .await?;
+        let mut strategy_guard = self.strategy.write().await;
+        strategy_guard.on_execution_report(&order).await?;
 
         Ok(())
     }
 }
-
-use tokio_stream::StreamExt;

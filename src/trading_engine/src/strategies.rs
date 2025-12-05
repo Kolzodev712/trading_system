@@ -1,7 +1,9 @@
 use super::strategy::{Strategy, TradingState};
+use async_trait::async_trait;
 use core_logic::{
     data::{
         base_data::{OrderType, Pair, Side},
+        macros::Symbol,
         private_data::{Order, OrderRequest},
         public_data::Orderbook,
     },
@@ -23,6 +25,7 @@ use tracing::{debug, info, warn};
 /// - Limits number of active orders
 pub struct BuyLowSellHigh {
     state: TradingState,
+    #[allow(dead_code)] // Reserved for future use
     trading_client: Arc<RwLock<dyn TradingClient<OrderRequest>>>,
     symbol: Pair,
 
@@ -31,12 +34,12 @@ pub struct BuyLowSellHigh {
     max_history: usize,
 
     // Strategy parameters
-    buy_threshold: Decimal,        // Buy when price is X% below average
-    sell_threshold: Decimal,      // Sell when price is X% above average
-    position_size: Decimal,        // Fixed position size per trade
-    max_position: Decimal,         // Maximum total position size
-    max_active_orders: usize,      // Maximum concurrent orders
-    stop_loss_percent: Option<Decimal>,  // Stop loss percentage (e.g., 5.0 for 5%)
+    buy_threshold: Decimal,               // Buy when price is X% below average
+    sell_threshold: Decimal,              // Sell when price is X% above average
+    position_size: Decimal,               // Fixed position size per trade
+    max_position: Decimal,                // Maximum total position size
+    max_active_orders: usize,             // Maximum concurrent orders
+    stop_loss_percent: Option<Decimal>,   // Stop loss percentage (e.g., 5.0 for 5%)
     take_profit_percent: Option<Decimal>, // Take profit percentage (e.g., 10.0 for 10%)
 }
 
@@ -52,7 +55,7 @@ impl BuyLowSellHigh {
         take_profit_percent: Option<Decimal>,
         max_active_orders: usize,
         price_history_size: usize,
-        min_price_history: usize,
+        _min_price_history: usize,
     ) -> Self {
         Self {
             state: TradingState::new(),
@@ -150,16 +153,19 @@ impl Strategy for BuyLowSellHigh {
             if position.quantity > Decimal::ZERO {
                 // Check stop-loss
                 if let Some(stop_loss) = self.stop_loss_percent {
-                    let loss_percent = (position.avg_price - mid_price) / position.avg_price * Decimal::from(100);
+                    let loss_percent =
+                        (position.avg_price - mid_price) / position.avg_price * Decimal::from(100);
                     if loss_percent >= stop_loss {
-                        warn!("Stop-loss triggered: loss={loss_percent:.2}%, threshold={stop_loss}%");
+                        warn!(
+                            "Stop-loss triggered: loss={loss_percent:.2}%, threshold={stop_loss}%"
+                        );
                         let sell_price = if !orderbook.bids.is_empty() {
                             orderbook.bids[0]
                         } else {
                             mid_price
                         };
                         return Ok(Some(OrderRequest {
-                            symbol: self.symbol.clone().into(),
+                            symbol: Symbol::from(self.symbol.convert_to_smolstr()),
                             side: Side::Sell,
                             order_type: OrderType::Limit,
                             price: sell_price,
@@ -172,7 +178,8 @@ impl Strategy for BuyLowSellHigh {
 
                 // Check take-profit
                 if let Some(take_profit) = self.take_profit_percent {
-                    let profit_percent = (mid_price - position.avg_price) / position.avg_price * Decimal::from(100);
+                    let profit_percent =
+                        (mid_price - position.avg_price) / position.avg_price * Decimal::from(100);
                     if profit_percent >= take_profit {
                         info!("Take-profit triggered: profit={profit_percent:.2}%, threshold={take_profit}%");
                         let sell_price = if !orderbook.bids.is_empty() {
@@ -181,7 +188,7 @@ impl Strategy for BuyLowSellHigh {
                             mid_price
                         };
                         return Ok(Some(OrderRequest {
-                            symbol: self.symbol.clone().into(),
+                            symbol: Symbol::from(self.symbol.convert_to_smolstr()),
                             side: Side::Sell,
                             order_type: OrderType::Limit,
                             price: sell_price,
@@ -209,7 +216,7 @@ impl Strategy for BuyLowSellHigh {
                 };
 
                 return Ok(Some(OrderRequest {
-                    symbol: self.symbol.clone().into(),
+                    symbol: Symbol::from(self.symbol.convert_to_smolstr()),
                     side: Side::Buy,
                     order_type: OrderType::Limit,
                     price: buy_price,
@@ -237,7 +244,7 @@ impl Strategy for BuyLowSellHigh {
             };
 
             return Ok(Some(OrderRequest {
-                symbol: self.symbol.clone().into(),
+                symbol: Symbol::from(self.symbol.convert_to_smolstr()),
                 side: Side::Sell,
                 order_type: OrderType::Limit,
                 price: sell_price,
@@ -253,18 +260,37 @@ impl Strategy for BuyLowSellHigh {
     async fn on_execution_report(
         &mut self,
         order: &Order,
-        state: &mut TradingState,
     ) -> Result<(), EngineError> {
-        // Remove from active orders
-        state.remove_order(&order.order_id);
+        // Convert Symbol to Pair for position tracking before borrowing state
+        let symbol_str = order.symbol.as_ref();
+        // Parse symbol string (e.g., "BTCUSDT") back to Pair
+        // This is a simplified approach - assumes symbol format is BASEQUOTE
+        let pair = if symbol_str.len() >= 6 {
+            // Try to find where quote starts (e.g., BTCUSDT -> BTC/USDT)
+            // For now, we'll use a simple heuristic
+            let base_len = symbol_str.len() - 4; // Assume 4-char quote (USDT)
+            if base_len > 0 && base_len < symbol_str.len() {
+                Pair::new(&symbol_str[..base_len], &symbol_str[base_len..])
+            } else {
+                // Fallback: use the symbol as-is
+                self.symbol.clone()
+            }
+        } else {
+            self.symbol.clone()
+        };
 
-        // Update position
+        // Calculate quantity change
         let qty_change = match order.side {
             Side::Buy => order.amount,
             Side::Sell => -order.amount,
         };
 
-        state.update_position(order.symbol.clone(), qty_change, order.price);
+        // Now get state and update
+        let state = self.get_state_mut();
+        // Remove from active orders
+        state.remove_order(&order.order_id);
+        // Update position
+        state.update_position(pair, qty_change, order.price);
 
         info!(
             "Order executed: {side} {amount} {symbol} @ {price}",

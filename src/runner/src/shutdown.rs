@@ -5,6 +5,7 @@ use tracing::info;
 /// Manages graceful shutdown of the trading system
 #[derive(Clone)]
 pub struct ShutdownManager {
+    #[allow(dead_code)] // Used internally and via Clone
     shutdown_tx: Arc<broadcast::Sender<()>>,
 }
 
@@ -16,15 +17,18 @@ impl ShutdownManager {
         }
     }
 
+    #[allow(dead_code)] // Used in main.rs
     pub fn signal_shutdown(&self) {
         let _ = self.shutdown_tx.send(());
     }
 
+    #[allow(dead_code)] // Used in main.rs
     pub fn subscribe(&self) -> broadcast::Receiver<()> {
         self.shutdown_tx.subscribe()
     }
 
     /// Wait for shutdown signal with timeout
+    #[allow(dead_code)] // Used in main.rs
     pub async fn wait_for_shutdown(&self, timeout_secs: u64) {
         let mut rx = self.subscribe();
         tokio::select! {
@@ -43,4 +47,3 @@ impl Default for ShutdownManager {
         Self::new()
     }
 }
-

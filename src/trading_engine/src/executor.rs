@@ -13,7 +13,7 @@ use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
 use tokio::time::{interval, Duration};
 use tokio_stream::StreamExt;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 /// Executes a trading strategy by:
 /// 1. Consuming market data from Redis
@@ -98,7 +98,17 @@ impl<S: Strategy> StrategyExecutor<S> {
                         }
                     }
                     Err(e) => {
-                        warn!("Position reconciliation failed: {e}");
+                        // Check if it's a connection error - these are expected during reconnection
+                        let error_msg = format!("{e}");
+                        if error_msg.contains("Channel Closed")
+                            || error_msg.contains("Connection Closed")
+                        {
+                            debug!(
+                                "Position reconciliation skipped - WebSocket reconnecting. Will retry on next interval."
+                            );
+                        } else {
+                            warn!("Position reconciliation failed: {e}");
+                        }
                     }
                 }
             }

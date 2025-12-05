@@ -445,10 +445,14 @@ impl BinanceWSClient {
                 debug!("Successfully authenticated with session.logon");
                 self.subscription_handler.set_session(logon_params).await;
             } else {
-                return Err(EngineError::new_custom_error(
-                    format!("session.logon failed: {v:?}").into(),
-                ));
+                let error_msg = format!("session.logon failed: {v:?}");
+                error!("{error_msg}");
+                return Err(EngineError::new_custom_error(error_msg.into()));
             }
+        } else {
+            return Err(EngineError::new_custom_error(
+                "No response received from session.logon - connection may have closed".into(),
+            ));
         }
 
         Ok(ws_stream)
@@ -500,11 +504,31 @@ impl BinanceWSClient {
                         let _ = ping_tx.send(payload).await;
                     }
                     Ok(Message::Pong(p)) => handler.handle_pong(p),
-                    Ok(Message::Close(c)) => handler.handle_close(c),
-                    Err(e) => error!("WS read error: {e}"),
+                    Ok(Message::Close(c)) => {
+                        if let Some(close_frame) = &c {
+                            error!(
+                                "WebSocket closed by server: code={code}, reason={reason}",
+                                code = close_frame.code,
+                                reason = close_frame.reason
+                            );
+                        } else {
+                            error!("WebSocket closed by server (no close frame)");
+                        }
+                        handler.handle_close(c);
+                        // Close the inbound channel to signal the connection is dead
+                        // inbound_tx will be dropped when it goes out of scope
+                        break;
+                    }
+                    Err(e) => {
+                        error!("WebSocket read error: {e}");
+                        // Close the inbound channel on error
+                        // inbound_tx will be dropped when it goes out of scope
+                        break;
+                    }
                 }
             }
             debug!("reader.next() returned None — stream closed.");
+            // inbound_tx is automatically dropped here when it goes out of scope
         });
     }
 

@@ -33,7 +33,7 @@ use tokio::{
     sync::{broadcast, mpsc, oneshot, Mutex, RwLock},
     time::{sleep, Duration},
 };
-use tracing::{debug, error};
+use tracing::{debug, error, warn};
 
 /// Metadata stored for each order to enable cancellation by ID
 #[derive(Debug, Clone)]
@@ -210,7 +210,9 @@ impl BinanceClient {
                         }
                     }
                     None => {
-                        error!("Inbound channel closed");
+                        warn!(
+                            "Inbound channel closed - WebSocket connection lost. Will attempt reconnection..."
+                        );
 
                         let mut guard = self.outbound_rpc_rx.lock().await;
                         Self::fail_all_pending(&mut guard);

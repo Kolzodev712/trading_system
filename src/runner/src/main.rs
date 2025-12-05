@@ -199,11 +199,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 4. Create Strategy Executor
     info!("Creating Strategy Executor...");
+    let min_order_size = config.strategy.min_order_size.unwrap_or_else(|| {
+        // Default to 0.00001 BTC if not specified
+        rust_decimal::Decimal::new(1, 5)
+    });
     let executor = StrategyExecutor::new(
         strategy.clone(),
         trading_client.clone(),
         config.redis.url.clone(),
         symbol.clone(),
+        min_order_size,
     );
 
     // 5. Set up execution report handler

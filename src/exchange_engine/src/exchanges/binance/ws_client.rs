@@ -31,9 +31,9 @@ use core_logic::{error::EngineError, traits::PrivateDataClient, Exchange};
 use std::{collections::HashMap, fmt::Debug, sync::Arc};
 use tokio::{
     sync::{broadcast, mpsc, oneshot, Mutex, RwLock},
-    time::{sleep, Duration},
+    time::{sleep, timeout, Duration},
 };
-use tracing::{debug, error, warn};
+use tracing::{debug, error, info, warn};
 
 /// Metadata stored for each order to enable cancellation by ID
 #[derive(Debug, Clone)]
@@ -191,11 +191,14 @@ impl BinanceClient {
                             BinanceRpcResponse::CancelOrder(r)   => r.id.to_string(),
                             BinanceRpcResponse::CancelAll(r)     => r.id.to_string(),
                         };
+                        info!("Received RPC response: id={id}, looking for pending request...", id = id);
                         // try to fulfill pending waiter
-                        if let Some(tx) = self.outbound_rpc_rx.lock().await.remove(&id) {
+                        let mut pending = self.outbound_rpc_rx.lock().await;
+                        if let Some(tx) = pending.remove(&id) {
+                            info!("Found pending request for id={id}, sending response", id = id);
                             let _ = tx.send(resp);
                         } else {
-                            debug!("RPC response with id {id} had no waiter; event-only path?");
+                            warn!("RPC response with id {id} had no pending waiter (may be duplicate or unsolicited)", id = id);
                         }
                     }
                     Some(BinanceInbound::Event(evt)) => {
@@ -237,7 +240,14 @@ impl BinanceClient {
         let id = match &req {
             BinanceRpcRequest::AccountStatus(r) => r.id.to_string(),
             BinanceRpcRequest::TestOrder(r) => r.id.to_string(),
-            BinanceRpcRequest::OpenOrder(r) => r.id.to_string(),
+            BinanceRpcRequest::OpenOrder(r) => {
+                debug!(
+                    "Sending open_order RPC: id={id}, method={method}",
+                    id = r.id,
+                    method = r.method
+                );
+                r.id.to_string()
+            }
             BinanceRpcRequest::CancelOrder(r) => r.id.to_string(),
             BinanceRpcRequest::CancelAll(r) => r.id.to_string(),
         };
@@ -256,18 +266,49 @@ impl BinanceClient {
                 .ok_or_else(|| EngineError::new_custom_error("RPC channel not yet ready".into()))?
         };
 
+        info!("Sending RPC request: id={id}", id = id);
         if tx_rpc.send(req).await.is_err() {
+            error!("Failed to send RPC to writer channel: id={id}", id = id);
             let mut pending = self.outbound_rpc_rx.lock().await;
             pending.remove(&id);
             return Err(EngineError::new_custom_error("Failed to send RPC".into()));
         }
+        info!(
+            "RPC request sent to writer, waiting for response (timeout=30s): id={id}",
+            id = id
+        );
 
-        match rx.await {
-            Ok(resp) => {
+        // Wait for response with timeout (30 seconds for order operations)
+        match timeout(Duration::from_secs(30), rx).await {
+            Ok(Ok(resp)) => {
+                info!("RPC response received: id={id}", id = id);
                 Self::ensure_ok(&resp)?;
                 Ok(resp)
-            } // optionally: ensure_ok(&resp)?; Ok(resp)
-            Err(_) => Err(EngineError::ChannelClosedError),
+            }
+            Ok(Err(_)) => {
+                // Channel closed
+                error!("RPC response channel closed: id={id}", id = id);
+                let mut pending = self.outbound_rpc_rx.lock().await;
+                pending.remove(&id);
+                Err(EngineError::ChannelClosedError)
+            }
+            Err(_) => {
+                // Timeout - check if request is still pending
+                let pending_count = {
+                    let pending = self.outbound_rpc_rx.lock().await;
+                    pending.len()
+                };
+                error!(
+                    "RPC request timed out after 30 seconds: id={id}, pending_requests={pending_count}",
+                    id = id,
+                    pending_count = pending_count
+                );
+                let mut pending = self.outbound_rpc_rx.lock().await;
+                pending.remove(&id);
+                Err(EngineError::new_custom_error(
+                    format!("RPC request timed out after 30 seconds (id: {id})").into(),
+                ))
+            }
         }
     }
 
@@ -331,17 +372,40 @@ impl BinanceClient {
     }
 
     fn ensure_ok(resp: &BinanceRpcResponse) -> Result<(), EngineError> {
-        let status: i64 = match resp {
-            BinanceRpcResponse::AccountStatus(r) => r.status as i64,
-            BinanceRpcResponse::TestOrder(r) => r.status,
-            BinanceRpcResponse::OpenOrder(r) => r.status,
-            BinanceRpcResponse::CancelOrder(r) => r.status,
-            BinanceRpcResponse::CancelAll(r) => r.status,
-        };
-        if status != 200 {
-            return Err(EngineError::new_custom_error(
-                format!("WS RPC error status={status}").into(),
-            ));
+        match resp {
+            BinanceRpcResponse::AccountStatus(r) => {
+                if r.status != 200 {
+                    return Err(EngineError::new_custom_error(
+                        format!("WS RPC error status={status}", status = r.status).into(),
+                    ));
+                }
+            }
+            BinanceRpcResponse::TestOrder(r) | BinanceRpcResponse::OpenOrder(r) => {
+                if r.status != 200 {
+                    let error_msg = r
+                        .error
+                        .as_ref()
+                        .map(|e| format!("code={code}, msg={msg}", code = e.code, msg = e.msg))
+                        .unwrap_or_else(|| format!("status={status}", status = r.status));
+                    return Err(EngineError::new_custom_error(
+                        format!("WS RPC error: {error_msg}", error_msg = error_msg).into(),
+                    ));
+                }
+            }
+            BinanceRpcResponse::CancelOrder(r) => {
+                if r.status != 200 {
+                    return Err(EngineError::new_custom_error(
+                        format!("WS RPC error status={status}", status = r.status).into(),
+                    ));
+                }
+            }
+            BinanceRpcResponse::CancelAll(r) => {
+                if r.status != 200 {
+                    return Err(EngineError::new_custom_error(
+                        format!("WS RPC error status={status}", status = r.status).into(),
+                    ));
+                }
+            }
         }
         Ok(())
     }

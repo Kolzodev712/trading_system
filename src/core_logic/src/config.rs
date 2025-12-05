@@ -76,6 +76,10 @@ pub struct StrategyConfig {
 
     /// Minimum price history before trading
     pub min_price_history: usize,
+
+    /// Minimum order size (e.g., "0.00001" for BTC/USDC on Binance)
+    /// This should match the exchange's minimum lot size requirement
+    pub min_order_size: Option<Decimal>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

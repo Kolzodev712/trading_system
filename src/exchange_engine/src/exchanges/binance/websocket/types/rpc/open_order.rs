@@ -112,6 +112,14 @@ fn parse_tif(s: &str) -> Option<BinanceTimeInForce> {
     }
 }
 
+#[derive(Debug, Clone, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BinanceWsOrderError {
+    pub code: i64,
+    #[serde(default)]
+    pub msg: String,
+}
+
 // https://developers.binance.com/docs/binance-spot-api-docs/websocket-api/trading-requests#place-new-order-trade
 #[derive(Debug, Clone, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -122,8 +130,12 @@ pub struct BinanceWsOrderResponse {
     )]
     pub id: SmolStr,
     pub status: i64,
-    pub result: BinanceWsOrderResult,
-    pub rate_limits: BinanceWsOrderResRateLimit,
+    #[serde(default)]
+    pub result: Option<BinanceWsOrderResult>,
+    #[serde(default)]
+    pub error: Option<BinanceWsOrderError>,
+    #[serde(default, rename = "rateLimits")]
+    pub rate_limits: Option<Vec<BinanceRateLimit>>,
 }
 
 pub fn map_open_order_to_core(
@@ -131,26 +143,34 @@ pub fn map_open_order_to_core(
     resp: BinanceWsOrderResponse,
 ) -> Result<Order, EngineError> {
     if resp.status != 200 {
+        let error_msg = resp
+            .error
+            .as_ref()
+            .map(|e| format!("code={code}, msg={msg}", code = e.code, msg = e.msg))
+            .unwrap_or_else(|| format!("status={status}", status = resp.status));
         return Err(EngineError::new_custom_error(
-            format!("WS RPC error status={status}", status = resp.status).into(),
+            format!("WS RPC error: {error_msg}", error_msg = error_msg).into(),
         ));
     }
 
+    let result = resp.result.ok_or_else(|| {
+        EngineError::new_custom_error("WS RPC success response missing result field".into())
+    })?;
+
     Ok(Order {
-        order_id: resp
-            .result
+        order_id: result
             .order_id
             .parse::<u64>()
             .map(OrderId::from)
             .map_err(|e| EngineError::new_custom_error(format!("invalid order_id: {e}").into()))?,
-        symbol: resp.result.symbol.convert_to_smolstr().into(),
+        symbol: result.symbol.convert_to_smolstr().into(),
         price: params.price,
         amount: params.quantity,
         side: params.side.into(),
         status: core_logic::data::base_data::OrderStatus::New,
         filled_amount: rust_decimal::Decimal::ZERO,
         internal_created_at: chrono::Utc::now().timestamp_millis() as u64,
-        exchange_created_at: Some(resp.result.transact_time as u64),
+        exchange_created_at: Some(result.transact_time as u64),
     })
 }
 
@@ -170,12 +190,6 @@ pub struct BinanceWsOrderResult {
     )]
     pub client_order_id: SmolStr,
     pub transact_time: i64,
-}
-
-#[derive(Debug, Clone, Eq, PartialEq, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct BinanceWsOrderResRateLimit {
-    pub rate_limit: Vec<BinanceRateLimit>,
 }
 
 #[cfg(test)]
@@ -216,22 +230,21 @@ mod tests {
         let response = BinanceWsOrderResponse {
             id: SmolStr::new("5678"),
             status: 200,
-            result: BinanceWsOrderResult {
+            result: Some(BinanceWsOrderResult {
                 symbol: BinanceSymbol::new("ETH", "USDT"),
                 order_id: SmolStr::new("78910"),
                 order_list_id: 1,
                 client_order_id: SmolStr::new("myorder123"),
                 transact_time: 1625256000000,
-            },
-            rate_limits: BinanceWsOrderResRateLimit {
-                rate_limit: vec![BinanceRateLimit {
-                    rate_limit_type: SmolStr::new("ORDERS"),
-                    interval: SmolStr::new("MINUTE"),
-                    interval_num: 1,
-                    limit: 1200,
-                    count: 10,
-                }],
-            },
+            }),
+            error: None,
+            rate_limits: Some(vec![BinanceRateLimit {
+                rate_limit_type: SmolStr::new("ORDERS"),
+                interval: SmolStr::new("MINUTE"),
+                interval_num: 1,
+                limit: 1200,
+                count: 10,
+            }]),
         };
 
         let json = serde_json::to_string(&response).unwrap();

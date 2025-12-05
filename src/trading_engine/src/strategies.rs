@@ -137,7 +137,11 @@ impl Strategy for BuyLowSellHigh {
         // Need minimum price history to calculate meaningful average
         let min_history = self.min_price_history;
         if self.price_history.len() < min_history {
-            if self.price_history.len() % 5 == 0 || self.price_history.len() == min_history - 1 {
+            // Only log at key milestones to reduce noise
+            if self.price_history.len() == min_history / 2
+                || self.price_history.len() == min_history - 1
+                || self.price_history.len() == min_history - 5
+            {
                 info!(
                     "Building price history: {current}/{target} (need {remaining} more before trading)",
                     current = self.price_history.len(),
@@ -236,15 +240,13 @@ impl Strategy for BuyLowSellHigh {
             return Ok(None);
         };
 
-        // Log more frequently to see what's happening (every 5 updates instead of 10)
-        if self.price_history.len() % 5 == 0 {
+        // Periodic price status (every 30 updates to reduce noise)
+        if self.price_history.len() % 30 == 0 {
             info!(
-                "Price check: mid={mid_price}, avg={avg_price}, diff={diff:.3}%, buy_threshold={buy_threshold:.2}%, sell_threshold={sell_threshold:.2}%, position={position}",
+                "Price status: mid={mid_price}, avg={avg_price}, diff={diff:.3}%, position={position} BTC",
                 mid_price = mid_price,
                 avg_price = avg_price,
                 diff = price_diff_from_avg,
-                buy_threshold = self.buy_threshold,
-                sell_threshold = self.sell_threshold,
                 position = current_qty
             );
         }
@@ -268,7 +270,7 @@ impl Strategy for BuyLowSellHigh {
                     mid_price
                 };
 
-                return Ok(Some(OrderRequest {
+                let order_req = OrderRequest {
                     symbol: Symbol::from(self.symbol.convert_to_smolstr()),
                     side: Side::Buy,
                     order_type: OrderType::Limit,
@@ -276,7 +278,14 @@ impl Strategy for BuyLowSellHigh {
                     amount: self.position_size,
                     timestamp: None,
                     exchange_params: Default::default(),
-                }));
+                };
+                info!(
+                    "Returning BUY order request: symbol={symbol}, price={price}, amount={amount}",
+                    symbol = order_req.symbol,
+                    price = order_req.price,
+                    amount = order_req.amount
+                );
+                return Ok(Some(order_req));
             } else {
                 info!("Max position reached ({current_qty} + {position_size} > {max_position}), skipping buy",
                     current_qty = current_qty,
@@ -304,7 +313,7 @@ impl Strategy for BuyLowSellHigh {
                 mid_price
             };
 
-            return Ok(Some(OrderRequest {
+            let order_req = OrderRequest {
                 symbol: Symbol::from(self.symbol.convert_to_smolstr()),
                 side: Side::Sell,
                 order_type: OrderType::Limit,
@@ -312,7 +321,14 @@ impl Strategy for BuyLowSellHigh {
                 amount: sell_qty,
                 timestamp: None,
                 exchange_params: Default::default(),
-            }));
+            };
+            info!(
+                "Returning SELL order request: symbol={symbol}, price={price}, amount={amount}",
+                symbol = order_req.symbol,
+                price = order_req.price,
+                amount = order_req.amount
+            );
+            return Ok(Some(order_req));
         } else {
             // No trade signal - log why (only periodically to reduce noise)
             // Calculate how close we are to buy/sell signals
@@ -335,9 +351,9 @@ impl Strategy for BuyLowSellHigh {
                 (-price_diff_from_avg) + self.sell_threshold
             };
 
-            // Show when we're close to a signal (within 0.05% of threshold)
-            if buy_diff_needed.abs() < Decimal::new(5, 2)
-                || sell_diff_needed.abs() < Decimal::new(5, 2)
+            // Show when we're very close to a signal (within 0.02% of threshold to reduce noise)
+            if buy_diff_needed.abs() < Decimal::new(2, 2)
+                || sell_diff_needed.abs() < Decimal::new(2, 2)
             {
                 // Close to a signal - log it with clearer messaging
                 // When values are negative, it means we're very close (just need a tiny bit more)
@@ -346,13 +362,14 @@ impl Strategy for BuyLowSellHigh {
                 } else {
                     format!("need {:.3}% more drop", buy_diff_needed)
                 };
-                
+
                 let sell_msg = if sell_diff_needed <= Decimal::ZERO {
-                    format!("TRIGGERED! ({:.3}% above threshold)", sell_diff_needed.abs())
+                    // Negative means we're below threshold, need more rise (show absolute value)
+                    format!("need {:.3}% more rise", sell_diff_needed.abs())
                 } else {
                     format!("need {:.3}% more rise", sell_diff_needed)
                 };
-                
+
                 info!(
                     "Close to signal: price_diff={diff:.3}%, buy: {buy_msg}, sell: {sell_msg}, position={position}",
                     diff = price_diff_from_avg,
@@ -360,14 +377,17 @@ impl Strategy for BuyLowSellHigh {
                     sell_msg = sell_msg,
                     position = current_qty
                 );
-            } else if self.price_history.len() % 20 == 0 {
-                debug!(
-                    "No trade signal: price_diff={diff:.3}%, buy_threshold={buy_threshold:.2}%, sell_threshold={sell_threshold:.2}%, position={position}",
-                    diff = price_diff_from_avg,
-                    buy_threshold = self.buy_threshold,
-                    sell_threshold = self.sell_threshold,
-                    position = current_qty
-                );
+            } else {
+                // Only log when far from signal (every 60 updates) to reduce noise
+                if self.price_history.len() % 60 == 0 {
+                    debug!(
+                        "No trade signal: price_diff={diff:.3}%, thresholds={buy_threshold:.2}%/{sell_threshold:.2}%, position={position}",
+                        diff = price_diff_from_avg,
+                        buy_threshold = self.buy_threshold,
+                        sell_threshold = self.sell_threshold,
+                        position = current_qty
+                    );
+                }
             }
         }
 

@@ -9,6 +9,7 @@ use core_logic::{
     traits::TradingClient,
 };
 use exchange_engine::exchanges::binance::websocket::types::user_data::execution_report::ExecutionReport;
+use rust_decimal::Decimal;
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
 use tokio::time::{interval, Duration};
@@ -31,6 +32,7 @@ pub struct StrategyExecutor<S: Strategy + 'static> {
     #[allow(dead_code)] // Used in spawned tasks
     reconciler: PositionReconciler,
     order_timeout_secs: u64,
+    min_order_size: Decimal,
 }
 
 impl<S: Strategy> StrategyExecutor<S> {
@@ -41,6 +43,7 @@ impl<S: Strategy> StrategyExecutor<S> {
         >,
         redis_url: String,
         symbol: Pair,
+        min_order_size: Decimal,
     ) -> Self {
         let reconciler = PositionReconciler::new(Arc::clone(&trading_client));
         Self {
@@ -51,6 +54,7 @@ impl<S: Strategy> StrategyExecutor<S> {
             circuit_breaker: Arc::new(Mutex::new(order_circuit_breaker())),
             reconciler,
             order_timeout_secs: 300, // 5 minutes default timeout for limit orders
+            min_order_size,
         }
     }
 
@@ -190,11 +194,25 @@ impl<S: Strategy> StrategyExecutor<S> {
                     let order_request = {
                         let mut strat = strategy.write().await;
                         let state = strat.get_state().clone();
-                        strat.on_orderbook(&orderbook, &state).await?
+                        match strat.on_orderbook(&orderbook, &state).await {
+                            Ok(req) => req,
+                            Err(e) => {
+                                error!("Strategy error in on_orderbook: {error}", error = e);
+                                continue;
+                            }
+                        }
                     };
 
                     // If strategy wants to place an order, do it
-                    if let Some(req) = order_request {
+                    if let Some(mut req) = order_request {
+                        info!(
+                            "Strategy requested order: side={side}, symbol={symbol}, price={price}, amount={amount}",
+                            side = req.side,
+                            symbol = req.symbol,
+                            price = req.price,
+                            amount = req.amount
+                        );
+
                         // Check circuit breaker
                         let cb = circuit_breaker.lock().await;
                         if !cb.can_proceed() {
@@ -213,8 +231,98 @@ impl<S: Strategy> StrategyExecutor<S> {
                         };
 
                         if active_count >= 5 {
-                            warn!("Too many active orders, skipping");
+                            warn!(
+                                "Too many active orders ({active_count}), skipping order placement"
+                            );
                             continue;
+                        }
+
+                        info!(
+                            "Attempting to place order (active_orders={active_count})...",
+                            active_count = active_count
+                        );
+
+                        // Check balance before placing order
+                        match trading_client.read().await.fetch_balance().await {
+                            Ok(balances) => {
+                                match req.side {
+                                    core_logic::data::base_data::Side::Buy => {
+                                        // Find quote currency balance (USDC for BTC/USDC)
+                                        let quote_balance = balances
+                                            .iter()
+                                            .find(|b| {
+                                                let balance_symbol = b.symbol.as_ref();
+                                                balance_symbol == symbol.quote.as_str()
+                                                    || balance_symbol
+                                                        .ends_with(symbol.quote.as_str())
+                                            })
+                                            .map(|b| b.free)
+                                            .unwrap_or(Decimal::ZERO);
+
+                                        let required_balance = req.price * req.amount;
+                                        if quote_balance < required_balance {
+                                            warn!(
+                                                "Insufficient balance: need {required} {quote}, have {available} {quote}. Skipping order.",
+                                                required = required_balance,
+                                                quote = symbol.quote,
+                                                available = quote_balance
+                                            );
+                                            continue;
+                                        }
+                                        debug!(
+                                            "Balance check passed: {available} {quote} >= {required} {quote}",
+                                            available = quote_balance,
+                                            quote = symbol.quote,
+                                            required = required_balance
+                                        );
+                                    }
+                                    core_logic::data::base_data::Side::Sell => {
+                                        // Find base currency balance (BTC for BTC/USDC)
+                                        let base_balance = balances
+                                            .iter()
+                                            .find(|b| {
+                                                let balance_symbol = b.symbol.as_ref();
+                                                balance_symbol == symbol.base.as_str()
+                                                    || balance_symbol
+                                                        .starts_with(symbol.base.as_str())
+                                            })
+                                            .map(|b| b.free)
+                                            .unwrap_or(Decimal::ZERO);
+
+                                        if base_balance < req.amount {
+                                            warn!(
+                                                "Insufficient balance: need {required} {base}, have {available} {base}. Skipping order.",
+                                                required = req.amount,
+                                                base = symbol.base,
+                                                available = base_balance
+                                            );
+                                            continue;
+                                        }
+                                        debug!(
+                                            "Balance check passed: {available} {base} >= {required} {base}",
+                                            available = base_balance,
+                                            base = symbol.base,
+                                            required = req.amount
+                                        );
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                warn!(
+                                    "Failed to fetch balance for validation: {error}. Proceeding with order placement.",
+                                    error = e
+                                );
+                            }
+                        }
+
+                        // Enforce minimum order size from config
+                        if req.amount < self.min_order_size {
+                            warn!(
+                                "Order amount {amount} is below minimum {min}. Adjusting to minimum.",
+                                amount = req.amount,
+                                min = self.min_order_size
+                            );
+                            req.amount = self.min_order_size;
                         }
 
                         // Place the order with retry logic
@@ -222,13 +330,55 @@ impl<S: Strategy> StrategyExecutor<S> {
                         let client_clone = Arc::clone(&trading_client);
                         let req_clone = req.clone();
 
-                        match retry_with_backoff(&retry_config, || {
+                        info!(
+                            "Calling open_order with retry (max_attempts={max_attempts})...",
+                            max_attempts = retry_config.max_attempts
+                        );
+
+                        // Helper to check if error is insufficient balance (shouldn't retry)
+                        let is_insufficient_balance = |e: &EngineError| -> bool {
+                            let error_str = format!("{e}");
+                            error_str.contains("-2010")
+                                || error_str.contains("insufficient balance")
+                        };
+
+                        let result = retry_with_backoff(&retry_config, || {
                             let client = Arc::clone(&client_clone);
                             let req = req_clone.clone();
-                            Box::pin(async move { client.write().await.open_order(req).await })
+                            Box::pin(async move {
+                                debug!("Retry attempt: calling open_order...");
+                                let result = client.write().await.open_order(req).await;
+                                match &result {
+                                    Ok(_) => debug!("open_order succeeded"),
+                                    Err(e) => {
+                                        if is_insufficient_balance(e) {
+                                            warn!("open_order failed: insufficient balance (will not retry): {error}", error = e);
+                                        } else {
+                                            warn!("open_order failed: {error}", error = e);
+                                        }
+                                    }
+                                }
+                                result
+                            })
                         })
-                        .await
-                        {
+                        .await;
+
+                        // If it's an insufficient balance error, don't retry and skip circuit breaker failure
+                        if let Err(e) = &result {
+                            if is_insufficient_balance(e) {
+                                warn!(
+                                    "Order failed due to insufficient balance (skipping retries): {error}. Order request: side={side}, symbol={symbol}, price={price}, amount={amount}",
+                                    error = e,
+                                    side = req_clone.side,
+                                    symbol = req_clone.symbol,
+                                    price = req_clone.price,
+                                    amount = req_clone.amount
+                                );
+                                continue; // Skip to next message, don't record circuit breaker failure
+                            }
+                        }
+
+                        match result {
                             Ok(mut order) => {
                                 // Ensure order has New status
                                 order.status = core_logic::data::base_data::OrderStatus::New;
@@ -252,10 +402,13 @@ impl<S: Strategy> StrategyExecutor<S> {
                             }
                             Err(e) => {
                                 error!(
-                                    "Failed to place order after {max_retries} retries: {error}. Order request: {request:?}",
+                                    "Failed to place order after {max_retries} retries: {error}. Order request: side={side}, symbol={symbol}, price={price}, amount={amount}",
                                     max_retries = retry_config.max_attempts,
                                     error = e,
-                                    request = req_clone
+                                    side = req_clone.side,
+                                    symbol = req_clone.symbol,
+                                    price = req_clone.price,
+                                    amount = req_clone.amount
                                 );
 
                                 // Record failure in circuit breaker

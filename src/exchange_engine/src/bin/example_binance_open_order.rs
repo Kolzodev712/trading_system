@@ -1,3 +1,13 @@
+//! Example: Place an order on Binance via WebSocket
+//!
+//! This example demonstrates how to:
+//! 1. Connect to Binance WebSocket
+//! 2. Place a test order
+//! 3. Handle order responses
+//!
+//! **Note**: This requires valid Binance API keys in `config/binance_config.json`
+//! **Warning**: This will place a real test order on Binance testnet
+
 use core_logic::traits::PrivateDataClient;
 use exchange_engine::exchanges::binance::{
     common_types::{BinanceOrderType, BinanceSide, BinanceSymbol, BinanceTimeInForce},

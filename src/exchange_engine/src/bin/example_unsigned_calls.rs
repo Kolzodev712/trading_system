@@ -1,3 +1,11 @@
+//! Example: Make unsigned REST API calls to Binance
+//!
+//! This example demonstrates how to:
+//! 1. Use Binance REST client for public endpoints
+//! 2. Fetch orderbook data without authentication
+//!
+//! **Note**: This does NOT require API keys (uses public endpoints)
+
 use exchange_engine::exchanges::binance::{
     config::BinanceConfig, rest::client::BinanceHttpClient, rest_client::BinanceRestClient,
 };

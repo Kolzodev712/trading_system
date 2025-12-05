@@ -2,7 +2,7 @@ use super::strategy::{Strategy, TradingState};
 use async_trait::async_trait;
 use core_logic::{
     data::{
-        base_data::{OrderType, Pair, Side},
+        base_data::{OrderStatus, OrderType, Pair, Side},
         macros::Symbol,
         private_data::{Order, OrderRequest},
         public_data::Orderbook,
@@ -257,27 +257,10 @@ impl Strategy for BuyLowSellHigh {
         Ok(None)
     }
 
-    async fn on_execution_report(
-        &mut self,
-        order: &Order,
-    ) -> Result<(), EngineError> {
-        // Convert Symbol to Pair for position tracking before borrowing state
-        let symbol_str = order.symbol.as_ref();
-        // Parse symbol string (e.g., "BTCUSDT") back to Pair
-        // This is a simplified approach - assumes symbol format is BASEQUOTE
-        let pair = if symbol_str.len() >= 6 {
-            // Try to find where quote starts (e.g., BTCUSDT -> BTC/USDT)
-            // For now, we'll use a simple heuristic
-            let base_len = symbol_str.len() - 4; // Assume 4-char quote (USDT)
-            if base_len > 0 && base_len < symbol_str.len() {
-                Pair::new(&symbol_str[..base_len], &symbol_str[base_len..])
-            } else {
-                // Fallback: use the symbol as-is
-                self.symbol.clone()
-            }
-        } else {
-            self.symbol.clone()
-        };
+    async fn on_execution_report(&mut self, order: &Order) -> Result<(), EngineError> {
+        // Use the strategy's symbol (Pair) directly instead of parsing from Symbol
+        // This avoids the symbol parsing bug and ensures consistency
+        let pair = self.symbol.clone();
 
         // Calculate quantity change
         let qty_change = match order.side {
@@ -287,8 +270,13 @@ impl Strategy for BuyLowSellHigh {
 
         // Now get state and update
         let state = self.get_state_mut();
-        // Remove from active orders
+
+        // Update order status to Filled
+        state.update_order_status(&order.order_id, OrderStatus::Filled, Some(order.amount));
+
+        // Remove from active orders (now that it's filled)
         state.remove_order(&order.order_id);
+
         // Update position
         state.update_position(pair, qty_change, order.price);
 

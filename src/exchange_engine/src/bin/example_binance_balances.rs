@@ -1,4 +1,13 @@
-use core_logic::traits::PrivateDataClient; // you can drop this import now if you like
+//! Example: Fetch account balances from Binance
+//!
+//! This example demonstrates how to:
+//! 1. Connect to Binance WebSocket
+//! 2. Fetch account balances
+//! 3. Display balance information
+//!
+//! **Note**: This requires valid Binance API keys in `config/binance_config.json`
+
+use core_logic::traits::PrivateDataClient;
 use exchange_engine::exchanges::binance::{config::BinanceConfig, ws_client::BinanceClient};
 use std::{fs, sync::Arc};
 use tokio::sync::RwLock;

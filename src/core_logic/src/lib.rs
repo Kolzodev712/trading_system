@@ -1,5 +1,6 @@
 pub mod authenticator;
 pub mod channels;
+pub mod circuit_breaker;
 pub mod config;
 pub mod data;
 pub mod error;

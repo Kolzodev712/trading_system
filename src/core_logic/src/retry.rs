@@ -31,20 +31,20 @@ where
     let mut last_error = None;
 
     for attempt in 1..=config.max_attempts {
-            match f().await {
-                Ok(result) => return Ok(result),
-                Err(e) => {
-                    last_error = Some(e);
-                    if attempt < config.max_attempts {
-                        let sleep_duration = Duration::from_millis(
-                            (delay as f64 * config.backoff_multiplier.powi(attempt as i32 - 1))
-                                .min(config.max_delay_ms as f64) as u64,
-                        );
-                        sleep(sleep_duration).await;
-                        delay = (delay as f64 * config.backoff_multiplier) as u64;
-                    }
+        match f().await {
+            Ok(result) => return Ok(result),
+            Err(e) => {
+                last_error = Some(e);
+                if attempt < config.max_attempts {
+                    let sleep_duration = Duration::from_millis(
+                        (delay as f64 * config.backoff_multiplier.powi(attempt as i32 - 1))
+                            .min(config.max_delay_ms as f64) as u64,
+                    );
+                    sleep(sleep_duration).await;
+                    delay = (delay as f64 * config.backoff_multiplier) as u64;
                 }
             }
+        }
     }
 
     Err(last_error.expect("Should have at least one error"))

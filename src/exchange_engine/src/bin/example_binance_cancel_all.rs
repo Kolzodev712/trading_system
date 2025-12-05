@@ -1,3 +1,12 @@
+//! Example: Cancel all orders for a trading pair on Binance
+//!
+//! This example demonstrates how to:
+//! 1. Connect to Binance WebSocket
+//! 2. Cancel all open orders for a specific trading pair
+//!
+//! **Note**: This requires valid Binance API keys in `config/binance_config.json`
+//! **Warning**: This will cancel ALL open orders for the configured trading pair
+
 use core_logic::traits::PrivateDataClient;
 use exchange_engine::exchanges::binance::{
     common_types::BinanceSymbol, config::BinanceConfig,

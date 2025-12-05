@@ -1,8 +1,5 @@
 use super::strategy::Strategy;
-use core_logic::{
-    data::private_data::Order, data::public_data::Orderbook,
-    error::EngineError,
-};
+use core_logic::{data::private_data::Order, data::public_data::Orderbook, error::EngineError};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 

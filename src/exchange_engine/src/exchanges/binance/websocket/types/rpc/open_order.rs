@@ -147,6 +147,8 @@ pub fn map_open_order_to_core(
         price: params.price,
         amount: params.quantity,
         side: params.side.into(),
+        status: core_logic::data::base_data::OrderStatus::New,
+        filled_amount: rust_decimal::Decimal::ZERO,
         internal_created_at: chrono::Utc::now().timestamp_millis() as u64,
         exchange_created_at: Some(resp.result.transact_time as u64),
     })

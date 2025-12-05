@@ -1,3 +1,11 @@
+//! Example: Cancel an order by ID on Binance
+//!
+//! This example demonstrates how to:
+//! 1. Connect to Binance WebSocket
+//! 2. Cancel a specific order by its ID
+//!
+//! **Note**: This requires valid Binance API keys in `config/binance_config.json`
+
 use core_logic::traits::PrivateDataClient;
 use exchange_engine::exchanges::binance::{
     common_types::{BinanceOrderType, BinanceSymbol},

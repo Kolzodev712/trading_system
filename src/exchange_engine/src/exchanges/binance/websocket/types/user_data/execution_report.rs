@@ -1,7 +1,7 @@
 use crate::exchanges::binance::common_types::{
     BinanceOrderStatus, BinanceOrderType, BinanceSide, BinanceTimeInForce,
 };
-use core_logic::data::private_data::Order;
+use core_logic::data::{base_data::OrderStatus, private_data::Order};
 use core_logic::utils::{deserialize_smol_str, serialize_smol_str};
 
 use rust_decimal::Decimal;
@@ -48,6 +48,7 @@ pub struct ExecutionReport {
 
 impl From<ExecutionReport> for Order {
     fn from(report: ExecutionReport) -> Self {
+        let status: OrderStatus = report.order_status.into();
         Order {
             order_id: report.order_id.into(),
             symbol: report.symbol.into(),
@@ -56,6 +57,12 @@ impl From<ExecutionReport> for Order {
             amount: report.quantity,
             internal_created_at: report.event_time,
             exchange_created_at: Some(report.transaction_time),
+            status: status.clone(),
+            filled_amount: if matches!(status, OrderStatus::Filled | OrderStatus::PartiallyFilled) {
+                report.quantity
+            } else {
+                rust_decimal::Decimal::ZERO
+            },
         }
     }
 }

@@ -1,7 +1,4 @@
-use core_logic::{
-    config::TradingSystemConfig, data::base_data::Pair,
-    traits::TradingClient,
-};
+use core_logic::{config::TradingSystemConfig, data::base_data::Pair, traits::TradingClient};
 use exchange_engine::exchanges::binance::{config::BinanceConfig, ws_client::BinanceClient};
 use market_data_engine::{
     config::{ExchangeConfig as MDExchangeConfig, MarketDataConfig},
@@ -73,7 +70,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // The market_data_engine version has a different structure
     use market_data_engine::exchanges::binance::config::BinanceConfig as MDBinanceConfig;
     use market_data_engine::exchanges::binance::websocket::types::common::BinanceSymbol as MDBinanceSymbol;
-    
+
     let market_data_binance_config = MDBinanceConfig {
         symbol: MDBinanceSymbol {
             base: binance_config.symbol.base.clone(),

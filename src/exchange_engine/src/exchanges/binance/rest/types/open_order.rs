@@ -129,6 +129,12 @@ pub struct BinanceOrderResponse {
 
 impl From<BinanceOrderResponse> for Order {
     fn from(binance_res: BinanceOrderResponse) -> Self {
+        let status = binance_res
+            .status
+            .map(|s| s.into())
+            .unwrap_or(core_logic::data::base_data::OrderStatus::New);
+        let filled_amount = binance_res.executed_qty.unwrap_or_default();
+
         Order {
             symbol: binance_res.symbol.into(),
             side: binance_res.side.unwrap_or_default().into(),
@@ -137,6 +143,8 @@ impl From<BinanceOrderResponse> for Order {
             order_id: binance_res.order_id.into(),
             exchange_created_at: binance_res.transact_time,
             internal_created_at: binance_res.working_time.unwrap_or_default(),
+            status,
+            filled_amount,
         }
     }
 }

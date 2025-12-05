@@ -1,6 +1,6 @@
 //! A general level data abstraction for External data types, using in the external system logic for authenticated requests.
 use super::{
-    base_data::{AccountType, OrderId, OrderType, Side},
+    base_data::{AccountType, OrderId, OrderStatus, OrderType, Side},
     macros::{MillisecondTimestamp, Symbol},
 };
 use rust_decimal::Decimal;
@@ -41,6 +41,16 @@ pub struct Order {
     pub internal_created_at: u64,
     /// Exchange's timestamp of the order
     pub exchange_created_at: Option<u64>,
+    /// Order status (New, Filled, Canceled, etc.)
+    #[serde(default = "default_order_status")]
+    pub status: OrderStatus,
+    /// Filled amount (for partial fills)
+    #[serde(default)]
+    pub filled_amount: Decimal,
+}
+
+fn default_order_status() -> OrderStatus {
+    OrderStatus::New
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Deserialize, Serialize)]

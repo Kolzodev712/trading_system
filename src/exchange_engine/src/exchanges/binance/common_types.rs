@@ -84,6 +84,20 @@ impl From<OrderStatus> for BinanceOrderStatus {
     }
 }
 
+impl From<BinanceOrderStatus> for OrderStatus {
+    fn from(binance_status: BinanceOrderStatus) -> Self {
+        match binance_status {
+            BinanceOrderStatus::New => OrderStatus::New,
+            BinanceOrderStatus::PartiallyFilled => OrderStatus::PartiallyFilled,
+            BinanceOrderStatus::Filled | BinanceOrderStatus::Trade => OrderStatus::Filled,
+            BinanceOrderStatus::Canceled => OrderStatus::Canceled,
+            BinanceOrderStatus::Replaced => OrderStatus::PendingCancel,
+            BinanceOrderStatus::Rejected => OrderStatus::Rejected,
+            BinanceOrderStatus::Expired => OrderStatus::Expired,
+        }
+    }
+}
+
 /// To be removed when using common Side
 #[derive(Debug, Default, Deserialize, Serialize, Clone, Eq, PartialEq)]
 #[serde(rename_all = "UPPERCASE")]

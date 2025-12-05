@@ -21,10 +21,16 @@ impl PositionReconciler {
     }
 
     /// Reconcile positions by fetching balances from exchange and comparing
+    ///
+    /// # Parameters
+    /// - `state`: The trading state to reconcile
+    /// - `symbol`: The trading pair to reconcile
+    /// - `current_price`: Optional current market price to use for avg_price calculation when creating new positions
     pub async fn reconcile(
         &self,
         state: &mut TradingState,
         symbol: &Pair,
+        current_price: Option<Decimal>,
     ) -> Result<ReconciliationResult, EngineError> {
         // Fetch balances from exchange
         let balances = self.trading_client.read().await.fetch_balance().await?;
@@ -67,12 +73,32 @@ impl PositionReconciler {
             // Update internal state to match exchange
             if base_balance > Decimal::ZERO {
                 // We have a position on exchange but not internally
-                // Use a reasonable average price (could be improved)
+                // Use existing avg_price if available, otherwise use current market price as approximation
                 let avg_price = internal_position
                     .map(|p| p.avg_price)
+                    .or(current_price)
                     .unwrap_or(Decimal::ZERO);
 
-                state.update_position(symbol.clone(), base_balance, avg_price);
+                // Only update if we have a valid price (either existing or current market price)
+                if avg_price > Decimal::ZERO {
+                    state.update_position(symbol.clone(), base_balance, avg_price);
+                } else {
+                    // If we don't have a price, we can't calculate avg_price properly
+                    // Set quantity directly and avg_price will remain zero until next trade
+                    if let Some(position) = state.positions.get_mut(symbol) {
+                        position.quantity = base_balance;
+                    } else {
+                        // Create new position with zero avg_price (will be set on next trade)
+                        state.positions.insert(
+                            symbol.clone(),
+                            super::strategy::Position {
+                                symbol: symbol.clone(),
+                                quantity: base_balance,
+                                avg_price: Decimal::ZERO,
+                            },
+                        );
+                    }
+                }
                 info!(
                     "Updated internal position to match exchange: {base_balance} {base}",
                     base = symbol.base

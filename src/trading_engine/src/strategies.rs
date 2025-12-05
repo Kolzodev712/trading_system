@@ -92,12 +92,23 @@ impl BuyLowSellHigh {
         Some((best_bid + best_ask) / Decimal::from(2))
     }
 
+    /// Get the last known price from price history (for reconciliation)
+    pub fn get_last_price(&self) -> Option<Decimal> {
+        self.price_history.last().copied()
+    }
+
     fn should_buy(&self, current_price: Decimal, avg_price: Decimal) -> bool {
+        if avg_price <= Decimal::ZERO {
+            return false;
+        }
         let price_diff = (avg_price - current_price) / avg_price * Decimal::from(100);
         price_diff >= self.buy_threshold
     }
 
     fn should_sell(&self, current_price: Decimal, avg_price: Decimal) -> bool {
+        if avg_price <= Decimal::ZERO {
+            return false;
+        }
         let price_diff = (current_price - avg_price) / avg_price * Decimal::from(100);
         price_diff >= self.sell_threshold
     }
@@ -125,16 +136,23 @@ impl Strategy for BuyLowSellHigh {
         // Need minimum price history to calculate meaningful average
         let min_history = self.min_price_history;
         if self.price_history.len() < min_history {
-            debug!(
-                "Building price history: {current}/{target}",
-                current = self.price_history.len(),
-                target = min_history
-            );
+            if self.price_history.len() % 5 == 0 || self.price_history.len() == min_history - 1 {
+                info!(
+                    "Building price history: {current}/{target} (need {remaining} more before trading)",
+                    current = self.price_history.len(),
+                    target = min_history,
+                    remaining = min_history - self.price_history.len()
+                );
+            }
             return Ok(None);
         }
 
         let avg_price = match self.calculate_average_price() {
-            Some(p) => p,
+            Some(p) if p > Decimal::ZERO => p,
+            Some(_) => {
+                warn!("Average price is zero, skipping trade decision");
+                return Ok(None);
+            }
             None => return Ok(None),
         };
 
@@ -155,59 +173,87 @@ impl Strategy for BuyLowSellHigh {
             if position.quantity > Decimal::ZERO {
                 // Check stop-loss
                 if let Some(stop_loss) = self.stop_loss_percent {
-                    let loss_percent =
-                        (position.avg_price - mid_price) / position.avg_price * Decimal::from(100);
-                    if loss_percent >= stop_loss {
-                        warn!(
+                    if position.avg_price > Decimal::ZERO {
+                        let loss_percent = (position.avg_price - mid_price) / position.avg_price
+                            * Decimal::from(100);
+                        if loss_percent >= stop_loss {
+                            warn!(
                             "Stop-loss triggered: loss={loss_percent:.2}%, threshold={stop_loss}%"
                         );
-                        let sell_price = if !orderbook.bids.is_empty() {
-                            orderbook.bids[0]
-                        } else {
-                            mid_price
-                        };
-                        return Ok(Some(OrderRequest {
-                            symbol: Symbol::from(self.symbol.convert_to_smolstr()),
-                            side: Side::Sell,
-                            order_type: OrderType::Limit,
-                            price: sell_price,
-                            amount: position.quantity,
-                            timestamp: None,
-                            exchange_params: Default::default(),
-                        }));
+                            let sell_price = if !orderbook.bids.is_empty() {
+                                orderbook.bids[0]
+                            } else {
+                                mid_price
+                            };
+                            return Ok(Some(OrderRequest {
+                                symbol: Symbol::from(self.symbol.convert_to_smolstr()),
+                                side: Side::Sell,
+                                order_type: OrderType::Limit,
+                                price: sell_price,
+                                amount: position.quantity,
+                                timestamp: None,
+                                exchange_params: Default::default(),
+                            }));
+                        }
                     }
                 }
 
                 // Check take-profit
                 if let Some(take_profit) = self.take_profit_percent {
-                    let profit_percent =
-                        (mid_price - position.avg_price) / position.avg_price * Decimal::from(100);
-                    if profit_percent >= take_profit {
-                        info!("Take-profit triggered: profit={profit_percent:.2}%, threshold={take_profit}%");
-                        let sell_price = if !orderbook.bids.is_empty() {
-                            orderbook.bids[0]
-                        } else {
-                            mid_price
-                        };
-                        return Ok(Some(OrderRequest {
-                            symbol: Symbol::from(self.symbol.convert_to_smolstr()),
-                            side: Side::Sell,
-                            order_type: OrderType::Limit,
-                            price: sell_price,
-                            amount: position.quantity,
-                            timestamp: None,
-                            exchange_params: Default::default(),
-                        }));
+                    if position.avg_price > Decimal::ZERO {
+                        let profit_percent = (mid_price - position.avg_price) / position.avg_price
+                            * Decimal::from(100);
+                        if profit_percent >= take_profit {
+                            info!("Take-profit triggered: profit={profit_percent:.2}%, threshold={take_profit}%");
+                            let sell_price = if !orderbook.bids.is_empty() {
+                                orderbook.bids[0]
+                            } else {
+                                mid_price
+                            };
+                            return Ok(Some(OrderRequest {
+                                symbol: Symbol::from(self.symbol.convert_to_smolstr()),
+                                side: Side::Sell,
+                                order_type: OrderType::Limit,
+                                price: sell_price,
+                                amount: position.quantity,
+                                timestamp: None,
+                                exchange_params: Default::default(),
+                            }));
+                        }
                     }
                 }
             }
         }
 
         // Decision logic
+        // Log price status periodically to show what's happening
+        // Guard against division by zero
+        let price_diff_from_avg = if avg_price > Decimal::ZERO {
+            (mid_price - avg_price) / avg_price * Decimal::from(100)
+        } else {
+            warn!("Average price is zero, cannot calculate price difference");
+            return Ok(None);
+        };
+
+        if self.price_history.len() % 10 == 0 {
+            debug!(
+                "Price check: mid={mid_price}, avg={avg_price}, diff={diff:.2}%, buy_threshold={buy_threshold:.2}%, sell_threshold={sell_threshold:.2}%",
+                mid_price = mid_price,
+                avg_price = avg_price,
+                diff = price_diff_from_avg,
+                buy_threshold = self.buy_threshold,
+                sell_threshold = self.sell_threshold
+            );
+        }
+
         if self.should_buy(mid_price, avg_price) {
             // Check if we can buy more
             if current_qty + self.position_size <= self.max_position {
-                let diff = (avg_price - mid_price) / avg_price * Decimal::from(100);
+                let diff = if avg_price > Decimal::ZERO {
+                    (avg_price - mid_price) / avg_price * Decimal::from(100)
+                } else {
+                    Decimal::ZERO
+                };
                 info!("BUY signal: price={mid_price}, avg={avg_price}, diff={diff:.2}%");
 
                 // Use best ask as buy price (market order would be better, but limit is safer)
@@ -227,13 +273,21 @@ impl Strategy for BuyLowSellHigh {
                     exchange_params: Default::default(),
                 }));
             } else {
-                debug!("Max position reached, skipping buy");
+                info!("Max position reached ({current_qty} + {position_size} > {max_position}), skipping buy",
+                    current_qty = current_qty,
+                    position_size = self.position_size,
+                    max_position = self.max_position
+                );
             }
         } else if self.should_sell(mid_price, avg_price) && current_qty > Decimal::ZERO {
             // We have position and price is high - sell
             let sell_qty = self.position_size.min(current_qty);
 
-            let diff = (mid_price - avg_price) / avg_price * Decimal::from(100);
+            let diff = if avg_price > Decimal::ZERO {
+                (mid_price - avg_price) / avg_price * Decimal::from(100)
+            } else {
+                Decimal::ZERO
+            };
             info!(
                 "SELL signal: price={mid_price}, avg={avg_price}, diff={diff:.2}%, qty={sell_qty}"
             );
@@ -254,6 +308,17 @@ impl Strategy for BuyLowSellHigh {
                 timestamp: None,
                 exchange_params: Default::default(),
             }));
+        } else {
+            // No trade signal - log why (only periodically to reduce noise)
+            if self.price_history.len() % 20 == 0 {
+                debug!(
+                    "No trade signal: price_diff={diff:.2}%, buy_threshold={buy_threshold:.2}%, sell_threshold={sell_threshold:.2}%, position={position}",
+                    diff = price_diff_from_avg,
+                    buy_threshold = self.buy_threshold,
+                    sell_threshold = self.sell_threshold,
+                    position = current_qty
+                );
+            }
         }
 
         Ok(None)

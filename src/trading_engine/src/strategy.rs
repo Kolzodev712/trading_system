@@ -156,4 +156,10 @@ pub trait Strategy: Send + Sync {
 
     /// Get mutable trading state
     fn get_state_mut(&mut self) -> &mut TradingState;
+
+    /// Get the last known market price (for reconciliation)
+    /// Returns None if no price data is available
+    fn get_last_price(&self) -> Option<rust_decimal::Decimal> {
+        None // Default implementation - strategies can override
+    }
 }

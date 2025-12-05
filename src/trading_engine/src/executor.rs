@@ -80,12 +80,22 @@ impl<S: Strategy> StrategyExecutor<S> {
             let mut interval = interval(Duration::from_secs(300)); // Every 5 minutes
             loop {
                 interval.tick().await;
+                // Get the last known price before acquiring write lock
+                let current_price = {
+                    let strat = strategy_for_recon.read().await;
+                    strat.get_last_price()
+                };
+
                 let mut strat = strategy_for_recon.write().await;
                 let state = strat.get_state_mut();
+
                 // Create a new reconciler for this task to avoid lifetime issues
                 let task_reconciler =
                     PositionReconciler::new(Arc::clone(&trading_client_for_recon));
-                match task_reconciler.reconcile(state, &symbol_for_recon).await {
+                match task_reconciler
+                    .reconcile(state, &symbol_for_recon, current_price)
+                    .await
+                {
                     Ok(result) => {
                         if result.reconciled {
                             info!(
@@ -224,7 +234,14 @@ impl<S: Strategy> StrategyExecutor<S> {
                                 order.status = core_logic::data::base_data::OrderStatus::New;
                                 order.filled_amount = rust_decimal::Decimal::ZERO;
 
-                                info!("Order placed: {order:?}");
+                                info!(
+                                    "Order placed successfully: id={order_id}, symbol={symbol}, side={side}, price={price}, amount={amount}",
+                                    order_id = order.order_id.as_str(),
+                                    symbol = order.symbol,
+                                    side = order.side,
+                                    price = order.price,
+                                    amount = order.amount
+                                );
 
                                 // Record success in circuit breaker
                                 circuit_breaker.lock().await.record_success();

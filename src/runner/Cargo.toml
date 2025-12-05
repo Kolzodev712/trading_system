@@ -5,6 +5,9 @@ edition = "2021"
 
 [dependencies]
 trading_engine = { path = "../trading_engine" }
+core_logic = { path = "../core_logic" }
+exchange_engine = { path = "../exchange_engine" }
+market_data_engine = { path = "../market_data_engine" }
 
 # Logging
 tracing = { workspace = true }

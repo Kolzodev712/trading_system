@@ -34,7 +34,7 @@ impl WSMessageHandler for RedisMessageHandler {
             .publish(ORDERBOOK_CHANNEL, message)
             .await?;
 
-        debug!("✅ Published orderbook to Redis.");
+        debug!("Published orderbook to Redis.");
         Ok(())
     }
 
@@ -42,7 +42,7 @@ impl WSMessageHandler for RedisMessageHandler {
         let message = RedisMessage::TradeMessage(trade);
         self.redis_client.publish(TRADE_CHANNEL, message).await?;
 
-        debug!("✅ Published trade to Redis.");
+        debug!("Published trade to Redis.");
         Ok(())
     }
 }

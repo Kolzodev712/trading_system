@@ -46,7 +46,7 @@ impl ExchangeEngineDriver {
                     debug!("WebSocket loop successfully running");
                 }
                 Err(e) => {
-                    error!("WebSocket client failed: {}", e);
+                    error!("WebSocket client failed: {e}");
                 }
             }
         });

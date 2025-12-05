@@ -33,7 +33,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let ws_handle = tokio::spawn(async move {
         if let Err(e) = stream_client.stream().await {
-            error!("WebSocket streaming error: {}", e);
+            error!("WebSocket streaming error: {e}");
         }
     });
 
@@ -46,7 +46,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .await
             .is_some()
         {
-            info!("✅ WebSocket session ready");
+            info!("WebSocket session ready");
             break;
         }
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
@@ -60,16 +60,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     {
         let client = binance_client.read().await;
-        debug!("📤 Sending cancel-order request: {:?}", params);
+        debug!("Sending cancel-order request: {params:?}");
         match client.cancel_order_rpc(params).await {
-            Ok(_) => info!("✅ Cancel order request sent!"),
-            Err(e) => error!("❌ Failed to send cancel order: {}", e),
+            Ok(_) => info!("Cancel order request sent!"),
+            Err(e) => error!("Failed to send cancel order: {e}"),
         }
     }
 
     // 5) wait for Ctrl-C → fire the shutdown broadcast
     tokio::signal::ctrl_c().await?;
-    info!("🔌 Ctrl-C received, shutting down WS client");
+    info!("Ctrl-C received, shutting down WS client");
     {
         let client = binance_client.read().await;
         client.shutdown();
@@ -77,6 +77,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 6) finally await the WS task’s exit
     let _ = ws_handle.await;
-    info!("👋 Goodbye");
+    info!("Goodbye");
     Ok(())
 }

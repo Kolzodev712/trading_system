@@ -28,7 +28,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         tokio::spawn(async move {
             let mut c = client.write().await;
             if let Err(e) = c.stream().await {
-                error!("WebSocket streaming error: {}", e);
+                error!("WebSocket streaming error: {e}");
             }
         })
     };
@@ -40,7 +40,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             tokio::signal::ctrl_c()
                 .await
                 .expect("failed to install Ctrl-C handler");
-            info!("🛑 Ctrl-C received, shutting down WebSocket");
+            info!("Ctrl-C received, shutting down WebSocket");
             // shutdown() just fires the broadcast so the loop in `run_stream_loop` will exit
             client.read().await.shutdown();
         });
@@ -55,7 +55,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .await
             .is_some()
         {
-            info!("✅ WebSocket session ready, proceeding...");
+            info!("WebSocket session ready, proceeding...");
             break;
         }
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
@@ -64,11 +64,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 4) Send one RPC over the live connection:
     {
         let client = binance_client.read().await;
-        info!("🟢 Sending account status request...");
+        info!("Sending account status request...");
         if let Err(e) = client.account_status().await {
-            error!("❌ Failed to send account status request: {}", e);
+            error!("Failed to send account status request: {e}");
         } else {
-            info!("✅ Account status request sent successfully!");
+            info!("Account status request sent successfully!");
         }
     }
 

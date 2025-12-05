@@ -132,7 +132,7 @@ pub fn map_open_order_to_core(
 ) -> Result<Order, EngineError> {
     if resp.status != 200 {
         return Err(EngineError::new_custom_error(
-            format!("WS RPC error status={}", resp.status).into(),
+            format!("WS RPC error status={status}", status = resp.status).into(),
         ));
     }
 

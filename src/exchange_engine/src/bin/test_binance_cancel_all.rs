@@ -30,7 +30,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // now spawn without holding any locks
     let ws_task = tokio::spawn(async move {
         if let Err(e) = stream_handle.stream().await {
-            error!("WebSocket streaming error: {}", e);
+            error!("WebSocket streaming error: {e}");
         }
     });
 
@@ -43,7 +43,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .await
             .is_some()
         {
-            info!("✅ WebSocket session ready");
+            info!("WebSocket session ready");
             break;
         }
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
@@ -56,9 +56,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         let client = binance_client.read().await;
         if let Err(e) = client.cancel_all_orders_rpc(cancel_all_params).await {
-            error!("❌ Failed to send cancel-all request: {}", e);
+            error!("Failed to send cancel-all request: {e}");
         } else {
-            info!("✅ Cancel-all request sent");
+            info!("Cancel-all request sent");
         }
         // 4) signal the WS loop to shut down
         client.shutdown();

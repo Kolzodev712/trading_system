@@ -147,7 +147,7 @@ mod tests {
     use core_logic::data::base_data::OrderId;
     use serde_json;
 
-    /// ✅ Test serialization of BinanceOrderRequest (struct → JSON)
+    /// Test serialization of BinanceOrderRequest (struct → JSON)
     #[test]
     fn test_binance_order_request_serialization() {
         let order_request = BinanceOrderRequest {

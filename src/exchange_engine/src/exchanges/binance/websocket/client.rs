@@ -427,7 +427,7 @@ impl BinanceWSClient {
     async fn create_ws_stream(
         &self,
     ) -> Result<WebSocketStream<MaybeTlsStream<TcpStream>>, EngineError> {
-        let ws_url = format!("{}", self.url);
+        let ws_url = format!("{url}", url = self.url);
         self.make_ws_request(&ws_url).await
     }
 
@@ -442,11 +442,11 @@ impl BinanceWSClient {
         if let Some(Ok(Message::Text(logon_response))) = ws_stream.next().await {
             let v: Value = serde_json::from_str(&logon_response)?;
             if v.get("status").and_then(|s| s.as_u64()) == Some(200) {
-                debug!("✅ Successfully authenticated with session.logon");
+                debug!("Successfully authenticated with session.logon");
                 self.subscription_handler.set_session(logon_params).await;
             } else {
                 return Err(EngineError::new_custom_error(
-                    format!("❌ session.logon failed: {:?}", v).into(),
+                    format!("session.logon failed: {v:?}").into(),
                 ));
             }
         }
@@ -460,10 +460,10 @@ impl BinanceWSClient {
     ) -> Result<(), EngineError> {
         if let Some(subscription_message) = self.subscription_handler.create_subscription_request()
         {
-            debug!("📩 Subscribing to userDataStream...");
+            debug!("Subscribing to userDataStream...");
             ws_stream.send(subscription_message).await?;
         } else {
-            error!("❌ Failed to create subscription message");
+            error!("Failed to create subscription message");
         }
 
         Ok(())
@@ -492,7 +492,7 @@ impl BinanceWSClient {
                         Ok(BinanceInbound::Event(evt)) => {
                             let _ = inbound_tx.send(BinanceInbound::Event(evt)).await;
                         }
-                        Err(e) => error!("WS parse error: {}", e),
+                        Err(e) => error!("WS parse error: {e}"),
                     },
                     Ok(Message::Binary(bin)) => handler.handle_binary(bin),
                     Ok(Message::Ping(payload)) => {
@@ -501,7 +501,7 @@ impl BinanceWSClient {
                     }
                     Ok(Message::Pong(p)) => handler.handle_pong(p),
                     Ok(Message::Close(c)) => handler.handle_close(c),
-                    Err(e) => error!("WS read error: {}", e),
+                    Err(e) => error!("WS read error: {e}"),
                 }
             }
             debug!("💀 reader.next() returned None — stream closed.");
@@ -529,12 +529,12 @@ impl BinanceWSClient {
                             Ok(payload) => {
                                 let mut w = ws_write.lock().await;
                                 if let Err(e) = w.send(Message::Text(payload)).await {
-                                    error!("❌ Failed to send RPC: {:?}", e);
+                                    error!("Failed to send RPC: {e:?}");
                                     break;
                                 }
                             }
                             Err(e) => {
-                                error!("❌ Serialization error: {:?}", e);
+                                error!("Serialization error: {e:?}");
                                 break;
                             }
                         }
@@ -542,7 +542,7 @@ impl BinanceWSClient {
                         Some(p) = ping_rx.recv() => {
                         let mut w = ws_write.lock().await;
                         if let Err(e) = w.send(Message::Pong(p)).await {
-                            error!("❌ Failed to send Pong: {:?}", e);
+                            error!("Failed to send Pong: {e:?}");
                             break;
                         }
                     }
@@ -604,11 +604,11 @@ impl WebSocketClient<ParsedBinanceMessage> for BinanceWSClient {
                     Ok(Message::Text(txt)) => match handler.handle_text_message(txt.into()) {
                         Ok(parsed) => {
                             if let Err(e) = event_tx.send(parsed).await {
-                                error!("❌ failed to forward parsed event: {:?}", e);
+                                error!("failed to forward parsed event: {e:?}");
                             }
                         }
                         Err(e) => {
-                            error!("❌ WS parse error: {:?}", e);
+                            error!("WS parse error: {e:?}");
                         }
                     },
 
@@ -618,7 +618,7 @@ impl WebSocketClient<ParsedBinanceMessage> for BinanceWSClient {
                         handler.handle_ping(ping.clone());
                         // echo back
                         if let Err(e) = ws_stream.send(Message::Pong(ping)).await {
-                            error!("❌ error sending pong: {:?}", e);
+                            error!("error sending pong: {e:?}");
                         }
                     }
 
@@ -627,7 +627,7 @@ impl WebSocketClient<ParsedBinanceMessage> for BinanceWSClient {
                     Ok(Message::Close(cf)) => handler.handle_close(cf),
 
                     Err(e) => {
-                        error!("⚠️ error while receiving ws message: {}", e);
+                        error!("error while receiving ws message: {e}");
                         break;
                     }
                 }

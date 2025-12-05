@@ -95,7 +95,7 @@ impl BinanceClient {
         let client = BinanceWSClient::new(channel);
         client.run(tx.clone()).await?;
 
-        info!("✅ WebSocket stream started for {:?}", data_type);
+        info!("WebSocket stream started for {data_type:?}");
 
         self.event_loop(rx).await
     }
@@ -108,7 +108,7 @@ impl BinanceClient {
             self.handle_message(message).await?;
         }
 
-        error!("❌ Event channel closed unexpectedly");
+        error!("Event channel closed unexpectedly");
         Err(EngineError::ConnectionClosed)
     }
 
@@ -120,11 +120,11 @@ impl BinanceClient {
                 }
                 ParsedBinanceMessage::Trade(trade) => handler.handle_trade(trade).await?,
                 _ => {
-                    debug!("⚠️ Ignored unknown message: {:?}", message);
+                    debug!("Ignored unknown message: {message:?}");
                 }
             }
         } else {
-            error!("❌ No message handler assigned!");
+            error!("No message handler assigned!");
         }
         Ok(())
     }
@@ -137,7 +137,7 @@ impl BinanceClient {
         let jitter = std::time::Duration::from_millis(rand::random::<u64>() % 1000);
         let sleep_time = (*base_delay + jitter).min(max_delay);
 
-        debug!("🔁 Reconnecting after {:?}", sleep_time);
+        debug!("Reconnecting after {sleep_time:?}");
         tokio::time::sleep(sleep_time).await;
 
         *base_delay = (*base_delay * 2).min(max_delay);

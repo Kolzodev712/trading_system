@@ -56,6 +56,14 @@ pub struct BinanceClient {
     shutdown_tx: broadcast::Sender<()>,
     /// Tracks order metadata (symbol, order_type) by OrderId for cancellation
     order_tracker: Arc<RwLock<HashMap<OrderId, OrderMetadata>>>,
+    /// Channel for forwarding execution reports to strategy
+    execution_report_tx: Arc<
+        Mutex<
+            Option<
+                mpsc::Sender<super::websocket::types::user_data::execution_report::ExecutionReport>,
+            >,
+        >,
+    >,
 }
 
 impl BinanceClient {
@@ -79,11 +87,20 @@ impl BinanceClient {
             subscription_handler,
             shutdown_tx,
             order_tracker: Arc::new(RwLock::new(HashMap::new())),
+            execution_report_tx: Arc::new(Mutex::new(None)),
         }
     }
 
     pub async fn get_connection_session(&self) -> Option<ConnectionSession> {
         self.connection_session.read().await.clone()
+    }
+
+    /// Set the execution report channel for forwarding execution reports to strategy
+    pub async fn set_execution_report_channel(
+        &self,
+        tx: mpsc::Sender<super::websocket::types::user_data::execution_report::ExecutionReport>,
+    ) {
+        *self.execution_report_tx.lock().await = Some(tx);
     }
 
     pub async fn stream(&mut self) -> Result<(), EngineError> {
@@ -178,19 +195,27 @@ impl BinanceClient {
                         if let Some(tx) = self.outbound_rpc_rx.lock().await.remove(&id) {
                             let _ = tx.send(resp);
                         } else {
-                            debug!("RPC response with id {} had no waiter; event-only path?", id);
+                            debug!("RPC response with id {id} had no waiter; event-only path?");
                         }
                     }
                     Some(BinanceInbound::Event(evt)) => {
                         match evt {
                             ParsedBinanceMessage::OutboundAccountPosition(p) => debug!("Position: {:?}", p),
                             ParsedBinanceMessage::BalanceUpdate(b) => debug!("Balance: {:?}", b),
-                            ParsedBinanceMessage::ExecutionReport(r) => debug!("Exec rpt: {:?}", r),
-                            ParsedBinanceMessage::Raw(r) => debug!("Raw msg: {}", r),
+                            ParsedBinanceMessage::ExecutionReport(r) => {
+                                debug!("Exec rpt: {:?}", r);
+                                // Forward execution report to strategy if channel exists
+                                if let Some(tx) = self.execution_report_tx.lock().await.as_ref() {
+                                    if tx.send(r.clone()).await.is_err() {
+                                        debug!("Execution report channel closed");
+                                    }
+                                }
+                            }
+                            ParsedBinanceMessage::Raw(r) => debug!("Raw msg: {r}"),
                         }
                     }
                     None => {
-                        error!("🚨 Inbound channel closed");
+                        error!("Inbound channel closed");
 
                         let mut guard = self.outbound_rpc_rx.lock().await;
                         Self::fail_all_pending(&mut guard);
@@ -313,7 +338,7 @@ impl BinanceClient {
         };
         if status != 200 {
             return Err(EngineError::new_custom_error(
-                format!("WS RPC error status={}", status).into(),
+                format!("WS RPC error status={status}").into(),
             ));
         }
         Ok(())
@@ -404,8 +429,8 @@ impl TradingClient<OrderRequest, Pair> for BinanceClient {
                 // This handles cases where orders were created before tracking was implemented
                 // or orders created outside this client instance
                 debug!(
-                    "Order {} not found in tracker, using config symbol and default order type",
-                    order_id.as_str()
+                    "Order {order_id} not found in tracker, using config symbol and default order type",
+                    order_id = order_id.as_str()
                 );
                 (
                     self.config.symbol.convert_to_smolstr(),

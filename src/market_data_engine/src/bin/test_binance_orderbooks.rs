@@ -25,7 +25,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut driver = MarketDataDriver::new(market_data_config)?;
 
     if let Err(e) = driver.run(Method::Orderbooks).await {
-        error!("Error running market data driver: {}", e);
+        error!("Error running market data driver: {e}");
     }
 
     Ok(())

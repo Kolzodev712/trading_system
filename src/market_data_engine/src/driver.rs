@@ -41,12 +41,12 @@ impl MarketDataDriver {
         match method {
             Method::Orderbooks => {
                 if let Err(e) = self.exchange_client.orderbooks().await {
-                    error!("Error in fetching orderbooks: {}", e);
+                    error!("Error in fetching orderbooks: {e}");
                 }
             }
             Method::Trades => {
                 if let Err(e) = self.exchange_client.trades().await {
-                    error!("Error in fetching trades: {}", e);
+                    error!("Error in fetching trades: {e}");
                 }
             }
         }

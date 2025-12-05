@@ -112,12 +112,12 @@ impl DataHandler {
 
 impl MessageHandler<ParsedBinanceMessage> for DataHandler {
     fn handle_text_message(&self, text: SmolStr) -> Result<ParsedBinanceMessage, EngineError> {
-        debug!("Received text message: {}", text);
+        debug!("Received text message: {text}");
 
         let v: Value = serde_json::from_str(&text).map_err(EngineError::JsonError)?;
 
         if let (Some(_), Some(_)) = (v.get("result"), v.get("id")) {
-            debug!("Subscription acknowledgment received: {}", text);
+            debug!("Subscription acknowledgment received: {text}");
             return Ok(serde_json::from_value(v).map(ParsedBinanceMessage::InitialResponse)?);
         }
 
@@ -130,7 +130,7 @@ impl MessageHandler<ParsedBinanceMessage> for DataHandler {
             return self.handle_event(event_type, v);
         }
 
-        debug!("Unknown or unsupported message format: {}", text);
+        debug!("Unknown or unsupported message format: {text}");
         Ok(ParsedBinanceMessage::Raw(text))
     }
 
@@ -205,11 +205,11 @@ impl WebSocketClient<ParsedBinanceMessage> for BinanceWSClient {
                         match handler.handle_text_message(text.clone().into()) {
                             Ok(parsed_message) => {
                                 if let Err(e) = tx.send(parsed_message).await {
-                                    error!("Error sending message to channel: {}", e);
+                                    error!("Error sending message to channel: {e}");
                                 }
                             }
                             Err(e) => {
-                                error!("Error processing text message: {}", e);
+                                error!("Error processing text message: {e}");
                             }
                         }
                     }
@@ -219,14 +219,14 @@ impl WebSocketClient<ParsedBinanceMessage> for BinanceWSClient {
                     Ok(Message::Ping(ping)) => {
                         handler.handle_ping(ping.clone());
                         if let Err(e) = ws_stream.send(Message::Pong(ping)).await {
-                            error!("Error sending pong: {}", e);
+                            error!("Error sending pong: {e}");
                         }
                     }
                     Ok(Message::Pong(pong)) => {
                         handler.handle_pong(pong);
                     }
                     Err(e) => {
-                        error!("Error while receiving a message: {}", e);
+                        error!("Error while receiving a message: {e}");
                     }
                     _ => {}
                 }

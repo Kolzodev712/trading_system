@@ -35,7 +35,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let ws_handle = tokio::spawn(async move {
         if let Err(e) = ws_client_clone.stream().await {
-            error!("WebSocket streaming error: {}", e);
+            error!("WebSocket streaming error: {e}");
         }
     });
 
@@ -48,7 +48,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .await
             .is_some()
         {
-            info!("✅ WebSocket session ready, proceeding...");
+            info!("WebSocket session ready, proceeding...");
             break;
         }
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
@@ -61,8 +61,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let orderbook = match rest_client.fetch_orderbook().await {
         Ok(ob) => ob,
         Err(e) => {
-            error!("❌ Failed to fetch orderbook: {}", e);
-            return Err(format!("Failed to fetch orderbook: {}", e).into());
+            error!("Failed to fetch orderbook: {e}");
+            return Err(format!("Failed to fetch orderbook: {e}").into());
         }
     };
 
@@ -80,8 +80,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let test_quantity = Decimal::new(1, 3); // 0.001 BTC (small quantity for testing)
 
     info!(
-        "📊 Market price: {}, Using test price: {}, Quantity: {}",
-        market_price, test_price, test_quantity
+        "Market price: {market_price}, Using test price: {test_price}, Quantity: {test_quantity}"
     );
 
     // -- now we can send RPCs freely --
@@ -97,8 +96,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         let client = binance_client.read().await;
         match client.test_order(params).await {
-            Ok(_) => info!("✅ Test order sent successfully!"),
-            Err(e) => error!("❌ Failed to send test order: {}", e),
+            Ok(_) => info!("Test order sent successfully!"),
+            Err(e) => error!("Failed to send test order: {e}"),
         }
     }
 

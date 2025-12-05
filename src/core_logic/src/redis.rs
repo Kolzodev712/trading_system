@@ -52,10 +52,10 @@ impl RedisClient {
             let redis_message: RedisMessage =
                 serde_json::from_str(&payload).map_err(EngineError::JsonError)?;
 
-            debug!("Received message on {}: {:?}", channel, redis_message);
+            debug!("Received message on {channel}: {redis_message:?}");
 
             if let Err(e) = handler(redis_message) {
-                debug!("Error in message handler: {}", e);
+                debug!("Error in message handler: {e}");
             }
         }
 

@@ -85,8 +85,21 @@ impl<S: Strategy> StrategyExecutor<S> {
                 // Create a new reconciler for this task to avoid lifetime issues
                 let task_reconciler =
                     PositionReconciler::new(Arc::clone(&trading_client_for_recon));
-                if let Err(e) = task_reconciler.reconcile(state, &symbol_for_recon).await {
-                    warn!("Position reconciliation failed: {e}");
+                match task_reconciler.reconcile(state, &symbol_for_recon).await {
+                    Ok(result) => {
+                        if result.reconciled {
+                            info!(
+                                "Position reconciled for {symbol}: internal={internal_qty}, exchange={exchange_qty}, discrepancy={discrepancy}",
+                                symbol = result.symbol,
+                                internal_qty = result.internal_quantity,
+                                exchange_qty = result.exchange_quantity,
+                                discrepancy = result.discrepancy
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        warn!("Position reconciliation failed: {e}");
+                    }
                 }
             }
         });

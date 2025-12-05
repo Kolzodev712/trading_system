@@ -1831,6 +1831,7 @@ dependencies = [
  "hmac",
  "market_data_engine",
  "pem",
+ "redis",
  "reqwest",
  "ring 0.17.13",
  "rust_decimal",

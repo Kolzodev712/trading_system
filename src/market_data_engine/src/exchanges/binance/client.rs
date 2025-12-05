@@ -8,7 +8,6 @@ use super::{
 use crate::messages::WSMessageHandler;
 use async_trait::async_trait;
 use core_logic::{
-    channels::{ChannelHandler, ChannelManager},
     data::{
         base_data::{DataType, Pair},
         public_data::{Orderbook, Trade},
@@ -24,7 +23,7 @@ use tracing::{debug, error, info};
 #[derive(Debug)]
 pub struct BinanceClient {
     pub config: BinanceConfig,
-    pub channel_manager: ChannelManager,
+    buffer_size: usize,
     message_handler: Option<Box<dyn WSMessageHandler + Send + Sync>>,
 }
 
@@ -34,10 +33,9 @@ impl BinanceClient {
         buffer_size: usize,
         message_handler: Option<Box<dyn WSMessageHandler + Send + Sync>>,
     ) -> Self {
-        let channel_manager = ChannelManager::new(buffer_size);
         BinanceClient {
             config,
-            channel_manager,
+            buffer_size,
             message_handler,
         }
     }
@@ -47,7 +45,7 @@ impl BinanceClient {
     }
 
     pub async fn start_stream(&mut self, data_type: DataType) -> Result<(), EngineError> {
-        let (tx, rx) = self.channel_manager.create_channel();
+        let (tx, rx) = mpsc::channel(self.buffer_size);
         let channel = self.build_channel(data_type.clone());
 
         self.run_with_reconnect(channel, tx, rx, data_type).await
@@ -104,7 +102,7 @@ impl BinanceClient {
         &self,
         rx: &mut mpsc::Receiver<ParsedBinanceMessage>,
     ) -> Result<(), EngineError> {
-        while let Ok(message) = self.channel_manager.receive(rx).await {
+        while let Some(message) = rx.recv().await {
             self.handle_message(message).await?;
         }
 

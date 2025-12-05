@@ -101,7 +101,34 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
-    // Wait for market data to start
+    // Wait for market data to start and validate Redis connectivity
+    info!("Validating Redis connectivity...");
+    let redis_url: redis::ConnectionInfo = config.redis.url.parse().map_err(|e| {
+        format!(
+            "Invalid Redis URL '{url}': {error}",
+            url = config.redis.url,
+            error = e
+        )
+    })?;
+
+    let redis_client = redis::Client::open(redis_url.clone())
+        .map_err(|e| format!("Failed to create Redis client: {error}", error = e))?;
+
+    // Test Redis connection
+    let mut test_conn = redis_client.get_connection().map_err(|e| {
+        format!(
+            "Failed to connect to Redis: {error}. Please ensure Redis is running.",
+            error = e
+        )
+    })?;
+
+    let _: () = redis::cmd("PING")
+        .query(&mut test_conn)
+        .map_err(|e| format!("Redis PING failed: {error}", error = e))?;
+
+    info!("Redis connection validated successfully");
+
+    // Wait for market data to start publishing
     tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
 
     // 2. Create Trading Client
@@ -114,6 +141,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .set_execution_report_channel(exec_report_tx)
         .await;
 
+    // Clone client for connection check before moving it
+    let binance_client_for_check = binance_client.clone();
     let trading_client: Arc<
         RwLock<dyn TradingClient<core_logic::data::private_data::OrderRequest>>,
     > = Arc::new(RwLock::new(binance_client.clone()));
@@ -132,21 +161,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
-    // Wait for trading client to be ready
-    let mut attempts = 0;
-    loop {
+    // Wait for trading client to be ready (poll connection session)
+    info!("Waiting for trading client connection...");
+    let connection_timeout = tokio::time::Duration::from_secs(30);
+    let start = std::time::Instant::now();
+    let mut connected = false;
+
+    while start.elapsed() < connection_timeout {
         // Check if BinanceClient has a connection session
-        // Since we're using a trait object, we need to downcast or check differently
-        // For now, just wait a bit and assume it's ready
-        if attempts > 0 {
-            info!("Trading client ready");
+        if let Some(_session) = binance_client_for_check.get_connection_session().await {
+            info!("Trading client connected successfully");
+            connected = true;
             break;
         }
-        attempts += 1;
-        if attempts > 40 {
-            return Err("Trading client failed to connect".into());
-        }
         tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+    }
+
+    if !connected {
+        return Err("Trading client failed to connect within 30 seconds".into());
     }
 
     // 3. Create Strategy

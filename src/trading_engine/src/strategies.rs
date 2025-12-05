@@ -32,6 +32,7 @@ pub struct BuyLowSellHigh {
     // Price history for moving average
     price_history: Vec<Decimal>,
     max_history: usize,
+    min_price_history: usize, // Minimum price history required before trading
 
     // Strategy parameters
     buy_threshold: Decimal,               // Buy when price is X% below average
@@ -55,7 +56,7 @@ impl BuyLowSellHigh {
         take_profit_percent: Option<Decimal>,
         max_active_orders: usize,
         price_history_size: usize,
-        _min_price_history: usize,
+        min_price_history: usize,
     ) -> Self {
         Self {
             state: TradingState::new(),
@@ -63,6 +64,7 @@ impl BuyLowSellHigh {
             symbol,
             price_history: Vec::new(),
             max_history: price_history_size,
+            min_price_history,
             buy_threshold,
             sell_threshold,
             position_size,
@@ -121,7 +123,7 @@ impl Strategy for BuyLowSellHigh {
         }
 
         // Need minimum price history to calculate meaningful average
-        let min_history = 20; // Default minimum
+        let min_history = self.min_price_history;
         if self.price_history.len() < min_history {
             debug!(
                 "Building price history: {current}/{target}",

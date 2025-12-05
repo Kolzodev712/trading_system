@@ -7,7 +7,7 @@ use tracing::{info, warn};
 
 /// Reconciles internal trading state with exchange balances
 #[derive(Clone)]
-pub struct PositionReconciler {
+pub(crate) struct PositionReconciler {
     trading_client: Arc<RwLock<dyn TradingClient<core_logic::data::private_data::OrderRequest>>>,
 }
 
@@ -106,7 +106,8 @@ impl PositionReconciler {
 }
 
 #[derive(Debug, Clone)]
-pub struct ReconciliationResult {
+#[allow(dead_code)] // Fields are returned for potential future use/logging
+pub(crate) struct ReconciliationResult {
     pub symbol: Pair,
     pub internal_quantity: Decimal,
     pub exchange_quantity: Decimal,

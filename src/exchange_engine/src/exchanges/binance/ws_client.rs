@@ -27,9 +27,7 @@ use super::{
 };
 use crate::exchanges::binance::sign::BinanceWsAuthenticator;
 use async_trait::async_trait;
-use core_logic::{
-    channels::ChannelManager, error::EngineError, traits::PrivateDataClient, Exchange,
-};
+use core_logic::{error::EngineError, traits::PrivateDataClient, Exchange};
 use std::{collections::HashMap, fmt::Debug, sync::Arc};
 use tokio::{
     sync::{broadcast, mpsc, oneshot, Mutex, RwLock},
@@ -46,9 +44,8 @@ struct OrderMetadata {
 
 #[derive(Debug, Clone)]
 pub struct BinanceClient {
-    pub config: BinanceConfig,
-    pub channel_manager: ChannelManager,
-    pub outbound_rpc_tx: Arc<Mutex<Option<mpsc::Sender<BinanceRpcRequest>>>>,
+    pub(crate) config: BinanceConfig,
+    pub(crate) outbound_rpc_tx: Arc<Mutex<Option<mpsc::Sender<BinanceRpcRequest>>>>,
     outbound_rpc_rx: Arc<Mutex<HashMap<String, oneshot::Sender<BinanceRpcResponse>>>>,
     ws_client: BinanceWSClient,
     connection_session: Arc<RwLock<Option<ConnectionSession>>>,
@@ -67,10 +64,9 @@ pub struct BinanceClient {
 }
 
 impl BinanceClient {
-    pub fn new(config: BinanceConfig, buffer_size: usize) -> Self {
+    pub fn new(config: BinanceConfig, _buffer_size: usize) -> Self {
         let (shutdown_tx, _) = broadcast::channel(1);
 
-        let channel_manager = ChannelManager::new(buffer_size);
         let signer =
             BinanceWsAuthenticator::new(config.ws.api_key.clone(), config.ws.secret_key.clone());
         let session = Arc::new(RwLock::new(None));
@@ -79,7 +75,6 @@ impl BinanceClient {
 
         BinanceClient {
             config,
-            channel_manager,
             outbound_rpc_tx: Arc::new(Mutex::new(None)),
             outbound_rpc_rx: Arc::new(Mutex::new(HashMap::new())),
             ws_client,

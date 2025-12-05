@@ -264,23 +264,78 @@ impl Strategy for BuyLowSellHigh {
         // This avoids the symbol parsing bug and ensures consistency
         let pair = self.symbol.clone();
 
-        // Calculate quantity change
-        let qty_change = match order.side {
-            Side::Buy => order.amount,
-            Side::Sell => -order.amount,
-        };
-
         // Now get state and update
         let state = self.get_state_mut();
 
-        // Update order status to Filled
-        state.update_order_status(&order.order_id, OrderStatus::Filled, Some(order.amount));
+        // Update order status with the actual status from the execution report
+        state.update_order_status(
+            &order.order_id,
+            order.status.clone(),
+            Some(order.filled_amount),
+        );
 
-        // Remove from active orders (now that it's filled)
-        state.remove_order(&order.order_id);
+        // Handle different order statuses appropriately
+        match order.status {
+            OrderStatus::Filled => {
+                // Order is fully filled - calculate incremental quantity change
+                // filled_amount is cumulative, so we need to get the previous filled amount
+                // and calculate the delta to avoid double-counting if we already processed partial fills
+                let previous_filled = state
+                    .active_orders
+                    .get(&order.order_id)
+                    .map(|o| o.filled_amount)
+                    .unwrap_or(rust_decimal::Decimal::ZERO);
 
-        // Update position
-        state.update_position(pair, qty_change, order.price);
+                // Calculate incremental fill amount (delta)
+                let incremental_fill = order.filled_amount - previous_filled;
+
+                if incremental_fill > rust_decimal::Decimal::ZERO {
+                    let qty_change = match order.side {
+                        Side::Buy => incremental_fill,
+                        Side::Sell => -incremental_fill,
+                    };
+
+                    // Remove from active orders (now that it's fully filled)
+                    state.remove_order(&order.order_id);
+
+                    // Update position with incremental change (final fill)
+                    state.update_position(pair, qty_change, order.price);
+                } else {
+                    // Already fully processed, just remove the order
+                    state.remove_order(&order.order_id);
+                }
+            }
+            OrderStatus::PartiallyFilled => {
+                // Order is partially filled - calculate incremental quantity change
+                // filled_amount is cumulative, so we need to get the previous filled amount
+                // and calculate the delta
+                let previous_filled = state
+                    .active_orders
+                    .get(&order.order_id)
+                    .map(|o| o.filled_amount)
+                    .unwrap_or(rust_decimal::Decimal::ZERO);
+
+                // Calculate incremental fill amount (delta)
+                let incremental_fill = order.filled_amount - previous_filled;
+
+                if incremental_fill > rust_decimal::Decimal::ZERO {
+                    let qty_change = match order.side {
+                        Side::Buy => incremental_fill,
+                        Side::Sell => -incremental_fill,
+                    };
+
+                    // Keep order active (don't remove) and update position with incremental change
+                    state.update_position(pair, qty_change, order.price);
+                }
+            }
+            OrderStatus::Canceled | OrderStatus::Rejected | OrderStatus::Expired => {
+                // Order was cancelled/rejected/expired - remove from active orders
+                state.remove_order(&order.order_id);
+            }
+            _ => {
+                // Other statuses (New, etc.) - just update status, don't modify position
+            }
+        }
 
         info!(
             "Order executed: {side} {amount} {symbol} @ {price}",

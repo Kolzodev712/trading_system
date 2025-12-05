@@ -36,6 +36,10 @@ pub struct ExecutionReport {
     pub quantity: Decimal,
     #[serde(rename = "p")]
     pub price: Decimal,
+    /// Cumulative filled quantity (z field from Binance API)
+    /// This represents the total amount filled so far for this order
+    #[serde(rename = "z", default)]
+    pub cumulative_filled_quantity: Option<Decimal>,
     #[serde(rename = "X")]
     pub order_status: BinanceOrderStatus,
     #[serde(rename = "i")]
@@ -49,6 +53,24 @@ pub struct ExecutionReport {
 impl From<ExecutionReport> for Order {
     fn from(report: ExecutionReport) -> Self {
         let status: OrderStatus = report.order_status.into();
+
+        // Use cumulative filled quantity if available, otherwise fall back to quantity for filled orders
+        let filled_amount = if matches!(status, OrderStatus::Filled | OrderStatus::PartiallyFilled)
+        {
+            // For filled/partially filled orders, use cumulative filled quantity if provided
+            // Otherwise, if fully filled, use the original quantity; if partially filled, use zero
+            report.cumulative_filled_quantity.unwrap_or_else(|| {
+                if status == OrderStatus::Filled {
+                    report.quantity
+                } else {
+                    // PartiallyFilled without cumulative quantity - this shouldn't happen but default to zero
+                    rust_decimal::Decimal::ZERO
+                }
+            })
+        } else {
+            rust_decimal::Decimal::ZERO
+        };
+
         Order {
             order_id: report.order_id.into(),
             symbol: report.symbol.into(),
@@ -58,11 +80,7 @@ impl From<ExecutionReport> for Order {
             internal_created_at: report.event_time,
             exchange_created_at: Some(report.transaction_time),
             status: status.clone(),
-            filled_amount: if matches!(status, OrderStatus::Filled | OrderStatus::PartiallyFilled) {
-                report.quantity
-            } else {
-                rust_decimal::Decimal::ZERO
-            },
+            filled_amount,
         }
     }
 }
@@ -114,6 +132,7 @@ mod tests {
             time_in_force: BinanceTimeInForce::Gtc,
             quantity: Decimal::new(1, 0),
             price: Decimal::new(45000, 2),
+            cumulative_filled_quantity: None,
             order_status: BinanceOrderStatus::New,
             order_id: 4293153,
             transaction_time: 1628000000000,
@@ -142,6 +161,7 @@ mod tests {
             time_in_force: BinanceTimeInForce::Gtc,
             quantity: Decimal::new(1, 0),
             price: Decimal::new(45000, 2),
+            cumulative_filled_quantity: None,
             order_status: BinanceOrderStatus::New,
             order_id: 4293153,
             transaction_time: 1628000000000,
@@ -164,6 +184,7 @@ mod tests {
             time_in_force: BinanceTimeInForce::Gtc,
             quantity: Decimal::new(1, 0),
             price: Decimal::new(45000, 2),
+            cumulative_filled_quantity: None,
             order_status: BinanceOrderStatus::New,
             order_id: 4293153,
             transaction_time: 1628000000000,

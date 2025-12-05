@@ -136,7 +136,7 @@ impl<S: Strategy> StrategyExecutor<S> {
                         let mut strat = strategy_for_cleanup.write().await;
                         strat.get_state_mut().update_order_status(
                             &order_id,
-                            core_logic::data::base_data::OrderStatus::Expired,
+                            core_logic::data::base_data::OrderStatus::Canceled,
                             None,
                         );
                     }

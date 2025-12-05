@@ -101,6 +101,7 @@ impl BuyLowSellHigh {
         if avg_price <= Decimal::ZERO {
             return false;
         }
+        // Calculate how much price is below average (positive value means price is lower)
         let price_diff = (avg_price - current_price) / avg_price * Decimal::from(100);
         price_diff >= self.buy_threshold
     }

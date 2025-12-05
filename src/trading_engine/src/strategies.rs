@@ -235,14 +235,16 @@ impl Strategy for BuyLowSellHigh {
             return Ok(None);
         };
 
-        if self.price_history.len() % 10 == 0 {
-            debug!(
-                "Price check: mid={mid_price}, avg={avg_price}, diff={diff:.2}%, buy_threshold={buy_threshold:.2}%, sell_threshold={sell_threshold:.2}%",
+        // Log more frequently to see what's happening (every 5 updates instead of 10)
+        if self.price_history.len() % 5 == 0 {
+            info!(
+                "Price check: mid={mid_price}, avg={avg_price}, diff={diff:.3}%, buy_threshold={buy_threshold:.2}%, sell_threshold={sell_threshold:.2}%, position={position}",
                 mid_price = mid_price,
                 avg_price = avg_price,
                 diff = price_diff_from_avg,
                 buy_threshold = self.buy_threshold,
-                sell_threshold = self.sell_threshold
+                sell_threshold = self.sell_threshold,
+                position = current_qty
             );
         }
 
@@ -310,9 +312,26 @@ impl Strategy for BuyLowSellHigh {
             }));
         } else {
             // No trade signal - log why (only periodically to reduce noise)
-            if self.price_history.len() % 20 == 0 {
+            // Show when we're close to a signal (within 0.1% of threshold)
+            let buy_diff_needed = self.buy_threshold - price_diff_from_avg;
+            let sell_diff_needed = self.sell_threshold - price_diff_from_avg;
+
+            if buy_diff_needed.abs() < Decimal::new(1, 1)
+                || sell_diff_needed.abs() < Decimal::new(1, 1)
+            {
+                // Close to a signal - log it
+                info!(
+                    "Close to signal: price_diff={diff:.3}%, buy_threshold={buy_threshold:.2}% (need {buy_needed:.3}% more), sell_threshold={sell_threshold:.2}% (need {sell_needed:.3}% more), position={position}",
+                    diff = price_diff_from_avg,
+                    buy_threshold = self.buy_threshold,
+                    buy_needed = buy_diff_needed,
+                    sell_threshold = self.sell_threshold,
+                    sell_needed = sell_diff_needed,
+                    position = current_qty
+                );
+            } else if self.price_history.len() % 20 == 0 {
                 debug!(
-                    "No trade signal: price_diff={diff:.2}%, buy_threshold={buy_threshold:.2}%, sell_threshold={sell_threshold:.2}%, position={position}",
+                    "No trade signal: price_diff={diff:.3}%, buy_threshold={buy_threshold:.2}%, sell_threshold={sell_threshold:.2}%, position={position}",
                     diff = price_diff_from_avg,
                     buy_threshold = self.buy_threshold,
                     sell_threshold = self.sell_threshold,

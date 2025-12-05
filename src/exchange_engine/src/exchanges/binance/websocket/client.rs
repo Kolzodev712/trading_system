@@ -211,11 +211,54 @@ impl BinanceSubscriptionHandler {
         Ok(BinanceRpcRequest::AccountStatus(request))
     }
 
+    fn build_signed_order_params(
+        &self,
+        params: &BinanceWsOrderReqParams,
+    ) -> Result<SessionLogonParams, EngineError> {
+        let timestamp = chrono::Utc::now().timestamp_millis();
+
+        let mut signed_params = BTreeMap::new();
+        signed_params.insert("apiKey".into(), self.signer.api_key.clone());
+        signed_params.insert("timestamp".into(), timestamp.to_string().into());
+        signed_params.insert("symbol".into(), params.symbol.clone());
+        signed_params.insert("side".into(), params.side.to_string().into());
+        signed_params.insert("type".into(), params.order_type.to_string().into());
+        signed_params.insert(
+            "timeInForce".into(),
+            params.time_in_force.to_string().into(),
+        );
+        signed_params.insert("price".into(), params.price.to_string().into());
+        signed_params.insert("quantity".into(), params.quantity.to_string().into());
+
+        let signed_params = self.signer.build_signed_params(signed_params)?;
+
+        let api_key = signed_params.get("apiKey").cloned().ok_or_else(|| {
+            EngineError::new_custom_error("Missing apiKey in signed params".into())
+        })?;
+
+        let timestamp = signed_params
+            .get("timestamp")
+            .ok_or_else(|| EngineError::new_custom_error("Missing timestamp".into()))?
+            .parse::<i64>()
+            .map_err(|_| EngineError::new_custom_error("Invalid timestamp format".into()))?;
+
+        let signature = signed_params
+            .get("signature")
+            .cloned()
+            .ok_or_else(|| EngineError::new_custom_error("Missing signature".into()))?;
+
+        Ok(SessionLogonParams {
+            api_key,
+            timestamp,
+            signature,
+        })
+    }
+
     pub async fn create_test_order_request(
         &self,
         mut params: BinanceWsOrderReqParams,
     ) -> Result<BinanceRpcRequest, EngineError> {
-        let session = self.get_session().await?;
+        let session = self.build_signed_order_params(&params)?;
         params.session = session;
 
         let request = BinanceWsOrderRequest {
@@ -231,7 +274,7 @@ impl BinanceSubscriptionHandler {
         &self,
         mut params: BinanceWsOrderReqParams,
     ) -> Result<BinanceRpcRequest, EngineError> {
-        let session = self.get_session().await?;
+        let session = self.build_signed_order_params(&params)?;
         params.session = session;
 
         let request = BinanceWsOrderRequest {
@@ -243,11 +286,86 @@ impl BinanceSubscriptionHandler {
         Ok(BinanceRpcRequest::OpenOrder(request))
     }
 
+    fn build_signed_cancel_order_params(
+        &self,
+        params: &BinanceWsCancelOrderReqParams,
+    ) -> Result<SessionLogonParams, EngineError> {
+        let timestamp = chrono::Utc::now().timestamp_millis();
+
+        let mut signed_params = BTreeMap::new();
+        signed_params.insert("apiKey".into(), self.signer.api_key.clone());
+        signed_params.insert("timestamp".into(), timestamp.to_string().into());
+        signed_params.insert("symbol".into(), params.symbol.clone());
+        signed_params.insert(
+            "origClientOrderId".into(),
+            params.orig_client_order_id.clone(),
+        );
+        signed_params.insert("type".into(), params.order_type.to_string().into());
+
+        let signed_params = self.signer.build_signed_params(signed_params)?;
+
+        let api_key = signed_params.get("apiKey").cloned().ok_or_else(|| {
+            EngineError::new_custom_error("Missing apiKey in signed params".into())
+        })?;
+
+        let timestamp = signed_params
+            .get("timestamp")
+            .ok_or_else(|| EngineError::new_custom_error("Missing timestamp".into()))?
+            .parse::<i64>()
+            .map_err(|_| EngineError::new_custom_error("Invalid timestamp format".into()))?;
+
+        let signature = signed_params
+            .get("signature")
+            .cloned()
+            .ok_or_else(|| EngineError::new_custom_error("Missing signature".into()))?;
+
+        Ok(SessionLogonParams {
+            api_key,
+            timestamp,
+            signature,
+        })
+    }
+
+    fn build_signed_cancel_all_params(
+        &self,
+        params: &BinanceWsCancelAllOrdersReqParams,
+    ) -> Result<SessionLogonParams, EngineError> {
+        let timestamp = chrono::Utc::now().timestamp_millis();
+
+        let mut signed_params = BTreeMap::new();
+        signed_params.insert("apiKey".into(), self.signer.api_key.clone());
+        signed_params.insert("timestamp".into(), timestamp.to_string().into());
+        signed_params.insert("symbol".into(), params.symbol.clone());
+
+        let signed_params = self.signer.build_signed_params(signed_params)?;
+
+        let api_key = signed_params.get("apiKey").cloned().ok_or_else(|| {
+            EngineError::new_custom_error("Missing apiKey in signed params".into())
+        })?;
+
+        let timestamp = signed_params
+            .get("timestamp")
+            .ok_or_else(|| EngineError::new_custom_error("Missing timestamp".into()))?
+            .parse::<i64>()
+            .map_err(|_| EngineError::new_custom_error("Invalid timestamp format".into()))?;
+
+        let signature = signed_params
+            .get("signature")
+            .cloned()
+            .ok_or_else(|| EngineError::new_custom_error("Missing signature".into()))?;
+
+        Ok(SessionLogonParams {
+            api_key,
+            timestamp,
+            signature,
+        })
+    }
+
     pub async fn create_cancel_order_request(
         &self,
         mut params: BinanceWsCancelOrderReqParams,
     ) -> Result<BinanceRpcRequest, EngineError> {
-        let session = self.get_session().await?;
+        let session = self.build_signed_cancel_order_params(&params)?;
         params.session = session;
 
         let request = BinanceWsCancelOrderRequest {
@@ -263,12 +381,12 @@ impl BinanceSubscriptionHandler {
         &self,
         mut params: BinanceWsCancelAllOrdersReqParams,
     ) -> Result<BinanceRpcRequest, EngineError> {
-        let session = self.get_session().await?;
+        let session = self.build_signed_cancel_all_params(&params)?;
         params.session = session;
 
         let request = BinanceWsCancelAllOrdersRequest {
             id: generate_custom_uuid().into(),
-            method: CANCEL_ORDER.into(),
+            method: CANCEL_ALL_ORDERS.into(),
             params,
         };
 

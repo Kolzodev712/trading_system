@@ -2,6 +2,8 @@ use core_logic::traits::PrivateDataClient;
 use exchange_engine::exchanges::binance::{
     common_types::{BinanceOrderType, BinanceSide, BinanceSymbol, BinanceTimeInForce},
     config::BinanceConfig,
+    rest::client::BinanceHttpClient,
+    rest_client::BinanceRestClient,
     websocket::types::rpc::open_order::BinanceWsOrderReqParams,
     ws_client::BinanceClient,
 };
@@ -23,6 +25,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .init();
 
     let cfg = load_binance_config("config/binance_config.json")?;
+    let cfg_for_rest = cfg.clone();
     let binance_client = Arc::new(RwLock::new(BinanceClient::new(cfg, 100)));
 
     // -- spawn the WS loop on a *clone* of the client, not on the locked instance --
@@ -51,14 +54,44 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     }
 
+    // -- Fetch current market price to use a valid price --
+    let rest_client =
+        BinanceRestClient::new(BinanceHttpClient::new(cfg_for_rest.clone()), cfg_for_rest);
+
+    let orderbook = match rest_client.fetch_orderbook().await {
+        Ok(ob) => ob,
+        Err(e) => {
+            error!("❌ Failed to fetch orderbook: {}", e);
+            return Err(format!("Failed to fetch orderbook: {}", e).into());
+        }
+    };
+
+    // Use best bid price (slightly below for buy order) or fallback to 60000
+    let market_price = orderbook
+        .bids
+        .first()
+        .map(|bid| bid[0])
+        .unwrap_or(Decimal::new(6000000, 2)); // 60,000 USDT fallback
+
+    // Use 1% below market price for buy order to ensure it's valid
+    // Round to 2 decimal places for BTC/USDT price filter
+    let test_price_raw = market_price * Decimal::new(99, 2) / Decimal::new(100, 2);
+    let test_price = (test_price_raw * Decimal::new(100, 0)).round_dp(0) / Decimal::new(100, 0);
+    let test_quantity = Decimal::new(1, 3); // 0.001 BTC (small quantity for testing)
+
+    info!(
+        "📊 Market price: {}, Using test price: {}, Quantity: {}",
+        market_price, test_price, test_quantity
+    );
+
     // -- now we can send RPCs freely --
     let params = BinanceWsOrderReqParams::new(
         BinanceSymbol::new("BTC", "USDT").convert_to_smolstr(),
         BinanceSide::Buy,
         BinanceOrderType::Limit,
         BinanceTimeInForce::Gtc,
-        Decimal::new(85000, 2),
-        Decimal::new(10, 2),
+        test_price,
+        test_quantity,
     );
 
     {

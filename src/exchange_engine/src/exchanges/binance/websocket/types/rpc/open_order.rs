@@ -10,7 +10,7 @@ use core_logic::{
 };
 
 use super::super::common::{BinanceRateLimit, SessionLogonParams};
-use core_logic::utils::{deserialize_smol_str, serialize_smol_str};
+use core_logic::utils::{deserialize_smol_str, serialize_enum_as_display, serialize_smol_str};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use smol_str::SmolStr;
@@ -41,6 +41,7 @@ pub struct BinanceWsOrderReqParams {
     )]
     pub symbol: SmolStr,
     pub side: BinanceSide,
+    #[serde(rename = "type", serialize_with = "serialize_enum_as_display")]
     pub order_type: BinanceOrderType,
     pub time_in_force: BinanceTimeInForce,
     pub price: Decimal,

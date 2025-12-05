@@ -33,7 +33,7 @@ use tokio::{
     sync::{broadcast, mpsc, oneshot, Mutex, RwLock},
     time::{sleep, Duration},
 };
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, warn};
 
 /// Metadata stored for each order to enable cancellation by ID
 #[derive(Debug, Clone)]
@@ -139,12 +139,12 @@ impl BinanceClient {
         ping_tx: mpsc::Sender<Vec<u8>>,
         ping_rx: mpsc::Receiver<Vec<u8>>,
     ) -> Result<ConnectionSession, EngineError> {
-        info!("Starting WebSocket connection and authentication...");
+        debug!("Starting WebSocket connection and authentication...");
         let mut ws = self.ws_client.connect_and_authenticate().await?;
-        info!("Authentication complete, subscribing to user stream...");
+        debug!("Authentication complete, subscribing to user stream...");
 
         self.ws_client.subscribe_to_user_stream(&mut ws).await?;
-        info!("Subscription complete, splitting stream into reader/writer tasks...");
+        debug!("Subscription complete, splitting stream into reader/writer tasks...");
 
         let (outbound_tx, outbound_rx) = mpsc::channel::<BinanceRpcRequest>(1024);
         *self.outbound_rpc_tx.lock().await = Some(outbound_tx.clone());
@@ -162,7 +162,7 @@ impl BinanceClient {
             )
             .await?;
 
-        info!("WebSocket stream split complete, connection ready");
+        debug!("WebSocket stream split complete, connection ready");
         Ok(session)
     }
 

@@ -203,12 +203,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Default to 0.00001 BTC if not specified
         rust_decimal::Decimal::new(1, 5)
     });
+    let step_size = config.strategy.step_size.unwrap_or_else(|| {
+        // Default to 0.00001 BTC if not specified (5 decimal places)
+        rust_decimal::Decimal::new(1, 5)
+    });
+    let tick_size = config.strategy.tick_size.unwrap_or_else(|| {
+        // Default to 0.01 USDC if not specified (2 decimal places for price)
+        rust_decimal::Decimal::new(1, 2)
+    });
+    let min_notional = config.strategy.min_notional.unwrap_or_else(|| {
+        // Default to 5.0 USDC if not specified
+        rust_decimal::Decimal::new(5, 0)
+    });
     let executor = StrategyExecutor::new(
         strategy.clone(),
         trading_client.clone(),
         config.redis.url.clone(),
         symbol.clone(),
         min_order_size,
+        step_size,
+        tick_size,
+        min_notional,
     );
 
     // 5. Set up execution report handler
@@ -280,6 +295,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Graceful shutdown
     info!("Shutting down gracefully...");
+
+    // Cancel all open orders before shutting down
+    info!(
+        "Cancelling all open orders for {symbol}...",
+        symbol = symbol
+    );
+    match trading_client
+        .write()
+        .await
+        .cancel_all_orders(&symbol)
+        .await
+    {
+        Ok(_) => info!("All orders cancelled successfully"),
+        Err(e) => warn!("Failed to cancel all orders: {error}", error = e),
+    }
 
     // Signal all components to stop
     shutdown_manager.signal_shutdown();

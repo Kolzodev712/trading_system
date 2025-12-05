@@ -142,7 +142,7 @@ impl Strategy for BuyLowSellHigh {
                 || self.price_history.len() == min_history - 1
                 || self.price_history.len() == min_history - 5
             {
-                info!(
+                debug!(
                     "Building price history: {current}/{target} (need {remaining} more before trading)",
                     current = self.price_history.len(),
                     target = min_history,
@@ -236,13 +236,13 @@ impl Strategy for BuyLowSellHigh {
         let price_diff_from_avg = if avg_price > Decimal::ZERO {
             (mid_price - avg_price) / avg_price * Decimal::from(100)
         } else {
-            warn!("Average price is zero, cannot calculate price difference");
+            debug!("Average price is zero, cannot calculate price difference");
             return Ok(None);
         };
 
         // Periodic price status (every 30 updates to reduce noise)
         if self.price_history.len() % 30 == 0 {
-            info!(
+            debug!(
                 "Price status: mid={mid_price}, avg={avg_price}, diff={diff:.3}%, position={position} BTC",
                 mid_price = mid_price,
                 avg_price = avg_price,
@@ -259,7 +259,7 @@ impl Strategy for BuyLowSellHigh {
                 } else {
                     Decimal::ZERO
                 };
-                info!("BUY signal: price={mid_price}, avg={avg_price}, diff={diff:.2}%, amount={amount} BTC",
+                debug!("BUY signal: price={mid_price}, avg={avg_price}, diff={diff:.2}%, amount={amount} BTC",
                     amount = self.position_size
                 );
 
@@ -279,7 +279,7 @@ impl Strategy for BuyLowSellHigh {
                     timestamp: None,
                     exchange_params: Default::default(),
                 };
-                info!(
+                debug!(
                     "Returning BUY order request: symbol={symbol}, price={price}, amount={amount}",
                     symbol = order_req.symbol,
                     price = order_req.price,
@@ -287,7 +287,7 @@ impl Strategy for BuyLowSellHigh {
                 );
                 return Ok(Some(order_req));
             } else {
-                info!("Max position reached ({current_qty} + {position_size} > {max_position}), skipping buy",
+                debug!("Max position reached ({current_qty} + {position_size} > {max_position}), skipping buy",
                     current_qty = current_qty,
                     position_size = self.position_size,
                     max_position = self.max_position
@@ -302,7 +302,7 @@ impl Strategy for BuyLowSellHigh {
             } else {
                 Decimal::ZERO
             };
-            info!(
+            debug!(
                 "SELL signal: price={mid_price}, avg={avg_price}, diff={diff:.2}%, qty={sell_qty} BTC"
             );
 
@@ -322,7 +322,7 @@ impl Strategy for BuyLowSellHigh {
                 timestamp: None,
                 exchange_params: Default::default(),
             };
-            info!(
+            debug!(
                 "Returning SELL order request: symbol={symbol}, price={price}, amount={amount}",
                 symbol = order_req.symbol,
                 price = order_req.price,
@@ -370,7 +370,7 @@ impl Strategy for BuyLowSellHigh {
                     format!("need {:.3}% more rise", sell_diff_needed)
                 };
 
-                info!(
+                debug!(
                     "Close to signal: price_diff={diff:.3}%, buy: {buy_msg}, sell: {sell_msg}, position={position}",
                     diff = price_diff_from_avg,
                     buy_msg = buy_msg,
@@ -472,13 +472,37 @@ impl Strategy for BuyLowSellHigh {
             }
         }
 
-        info!(
-            "Order executed: {side} {amount} {symbol} @ {price}",
-            side = order.side,
-            amount = order.amount,
-            symbol = order.symbol,
-            price = order.price
-        );
+        // Log fills and trades
+        match order.status {
+            OrderStatus::Filled => {
+                info!(
+                    "Order FILLED: {side} {filled}/{total} {symbol} @ {price}",
+                    side = order.side,
+                    filled = order.filled_amount,
+                    total = order.amount,
+                    symbol = order.symbol,
+                    price = order.price
+                );
+            }
+            OrderStatus::PartiallyFilled => {
+                info!(
+                    "Order PARTIALLY FILLED: {side} {filled}/{total} {symbol} @ {price}",
+                    side = order.side,
+                    filled = order.filled_amount,
+                    total = order.amount,
+                    symbol = order.symbol,
+                    price = order.price
+                );
+            }
+            _ => {
+                debug!(
+                    "Order status updated: {side} {symbol} -> {status:?}",
+                    side = order.side,
+                    symbol = order.symbol,
+                    status = order.status
+                );
+            }
+        }
 
         Ok(())
     }

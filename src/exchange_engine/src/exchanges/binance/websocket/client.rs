@@ -43,7 +43,7 @@ use tokio_tungstenite::{
     connect_async, tungstenite::protocol::frame::CloseFrame, tungstenite::protocol::Message,
     MaybeTlsStream, WebSocketStream,
 };
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, warn};
 
 pub const BINANCE_WS_URL: &str = "wss://ws-api.binance.com:443/ws-api/v3";
 pub const LOGON_SESSION: &str = "session.logon";
@@ -677,7 +677,7 @@ impl BinanceWSClient {
                         let is_rpc_response = txt.contains("\"id\"")
                             && (txt.contains("\"status\"") || txt.contains("\"result\""));
                         if is_rpc_response {
-                            info!(
+                            debug!(
                                 "Reader received RPC response #{count}: {text}",
                                 count = message_count,
                                 text = txt
@@ -691,7 +691,7 @@ impl BinanceWSClient {
                         }
                         match handler.handle_text_message(txt.into()) {
                             Ok(BinanceInbound::Rpc(rpc)) => {
-                                info!("Parsed as RPC response, forwarding to handler...");
+                                debug!("Parsed as RPC response, forwarding to handler...");
                                 if inbound_tx.send(BinanceInbound::Rpc(rpc)).await.is_err() {
                                     warn!("Failed to send RPC to inbound channel (channel closed)");
                                     break;
@@ -804,7 +804,7 @@ impl BinanceWSClient {
                         };
                         match json {
                             Ok(payload) => {
-                                info!("Writer sending RPC #{count} ({type}) to WebSocket: {payload}",
+                                debug!("Writer sending RPC #{count} ({type}) to WebSocket: {payload}",
                                     count = rpc_count,
                                     type = rpc_type,
                                     payload = payload

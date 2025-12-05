@@ -80,6 +80,18 @@ pub struct StrategyConfig {
     /// Minimum order size (e.g., "0.00001" for BTC/USDC on Binance)
     /// This should match the exchange's minimum lot size requirement
     pub min_order_size: Option<Decimal>,
+
+    /// Step size for order quantities (e.g., "0.00001" for BTC/USDC on Binance)
+    /// Quantities must be rounded to a multiple of this step size
+    pub step_size: Option<Decimal>,
+
+    /// Tick size for order prices (e.g., "0.01" for BTC/USDC on Binance)
+    /// Prices must be rounded to a multiple of this tick size
+    pub tick_size: Option<Decimal>,
+
+    /// Minimum notional value (price * quantity) in quote currency
+    /// (e.g., "5.0" for BTC/USDC on Binance means minimum 5 USDC)
+    pub min_notional: Option<Decimal>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

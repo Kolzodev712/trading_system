@@ -33,6 +33,9 @@ pub struct StrategyExecutor<S: Strategy + 'static> {
     reconciler: PositionReconciler,
     order_timeout_secs: u64,
     min_order_size: Decimal,
+    step_size: Decimal,
+    tick_size: Decimal,
+    min_notional: Decimal,
 }
 
 impl<S: Strategy> StrategyExecutor<S> {
@@ -44,6 +47,9 @@ impl<S: Strategy> StrategyExecutor<S> {
         redis_url: String,
         symbol: Pair,
         min_order_size: Decimal,
+        step_size: Decimal,
+        tick_size: Decimal,
+        min_notional: Decimal,
     ) -> Self {
         let reconciler = PositionReconciler::new(Arc::clone(&trading_client));
         Self {
@@ -55,6 +61,9 @@ impl<S: Strategy> StrategyExecutor<S> {
             reconciler,
             order_timeout_secs: 300, // 5 minutes default timeout for limit orders
             min_order_size,
+            step_size,
+            tick_size,
+            min_notional,
         }
     }
 
@@ -65,7 +74,7 @@ impl<S: Strategy> StrategyExecutor<S> {
 
     /// Main execution loop - consumes orderbooks from Redis and executes strategy
     pub async fn run(&self) -> Result<(), EngineError> {
-        info!(
+        debug!(
             "Starting strategy executor for {symbol:?}",
             symbol = self.symbol
         );
@@ -102,7 +111,7 @@ impl<S: Strategy> StrategyExecutor<S> {
                 {
                     Ok(result) => {
                         if result.reconciled {
-                            info!(
+                            debug!(
                                 "Position reconciled for {symbol}: internal={internal_qty}, exchange={exchange_qty}, discrepancy={discrepancy}",
                                 symbol = result.symbol,
                                 internal_qty = result.internal_quantity,
@@ -205,7 +214,7 @@ impl<S: Strategy> StrategyExecutor<S> {
 
                     // If strategy wants to place an order, do it
                     if let Some(mut req) = order_request {
-                        info!(
+                        debug!(
                             "Strategy requested order: side={side}, symbol={symbol}, price={price}, amount={amount}",
                             side = req.side,
                             symbol = req.symbol,
@@ -216,7 +225,7 @@ impl<S: Strategy> StrategyExecutor<S> {
                         // Check circuit breaker
                         let cb = circuit_breaker.lock().await;
                         if !cb.can_proceed() {
-                            warn!(
+                            debug!(
                                 "Circuit breaker is open, skipping order placement. State: {state}",
                                 state = cb.state()
                             );
@@ -231,13 +240,13 @@ impl<S: Strategy> StrategyExecutor<S> {
                         };
 
                         if active_count >= 5 {
-                            warn!(
+                            debug!(
                                 "Too many active orders ({active_count}), skipping order placement"
                             );
                             continue;
                         }
 
-                        info!(
+                        debug!(
                             "Attempting to place order (active_orders={active_count})...",
                             active_count = active_count
                         );
@@ -315,14 +324,52 @@ impl<S: Strategy> StrategyExecutor<S> {
                             }
                         }
 
+                        // Round quantity to step size (required by Binance LOT_SIZE filter)
+                        // Round down to avoid exceeding available balance
+                        let rounded_amount = (req.amount / self.step_size).floor() * self.step_size;
+                        if rounded_amount != req.amount {
+                            debug!(
+                                "Order amount {amount} rounded to step size {step}: {rounded}",
+                                amount = req.amount,
+                                step = self.step_size,
+                                rounded = rounded_amount
+                            );
+                            req.amount = rounded_amount;
+                        }
+
                         // Enforce minimum order size from config
                         if req.amount < self.min_order_size {
-                            warn!(
-                                "Order amount {amount} is below minimum {min}. Adjusting to minimum.",
+                            debug!(
+                                "Order amount {amount} is below minimum {min}. Skipping order.",
                                 amount = req.amount,
                                 min = self.min_order_size
                             );
-                            req.amount = self.min_order_size;
+                            continue;
+                        }
+
+                        // Round price to tick size (required by Binance PRICE_FILTER)
+                        let rounded_price = (req.price / self.tick_size).floor() * self.tick_size;
+                        if rounded_price != req.price {
+                            debug!(
+                                "Order price {price} rounded to tick size {tick}: {rounded}",
+                                price = req.price,
+                                tick = self.tick_size,
+                                rounded = rounded_price
+                            );
+                            req.price = rounded_price;
+                        }
+
+                        // Check minimum notional value (price * quantity)
+                        let notional = req.price * req.amount;
+                        if notional < self.min_notional {
+                            debug!(
+                                "Order notional {notional} is below minimum {min}. Skipping order. (price={price}, amount={amount})",
+                                notional = notional,
+                                min = self.min_notional,
+                                price = req.price,
+                                amount = req.amount
+                            );
+                            continue;
                         }
 
                         // Place the order with retry logic
@@ -330,7 +377,7 @@ impl<S: Strategy> StrategyExecutor<S> {
                         let client_clone = Arc::clone(&trading_client);
                         let req_clone = req.clone();
 
-                        info!(
+                        debug!(
                             "Calling open_order with retry (max_attempts={max_attempts})...",
                             max_attempts = retry_config.max_attempts
                         );
@@ -352,9 +399,9 @@ impl<S: Strategy> StrategyExecutor<S> {
                                     Ok(_) => debug!("open_order succeeded"),
                                     Err(e) => {
                                         if is_insufficient_balance(e) {
-                                            warn!("open_order failed: insufficient balance (will not retry): {error}", error = e);
+                                            debug!("open_order failed: insufficient balance (will not retry): {error}", error = e);
                                         } else {
-                                            warn!("open_order failed: {error}", error = e);
+                                            debug!("open_order failed: {error}", error = e);
                                         }
                                     }
                                 }
@@ -366,7 +413,7 @@ impl<S: Strategy> StrategyExecutor<S> {
                         // If it's an insufficient balance error, don't retry and skip circuit breaker failure
                         if let Err(e) = &result {
                             if is_insufficient_balance(e) {
-                                warn!(
+                                debug!(
                                     "Order failed due to insufficient balance (skipping retries): {error}. Order request: side={side}, symbol={symbol}, price={price}, amount={amount}",
                                     error = e,
                                     side = req_clone.side,
@@ -401,7 +448,7 @@ impl<S: Strategy> StrategyExecutor<S> {
                                 strat.get_state_mut().add_order(order);
                             }
                             Err(e) => {
-                                error!(
+                                warn!(
                                     "Failed to place order after {max_retries} retries: {error}. Order request: side={side}, symbol={symbol}, price={price}, amount={amount}",
                                     max_retries = retry_config.max_attempts,
                                     error = e,
@@ -421,7 +468,7 @@ impl<S: Strategy> StrategyExecutor<S> {
                     // Ignore trades for now
                 }
                 Err(e) => {
-                    warn!(
+                    debug!(
                         "Failed to parse Redis message: {error}. Payload: {payload:.100}...",
                         error = e,
                         payload = payload

@@ -33,7 +33,7 @@ use tokio::{
     sync::{broadcast, mpsc, oneshot, Mutex, RwLock},
     time::{sleep, timeout, Duration},
 };
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, warn};
 
 /// Metadata stored for each order to enable cancellation by ID
 #[derive(Debug, Clone)]
@@ -191,11 +191,11 @@ impl BinanceClient {
                             BinanceRpcResponse::CancelOrder(r)   => r.id.to_string(),
                             BinanceRpcResponse::CancelAll(r)     => r.id.to_string(),
                         };
-                        info!("Received RPC response: id={id}, looking for pending request...", id = id);
+                        debug!("Received RPC response: id={id}, looking for pending request...", id = id);
                         // try to fulfill pending waiter
                         let mut pending = self.outbound_rpc_rx.lock().await;
                         if let Some(tx) = pending.remove(&id) {
-                            info!("Found pending request for id={id}, sending response", id = id);
+                            debug!("Found pending request for id={id}, sending response", id = id);
                             let _ = tx.send(resp);
                         } else {
                             warn!("RPC response with id {id} had no pending waiter (may be duplicate or unsolicited)", id = id);
@@ -266,14 +266,14 @@ impl BinanceClient {
                 .ok_or_else(|| EngineError::new_custom_error("RPC channel not yet ready".into()))?
         };
 
-        info!("Sending RPC request: id={id}", id = id);
+        debug!("Sending RPC request: id={id}", id = id);
         if tx_rpc.send(req).await.is_err() {
             error!("Failed to send RPC to writer channel: id={id}", id = id);
             let mut pending = self.outbound_rpc_rx.lock().await;
             pending.remove(&id);
             return Err(EngineError::new_custom_error("Failed to send RPC".into()));
         }
-        info!(
+        debug!(
             "RPC request sent to writer, waiting for response (timeout=30s): id={id}",
             id = id
         );
@@ -281,7 +281,7 @@ impl BinanceClient {
         // Wait for response with timeout (30 seconds for order operations)
         match timeout(Duration::from_secs(30), rx).await {
             Ok(Ok(resp)) => {
-                info!("RPC response received: id={id}", id = id);
+                debug!("RPC response received: id={id}", id = id);
                 Self::ensure_ok(&resp)?;
                 Ok(resp)
             }

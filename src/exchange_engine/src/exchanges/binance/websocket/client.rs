@@ -37,12 +37,13 @@ use std::sync::Arc;
 use tokio::{
     net::TcpStream,
     sync::{mpsc, Mutex, RwLock},
+    time::timeout,
 };
 use tokio_tungstenite::{
     connect_async, tungstenite::protocol::frame::CloseFrame, tungstenite::protocol::Message,
     MaybeTlsStream, WebSocketStream,
 };
-use tracing::{debug, error};
+use tracing::{debug, error, info, warn};
 
 pub const BINANCE_WS_URL: &str = "wss://ws-api.binance.com:443/ws-api/v3";
 pub const LOGON_SESSION: &str = "session.logon";
@@ -142,6 +143,7 @@ impl BinanceSubscriptionHandler {
         *guard = Some(params);
     }
 
+    #[allow(dead_code)] // May be used for other RPC requests that don't need fresh signatures
     async fn get_session(&self) -> Result<SessionLogonParams, EngineError> {
         let guard = self.session.read().await;
         guard.clone().ok_or_else(|| {
@@ -195,16 +197,66 @@ impl BinanceSubscriptionHandler {
         ))
     }
 
+    fn build_signed_account_status_params(
+        &self,
+        recv_window: Option<u64>,
+        omit_zero_balances: Option<bool>,
+    ) -> Result<SessionLogonParams, EngineError> {
+        let timestamp = chrono::Utc::now().timestamp_millis();
+
+        // Include ALL parameters that will be sent in the signature calculation
+        let mut signed_params = BTreeMap::new();
+        signed_params.insert("apiKey".into(), self.signer.api_key.clone());
+        signed_params.insert("timestamp".into(), timestamp.to_string().into());
+
+        // Include recvWindow and omitZeroBalances in signature if they're present
+        if let Some(recv_window) = recv_window {
+            signed_params.insert("recvWindow".into(), recv_window.to_string().into());
+        }
+        if let Some(omit_zero) = omit_zero_balances {
+            signed_params.insert("omitZeroBalances".into(), omit_zero.to_string().into());
+        }
+
+        let signed_params = self.signer.build_signed_params(signed_params)?;
+
+        let api_key = signed_params.get("apiKey").cloned().ok_or_else(|| {
+            EngineError::new_custom_error("Missing apiKey in signed params".into())
+        })?;
+
+        let timestamp = signed_params
+            .get("timestamp")
+            .ok_or_else(|| EngineError::new_custom_error("Missing timestamp".into()))?
+            .parse::<i64>()
+            .map_err(|_| EngineError::new_custom_error("Invalid timestamp format".into()))?;
+
+        let signature = signed_params
+            .get("signature")
+            .cloned()
+            .ok_or_else(|| EngineError::new_custom_error("Missing signature".into()))?;
+
+        Ok(SessionLogonParams {
+            api_key,
+            timestamp,
+            signature,
+        })
+    }
+
     pub async fn create_account_status_request(&self) -> Result<BinanceRpcRequest, EngineError> {
-        let session = self.get_session().await?;
+        // Generate a NEW signature with a NEW timestamp for each request
+        // Reusing the logon session would cause signature validation to fail
+        // Include recvWindow and omitZeroBalances in the signature calculation
+        let recv_window = Some(60_000);
+        let omit_zero_balances = Some(true);
+
+        let session = self.build_signed_account_status_params(recv_window, omit_zero_balances)?;
 
         let request = BinanceAccountStatusRequest {
             id: generate_custom_uuid().into(),
             method: ACCOUNT_STATUS.into(),
             params: BinanceAccountStatusParams {
                 session_logon_params: session,
-                recv_window: Some(60_000),
-                omit_zero_balances: Some(true),
+                recv_window,
+                omit_zero_balances,
             },
         };
 
@@ -428,7 +480,10 @@ impl BinanceWSClient {
         &self,
     ) -> Result<WebSocketStream<MaybeTlsStream<TcpStream>>, EngineError> {
         let ws_url = format!("{url}", url = self.url);
-        self.make_ws_request(&ws_url).await
+        info!("Connecting to Binance WebSocket: {ws_url}");
+        let stream = self.make_ws_request(&ws_url).await?;
+        info!("WebSocket connection established successfully");
+        Ok(stream)
     }
 
     pub async fn connect_and_authenticate(
@@ -436,25 +491,61 @@ impl BinanceWSClient {
     ) -> Result<WebSocketStream<MaybeTlsStream<TcpStream>>, EngineError> {
         let mut ws_stream = self.create_ws_stream().await?;
 
+        info!("Creating session.logon message...");
         let (logon_msg, logon_params) = self.subscription_handler.create_logon_message()?;
-        ws_stream.send(logon_msg).await?;
 
-        if let Some(Ok(Message::Text(logon_response))) = ws_stream.next().await {
-            let v: Value = serde_json::from_str(&logon_response)?;
-            if v.get("status").and_then(|s| s.as_u64()) == Some(200) {
-                debug!("Successfully authenticated with session.logon");
-                self.subscription_handler.set_session(logon_params).await;
-            } else {
-                let error_msg = format!("session.logon failed: {v:?}");
+        // Log the logon message content (without sensitive data)
+        if let Message::Text(logon_text) = &logon_msg {
+            let logon_json: Value = serde_json::from_str(logon_text).unwrap_or_default();
+            info!(
+                "Sending session.logon: method={method}, id={id}",
+                method = logon_json
+                    .get("method")
+                    .and_then(|m| m.as_str())
+                    .unwrap_or("unknown"),
+                id = logon_json
+                    .get("id")
+                    .and_then(|i| i.as_str())
+                    .unwrap_or("unknown")
+            );
+        }
+
+        ws_stream.send(logon_msg).await?;
+        info!("session.logon message sent, waiting for response...");
+
+        match ws_stream.next().await {
+            Some(Ok(Message::Text(logon_response))) => {
+                info!("Received logon response: {logon_response}");
+                let v: Value = serde_json::from_str(&logon_response)?;
+                if v.get("status").and_then(|s| s.as_u64()) == Some(200) {
+                    info!("Successfully authenticated with session.logon (status=200)");
+                    self.subscription_handler.set_session(logon_params).await;
+                } else {
+                    let status = v.get("status").and_then(|s| s.as_u64()).unwrap_or(0);
+                    let error_msg = format!("session.logon failed with status={status}: {v:?}");
+                    error!("{error_msg}");
+                    return Err(EngineError::new_custom_error(error_msg.into()));
+                }
+            }
+            Some(Ok(other_msg)) => {
+                let error_msg = format!("Unexpected message type during logon: {other_msg:?}");
                 error!("{error_msg}");
                 return Err(EngineError::new_custom_error(error_msg.into()));
             }
-        } else {
-            return Err(EngineError::new_custom_error(
-                "No response received from session.logon - connection may have closed".into(),
-            ));
+            Some(Err(e)) => {
+                let error_msg = format!("Error reading logon response: {e}");
+                error!("{error_msg}");
+                return Err(EngineError::new_custom_error(error_msg.into()));
+            }
+            None => {
+                let error_msg =
+                    "No response received from session.logon - connection may have closed";
+                error!("{error_msg}");
+                return Err(EngineError::new_custom_error(error_msg.into()));
+            }
         }
 
+        info!("Authentication complete, WebSocket ready for subscription");
         Ok(ws_stream)
     }
 
@@ -464,12 +555,98 @@ impl BinanceWSClient {
     ) -> Result<(), EngineError> {
         if let Some(subscription_message) = self.subscription_handler.create_subscription_request()
         {
-            debug!("Subscribing to userDataStream...");
+            // Log subscription message content
+            if let Message::Text(sub_text) = &subscription_message {
+                let sub_json: Value = serde_json::from_str(sub_text).unwrap_or_default();
+                info!("Subscribing to userDataStream: method={method}, id={id}, full_message={message}",
+                    method = sub_json.get("method").and_then(|m| m.as_str()).unwrap_or("unknown"),
+                    id = sub_json.get("id").and_then(|i| i.as_str()).unwrap_or("unknown"),
+                    message = sub_text
+                );
+            } else {
+                info!("Subscribing to userDataStream (non-text message)");
+            }
+
             ws_stream.send(subscription_message).await?;
+            info!("userDataStream.subscribe message sent, waiting for response (timeout=500ms)...");
+
+            // Wait briefly for any immediate subscription response
+            // Note: Binance may not send an acknowledgment for userDataStream.subscribe
+            // It may just start sending events, so we use a short timeout
+            match timeout(tokio::time::Duration::from_millis(500), ws_stream.next()).await {
+                Ok(Some(Ok(Message::Text(response)))) => {
+                    info!("Received subscription response: {response}");
+                    let v: Value = serde_json::from_str(&response)?;
+                    // Check if this is a subscription acknowledgment or error
+                    if let Some(status) = v.get("status").and_then(|s| s.as_u64()) {
+                        if status == 200 {
+                            info!("Subscription acknowledged with status=200: {response}");
+                        } else {
+                            warn!("Subscription returned non-200 status={status}: {response}");
+                        }
+                    } else if v.get("result").is_some() {
+                        info!("Subscription result received: {response}");
+                    } else if v.get("e").is_some() {
+                        // This is an event - subscription likely succeeded
+                        info!("Received event during subscription (subscription likely succeeded): event_type={event_type}, full={response}",
+                            event_type = v.get("e").and_then(|e| e.as_str()).unwrap_or("unknown")
+                        );
+                    } else {
+                        // Unknown message format
+                        warn!("Received unknown message format during subscription: {response}");
+                    }
+                }
+                Ok(Some(Ok(Message::Ping(payload)))) => {
+                    info!("Received Ping during subscription (payload_len={len}), will respond with Pong",
+                        len = payload.len()
+                    );
+                }
+                Ok(Some(Ok(Message::Pong(_)))) => {
+                    info!("Received Pong during subscription");
+                }
+                Ok(Some(Ok(Message::Close(close_frame)))) => {
+                    if let Some(cf) = &close_frame {
+                        error!(
+                            "WebSocket closed during subscription: code={code}, reason={reason}",
+                            code = cf.code,
+                            reason = cf.reason
+                        );
+                    } else {
+                        error!("WebSocket closed during subscription (no close frame)");
+                    }
+                    return Err(EngineError::new_custom_error(
+                        "WebSocket stream closed during subscription".into(),
+                    ));
+                }
+                Ok(Some(Ok(other))) => {
+                    warn!("Received non-text message during subscription: {other:?}");
+                }
+                Ok(Some(Err(e))) => {
+                    error!("Error reading subscription response: {e}");
+                    return Err(EngineError::new_custom_error(
+                        format!("Error reading subscription response: {e}").into(),
+                    ));
+                }
+                Ok(None) => {
+                    error!("WebSocket stream closed during subscription (None returned)");
+                    return Err(EngineError::new_custom_error(
+                        "WebSocket stream closed during subscription".into(),
+                    ));
+                }
+                Err(_) => {
+                    // Timeout - this is OK, Binance may not send immediate response
+                    // Events will come through the reader task after stream split
+                    info!("No immediate subscription response (timeout after 500ms - this is normal, events will come later)");
+                }
+            }
         } else {
             error!("Failed to create subscription message");
+            return Err(EngineError::new_custom_error(
+                "Failed to create subscription message".into(),
+            ));
         }
 
+        info!("Subscription process complete");
         Ok(())
     }
 
@@ -487,32 +664,84 @@ impl BinanceWSClient {
             + 'static,
     {
         tokio::spawn(async move {
+            info!("WebSocket reader task started");
+            let mut message_count = 0u64;
+
             while let Some(message) = reader.next().await {
+                message_count += 1;
                 match message {
-                    Ok(Message::Text(txt)) => match handler.handle_text_message(txt.into()) {
-                        Ok(BinanceInbound::Rpc(rpc)) => {
-                            let _ = inbound_tx.send(BinanceInbound::Rpc(rpc)).await;
+                    Ok(Message::Text(txt)) => {
+                        info!(
+                            "Reader received text message #{count}: {text}",
+                            count = message_count,
+                            text = txt
+                        );
+                        match handler.handle_text_message(txt.into()) {
+                            Ok(BinanceInbound::Rpc(rpc)) => {
+                                debug!("Parsed as RPC response, forwarding...");
+                                if inbound_tx.send(BinanceInbound::Rpc(rpc)).await.is_err() {
+                                    warn!("Failed to send RPC to inbound channel (channel closed)");
+                                    break;
+                                }
+                            }
+                            Ok(BinanceInbound::Event(evt)) => {
+                                debug!("Parsed as event, forwarding...");
+                                if inbound_tx.send(BinanceInbound::Event(evt)).await.is_err() {
+                                    warn!(
+                                        "Failed to send event to inbound channel (channel closed)"
+                                    );
+                                    break;
+                                }
+                            }
+                            Err(e) => {
+                                error!(
+                                    "WS parse error on message #{count}: {e}",
+                                    count = message_count
+                                );
+                            }
                         }
-                        Ok(BinanceInbound::Event(evt)) => {
-                            let _ = inbound_tx.send(BinanceInbound::Event(evt)).await;
-                        }
-                        Err(e) => error!("WS parse error: {e}"),
-                    },
-                    Ok(Message::Binary(bin)) => handler.handle_binary(bin),
-                    Ok(Message::Ping(payload)) => {
-                        handler.handle_ping(payload.clone());
-                        let _ = ping_tx.send(payload).await;
                     }
-                    Ok(Message::Pong(p)) => handler.handle_pong(p),
+                    Ok(Message::Binary(bin)) => {
+                        info!(
+                            "Reader received binary message #{count} (len={len})",
+                            count = message_count,
+                            len = bin.len()
+                        );
+                        handler.handle_binary(bin);
+                    }
+                    Ok(Message::Ping(payload)) => {
+                        info!(
+                            "Reader received Ping #{count} (payload_len={len}, payload={payload:?})",
+                            count = message_count,
+                            len = payload.len(),
+                            payload = payload
+                        );
+                        handler.handle_ping(payload.clone());
+                        if ping_tx.send(payload).await.is_err() {
+                            warn!("Failed to send ping to ping channel");
+                        }
+                    }
+                    Ok(Message::Pong(p)) => {
+                        info!(
+                            "Reader received Pong #{count} (payload_len={len})",
+                            count = message_count,
+                            len = p.len()
+                        );
+                        handler.handle_pong(p);
+                    }
                     Ok(Message::Close(c)) => {
                         if let Some(close_frame) = &c {
                             error!(
-                                "WebSocket closed by server: code={code}, reason={reason}",
+                                "WebSocket closed by server (message #{count}): code={code}, reason={reason}",
+                                count = message_count,
                                 code = close_frame.code,
                                 reason = close_frame.reason
                             );
                         } else {
-                            error!("WebSocket closed by server (no close frame)");
+                            error!(
+                                "WebSocket closed by server (message #{count}, no close frame)",
+                                count = message_count
+                            );
                         }
                         handler.handle_close(c);
                         // Close the inbound channel to signal the connection is dead
@@ -520,14 +749,20 @@ impl BinanceWSClient {
                         break;
                     }
                     Err(e) => {
-                        error!("WebSocket read error: {e}");
+                        error!(
+                            "WebSocket read error on message #{count}: {e}",
+                            count = message_count
+                        );
                         // Close the inbound channel on error
                         // inbound_tx will be dropped when it goes out of scope
                         break;
                     }
                 }
             }
-            debug!("reader.next() returned None — stream closed.");
+            info!(
+                "WebSocket reader task exiting (processed {count} messages total)",
+                count = message_count
+            );
             // inbound_tx is automatically dropped here when it goes out of scope
         });
     }
@@ -539,46 +774,75 @@ impl BinanceWSClient {
         ws_write: Arc<Mutex<SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>>>,
     ) {
         tokio::spawn(async move {
+            info!("WebSocket writer task started");
+            let mut rpc_count = 0u64;
+            let mut pong_count = 0u64;
+
             loop {
                 tokio::select! {
                     Some(rpc) = outbound_rx.recv() => {
-                        let json = match rpc {
-                            BinanceRpcRequest::AccountStatus(req) => serde_json::to_string(&req),
-                            BinanceRpcRequest::TestOrder(req)     => serde_json::to_string(&req),
-                            BinanceRpcRequest::OpenOrder(req)     => serde_json::to_string(&req),
-                            BinanceRpcRequest::CancelOrder(req)   => serde_json::to_string(&req),
-                            BinanceRpcRequest::CancelAll(req)     => serde_json::to_string(&req),
+                        rpc_count += 1;
+                        let (rpc_type, json) = match rpc {
+                            BinanceRpcRequest::AccountStatus(req) => ("AccountStatus", serde_json::to_string(&req)),
+                            BinanceRpcRequest::TestOrder(req)     => ("TestOrder", serde_json::to_string(&req)),
+                            BinanceRpcRequest::OpenOrder(req)     => ("OpenOrder", serde_json::to_string(&req)),
+                            BinanceRpcRequest::CancelOrder(req)   => ("CancelOrder", serde_json::to_string(&req)),
+                            BinanceRpcRequest::CancelAll(req)     => ("CancelAll", serde_json::to_string(&req)),
                         };
                         match json {
                             Ok(payload) => {
+                                debug!("Writer sending RPC #{count} ({type}): {payload}",
+                                    count = rpc_count,
+                                    type = rpc_type,
+                                    payload = payload
+                                );
                                 let mut w = ws_write.lock().await;
                                 if let Err(e) = w.send(Message::Text(payload)).await {
-                                    error!("Failed to send RPC: {e:?}");
+                                    error!("Failed to send RPC #{count} ({type}): {e:?}",
+                                        count = rpc_count,
+                                        type = rpc_type
+                                    );
                                     break;
                                 }
+                                debug!("RPC #{count} ({type}) sent successfully", count = rpc_count, type = rpc_type);
                             }
                             Err(e) => {
-                                error!("Serialization error: {e:?}");
+                                error!("Serialization error for RPC #{count} ({type}): {e:?}",
+                                    count = rpc_count,
+                                    type = rpc_type
+                                );
                                 break;
                             }
                         }
                     }
-                        Some(p) = ping_rx.recv() => {
+                    Some(p) = ping_rx.recv() => {
+                        pong_count += 1;
+                        debug!("Writer sending Pong #{count} (payload_len={len})",
+                            count = pong_count,
+                            len = p.len()
+                        );
                         let mut w = ws_write.lock().await;
                         if let Err(e) = w.send(Message::Pong(p)).await {
-                            error!("Failed to send Pong: {e:?}");
+                            error!("Failed to send Pong #{count}: {e:?}", count = pong_count);
                             break;
                         }
                     }
 
                     else => {
-                        debug!("Both RPC and ping channels closed, writer exiting");
+                        info!("Both RPC and ping channels closed, writer exiting (sent {rpc_count} RPCs, {pong_count} Pongs)",
+                            rpc_count = rpc_count,
+                            pong_count = pong_count
+                        );
                         break;
                     }
                 }
             }
 
-            debug!("WebSocket writer task exited");
+            info!(
+                "WebSocket writer task exited (sent {rpc_count} RPCs, {pong_count} Pongs total)",
+                rpc_count = rpc_count,
+                pong_count = pong_count
+            );
         });
     }
 
@@ -593,11 +857,22 @@ impl BinanceWSClient {
         ping_rx: mpsc::Receiver<Vec<u8>>,
         handler: impl MessageHandler<BinanceInbound> + Send + Sync + 'static,
     ) -> Result<ConnectionSession, EngineError> {
+        info!("Splitting WebSocket stream into read/write halves...");
+        info!("Channel status: inbound_tx.is_closed={}, outbound_tx.is_closed={}, ping_tx.is_closed={}",
+            inbound_tx.is_closed(),
+            outbound_tx.is_closed(),
+            ping_tx.is_closed()
+        );
+
         let (ws_write, ws_read) = ws_stream.split();
         let ws_write = Arc::new(Mutex::new(ws_write));
 
+        info!("Starting writer and reader tasks...");
         self.handle_write_stream(outbound_rx, ping_rx, Arc::clone(&ws_write));
         self.handle_read_stream(ws_read, inbound_tx, ping_tx, handler);
+        info!("Reader and writer tasks spawned, connection fully established. Returning ConnectionSession with outbound_tx (is_closed={})",
+            outbound_tx.is_closed()
+        );
 
         Ok(ConnectionSession { outbound_tx })
     }

@@ -54,21 +54,25 @@ impl From<ExecutionReport> for Order {
     fn from(report: ExecutionReport) -> Self {
         let status: OrderStatus = report.order_status.into();
 
-        // Use cumulative filled quantity if available, otherwise fall back to quantity for filled orders
-        let filled_amount = if matches!(status, OrderStatus::Filled | OrderStatus::PartiallyFilled)
-        {
-            // For filled/partially filled orders, use cumulative filled quantity if provided
-            // Otherwise, if fully filled, use the original quantity; if partially filled, use zero
-            report.cumulative_filled_quantity.unwrap_or_else(|| {
-                if status == OrderStatus::Filled {
-                    report.quantity
-                } else {
-                    // PartiallyFilled without cumulative quantity - this shouldn't happen but default to zero
-                    rust_decimal::Decimal::ZERO
-                }
-            })
-        } else {
-            rust_decimal::Decimal::ZERO
+        // Use cumulative filled quantity (z field) for filled/partially filled orders
+        // This is the authoritative source for how much has been filled so far
+        let filled_amount = match status {
+            OrderStatus::Filled | OrderStatus::PartiallyFilled => {
+                // Always prefer cumulative_filled_quantity (z field) when available
+                // For Filled orders, if cumulative is missing, use quantity as fallback
+                // For PartiallyFilled orders, cumulative should always be present from Binance
+                report.cumulative_filled_quantity.unwrap_or_else(|| {
+                    if status == OrderStatus::Filled {
+                        // Fully filled but no cumulative - use original quantity as fallback
+                        report.quantity
+                    } else {
+                        // PartiallyFilled without cumulative quantity - this indicates a data issue
+                        // Default to zero to avoid incorrect position tracking
+                        rust_decimal::Decimal::ZERO
+                    }
+                })
+            }
+            _ => rust_decimal::Decimal::ZERO,
         };
 
         Order {

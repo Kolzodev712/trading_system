@@ -53,6 +53,11 @@ ed25519-dalek = "2.1.1"
 # Storage
 redis = { version = "0.27.6", features = ["tokio-comp"] }
 
+# HTTP Server
+axum = "0.7"
+tower = "0.4"
+tower-http = { version = "0.5", features = ["cors", "trace"] }
+
 # Utils
 futures-util = "0.3"
 chrono = { version = "0.4.31", features = ["serde"] }

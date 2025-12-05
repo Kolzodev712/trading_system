@@ -1,8 +1,10 @@
 pub mod authenticator;
 pub mod channels;
+pub mod config;
 pub mod data;
 pub mod error;
 pub mod redis;
+pub mod retry;
 pub mod rest_client;
 pub mod traits;
 pub mod utils;

@@ -3,6 +3,7 @@ use core_logic::{
     data::{base_data::Pair, private_data::Order},
     error::EngineError,
     redis::{RedisMessage, ORDERBOOK_CHANNEL},
+    retry::{order_retry_config, retry_with_backoff},
     traits::TradingClient,
 };
 use exchange_engine::exchanges::binance::websocket::types::user_data::execution_report::ExecutionReport;
@@ -86,8 +87,20 @@ impl<S: Strategy> StrategyExecutor<S> {
                             continue;
                         }
 
-                        // Place the order
-                        match trading_client.write().await.open_order(req.clone()).await {
+                        // Place the order with retry logic
+                        let retry_config = order_retry_config();
+                        let client_clone = Arc::clone(&trading_client);
+                        let req_clone = req.clone();
+                        
+                        match retry_with_backoff(&retry_config, || {
+                            let client = Arc::clone(&client_clone);
+                            let req = req_clone.clone();
+                            Box::pin(async move {
+                                client.write().await.open_order(req).await
+                            })
+                        })
+                        .await
+                        {
                             Ok(order) => {
                                 info!("Order placed: {order:?}");
                                 // Add to active orders
@@ -95,7 +108,7 @@ impl<S: Strategy> StrategyExecutor<S> {
                                 strat.get_state_mut().add_order(order);
                             }
                             Err(e) => {
-                                error!("Failed to place order: {e}");
+                                error!("Failed to place order after retries: {e}");
                             }
                         }
                     }

@@ -504,7 +504,7 @@ impl BinanceWSClient {
                     Err(e) => error!("WS read error: {e}"),
                 }
             }
-            debug!("💀 reader.next() returned None — stream closed.");
+            debug!("reader.next() returned None — stream closed.");
         });
     }
 
@@ -632,7 +632,7 @@ impl WebSocketClient<ParsedBinanceMessage> for BinanceWSClient {
                     }
                 }
             }
-            debug!("💀 handle_messages: stream closed");
+            debug!("handle_messages: stream closed");
         });
 
         Ok(())

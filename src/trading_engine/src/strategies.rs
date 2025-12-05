@@ -31,11 +31,13 @@ pub struct BuyLowSellHigh {
     max_history: usize,
 
     // Strategy parameters
-    buy_threshold: Decimal,   // Buy when price is X% below average
-    sell_threshold: Decimal,  // Sell when price is X% above average
-    position_size: Decimal,   // Fixed position size per trade
-    max_position: Decimal,    // Maximum total position size
-    max_active_orders: usize, // Maximum concurrent orders
+    buy_threshold: Decimal,        // Buy when price is X% below average
+    sell_threshold: Decimal,      // Sell when price is X% above average
+    position_size: Decimal,        // Fixed position size per trade
+    max_position: Decimal,         // Maximum total position size
+    max_active_orders: usize,      // Maximum concurrent orders
+    stop_loss_percent: Option<Decimal>,  // Stop loss percentage (e.g., 5.0 for 5%)
+    take_profit_percent: Option<Decimal>, // Take profit percentage (e.g., 10.0 for 10%)
 }
 
 impl BuyLowSellHigh {
@@ -44,18 +46,27 @@ impl BuyLowSellHigh {
         symbol: Pair,
         position_size: Decimal,
         max_position: Decimal,
+        buy_threshold: Decimal,
+        sell_threshold: Decimal,
+        stop_loss_percent: Option<Decimal>,
+        take_profit_percent: Option<Decimal>,
+        max_active_orders: usize,
+        price_history_size: usize,
+        min_price_history: usize,
     ) -> Self {
         Self {
             state: TradingState::new(),
             trading_client,
             symbol,
             price_history: Vec::new(),
-            max_history: 100, // Keep last 100 prices for moving average
-            buy_threshold: Decimal::new(2, 2), // 2% below average
-            sell_threshold: Decimal::new(2, 2), // 2% above average
+            max_history: price_history_size,
+            buy_threshold,
+            sell_threshold,
             position_size,
             max_position,
-            max_active_orders: 2, // Max 2 orders at a time (1 buy, 1 sell)
+            max_active_orders,
+            stop_loss_percent,
+            take_profit_percent,
         }
     }
 
@@ -106,12 +117,13 @@ impl Strategy for BuyLowSellHigh {
             self.price_history.remove(0);
         }
 
-        // Need at least 20 prices to calculate meaningful average
-        if self.price_history.len() < 20 {
+        // Need minimum price history to calculate meaningful average
+        let min_history = 20; // Default minimum
+        if self.price_history.len() < min_history {
             debug!(
                 "Building price history: {current}/{target}",
                 current = self.price_history.len(),
-                target = 20
+                target = min_history
             );
             return Ok(None);
         }
@@ -132,6 +144,55 @@ impl Strategy for BuyLowSellHigh {
         let current_qty = current_position
             .map(|p| p.quantity)
             .unwrap_or(Decimal::ZERO);
+
+        // Check stop-loss and take-profit for existing positions
+        if let Some(position) = current_position {
+            if position.quantity > Decimal::ZERO {
+                // Check stop-loss
+                if let Some(stop_loss) = self.stop_loss_percent {
+                    let loss_percent = (position.avg_price - mid_price) / position.avg_price * Decimal::from(100);
+                    if loss_percent >= stop_loss {
+                        warn!("Stop-loss triggered: loss={loss_percent:.2}%, threshold={stop_loss}%");
+                        let sell_price = if !orderbook.bids.is_empty() {
+                            orderbook.bids[0]
+                        } else {
+                            mid_price
+                        };
+                        return Ok(Some(OrderRequest {
+                            symbol: self.symbol.clone().into(),
+                            side: Side::Sell,
+                            order_type: OrderType::Limit,
+                            price: sell_price,
+                            amount: position.quantity,
+                            timestamp: None,
+                            exchange_params: Default::default(),
+                        }));
+                    }
+                }
+
+                // Check take-profit
+                if let Some(take_profit) = self.take_profit_percent {
+                    let profit_percent = (mid_price - position.avg_price) / position.avg_price * Decimal::from(100);
+                    if profit_percent >= take_profit {
+                        info!("Take-profit triggered: profit={profit_percent:.2}%, threshold={take_profit}%");
+                        let sell_price = if !orderbook.bids.is_empty() {
+                            orderbook.bids[0]
+                        } else {
+                            mid_price
+                        };
+                        return Ok(Some(OrderRequest {
+                            symbol: self.symbol.clone().into(),
+                            side: Side::Sell,
+                            order_type: OrderType::Limit,
+                            price: sell_price,
+                            amount: position.quantity,
+                            timestamp: None,
+                            exchange_params: Default::default(),
+                        }));
+                    }
+                }
+            }
+        }
 
         // Decision logic
         if self.should_buy(mid_price, avg_price) {

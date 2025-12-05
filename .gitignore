@@ -2,3 +2,4 @@
 /legacy
 /trading_keys/binance
 /src/exchange_engine/config/binance_config.json
+/config/trading_system.json

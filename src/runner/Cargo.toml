@@ -47,6 +47,12 @@ chrono = { workspace = true }
 rust_decimal = { workspace = true }
 base64 = { workspace = true }
 
+
+# HTTP Server
+axum = { workspace = true }
+tower = { workspace = true }
+tower-http = { workspace = true }
+
 # Testing
 tokio-test = { workspace = true }
 

@@ -1,5 +1,5 @@
 use exchange_engine::exchanges::binance::{
-    config::BinanceConfig, rest::client::BinanceHttpClient, rest_client::BinanceClient,
+    config::BinanceConfig, rest::client::BinanceHttpClient, rest_client::BinanceRestClient,
 };
 use std::fs;
 
@@ -15,14 +15,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = load_binance_config("config/binance_config.json")?;
 
     let client = BinanceHttpClient::new(config.clone());
-    let driver = BinanceClient::new(client, config.clone());
+    let driver = BinanceRestClient::new(client, config.clone());
 
-    match driver.get_orderbook().await {
+    match driver.fetch_orderbook().await {
         Ok(response) => {
-            println!("Time: {:?}", response);
+            println!("Orderbook: {:?}", response);
         }
         Err(e) => {
-            eprintln!("Failed to get time: {}", e);
+            eprintln!("Failed to get orderbook: {}", e);
         }
     }
 

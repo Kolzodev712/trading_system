@@ -1,6 +1,13 @@
 use crate::exchanges::binance::common_types::{
     BinanceOrderType, BinanceSide, BinanceSymbol, BinanceTimeInForce,
 };
+use core_logic::{
+    data::{
+        base_data::OrderId,
+        private_data::{Order, OrderRequest},
+    },
+    error::EngineError,
+};
 
 use super::super::common::{BinanceRateLimit, SessionLogonParams};
 use core_logic::utils::{deserialize_smol_str, serialize_smol_str};
@@ -62,6 +69,48 @@ impl BinanceWsOrderReqParams {
         }
     }
 }
+
+impl TryFrom<OrderRequest> for BinanceWsOrderReqParams {
+    type Error = EngineError;
+
+    fn try_from(req: OrderRequest) -> Result<Self, Self::Error> {
+        let side: BinanceSide = req.side.into();
+        let order_type: BinanceOrderType = req.order_type.into();
+
+        let tif = req
+            .exchange_params
+            .get("timeInForce")
+            .or_else(|| req.exchange_params.get("tif"))
+            .and_then(|raw| parse_tif(raw))
+            .unwrap_or(match order_type {
+                BinanceOrderType::Limit
+                | BinanceOrderType::LimitMaker
+                | BinanceOrderType::StopLossLimit
+                | BinanceOrderType::TakeProfitLimit => BinanceTimeInForce::Gtc,
+                _ => BinanceTimeInForce::Gtc,
+            });
+
+        Ok(Self {
+            symbol: SmolStr::from(&req.symbol),
+            side,
+            order_type,
+            time_in_force: tif,
+            price: req.price,
+            quantity: req.amount,
+            session: SessionLogonParams::default(),
+        })
+    }
+}
+
+fn parse_tif(s: &str) -> Option<BinanceTimeInForce> {
+    match s.to_ascii_uppercase().as_str() {
+        "GTC" => Some(BinanceTimeInForce::Gtc),
+        "IOC" => Some(BinanceTimeInForce::Ioc),
+        "FOK" => Some(BinanceTimeInForce::Fok),
+        _ => None,
+    }
+}
+
 // https://developers.binance.com/docs/binance-spot-api-docs/websocket-api/trading-requests#place-new-order-trade
 #[derive(Debug, Clone, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -70,34 +119,60 @@ pub struct BinanceWsOrderResponse {
         serialize_with = "serialize_smol_str",
         deserialize_with = "deserialize_smol_str"
     )]
-    id: SmolStr,
-    status: i64,
-    result: BinanceWsOrderResult,
-    rate_limits: BinanceWsOrderResRateLimit,
+    pub id: SmolStr,
+    pub status: i64,
+    pub result: BinanceWsOrderResult,
+    pub rate_limits: BinanceWsOrderResRateLimit,
+}
+
+pub fn map_open_order_to_core(
+    params: BinanceWsOrderReqParams,
+    resp: BinanceWsOrderResponse,
+) -> Result<Order, EngineError> {
+    if resp.status != 200 {
+        return Err(EngineError::new_custom_error(
+            format!("WS RPC error status={}", resp.status).into(),
+        ));
+    }
+
+    Ok(Order {
+        order_id: resp
+            .result
+            .order_id
+            .parse::<u64>()
+            .map(OrderId::from)
+            .map_err(|e| EngineError::new_custom_error(format!("invalid order_id: {e}").into()))?,
+        symbol: resp.result.symbol.convert_to_smolstr().into(),
+        price: params.price,
+        amount: params.quantity,
+        side: params.side.into(),
+        internal_created_at: chrono::Utc::now().timestamp_millis() as u64,
+        exchange_created_at: Some(resp.result.transact_time as u64),
+    })
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BinanceWsOrderResult {
-    symbol: BinanceSymbol,
+    pub symbol: BinanceSymbol,
     #[serde(
         serialize_with = "serialize_smol_str",
         deserialize_with = "deserialize_smol_str"
     )]
-    order_id: SmolStr,
-    order_list_id: i64,
+    pub order_id: SmolStr,
+    pub order_list_id: i64,
     #[serde(
         serialize_with = "serialize_smol_str",
         deserialize_with = "deserialize_smol_str"
     )]
-    client_order_id: SmolStr,
-    transact_time: i64,
+    pub client_order_id: SmolStr,
+    pub transact_time: i64,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BinanceWsOrderResRateLimit {
-    rate_limit: Vec<BinanceRateLimit>,
+    pub rate_limit: Vec<BinanceRateLimit>,
 }
 
 #[cfg(test)]

@@ -1,6 +1,7 @@
 use crate::exchanges::binance::common_types::{
     BinanceOrderStatus, BinanceOrderType, BinanceSide, BinanceTimeInForce,
 };
+use core_logic::data::macros::Symbol;
 
 use super::super::common::{BinanceRateLimit, SessionLogonParams};
 use core_logic::utils::{deserialize_smol_str, serialize_smol_str};
@@ -52,6 +53,17 @@ impl BinanceWsCancelOrderReqParams {
         Self {
             symbol,
             orig_client_order_id: orig_client_order_id.into(),
+            order_type,
+            session: SessionLogonParams::default(),
+        }
+    }
+}
+
+impl From<(Symbol, SmolStr, BinanceOrderType)> for BinanceWsCancelOrderReqParams {
+    fn from((symbol, client_id, order_type): (Symbol, SmolStr, BinanceOrderType)) -> Self {
+        Self {
+            symbol: SmolStr::from(&symbol),
+            orig_client_order_id: client_id,
             order_type,
             session: SessionLogonParams::default(),
         }

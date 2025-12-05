@@ -55,7 +55,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     {
         let client = binance_client.read().await;
-        if let Err(e) = client.cancel_all_orders(cancel_all_params).await {
+        if let Err(e) = client.cancel_all_orders_rpc(cancel_all_params).await {
             error!("❌ Failed to send cancel-all request: {}", e);
         } else {
             info!("✅ Cancel-all request sent");

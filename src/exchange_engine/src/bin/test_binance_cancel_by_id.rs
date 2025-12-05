@@ -61,7 +61,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         let client = binance_client.read().await;
         debug!("📤 Sending cancel-order request: {:?}", params);
-        match client.cancel_order(params).await {
+        match client.cancel_order_rpc(params).await {
             Ok(_) => info!("✅ Cancel order request sent!"),
             Err(e) => error!("❌ Failed to send cancel order: {}", e),
         }

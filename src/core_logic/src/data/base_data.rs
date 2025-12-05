@@ -89,7 +89,7 @@ pub enum OrderStatus {
     Expired,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Eq, PartialEq)]
+#[derive(Debug, Deserialize, Serialize, Clone, Eq, PartialEq, Hash)]
 pub struct OrderId(
     #[serde(
         serialize_with = "serialize_smol_str",

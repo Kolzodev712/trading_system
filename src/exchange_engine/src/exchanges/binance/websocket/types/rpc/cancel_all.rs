@@ -1,6 +1,7 @@
 use crate::exchanges::binance::common_types::{
     BinanceOrderStatus, BinanceOrderType, BinanceSide, BinanceTimeInForce,
 };
+use core_logic::data::macros::Symbol;
 
 use super::super::common::{BinanceRateLimit, SessionLogonParams};
 use core_logic::utils::{deserialize_smol_str, serialize_smol_str};
@@ -46,6 +47,15 @@ impl BinanceWsCancelAllOrdersReqParams {
     }
 }
 
+impl From<Symbol> for BinanceWsCancelAllOrdersReqParams {
+    fn from(symbol: Symbol) -> Self {
+        Self {
+            symbol: SmolStr::from(&symbol),
+            session: SessionLogonParams::default(),
+        }
+    }
+}
+
 // https://developers.binance.com/docs/binance-spot-api-docs/websocket-api/trading-requests#cancel-order-trade
 #[derive(Debug, Clone, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -54,10 +64,10 @@ pub struct BinanceWsCancelAllOrdersResponse {
         serialize_with = "serialize_smol_str",
         deserialize_with = "deserialize_smol_str"
     )]
-    id: SmolStr,
-    status: i64,
-    result: BinanceWsCancelAllOrdersResult,
-    rate_limits: BinanceRateLimit,
+    pub id: SmolStr,
+    pub status: i64,
+    pub result: BinanceWsCancelAllOrdersResult,
+    pub rate_limits: BinanceRateLimit,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Deserialize, Serialize)]
@@ -74,48 +84,48 @@ pub struct SingleCancelOrder {
         serialize_with = "serialize_smol_str",
         deserialize_with = "deserialize_smol_str"
     )]
-    symbol: SmolStr,
+    pub symbol: SmolStr,
     // order id that was cancelled
     #[serde(
         serialize_with = "serialize_smol_str",
         deserialize_with = "deserialize_smol_str"
     )]
-    orig_client_order_id: SmolStr,
-    order_id: i64,
-    order_list_id: i64,
+    pub orig_client_order_id: SmolStr,
+    pub order_id: i64,
+    pub order_list_id: i64,
     #[serde(
         serialize_with = "serialize_smol_str",
         deserialize_with = "deserialize_smol_str"
     )]
-    client_order_id: SmolStr,
-    transact_time: i64,
-    price: Decimal,
-    orig_qty: Decimal,
-    status: BinanceOrderStatus,
-    time_in_force: BinanceTimeInForce,
+    pub client_order_id: SmolStr,
+    pub transact_time: i64,
+    pub price: Decimal,
+    pub orig_qty: Decimal,
+    pub status: BinanceOrderStatus,
+    pub time_in_force: BinanceTimeInForce,
     #[serde(rename = "type")]
-    type_: BinanceOrderType,
-    side: BinanceSide,
-    stop_price: Decimal,
+    pub type_: BinanceOrderType,
+    pub side: BinanceSide,
+    pub stop_price: Decimal,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OcoCancelOrder {
-    order_list_id: i64,
+    pub order_list_id: i64,
     #[serde(
         serialize_with = "serialize_smol_str",
         deserialize_with = "deserialize_smol_str"
     )]
-    list_client_order_id: SmolStr,
-    transaction_time: i64,
+    pub list_client_order_id: SmolStr,
+    pub transaction_time: i64,
     #[serde(
         serialize_with = "serialize_smol_str",
         deserialize_with = "deserialize_smol_str"
     )]
-    symbol: SmolStr,
-    orders: Vec<OcoOrder>,
-    order_reports: Vec<OcoOrderReport>,
+    pub symbol: SmolStr,
+    pub orders: Vec<OcoOrder>,
+    pub order_reports: Vec<OcoOrderReport>,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Deserialize, Serialize)]
@@ -125,13 +135,13 @@ pub struct OcoOrder {
         serialize_with = "serialize_smol_str",
         deserialize_with = "deserialize_smol_str"
     )]
-    symbol: SmolStr,
-    order_id: i64,
+    pub symbol: SmolStr,
+    pub order_id: i64,
     #[serde(
         serialize_with = "serialize_smol_str",
         deserialize_with = "deserialize_smol_str"
     )]
-    client_order_id: SmolStr,
+    pub client_order_id: SmolStr,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Deserialize, Serialize)]
@@ -141,32 +151,32 @@ pub struct OcoOrderReport {
         serialize_with = "serialize_smol_str",
         deserialize_with = "deserialize_smol_str"
     )]
-    symbol: SmolStr,
+    pub symbol: SmolStr,
     // order id that was cancelled
     #[serde(
         serialize_with = "serialize_smol_str",
         deserialize_with = "deserialize_smol_str"
     )]
-    orig_client_order_id: SmolStr,
-    order_id: i64,
-    order_list_id: i64,
+    pub orig_client_order_id: SmolStr,
+    pub order_id: i64,
+    pub order_list_id: i64,
     #[serde(
         serialize_with = "serialize_smol_str",
         deserialize_with = "deserialize_smol_str"
     )]
-    client_order_id: SmolStr,
-    transact_time: i64,
-    price: Decimal,
-    orig_qty: Decimal,
-    executed_qty: Decimal,
-    orig_quote_order_qty: Decimal,
-    cummulative_quote_qty: Decimal,
-    status: BinanceOrderStatus,
-    time_in_force: BinanceTimeInForce,
+    pub client_order_id: SmolStr,
+    pub transact_time: i64,
+    pub price: Decimal,
+    pub orig_qty: Decimal,
+    pub executed_qty: Decimal,
+    pub orig_quote_order_qty: Decimal,
+    pub cummulative_quote_qty: Decimal,
+    pub status: BinanceOrderStatus,
+    pub time_in_force: BinanceTimeInForce,
     #[serde(rename = "type")]
-    type_: BinanceOrderType,
-    side: BinanceSide,
-    stop_price: Decimal,
+    pub type_: BinanceOrderType,
+    pub side: BinanceSide,
+    pub stop_price: Decimal,
 }
 
 #[cfg(test)]

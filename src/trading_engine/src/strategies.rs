@@ -257,7 +257,9 @@ impl Strategy for BuyLowSellHigh {
                 } else {
                     Decimal::ZERO
                 };
-                info!("BUY signal: price={mid_price}, avg={avg_price}, diff={diff:.2}%");
+                info!("BUY signal: price={mid_price}, avg={avg_price}, diff={diff:.2}%, amount={amount} BTC",
+                    amount = self.position_size
+                );
 
                 // Use best ask as buy price (market order would be better, but limit is safer)
                 let buy_price = if !orderbook.asks.is_empty() {
@@ -292,7 +294,7 @@ impl Strategy for BuyLowSellHigh {
                 Decimal::ZERO
             };
             info!(
-                "SELL signal: price={mid_price}, avg={avg_price}, diff={diff:.2}%, qty={sell_qty}"
+                "SELL signal: price={mid_price}, avg={avg_price}, diff={diff:.2}%, qty={sell_qty} BTC"
             );
 
             // Use best bid as sell price
@@ -313,16 +315,33 @@ impl Strategy for BuyLowSellHigh {
             }));
         } else {
             // No trade signal - log why (only periodically to reduce noise)
-            // Show when we're close to a signal (within 0.1% of threshold)
-            let buy_diff_needed = self.buy_threshold - price_diff_from_avg;
-            let sell_diff_needed = self.sell_threshold - price_diff_from_avg;
+            // Calculate how close we are to buy/sell signals
+            // For buy: need price_diff_from_avg <= -buy_threshold (price below average by threshold)
+            // For sell: need price_diff_from_avg >= sell_threshold (price above average by threshold)
 
-            if buy_diff_needed.abs() < Decimal::new(1, 1)
-                || sell_diff_needed.abs() < Decimal::new(1, 1)
+            let buy_diff_needed = if price_diff_from_avg < Decimal::ZERO {
+                // Price is below average, calculate how much more drop needed
+                (-price_diff_from_avg) - self.buy_threshold
+            } else {
+                // Price is above average, would need to drop this much + threshold
+                price_diff_from_avg + self.buy_threshold
+            };
+
+            let sell_diff_needed = if price_diff_from_avg > Decimal::ZERO {
+                // Price is above average, calculate how much more rise needed
+                price_diff_from_avg - self.sell_threshold
+            } else {
+                // Price is below average, would need to rise this much + threshold
+                (-price_diff_from_avg) + self.sell_threshold
+            };
+
+            // Show when we're close to a signal (within 0.05% of threshold)
+            if buy_diff_needed.abs() < Decimal::new(5, 2)
+                || sell_diff_needed.abs() < Decimal::new(5, 2)
             {
                 // Close to a signal - log it
                 info!(
-                    "Close to signal: price_diff={diff:.3}%, buy_threshold={buy_threshold:.2}% (need {buy_needed:.3}% more), sell_threshold={sell_threshold:.2}% (need {sell_needed:.3}% more), position={position}",
+                    "Close to signal: price_diff={diff:.3}%, buy_threshold={buy_threshold:.2}% (need {buy_needed:.3}% more drop), sell_threshold={sell_threshold:.2}% (need {sell_needed:.3}% more rise), position={position}",
                     diff = price_diff_from_avg,
                     buy_threshold = self.buy_threshold,
                     buy_needed = buy_diff_needed,

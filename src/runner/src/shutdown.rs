@@ -27,18 +27,12 @@ impl ShutdownManager {
         self.shutdown_tx.subscribe()
     }
 
-    /// Wait for shutdown signal with timeout
+    /// Wait for shutdown signal (blocks until signal is received)
     #[allow(dead_code)] // Used in main.rs
-    pub async fn wait_for_shutdown(&self, timeout_secs: u64) {
+    pub async fn wait_for_shutdown(&self) {
         let mut rx = self.subscribe();
-        tokio::select! {
-            _ = rx.recv() => {
-                info!("Shutdown signal received");
-            }
-            _ = tokio::time::sleep(tokio::time::Duration::from_secs(timeout_secs)) => {
-                info!("Shutdown timeout reached, forcing shutdown");
-            }
-        }
+        let _ = rx.recv().await;
+        info!("Shutdown signal received");
     }
 }
 

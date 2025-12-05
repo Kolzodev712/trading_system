@@ -241,10 +241,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
-    // Wait for shutdown signal
-    shutdown_manager
-        .wait_for_shutdown(config.system.shutdown_timeout_secs)
-        .await;
+    // Wait for shutdown signal (Ctrl+C or manual shutdown)
+    shutdown_manager.wait_for_shutdown().await;
 
     // Graceful shutdown
     info!("Shutting down gracefully...");

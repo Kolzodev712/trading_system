@@ -339,14 +339,25 @@ impl Strategy for BuyLowSellHigh {
             if buy_diff_needed.abs() < Decimal::new(5, 2)
                 || sell_diff_needed.abs() < Decimal::new(5, 2)
             {
-                // Close to a signal - log it
+                // Close to a signal - log it with clearer messaging
+                // When values are negative, it means we're very close (just need a tiny bit more)
+                let buy_msg = if buy_diff_needed <= Decimal::ZERO {
+                    format!("TRIGGERED! ({:.3}% below threshold)", buy_diff_needed.abs())
+                } else {
+                    format!("need {:.3}% more drop", buy_diff_needed)
+                };
+                
+                let sell_msg = if sell_diff_needed <= Decimal::ZERO {
+                    format!("TRIGGERED! ({:.3}% above threshold)", sell_diff_needed.abs())
+                } else {
+                    format!("need {:.3}% more rise", sell_diff_needed)
+                };
+                
                 info!(
-                    "Close to signal: price_diff={diff:.3}%, buy_threshold={buy_threshold:.2}% (need {buy_needed:.3}% more drop), sell_threshold={sell_threshold:.2}% (need {sell_needed:.3}% more rise), position={position}",
+                    "Close to signal: price_diff={diff:.3}%, buy: {buy_msg}, sell: {sell_msg}, position={position}",
                     diff = price_diff_from_avg,
-                    buy_threshold = self.buy_threshold,
-                    buy_needed = buy_diff_needed,
-                    sell_threshold = self.sell_threshold,
-                    sell_needed = sell_diff_needed,
+                    buy_msg = buy_msg,
+                    sell_msg = sell_msg,
                     position = current_qty
                 );
             } else if self.price_history.len() % 20 == 0 {

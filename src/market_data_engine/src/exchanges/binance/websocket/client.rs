@@ -205,7 +205,9 @@ impl WebSocketClient<ParsedBinanceMessage> for BinanceWSClient {
                         match handler.handle_text_message(text.clone().into()) {
                             Ok(parsed_message) => {
                                 if let Err(e) = tx.send(parsed_message).await {
-                                    error!("Error sending message to channel: {e}");
+                                    // Channel closed - expected during shutdown
+                                    debug!("Channel closed during message send (shutdown): {e}");
+                                    break;
                                 }
                             }
                             Err(e) => {

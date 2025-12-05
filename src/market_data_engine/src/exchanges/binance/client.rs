@@ -106,8 +106,9 @@ impl BinanceClient {
             self.handle_message(message).await?;
         }
 
-        error!("Event channel closed unexpectedly");
-        Err(EngineError::ConnectionClosed)
+        // Channel closed - expected during shutdown
+        debug!("Event channel closed (shutdown)");
+        Ok(())
     }
 
     async fn handle_message(&self, message: ParsedBinanceMessage) -> Result<(), EngineError> {

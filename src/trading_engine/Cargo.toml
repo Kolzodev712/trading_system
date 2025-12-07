@@ -7,6 +7,7 @@ edition = "2021"
 
 [dependencies]
 trading_core = { path = "../../libs/trading_core" }
+indicator_engine = { path = "../indicator_engine" }
 # Note: Remove direct dependencies on exchange_engine and market_data_engine
 # They communicate via channels now
 
@@ -29,6 +30,9 @@ async-trait = { workspace = true }
 reqwest = { workspace = true }
 url = { workspace = true }
 urlencoding = { workspace = true }
+axum = { workspace = true }
+tower = { workspace = true }
+tower-http = { workspace = true }
 
 # Errors
 thiserror = { workspace = true }
@@ -45,11 +49,12 @@ uuid = { workspace = true }
 # Storage
 redis = { workspace = true }
 
-# Utrils
+# Utils
 smol_str = { workspace = true }
 futures-util = { workspace = true }
 chrono = { workspace = true }
 rust_decimal = { workspace = true }
+rust_decimal_macros = { workspace = true }
 base64 = { workspace = true }
 
 # Testing

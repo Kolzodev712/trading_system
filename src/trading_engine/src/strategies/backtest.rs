@@ -1,4 +1,4 @@
-use super::strategy::Strategy;
+use crate::state::Strategy;
 use rust_decimal::Decimal;
 use std::sync::Arc;
 use tokio::sync::RwLock;

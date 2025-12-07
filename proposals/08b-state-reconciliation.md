@@ -1,26 +1,65 @@
-# Proposal 08b: State Reconciliation in Exchange Engine
+# Proposal 08b: State Reconciliation
 
 ## Overview
 
-This proposal outlines the implementation of state reconciliation logic within the Exchange Engine. The reconciler ensures that the in-memory state (maintained from WebSocket streams) stays synchronized with the exchange's authoritative state by periodically fetching data via REST API and reconciling any discrepancies. This is not a separate service but a component that lives inside the Exchange Engine.
+This proposal outlines the implementation of state reconciliation logic across the trading system. The system maintains state in two places:
+
+1. **Trading Engine State** (`src/trading_engine/src/state.rs`): 
+   - `TradingState`: Manages positions, active orders, and pending orders from the trading strategy/level perspective
+   - `Position`: Represents a position in a trading pair with quantity and average price
+   - Used by both strategy mode and levels mode
+   - Currently reconciled via `PositionReconciler` in `src/trading_engine/src/reconciliation.rs`
+
+2. **Exchange Engine State** (to be implemented):
+   - Exchange-level state (balances, orders, trades) maintained from WebSocket streams
+   - Needs reconciliation with REST API to ensure accuracy
+
+The reconciler ensures that both state systems stay synchronized with the exchange's authoritative state by periodically fetching data via REST API and reconciling any discrepancies. This is not a separate service but components that live within their respective engines.
 
 ## Key Requirements
 
-1. **Bootstrap Reconciliation**: At startup, fetch balances, open orders, and trades via REST API to initialize state
+### Trading Engine State Reconciliation (Existing)
+
+The `trading_engine` already has a `TradingState` structure (`src/trading_engine/src/state.rs`) that includes:
+- **Positions**: `HashMap<Pair, Position>` - Current positions per trading pair
+- **Active Orders**: `HashMap<OrderId, Order>` - All active orders
+- **Pending Orders**: `HashMap<OrderId, u64>` - Orders pending execution with timestamps
+
+A `PositionReconciler` exists in `src/trading_engine/src/reconciliation.rs` that:
+- Fetches balances from exchange via `TradingClient::fetch_balance()`
+- Compares internal positions with exchange balances
+- Updates internal state to match exchange when discrepancies are detected
+
+**This proposal must build on top of this existing state structure.**
+
+### Exchange Engine State Reconciliation (New)
+
+1. **Bootstrap Reconciliation**: At startup, fetch balances, open orders, and trades via REST API to initialize exchange-level state
 2. **Periodic Reconciliation**: Periodically (configurable interval) fetch REST data and reconcile with WebSocket state
 3. **Discrepancy Detection**: Detect and log discrepancies between REST and WebSocket data
 4. **State Correction**: Update in-memory state to match exchange authoritative state (REST takes priority)
 5. **Configurable Interval**: Reconciliation interval configurable via system config
 6. **Error Handling**: Graceful handling of reconciliation failures without disrupting trading
 7. **Trait Requirements**: All exchanges must implement mandatory methods for fetching balances, open orders, and trades
+8. **Integration with Trading Engine State**: Exchange-level reconciliation should trigger updates to `TradingState` when discrepancies are found
 
 ## Architecture Overview
 
 ### Component Structure
 
 ```
-Exchange Engine
-├── State Manager
+Trading Engine (Existing State)
+├── TradingState (src/trading_engine/src/state.rs)
+│   ├── positions: HashMap<Pair, Position>
+│   ├── active_orders: HashMap<OrderId, Order>
+│   └── pending_orders: HashMap<OrderId, u64>
+├── PositionReconciler (src/trading_engine/src/reconciliation.rs)
+│   └── Reconciles TradingState positions with exchange balances
+└── Strategy Trait
+    └── Uses TradingState for strategy execution
+
+Exchange Engine (New State)
+├── Exchange State Manager (NEW)
 │   ├── In-Memory State (from WebSocket)
 │   │   ├── Balances
 │   │   ├── Open Orders
@@ -35,37 +74,100 @@ Exchange Engine
     └── fetch_trades() (mandatory)
 ```
 
+### State Relationship
+
+```
+Exchange State (Authoritative)
+    ↓ (reconciles with)
+Trading Engine State (TradingState)
+    ↓ (used by)
+Strategies / Levels
+```
+
+**Important**: The `TradingState` in `trading_engine` is the primary state used by trading strategies and levels. Exchange-level state reconciliation should update `TradingState` when discrepancies are detected.
+
 ### Data Flow
 
 ```
 Bootstrap
     ↓
-State Reconciler
-    ├── fetch_balance() → Initialize balances
-    ├── fetch_open_orders() → Initialize orders
+Exchange State Reconciler
+    ├── fetch_balance() → Initialize exchange balances
+    ├── fetch_open_orders() → Initialize exchange orders
     └── fetch_trades() → Initialize trade history
         ↓
-State Manager
-    └── Store initial state
+Exchange State Manager
+    └── Store initial exchange state
+        ↓
+Trading Engine State Reconciliation
+    └── PositionReconciler.reconcile()
+        ├── Fetches balances from exchange
+        ├── Compares with TradingState.positions
+        └── Updates TradingState to match exchange
         ↓
 WebSocket Stream
-    └── Update state in real-time
+    └── Update both states in real-time
+        ├── Exchange State (balances, orders, trades)
+        └── TradingState (positions, orders)
         ↓
 Periodic Reconciliation (every N seconds)
-    ├── fetch_balance() → Compare with WS state
-    ├── fetch_open_orders() → Compare with WS state
-    └── fetch_trades() → Compare with WS state
+    ├── Exchange Level:
+    │   ├── fetch_balance() → Compare with WS state
+    │   ├── fetch_open_orders() → Compare with WS state
+    │   └── fetch_trades() → Compare with WS state
+    └── Trading Engine Level:
+        └── PositionReconciler.reconcile()
+            ├── Fetches balances
+            ├── Compares with TradingState
+            └── Updates TradingState if discrepancies found
         ↓
 Discrepancy Detection
-    └── Log discrepancies
+    └── Log discrepancies at both levels
         ↓
 State Correction
-    └── Update state to match REST (authoritative)
+    ├── Update Exchange State to match REST (authoritative)
+    └── Update TradingState to match Exchange State
 ```
 
 ## Detailed Component Design
 
-### 1. TradingClient Trait Updates (`libs/trading_core/src/traits/trading.rs`)
+### 1. Trading Engine State (Existing - `src/trading_engine/src/state.rs`)
+
+**Current Implementation**:
+
+The `trading_engine` maintains its own state via `TradingState`:
+
+```rust
+pub struct TradingState {
+    pub positions: HashMap<Pair, Position>,
+    pub active_orders: HashMap<OrderId, Order>,
+    pub pending_orders: HashMap<OrderId, u64>,
+}
+
+pub struct Position {
+    pub symbol: Pair,
+    pub quantity: Decimal,
+    pub avg_price: Decimal,
+}
+```
+
+**Current Reconciliation**:
+
+`PositionReconciler` in `src/trading_engine/src/reconciliation.rs`:
+- Fetches balances via `TradingClient::fetch_balance()`
+- Compares `TradingState.positions` with exchange balances
+- Updates `TradingState` when discrepancies are detected
+- Used by both strategy mode and levels mode
+
+**Integration Point**:
+
+When implementing exchange-level state reconciliation, it should:
+1. Use the existing `TradingState` structure
+2. Trigger `PositionReconciler` when exchange-level discrepancies are found
+3. Ensure `TradingState` is updated to reflect exchange authoritative state
+4. Maintain compatibility with existing strategy and level systems
+
+### 2. TradingClient Trait Updates (`libs/trading_core/src/traits/trading.rs`)
 
 **Purpose**: Add mandatory methods for state reconciliation.
 
@@ -157,7 +259,30 @@ fn default_reconciliation_enabled() -> bool {
 }
 ```
 
-### 4. State Reconciler (`src/exchange_engine/src/reconciler.rs`)
+### 4. Trading Engine State Integration
+
+**Purpose**: Ensure exchange-level reconciliation updates `TradingState`.
+
+When exchange-level reconciliation detects discrepancies:
+1. Update exchange-level state (balances, orders, trades)
+2. Trigger `PositionReconciler` to reconcile `TradingState`
+3. Update `TradingState.positions` to match exchange balances
+4. Update `TradingState.active_orders` to match exchange orders
+
+```rust
+// In exchange-level reconciliation
+if discrepancy_found {
+    // Update exchange state
+    exchange_state.update_balances(rest_balances);
+    
+    // Trigger TradingState reconciliation
+    let trading_state = get_trading_state(); // From trading engine
+    let reconciler = PositionReconciler::new(trading_client);
+    reconciler.reconcile(trading_state, &pair, current_price).await?;
+}
+```
+
+### 5. State Reconciler (`src/exchange_engine/src/reconciler.rs`)
 
 **Purpose**: Core reconciliation logic.
 
@@ -582,7 +707,7 @@ pub trait StateManager: Send + Sync {
 }
 ```
 
-### 5. Exchange State Manager Integration (`src/exchange_engine/src/state/manager.rs`)
+### 6. Exchange State Manager Integration (`src/exchange_engine/src/state/manager.rs`)
 
 **Purpose**: Integrate reconciler with state manager.
 
@@ -663,7 +788,30 @@ impl StateManager for ExchangeStateManager {
 
 ## Integration Points
 
-### 1. Bootstrap Integration
+### 1. Trading Engine State Integration
+
+**Existing**: `TradingState` is already used by:
+- Strategy mode: `BuyLowSellHigh` strategy maintains `TradingState`
+- Levels mode: `LevelBasedEventLoop` maintains `TradingState`
+- Both use `PositionReconciler` for position reconciliation
+
+**New Integration**: Exchange-level reconciliation should:
+1. Access `TradingState` from trading engine
+2. Trigger `PositionReconciler` when exchange discrepancies found
+3. Ensure `TradingState` stays synchronized with exchange state
+
+```rust
+// In exchange engine reconciliation
+use trading_engine::state::TradingState;
+use trading_engine::reconciliation::PositionReconciler;
+
+// When discrepancy detected
+let trading_state = get_trading_state_from_engine();
+let reconciler = PositionReconciler::new(trading_client.clone());
+reconciler.reconcile(&mut trading_state, &pair, current_price).await?;
+```
+
+### 2. Bootstrap Integration
 
 ```rust
 // In exchange engine initialization
@@ -671,9 +819,16 @@ let mut state_manager = ExchangeStateManager::new(trading_client, &config);
 
 // Bootstrap: Fetch initial state and start reconciliation
 state_manager.bootstrap(&configured_pairs).await?;
+
+// Also reconcile TradingState
+let trading_state = get_trading_state_from_engine();
+let reconciler = PositionReconciler::new(trading_client.clone());
+for pair in configured_pairs {
+    reconciler.reconcile(&mut trading_state, pair, None).await?;
+}
 ```
 
-### 2. Configuration
+### 3. Configuration
 
 ```json
 {
@@ -746,19 +901,36 @@ match trading_client.fetch_balance().await {
 
 ## Success Criteria
 
+### Trading Engine State (Already Implemented)
+- [x] `TradingState` structure exists with positions, orders, and pending orders
+- [x] `PositionReconciler` implemented and working
+- [x] Used by both strategy and levels modes
+- [x] Reconciliation logic tested
+
+### Exchange Engine State (To Be Implemented)
 - [ ] `fetch_open_orders()` and `fetch_trades()` added to `TradingClient` trait
 - [ ] `fetch_market_data_snapshot()` added to `MarketDataClient` trait
 - [ ] All exchanges implement mandatory reconciliation methods
-- [ ] State reconciler implemented in exchange engine
-- [ ] Bootstrap reconciliation fetches initial state
+- [ ] Exchange-level state reconciler implemented
+- [ ] Bootstrap reconciliation fetches initial exchange state
 - [ ] Periodic reconciliation runs at configured intervals
-- [ ] Discrepancies detected and logged
-- [ ] State corrected to match REST (authoritative source)
+- [ ] Exchange-level discrepancies detected and logged
+- [ ] Exchange state corrected to match REST (authoritative source)
+- [ ] Exchange-level reconciliation triggers `TradingState` updates
+- [ ] `PositionReconciler` called when exchange discrepancies found
 - [ ] Reconciliation configurable via system config
 - [ ] Error handling doesn't disrupt trading
 
 ## Notes
 
+### Trading Engine State (Current)
+- **Location**: `src/trading_engine/src/state.rs` - `TradingState` and `Position`
+- **Reconciliation**: `src/trading_engine/src/reconciliation.rs` - `PositionReconciler`
+- **Usage**: Used by both strategy mode and levels mode
+- **Purpose**: Tracks positions and orders from trading perspective
+- **Integration**: Already integrated with `TradingClient::fetch_balance()`
+
+### Exchange Engine State (Proposed)
 - **Not a separate service**: Reconciler lives inside Exchange Engine
 - **REST is authoritative**: REST data takes priority over WebSocket state
 - **Periodic reconciliation**: Configurable interval (default 5 minutes)
@@ -766,4 +938,18 @@ match trading_client.fetch_balance().await {
 - **Discrepancy logging**: All discrepancies logged for monitoring
 - **Non-blocking**: Reconciliation runs in background
 - **Graceful degradation**: Continues operation if reconciliation fails
+- **TradingState Integration**: Must update `TradingState` when exchange discrepancies found
+- **Build on Existing**: Must work with existing `TradingState` and `PositionReconciler`
+
+### State Hierarchy
+
+1. **Exchange State** (authoritative, from REST API)
+   - Balances, orders, trades as reported by exchange
+   - Updated via WebSocket streams and REST reconciliation
+
+2. **Trading Engine State** (`TradingState`)
+   - Positions, active orders, pending orders
+   - Used by strategies and levels
+   - Reconciles with exchange state via `PositionReconciler`
+   - Must stay synchronized with exchange state
 

@@ -3,36 +3,64 @@
 
 mod integration {
     use exchange_engine::exchanges::binance::{config::BinanceConfig, ws_client::BinanceClient};
+    use runner::config::{BotConfig, StrategiesConfig};
     use std::sync::Arc;
     use tokio::sync::RwLock;
-    use trading_core::{config::TradingSystemConfig, traits::TradingClient, types::common::Pair};
-    use trading_engine::{strategies::BuyLowSellHigh, strategy::Strategy};
+    use trading_core::{traits::TradingClient, types::common::Pair};
+    use trading_engine::{state::Strategy, strategies::BuyLowSellHigh};
 
     /// Test that the system can load configuration
     #[tokio::test]
     async fn test_config_loading() {
-        let config = TradingSystemConfig::load_from_file("config/trading_system.json");
-        assert!(config.is_ok(), "Should load config file");
+        let bot_config = BotConfig::load_from_file("config/bot.json");
+        assert!(bot_config.is_ok(), "Should load bot config file");
 
-        let config = config.unwrap();
-        assert_eq!(config.exchange.exchange, trading_core::Exchange::Binance);
-        assert_eq!(config.strategy.strategy_type, "BuyLowSellHigh");
+        let bot_config = bot_config.unwrap();
+        assert_eq!(
+            bot_config.exchange.exchange,
+            trading_core::Exchange::Binance
+        );
+
+        let strategies_config = StrategiesConfig::load_from_file("config/strategies.json");
+        assert!(
+            strategies_config.is_ok(),
+            "Should load strategies config file"
+        );
+
+        let strategies_config = strategies_config.unwrap();
+        assert_eq!(strategies_config.strategy_type, "BuyLowSellHigh");
     }
 
     /// Test that configuration validation works
     #[tokio::test]
     async fn test_config_validation() {
-        let config = TradingSystemConfig::load_from_file("config/trading_system.json").unwrap();
-        let result = config.validate();
-        assert!(result.is_ok(), "Config should be valid: {:?}", result.err());
+        let bot_config = BotConfig::load_from_file("config/bot.json").unwrap();
+        let result = bot_config.validate();
+        assert!(
+            result.is_ok(),
+            "Bot config should be valid: {:?}",
+            result.err()
+        );
+
+        let strategies_config = StrategiesConfig::load_from_file("config/strategies.json").unwrap();
+        let result = strategies_config.validate();
+        assert!(
+            result.is_ok(),
+            "Strategies config should be valid: {:?}",
+            result.err()
+        );
     }
 
     /// Test that strategy can be created
     #[tokio::test]
     async fn test_strategy_creation() {
         // Create a mock trading client (we'll use a real one but won't connect)
-        let config = TradingSystemConfig::load_from_file("config/trading_system.json").unwrap();
-        let binance_config_json = config.exchange.exchange_specific.get("binance").unwrap();
+        let bot_config = BotConfig::load_from_file("config/bot.json").unwrap();
+        let binance_config_json = bot_config
+            .exchange
+            .exchange_specific
+            .get("binance")
+            .unwrap();
 
         let binance_config: BinanceConfig =
             serde_json::from_value(binance_config_json.clone()).unwrap();
@@ -70,7 +98,7 @@ mod integration {
             exchange::Order,
         };
 
-        let mut state = trading_engine::strategy::TradingState::new();
+        let mut state = trading_engine::state::TradingState::new();
 
         // Create a test order
         let order = Order {
@@ -132,7 +160,7 @@ mod integration {
     #[tokio::test]
     async fn test_position_reconciliation_logic() {
         use trading_core::types::common::Pair;
-        use trading_engine::strategy::TradingState;
+        use trading_engine::state::TradingState;
 
         let mut state = TradingState::new();
         let symbol = Pair::new("BTC", "USDT");
@@ -157,7 +185,7 @@ mod integration {
             common::{OrderId, OrderStatus, Symbol},
             exchange::Order,
         };
-        use trading_engine::strategy::TradingState;
+        use trading_engine::state::TradingState;
 
         let mut state = TradingState::new();
 
@@ -191,11 +219,15 @@ mod integration {
     /// Test health server structure
     #[tokio::test]
     async fn test_health_server_structure() {
-        use runner::health::HealthServer;
+        use trading_engine::health::HealthServer;
         use trading_engine::strategies::BuyLowSellHigh;
 
-        let config = TradingSystemConfig::load_from_file("config/trading_system.json").unwrap();
-        let binance_config_json = config.exchange.exchange_specific.get("binance").unwrap();
+        let bot_config = BotConfig::load_from_file("config/bot.json").unwrap();
+        let binance_config_json = bot_config
+            .exchange
+            .exchange_specific
+            .get("binance")
+            .unwrap();
 
         let binance_config: BinanceConfig =
             serde_json::from_value(binance_config_json.clone()).unwrap();
@@ -219,7 +251,13 @@ mod integration {
             20,
         )));
 
-        let _health_server = HealthServer::new(strategy);
+        // Extract TradingState from strategy
+        let trading_state = {
+            let strat = strategy.read().await;
+            Arc::new(RwLock::new(strat.get_state().clone()))
+        };
+
+        let _health_server = HealthServer::new(trading_state);
         // If we get here, the server was created successfully
         assert!(true);
     }
@@ -230,8 +268,12 @@ mod integration {
         use trading_core::types::market_data::Orderbook;
         use trading_engine::strategies::BuyLowSellHigh;
 
-        let config = TradingSystemConfig::load_from_file("config/trading_system.json").unwrap();
-        let binance_config_json = config.exchange.exchange_specific.get("binance").unwrap();
+        let bot_config = BotConfig::load_from_file("config/bot.json").unwrap();
+        let binance_config_json = bot_config
+            .exchange
+            .exchange_specific
+            .get("binance")
+            .unwrap();
         let binance_config: BinanceConfig =
             serde_json::from_value(binance_config_json.clone()).unwrap();
 
@@ -294,10 +336,14 @@ mod integration {
     #[tokio::test]
     async fn test_strategy_stop_loss() {
         use trading_core::types::market_data::Orderbook;
-        use trading_engine::{strategies::BuyLowSellHigh, strategy::Strategy};
+        use trading_engine::{state::Strategy, strategies::BuyLowSellHigh};
 
-        let config = TradingSystemConfig::load_from_file("config/trading_system.json").unwrap();
-        let binance_config_json = config.exchange.exchange_specific.get("binance").unwrap();
+        let bot_config = BotConfig::load_from_file("config/bot.json").unwrap();
+        let binance_config_json = bot_config
+            .exchange
+            .exchange_specific
+            .get("binance")
+            .unwrap();
         let binance_config: BinanceConfig =
             serde_json::from_value(binance_config_json.clone()).unwrap();
 
@@ -363,10 +409,14 @@ mod integration {
     #[tokio::test]
     async fn test_strategy_take_profit() {
         use trading_core::types::market_data::Orderbook;
-        use trading_engine::{strategies::BuyLowSellHigh, strategy::Strategy};
+        use trading_engine::{state::Strategy, strategies::BuyLowSellHigh};
 
-        let config = TradingSystemConfig::load_from_file("config/trading_system.json").unwrap();
-        let binance_config_json = config.exchange.exchange_specific.get("binance").unwrap();
+        let bot_config = BotConfig::load_from_file("config/bot.json").unwrap();
+        let binance_config_json = bot_config
+            .exchange
+            .exchange_specific
+            .get("binance")
+            .unwrap();
         let binance_config: BinanceConfig =
             serde_json::from_value(binance_config_json.clone()).unwrap();
 
@@ -458,7 +508,7 @@ mod integration {
     #[tokio::test]
     async fn test_position_updates() {
         use trading_core::types::common::Pair;
-        use trading_engine::strategy::TradingState;
+        use trading_engine::state::TradingState;
 
         let mut state = TradingState::new();
         let symbol = Pair::new("BTC", "USDT");
@@ -500,10 +550,14 @@ mod integration {
     #[tokio::test]
     async fn test_max_position_limit() {
         use trading_core::types::market_data::Orderbook;
-        use trading_engine::{strategies::BuyLowSellHigh, strategy::Strategy};
+        use trading_engine::{state::Strategy, strategies::BuyLowSellHigh};
 
-        let config = TradingSystemConfig::load_from_file("config/trading_system.json").unwrap();
-        let binance_config_json = config.exchange.exchange_specific.get("binance").unwrap();
+        let bot_config = BotConfig::load_from_file("config/bot.json").unwrap();
+        let binance_config_json = bot_config
+            .exchange
+            .exchange_specific
+            .get("binance")
+            .unwrap();
         let binance_config: BinanceConfig =
             serde_json::from_value(binance_config_json.clone()).unwrap();
 
@@ -568,10 +622,14 @@ mod integration {
             exchange::Order,
             market_data::Orderbook,
         };
-        use trading_engine::{strategies::BuyLowSellHigh, strategy::Strategy};
+        use trading_engine::{state::Strategy, strategies::BuyLowSellHigh};
 
-        let config = TradingSystemConfig::load_from_file("config/trading_system.json").unwrap();
-        let binance_config_json = config.exchange.exchange_specific.get("binance").unwrap();
+        let bot_config = BotConfig::load_from_file("config/bot.json").unwrap();
+        let binance_config_json = bot_config
+            .exchange
+            .exchange_specific
+            .get("binance")
+            .unwrap();
         let binance_config: BinanceConfig =
             serde_json::from_value(binance_config_json.clone()).unwrap();
 
@@ -641,10 +699,14 @@ mod integration {
     #[tokio::test]
     async fn test_price_history_building() {
         use trading_core::types::market_data::Orderbook;
-        use trading_engine::{strategies::BuyLowSellHigh, strategy::Strategy};
+        use trading_engine::{state::Strategy, strategies::BuyLowSellHigh};
 
-        let config = TradingSystemConfig::load_from_file("config/trading_system.json").unwrap();
-        let binance_config_json = config.exchange.exchange_specific.get("binance").unwrap();
+        let bot_config = BotConfig::load_from_file("config/bot.json").unwrap();
+        let binance_config_json = bot_config
+            .exchange
+            .exchange_specific
+            .get("binance")
+            .unwrap();
         let binance_config: BinanceConfig =
             serde_json::from_value(binance_config_json.clone()).unwrap();
 

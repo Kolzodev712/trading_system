@@ -1,4 +1,4 @@
-use super::strategy::{Strategy, TradingState};
+use crate::state::{Strategy, TradingState};
 use async_trait::async_trait;
 use rust_decimal::Decimal;
 use std::sync::Arc;

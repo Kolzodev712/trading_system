@@ -1,6 +1,6 @@
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
-use smol_str::SmolStr;
+use smol_str::{SmolStr, ToSmolStr};
 use trading_core::{
     types::{common::Side, exchange::Trade},
     utils::{deserialize_smol_str, serialize_smol_str},
@@ -74,7 +74,7 @@ impl From<BinanceTradeResponse> for Trade {
         };
 
         Trade {
-            trade_id: binance_trade.id.to_string(),
+            trade_id: binance_trade.id.to_smolstr(),
             order_id: binance_trade.order_id.into(),
             pair,
             price: binance_trade.price,

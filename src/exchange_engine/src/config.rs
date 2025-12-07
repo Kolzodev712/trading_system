@@ -101,12 +101,12 @@ mod tests {
             }
             .into(),
             rest: BinanceCredentials {
-                api_key: "some_key".into(),
-                secret_key: "some_secret".into(),
+                api_key: trading_core::secret::SecretString::from("some_key"),
+                secret_key: trading_core::secret::SecretString::from("some_secret"),
             },
             ws: BinanceCredentials {
-                api_key: "some_key".into(),
-                secret_key: "some_secret".into(),
+                api_key: trading_core::secret::SecretString::from("some_key"),
+                secret_key: trading_core::secret::SecretString::from("some_secret"),
             },
             limit: Some(100),
             base_delay: Some(2),
@@ -134,12 +134,12 @@ mod tests {
             }
             .into(),
             rest: BinanceCredentials {
-                api_key: "some_key".into(),
-                secret_key: "some_secret".into(),
+                api_key: trading_core::secret::SecretString::from("some_key"),
+                secret_key: trading_core::secret::SecretString::from("some_secret"),
             },
             ws: BinanceCredentials {
-                api_key: "some_key".into(),
-                secret_key: "some_secret".into(),
+                api_key: trading_core::secret::SecretString::from("some_key"),
+                secret_key: trading_core::secret::SecretString::from("some_secret"),
             },
             limit: Some(100),
             base_delay: Some(2),

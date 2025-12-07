@@ -1,5 +1,7 @@
 use anyhow::anyhow;
-use trading_core::{authenticator::ExchangeAuthenticator, error::EngineError};
+use trading_core::{
+    authenticator::ExchangeAuthenticator, error::EngineError, secret::SecretString,
+};
 
 use async_trait::async_trait;
 use hmac::{Hmac, Mac};
@@ -12,16 +14,17 @@ use ed25519_dalek::{Signer, SigningKey};
 
 #[derive(Clone, Debug)]
 pub struct BinanceAuthenticator {
-    pub api_key: SmolStr,
-    pub secret_key: SmolStr,
+    pub api_key: SecretString,
+    pub secret_key: SecretString,
 }
 
 #[async_trait]
 impl ExchangeAuthenticator for BinanceAuthenticator {
     fn generate_signature(&self, query_string: &str) -> Result<Option<SmolStr>, EngineError> {
-        let mut mac = Hmac::<Sha256>::new_from_slice(self.secret_key.as_bytes()).map_err(|e| {
-            EngineError::AuthenticationError(anyhow!(format!("Invalid mac lenght: {e}")))
-        })?;
+        let mut mac =
+            Hmac::<Sha256>::new_from_slice(self.secret_key.expose().as_bytes()).map_err(|e| {
+                EngineError::AuthenticationError(anyhow!(format!("Invalid mac lenght: {e}")))
+            })?;
         mac.update(query_string.as_bytes());
         let signature = hex::encode(mac.finalize().into_bytes());
         Ok(Some(signature.into()))
@@ -48,19 +51,22 @@ impl ExchangeAuthenticator for BinanceAuthenticator {
 
     fn get_headers(&self) -> Result<Option<BTreeMap<SmolStr, SmolStr>>, EngineError> {
         let mut headers = BTreeMap::new();
-        headers.insert("X-MBX-APIKEY".into(), self.api_key.clone());
+        headers.insert(
+            "X-MBX-APIKEY".into(),
+            self.api_key.expose_smol_str().clone(),
+        );
         Ok(Some(headers))
     }
 }
 
 #[derive(Clone, Debug)]
 pub struct BinanceWsAuthenticator {
-    pub api_key: SmolStr,
-    pub secret_key_ed25519: SmolStr,
+    pub api_key: SecretString,
+    pub secret_key_ed25519: SecretString,
 }
 
 impl BinanceWsAuthenticator {
-    pub fn new(api_key: SmolStr, secret_key: SmolStr) -> Self {
+    pub fn new(api_key: SecretString, secret_key: SecretString) -> Self {
         Self {
             api_key,
             // to get this key use info from here <https://www.binance.com/en/support/faq/detail/6b9a63f1e3384cf48a2eedb82767a69a>
@@ -73,7 +79,7 @@ impl BinanceWsAuthenticator {
 impl ExchangeAuthenticator for BinanceWsAuthenticator {
     fn generate_signature(&self, payload: &str) -> Result<Option<SmolStr>, EngineError> {
         let private_key_bytes = general_purpose::STANDARD
-            .decode(&*self.secret_key_ed25519)
+            .decode(self.secret_key_ed25519.expose())
             .map_err(|e| EngineError::AuthenticationError(anyhow!(e)))?;
 
         if private_key_bytes.len() != 32 {

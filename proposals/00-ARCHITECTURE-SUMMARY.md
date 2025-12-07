@@ -4,6 +4,26 @@
 
 This document provides a comprehensive overview of the entire trading system architecture, incorporating all proposals with performance optimizations and efficient communication patterns.
 
+## Recent Completions
+
+### ✅ Proposal 03: Level-Based Trading System (COMPLETE)
+- Full level-based trading implementation with JSON configuration
+- Level executor, risk manager, cancellation manager
+- Event loop for orderbook processing and level execution
+- Indicator-based price/quantity resolution
+- Level lifecycle management (Created, Posted, Filled, Cancelled, Paused, Removed)
+- Both strategy and levels modes fully functional and tested
+
+### ✅ Major Refactoring (COMPLETE)
+- **Module Separation**: `strategies/` and `levels/` are independent modules with no cross-dependencies
+- **State Management**: Renamed `strategy.rs` → `state.rs` to reflect `TradingState` as trading engine's state
+- **Code Cleanup**: Removed unused `data/` module (legacy `OrderbookProcessor`)
+- **Runner Organization**: Clean `strategy_runner()` and `level_runner()` functions, removed redundant health wrapper
+- **Execution Report Handler**: Shared handler function eliminates code duplication
+- **Configuration Separation**: Trading-specific configs separated from general bot config
+- **Security**: `SecretString` type for API keys/secrets prevents accidental exposure in logs
+- **Dependencies**: Added `rust_decimal_macros` for cleaner decimal literals
+
 ## Prerequisites & Infrastructure Requirements
 
 To run the trading system in production, the following infrastructure and services must be set up and running:
@@ -136,6 +156,11 @@ To run the trading system in production, the following infrastructure and servic
 ### Security Requirements
 
 #### API Key Security
+- ✅ **SecretString Type**: All API keys and secrets use `SecretString` wrapper
+  - Prevents accidental exposure in logs, Debug, or Display output
+  - Shows `***REDACTED***` instead of actual values
+  - Requires explicit `.expose()` to access sensitive data
+  - Still serializes actual values for config files (needed for loading)
 - **Storage**: Encrypted storage or environment variables
 - **Permissions**: Minimum required permissions (read, trade)
 - **Rotation**: Regular key rotation recommended
@@ -147,9 +172,10 @@ To run the trading system in production, the following infrastructure and servic
 - **Authorization**: API key-based authentication with exchange
 
 #### Data Security
-- **Sensitive Data**: API keys, secrets stored securely
-- **Logging**: Avoid logging sensitive data
+- ✅ **Sensitive Data**: API keys, secrets use `SecretString` type (prevents accidental logging)
+- **Logging**: `SecretString` automatically redacts in Debug/Display
 - **Backup**: Encrypted backups for MongoDB (config only)
+- **Access Control**: Sensitive data requires explicit `.expose()` call
 
 ### Startup Sequence
 
@@ -262,10 +288,13 @@ cargo run --release --bin trading-cli -- --endpoint http://localhost:50051
 │           │                       │                     │
 │  ┌────────▼───────────────────────▼─────────┐        │
 │  │      Trading Engine                       │        │
-│  │  - Level Manager                          │        │
-│  │  - Level Executor                         │        │
+│  │  ✅ Level-based Trading (Proposal 03)     │        │
+│  │  ✅ Strategy-based Trading                 │        │
+│  │  - TradingState (shared state)            │        │
+│  │  - Level Manager / Strategy Executor      │        │
 │  │  - Risk Manager (cached)                 │        │
 │  │  - Indicator Subscriber (channel cache)  │        │
+│  │  - Position Reconciliation                │        │
 │  └────────┬──────────────────────────────────┘        │
 │           │                                            │
 │           │ Channel (in-process) OR gRPC (external)   │
@@ -433,12 +462,52 @@ cargo run --release --bin trading-cli -- --endpoint http://localhost:50051
 - MongoDB persistence (disabled, lazy, own persistence)
 
 ### Trading Engine
-- Level management and execution
-- Risk checks (cached, incremental)
-- Indicator subscription (channels, cached) - ✅ **Indicator Engine ready**
-- Order placement
-- Receives updates via channels (exchange, market data)
-- Monitoring data aggregation
+- ✅ **COMPLETE**: Level-based trading system (Proposal 03)
+  - Level management and execution (`levels/manager.rs`, `levels/executor.rs`)
+  - Level lifecycle (Created, Posted, Filled, Cancelled, Paused, Removed)
+  - Indicator-based price/quantity resolution (`levels/resolver.rs`)
+  - Risk checks per level (`levels/risk/manager.rs`, cached, incremental)
+  - Cancellation manager (`levels/cancellation/manager.rs`)
+  - Event loop (`levels/event_loop.rs`) for orderbook processing and level execution
+  - Indicator subscriber (`levels/indicator_subscriber.rs`) for real-time indicator values
+- ✅ **COMPLETE**: Strategy-based trading system
+  - Strategy trait (`state.rs`) and implementations (`strategies/strategies.rs`)
+  - Strategy executor (`strategies/executor.rs`) with Redis orderbook subscription
+  - Strategy manager (`strategies/strategy_manager.rs`) for multiple strategies
+  - Backtesting framework (`strategies/backtest.rs`)
+- ✅ **State Management**: `TradingState` in `state.rs` (renamed from `strategy.rs`)
+  - Positions tracking (`HashMap<Pair, Position>`)
+  - Active orders tracking (`HashMap<OrderId, Order>`)
+  - Pending orders tracking with timestamps
+  - Shared by both strategies and levels modes
+  - This is the trading engine's own state (not exchange-level state)
+- ✅ **Position Reconciliation**: `PositionReconciler` in `reconciliation.rs`
+  - Fetches balances from exchange via `TradingClient::fetch_balance()`
+  - Compares with internal `TradingState`
+  - Updates state when discrepancies detected
+  - Used by both modes
+- ✅ **Health Server**: Shared health monitoring (`health.rs`)
+  - REST API for positions, orders, state
+  - Used by both strategies and levels modes
+- **Module Structure**:
+  - `state.rs`: Shared `TradingState`, `Position`, `Strategy` trait
+  - `strategies/`: Strategy implementations (independent module)
+    - `strategies.rs`: BuyLowSellHigh implementation
+    - `executor.rs`: Strategy execution loop
+    - `strategy_manager.rs`: Multi-strategy management
+    - `backtest.rs`: Backtesting framework
+  - `levels/`: Level-based trading (independent module)
+    - `manager.rs`: Level lifecycle management
+    - `executor.rs`: Level execution
+    - `event_loop.rs`: Main event loop
+    - `resolver.rs`: Indicator resolution
+    - `indicator_subscriber.rs`: Indicator value subscription
+    - `risk/`: Risk management submodule
+    - `cancellation/`: Cancellation logic submodule
+  - `reconciliation.rs`: Position reconciliation (shared)
+  - `health.rs`: Health server (shared)
+- **Independence**: `strategies` and `levels` modules do NOT depend on each other
+- **Common Logic**: Shared components extracted to `state`, `reconciliation`, `health`
 
 ### Indicator Engine
 - ✅ **COMPLETE**: Real-time indicator calculation (SMA, EMA, composite indicators)
@@ -449,10 +518,24 @@ cargo run --release --bin trading-cli -- --endpoint http://localhost:50051
 - Performance optimized (SmolStr, efficient data structures)
 - Comprehensive unit tests (39 tests)
 
-### Runner (gRPC Server)
+### Runner (Application Orchestrator)
+- ✅ **Dual Mode Support**: Both strategy and levels modes
+  - `strategy_runner()`: Complete strategy mode setup
+  - `level_runner()`: Complete levels mode setup
+  - Mode selection via command-line argument (`--mode strategy|levels`)
+- ✅ **Shared Services**: `SharedServices` struct encapsulates common services
+  - Trading client, execution report channel, shutdown manager
+  - Market data handle, trading WebSocket handle, indicator handle
+- ✅ **Execution Report Handler**: Shared handler function eliminates duplication
+  - Common logic for receiving and processing execution reports
+  - Mode-specific callbacks for strategy vs levels handling
+- ✅ **Configuration Separation**:
+  - `config/bot.json`: General bot config (system, exchange, server, redis, features)
+  - `config/strategies.json`: Strategy-specific config
+  - `config/levels.json`: Levels-specific config
 - Orchestrates all services
 - Creates channel pairs and wires services together
-- Exposes gRPC server for TUI CLI
+- Exposes gRPC server for TUI CLI (future)
 - Provides level management, monitoring data, system health endpoints
 
 ### TUI CLI (Terminal User Interface and Monitoring)
@@ -619,8 +702,13 @@ Orderbook Update (Channel) → Trading Engine
 3. Basic state management
 
 ### Phase 2: Core Features
-1. Level-based trading (Proposal 03) - **Ready to implement (Indicator Engine complete)**
-2. Redis to Channels migration (Proposal 04) - **After Proposal 03**
+1. ✅ Level-based trading (Proposal 03) - **COMPLETE**
+   - Level executor, risk manager, cancellation manager
+   - Event loop for orderbook processing
+   - Indicator-based price/quantity resolution
+   - Level lifecycle management
+   - Both strategy and levels modes fully functional
+2. Redis to Channels migration (Proposal 04) - **Next**
 3. Data handling and persistence (Proposal 05)
 4. LiveConfig Service (Proposal 06) - **After Proposal 05**
 5. Risk system (Proposal 07)
@@ -649,6 +737,44 @@ Orderbook Update (Channel) → Trading Engine
 - **Vertical scaling**: Efficient resource usage
 - **Load handling**: 10x normal load
 
+## Recent Refactoring & Improvements
+
+### Module Organization (✅ Complete)
+- **Trading Engine State**: `state.rs` contains `TradingState`, `Position`, and `Strategy` trait
+  - Previously named `strategy.rs`, renamed to better reflect shared state purpose
+  - Used by both strategies and levels modes
+- **Module Separation**: `strategies/` and `levels/` are independent modules
+  - No cross-dependencies between strategies and levels
+  - Common logic extracted to shared modules (`state`, `reconciliation`, `health`)
+- **Code Cleanup**: Removed unused `data/` module
+  - `OrderbookProcessor` was legacy code from before Redis architecture
+  - Trading engine now processes orderbooks directly from Redis (one at a time)
+
+### Security Improvements (✅ Complete)
+- **SecretString Type**: Secure wrapper for API keys and secrets (`libs/trading_core/src/secret.rs`)
+  - Prevents accidental exposure in Debug/Display (shows `***REDACTED***`)
+  - Still serializes actual values for config files
+  - Requires explicit `.expose()` to access sensitive data
+  - All API keys and secrets now use `SecretString` instead of plain `SmolStr`
+
+### Code Quality Improvements (✅ Complete)
+- **Execution Report Handler**: Shared function eliminates duplication
+  - Common logic extracted to `execution_report_handler()` function
+  - Both modes use same handler with mode-specific callbacks
+- **Runner Organization**: Clean separation of concerns
+  - `strategy_runner()` and `level_runner()` functions in `runner/lib.rs`
+  - `main.rs` is clean, just routes to appropriate runner
+  - Removed redundant `runner/src/health.rs` wrapper
+- **Dependencies**: Added `rust_decimal_macros` for cleaner decimal literals
+
+### Configuration Architecture (✅ Complete)
+- **Separated Configs**: Trading-specific configs separated from general bot config
+  - `config/bot.json`: System-wide settings (exchange, server, redis, features)
+  - `config/strategies.json`: Strategy-specific parameters
+  - `config/levels.json`: Levels-specific parameters
+- **Config Loading**: Logic in `runner` crate (where it belongs)
+  - Not in `trading_core` (system-level concern, not library concern)
+
 ## Notes
 
 - **Monolith architecture**: Single process for ultra-low latency
@@ -658,4 +784,7 @@ Orderbook Update (Channel) → Trading Engine
 - **Resilient**: Error handling, circuit breakers, graceful degradation
 - **Maintainable**: Clear separation of concerns, modular design
 - **Independent services**: Exchange Engine and Market Data Engine are self-contained
+- **Independent trading modes**: Strategies and levels modules are independent
+- **Shared state**: `TradingState` is the trading engine's state, shared by both modes
+- **Secure by default**: API keys and secrets use `SecretString` wrapper
 

@@ -5,30 +5,49 @@ use market_data_engine::{
     config::{ExchangeConfig as MDExchangeConfig, MarketDataConfig},
     driver::{MarketDataDriver, Method},
 };
-use runner::{health::HealthServer, shutdown::ShutdownManager};
+use runner::config::BotConfig;
+use runner::shutdown::ShutdownManager;
+use runner::{level_runner, strategy_runner, SharedServices};
 use smol_str::SmolStr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{error, info, warn};
 use trading_core::{
     channels::{indicator_update_channel, market_data_update_channel},
-    config::TradingSystemConfig,
     traits::TradingClient,
     types::common::Pair,
 };
-use trading_engine::{executor::StrategyExecutor, strategies::BuyLowSellHigh, strategy::Strategy};
 
-mod health;
 mod shutdown;
+
+use clap::Parser;
+
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+struct Args {
+    /// Trading mode: "strategy" or "levels"
+    #[arg(short, long, default_value = "strategy")]
+    mode: String,
+
+    /// Path to strategies config file (required if mode is "strategy")
+    #[arg(short, long, default_value = "config/strategies.json")]
+    strategies_config: String,
+
+    /// Path to levels config file (required if mode is "levels")
+    #[arg(short, long, default_value = "config/levels.json")]
+    levels_config: String,
+}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Load configuration
-    let config = TradingSystemConfig::load_from_file("config/trading_system.json")?;
-    config.validate()?;
+    let args = Args::parse();
+
+    // Load general bot configuration
+    let bot_config = BotConfig::load_from_file("config/bot.json")?;
+    bot_config.validate()?;
 
     // Initialize logging
-    let log_level = match config.system.log_level.as_str() {
+    let log_level = match bot_config.system.log_level.as_str() {
         "trace" => tracing::Level::TRACE,
         "debug" => tracing::Level::DEBUG,
         "info" => tracing::Level::INFO,
@@ -61,7 +80,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Convert unified config to exchange-specific configs
     // Extract the exchange-specific config from JSON
-    let binance_config_json = config
+    let binance_config_json = bot_config
         .exchange
         .exchange_specific
         .get("binance")
@@ -88,9 +107,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         base_delay: binance_config.base_delay,
         max_delay: binance_config.max_delay,
     };
+    let exchange_enum = bot_config.exchange.exchange.clone();
     let market_data_config = MarketDataConfig {
-        redis_url: config.redis.url.clone(),
-        exchange: config.exchange.exchange,
+        redis_url: bot_config.redis.url.clone(),
+        exchange: exchange_enum,
         exchange_config: MDExchangeConfig::Binance(market_data_binance_config),
     };
     let mut market_data_driver = MarketDataDriver::new(market_data_config)?;
@@ -111,10 +131,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Wait for market data to start and validate Redis connectivity
     info!("Validating Redis connectivity...");
-    let redis_url: redis::ConnectionInfo = config.redis.url.parse().map_err(|e| {
+    let redis_url: redis::ConnectionInfo = bot_config.redis.url.parse().map_err(|e| {
         format!(
             "Invalid Redis URL '{url}': {error}",
-            url = config.redis.url,
+            url = bot_config.redis.url,
             error = e
         )
     })?;
@@ -201,7 +221,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut binance_client = BinanceClient::new(binance_config.clone(), 1024);
 
     // Set up execution report channel
-    let (exec_report_tx, mut exec_report_rx) = tokio::sync::mpsc::channel(100);
+    let (exec_report_tx, exec_report_rx) = tokio::sync::mpsc::channel(100);
     binance_client
         .set_execution_report_channel(exec_report_tx)
         .await;
@@ -246,154 +266,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Err("Trading client failed to connect within 30 seconds".into());
     }
 
-    // 3. Create Strategy
-    info!("Creating {} Strategy...", config.strategy.strategy_type);
-    let strategy = Arc::new(RwLock::new(BuyLowSellHigh::new(
-        trading_client.clone(),
-        symbol.clone(),
-        config.strategy.position_size,
-        config.strategy.max_position,
-        config.strategy.buy_threshold_percent,
-        config.strategy.sell_threshold_percent,
-        config.strategy.stop_loss_percent,
-        config.strategy.take_profit_percent,
-        config.strategy.max_active_orders,
-        config.strategy.price_history_size,
-        config.strategy.min_price_history,
-    )));
+    // Route based on mode
+    let services = SharedServices {
+        trading_client,
+        exec_report_rx,
+        shutdown_manager,
+        market_data_handle,
+        trading_ws_handle,
+        indicator_handle,
+    };
 
-    // 4. Create Strategy Executor
-    info!("Creating Strategy Executor...");
-    let min_order_size = config.strategy.min_order_size.unwrap_or_else(|| {
-        // Default to 0.00001 BTC if not specified
-        rust_decimal::Decimal::new(1, 5)
-    });
-    let step_size = config.strategy.step_size.unwrap_or_else(|| {
-        // Default to 0.00001 BTC if not specified (5 decimal places)
-        rust_decimal::Decimal::new(1, 5)
-    });
-    let tick_size = config.strategy.tick_size.unwrap_or_else(|| {
-        // Default to 0.01 USDC if not specified (2 decimal places for price)
-        rust_decimal::Decimal::new(1, 2)
-    });
-    let min_notional = config.strategy.min_notional.unwrap_or_else(|| {
-        // Default to 5.0 USDC if not specified
-        rust_decimal::Decimal::new(5, 0)
-    });
-    let executor = StrategyExecutor::new(
-        strategy.clone(),
-        trading_client.clone(),
-        config.redis.url.clone(),
-        symbol.clone(),
-        min_order_size,
-        step_size,
-        tick_size,
-        min_notional,
-    );
-
-    // 5. Set up execution report handler
-    let strategy_for_reports = Arc::clone(&strategy);
-    let mut shutdown_rx_reports = shutdown_manager.subscribe();
-    let execution_report_handle = tokio::spawn(async move {
-        loop {
-            tokio::select! {
-                report = exec_report_rx.recv() => {
-                    match report {
-                        Some(report) => {
-                            let order: trading_core::types::exchange::Order = report.into();
-                            let mut strat = strategy_for_reports.write().await;
-                            if let Err(e) = strat.on_execution_report(&order).await {
-                                error!("Error handling execution report: {e}");
-                            }
-                        }
-                        None => break,
-                    }
-                }
-                _ = shutdown_rx_reports.recv() => {
-                    info!("Execution report handler shutting down");
-                    break;
-                }
-            }
+    match args.mode.as_str() {
+        "strategy" => {
+            strategy_runner(bot_config.clone(), args.strategies_config, services).await?;
         }
-    });
-
-    // 6. Start Health Check Server
-    let health_server = HealthServer::new(strategy.clone());
-    let server_config = config.server.clone();
-    let mut shutdown_rx_health = shutdown_manager.subscribe();
-    let health_handle = tokio::spawn(async move {
-        tokio::select! {
-            result = health_server.start(&server_config.bind_address, server_config.port) => {
-                if let Err(e) = result {
-                    error!("Health server error: {e}");
-                }
-            }
-            _ = shutdown_rx_health.recv() => {
-                info!("Health server shutting down");
-            }
+        "levels" => {
+            level_runner(bot_config.clone(), args.levels_config, services).await?;
         }
-    });
-
-    info!("All systems ready! Starting strategy execution...");
-    info!("Strategy: {}", config.strategy.strategy_type);
-    info!("Position size: {} BTC", config.strategy.position_size);
-    info!("Max position: {} BTC", config.strategy.max_position);
-    info!("Symbol: {symbol}");
-
-    // 7. Run strategy executor with shutdown handling
-    let mut shutdown_rx_executor = shutdown_manager.subscribe();
-    let executor_handle = tokio::spawn(async move {
-        tokio::select! {
-            result = executor.run() => {
-                if let Err(e) = result {
-                    error!("Strategy executor error: {e}");
-                }
-            }
-            _ = shutdown_rx_executor.recv() => {
-                info!("Strategy executor shutting down");
-            }
-        }
-    });
-
-    // Wait for shutdown signal (Ctrl+C or manual shutdown)
-    shutdown_manager.wait_for_shutdown().await;
-
-    // Graceful shutdown
-    info!("Shutting down gracefully...");
-
-    // Cancel all open orders before shutting down
-    info!(
-        "Cancelling all open orders for {symbol}...",
-        symbol = symbol
-    );
-    match trading_client
-        .write()
-        .await
-        .cancel_all_orders(&symbol)
-        .await
-    {
-        Ok(_) => info!("All orders cancelled successfully"),
-        Err(e) => warn!("Failed to cancel all orders: {error}", error = e),
-    }
-
-    // Signal all components to stop
-    shutdown_manager.signal_shutdown();
-
-    // Wait for tasks to finish (with timeout)
-    let shutdown_timeout = tokio::time::Duration::from_secs(config.system.shutdown_timeout_secs);
-    tokio::select! {
-        _ = tokio::time::sleep(shutdown_timeout) => {
-            warn!("Shutdown timeout reached, forcing exit");
-        }
-        _ = async {
-            let _ = market_data_handle.await;
-            let _ = trading_ws_handle.await;
-            let _ = execution_report_handle.await;
-            let _ = health_handle.await;
-            let _ = executor_handle.await;
-            let _ = indicator_handle.await;
-        } => {
-            info!("All components shut down successfully");
+        _ => {
+            return Err(format!("Unknown mode: {}. Use 'strategy' or 'levels'", args.mode).into());
         }
     }
 

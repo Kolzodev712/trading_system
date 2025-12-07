@@ -155,7 +155,10 @@ impl BinanceSubscriptionHandler {
         let timestamp = chrono::Utc::now().timestamp_millis();
 
         let mut params = BTreeMap::new();
-        params.insert("apiKey".into(), self.signer.api_key.clone());
+        params.insert(
+            "apiKey".into(),
+            self.signer.api_key.expose_smol_str().clone(),
+        );
         params.insert("timestamp".into(), timestamp.to_string().into());
 
         let signed_params = self.signer.build_signed_params(params)?;
@@ -206,7 +209,10 @@ impl BinanceSubscriptionHandler {
 
         // Include ALL parameters that will be sent in the signature calculation
         let mut signed_params = BTreeMap::new();
-        signed_params.insert("apiKey".into(), self.signer.api_key.clone());
+        signed_params.insert(
+            "apiKey".into(),
+            self.signer.api_key.expose_smol_str().clone(),
+        );
         signed_params.insert("timestamp".into(), timestamp.to_string().into());
 
         // Include recvWindow and omitZeroBalances in signature if they're present
@@ -270,7 +276,10 @@ impl BinanceSubscriptionHandler {
         let timestamp = chrono::Utc::now().timestamp_millis();
 
         let mut signed_params = BTreeMap::new();
-        signed_params.insert("apiKey".into(), self.signer.api_key.clone());
+        signed_params.insert(
+            "apiKey".into(),
+            self.signer.api_key.expose_smol_str().clone(),
+        );
         signed_params.insert("timestamp".into(), timestamp.to_string().into());
         signed_params.insert("symbol".into(), params.symbol.clone());
         signed_params.insert("side".into(), params.side.to_string().into());
@@ -345,7 +354,10 @@ impl BinanceSubscriptionHandler {
         let timestamp = chrono::Utc::now().timestamp_millis();
 
         let mut signed_params = BTreeMap::new();
-        signed_params.insert("apiKey".into(), self.signer.api_key.clone());
+        signed_params.insert(
+            "apiKey".into(),
+            self.signer.api_key.expose_smol_str().clone(),
+        );
         signed_params.insert("timestamp".into(), timestamp.to_string().into());
         signed_params.insert("symbol".into(), params.symbol.clone());
         signed_params.insert(
@@ -385,7 +397,10 @@ impl BinanceSubscriptionHandler {
         let timestamp = chrono::Utc::now().timestamp_millis();
 
         let mut signed_params = BTreeMap::new();
-        signed_params.insert("apiKey".into(), self.signer.api_key.clone());
+        signed_params.insert(
+            "apiKey".into(),
+            self.signer.api_key.expose_smol_str().clone(),
+        );
         signed_params.insert("timestamp".into(), timestamp.to_string().into());
         signed_params.insert("symbol".into(), params.symbol.clone());
 

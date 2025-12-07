@@ -1,7 +1,6 @@
 use crate::exchanges::binance::common_types::BinanceSymbol;
 use serde::{Deserialize, Serialize};
-use smol_str::SmolStr;
-use trading_core::utils::{deserialize_smol_str, serialize_smol_str};
+use trading_core::secret::SecretString;
 
 #[derive(Debug, PartialEq, Eq, Deserialize, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -17,17 +16,8 @@ pub struct BinanceConfig {
 #[derive(Debug, PartialEq, Eq, Deserialize, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct BinanceCredentials {
-    #[serde(
-        serialize_with = "serialize_smol_str",
-        deserialize_with = "deserialize_smol_str"
-    )]
-    pub api_key: SmolStr,
-
-    #[serde(
-        serialize_with = "serialize_smol_str",
-        deserialize_with = "deserialize_smol_str"
-    )]
-    pub secret_key: SmolStr,
+    pub api_key: SecretString,
+    pub secret_key: SecretString,
 }
 
 #[cfg(test)]
@@ -38,8 +28,8 @@ mod tests {
     #[test]
     fn test_binance_credentials_serde() {
         let creds = BinanceCredentials {
-            api_key: SmolStr::new("test_api_key"),
-            secret_key: SmolStr::new("test_secret_key"),
+            api_key: SecretString::new("test_api_key"),
+            secret_key: SecretString::new("test_secret_key"),
         };
 
         let serialized = serde_json::to_string(&creds).expect("Serialization failed");
@@ -49,8 +39,8 @@ mod tests {
         let deserialized: BinanceCredentials =
             serde_json::from_str(&serialized).expect("Deserialization failed");
 
-        assert_eq!(deserialized.api_key, creds.api_key);
-        assert_eq!(deserialized.secret_key, creds.secret_key);
+        assert_eq!(deserialized.api_key.expose(), creds.api_key.expose());
+        assert_eq!(deserialized.secret_key.expose(), creds.secret_key.expose());
     }
 
     #[test]
@@ -58,12 +48,12 @@ mod tests {
         let config = BinanceConfig {
             symbol: BinanceSymbol::new("BTC", "USDT"),
             rest: BinanceCredentials {
-                api_key: SmolStr::new("rest_api_key"),
-                secret_key: SmolStr::new("rest_secret_key"),
+                api_key: SecretString::new("rest_api_key"),
+                secret_key: SecretString::new("rest_secret_key"),
             },
             ws: BinanceCredentials {
-                api_key: SmolStr::new("ws_api_key"),
-                secret_key: SmolStr::new("ws_secret_key"),
+                api_key: SecretString::new("ws_api_key"),
+                secret_key: SecretString::new("ws_secret_key"),
             },
             limit: Some(500),
             base_delay: Some(1000),
@@ -82,7 +72,21 @@ mod tests {
         let deserialized: BinanceConfig =
             serde_json::from_str(&serialized).expect("Deserialization failed");
 
-        assert_eq!(deserialized, config);
+        assert_eq!(
+            deserialized.rest.api_key.expose(),
+            config.rest.api_key.expose()
+        );
+        assert_eq!(
+            deserialized.rest.secret_key.expose(),
+            config.rest.secret_key.expose()
+        );
+        assert_eq!(deserialized.ws.api_key.expose(), config.ws.api_key.expose());
+        assert_eq!(
+            deserialized.ws.secret_key.expose(),
+            config.ws.secret_key.expose()
+        );
+        assert_eq!(deserialized.symbol, config.symbol);
+        assert_eq!(deserialized.limit, config.limit);
     }
 
     #[test]
@@ -90,12 +94,12 @@ mod tests {
         let config = BinanceConfig {
             symbol: BinanceSymbol::new("ETH", "USDT"),
             rest: BinanceCredentials {
-                api_key: SmolStr::new("rest_api_key"),
-                secret_key: SmolStr::new("rest_secret_key"),
+                api_key: SecretString::new("rest_api_key"),
+                secret_key: SecretString::new("rest_secret_key"),
             },
             ws: BinanceCredentials {
-                api_key: SmolStr::new("ws_api_key"),
-                secret_key: SmolStr::new("ws_secret_key"),
+                api_key: SecretString::new("ws_api_key"),
+                secret_key: SecretString::new("ws_secret_key"),
             },
             limit: None,
             base_delay: None,
@@ -107,6 +111,19 @@ mod tests {
         let deserialized: BinanceConfig =
             serde_json::from_str(&serialized).expect("Deserialization failed");
 
-        assert_eq!(deserialized, config);
+        assert_eq!(
+            deserialized.rest.api_key.expose(),
+            config.rest.api_key.expose()
+        );
+        assert_eq!(
+            deserialized.rest.secret_key.expose(),
+            config.rest.secret_key.expose()
+        );
+        assert_eq!(deserialized.ws.api_key.expose(), config.ws.api_key.expose());
+        assert_eq!(
+            deserialized.ws.secret_key.expose(),
+            config.ws.secret_key.expose()
+        );
+        assert_eq!(deserialized.symbol, config.symbol);
     }
 }

@@ -1,12 +1,12 @@
 pub mod authenticator;
 pub mod channels;
 pub mod circuit_breaker;
-pub mod config;
 pub mod error;
 pub mod grpc;
 pub mod redis;
 pub mod rest;
 pub mod retry;
+pub mod secret;
 pub mod traits;
 pub mod types;
 pub mod utils;

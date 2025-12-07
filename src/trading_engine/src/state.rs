@@ -167,7 +167,7 @@ pub trait Strategy: Send + Sync {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use trading_core::types::common::{Side, Symbol};
+    use trading_core::types::common::Side;
 
     #[test]
     fn test_trading_state_new() {
@@ -183,7 +183,7 @@ mod tests {
         let pair = Pair::new("BTC", "USDT");
         let order = Order {
             order_id: OrderId::new("12345".into()),
-            symbol: "BTCUSDT".into(),
+            symbol: pair.convert_to_smolstr().into(),
             side: Side::Buy,
             price: Decimal::new(90000, 0),
             amount: Decimal::new(10, 2),

@@ -1,4 +1,4 @@
-use super::strategy::Strategy;
+use crate::state::Strategy;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use trading_core::{error::EngineError, types::exchange::Order, types::market_data::Orderbook};

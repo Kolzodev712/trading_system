@@ -1,9 +1,0 @@
-{
-    "symbol": {
-        "base": "BTC",
-        "quote": "USDT"
-    },
-    "apiKey": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
-    "secretKey": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
-    "limit": 100
-}

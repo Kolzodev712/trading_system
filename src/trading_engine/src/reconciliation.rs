@@ -1,4 +1,4 @@
-use super::strategy::TradingState;
+use super::state::TradingState;
 use rust_decimal::Decimal;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -7,7 +7,7 @@ use trading_core::{error::EngineError, traits::TradingClient, types::common::Pai
 
 /// Reconciles internal trading state with exchange balances
 #[derive(Clone)]
-pub(crate) struct PositionReconciler {
+pub struct PositionReconciler {
     trading_client: Arc<RwLock<dyn TradingClient<trading_core::types::exchange::OrderRequest>>>,
 }
 
@@ -89,7 +89,7 @@ impl PositionReconciler {
                         // Create new position with zero avg_price (will be set on next trade)
                         state.positions.insert(
                             symbol.clone(),
-                            super::strategy::Position {
+                            super::state::Position {
                                 symbol: symbol.clone(),
                                 quantity: base_balance,
                                 avg_price: Decimal::ZERO,
@@ -130,8 +130,7 @@ impl PositionReconciler {
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)] // Fields are returned for potential future use/logging
-pub(crate) struct ReconciliationResult {
+pub struct ReconciliationResult {
     pub symbol: Pair,
     pub internal_quantity: Decimal,
     pub exchange_quantity: Decimal,

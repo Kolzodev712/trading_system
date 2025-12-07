@@ -172,4 +172,14 @@ impl MarketDataClient for BinanceClient {
     async fn trade_snapshot(&self, _pair: Pair) -> Result<PublicTrade, EngineError> {
         unimplemented!()
     }
+
+    async fn fetch_market_data_snapshot(
+        &self,
+        _pair: Pair,
+    ) -> Result<(Orderbook, Vec<PublicTrade>), EngineError> {
+        // TODO: Implement fetch_market_data_snapshot
+        // This should fetch both orderbook and recent trades in a single call
+        // for efficiency during reconciliation
+        unimplemented!("fetch_market_data_snapshot() - to be implemented for state reconciliation")
+    }
 }

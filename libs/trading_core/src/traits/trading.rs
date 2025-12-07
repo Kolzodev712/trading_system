@@ -1,7 +1,7 @@
 //! Trading client trait
 use crate::error::EngineError;
 use crate::types::common::{Exchange, OrderId, Pair};
-use crate::types::exchange::{Balance, Order, OrderRequest};
+use crate::types::exchange::{Balance, Order, OrderRequest, Trade};
 use async_trait::async_trait;
 use std::fmt::Debug;
 
@@ -35,4 +35,13 @@ where
 
     /// Fetches the balances for the account.
     async fn fetch_balance(&self) -> Result<Vec<Balance>, EngineError>;
+
+    /// Fetches all open orders for the account.
+    /// This method should be called at bootstrap and periodically for reconciliation.
+    async fn fetch_open_orders(&self) -> Result<Vec<Order>, EngineError>;
+
+    /// Fetches private trade history for the account.
+    /// This method should be called at bootstrap and periodically for reconciliation.
+    /// Optionally filters by trading pair if provided.
+    async fn fetch_trades(&self, pair: Option<&InstrumentId>) -> Result<Vec<Trade>, EngineError>;
 }

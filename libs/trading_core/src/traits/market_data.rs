@@ -28,4 +28,12 @@ where
 
     /// Fetch trade snapshot for a pair
     async fn trade_snapshot(&self, pair: InstrumentId) -> Result<PublicTrade, EngineError>;
+
+    /// Fetches market data snapshot (orderbook and recent trades) for a trading pair.
+    /// This method should be called at bootstrap and periodically for reconciliation.
+    /// Returns both orderbook and recent trades in a single call for efficiency.
+    async fn fetch_market_data_snapshot(
+        &self,
+        pair: InstrumentId,
+    ) -> Result<(Orderbook, Vec<PublicTrade>), EngineError>;
 }

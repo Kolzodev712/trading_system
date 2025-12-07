@@ -4,7 +4,7 @@ use trading_core::{
     traits::TradingClient,
     types::{
         common::{OrderId, Pair},
-        exchange::{Balance, Order, OrderRequest},
+        exchange::{Balance, Order, OrderRequest, Trade},
     },
 };
 
@@ -546,6 +546,19 @@ impl TradingClient<OrderRequest, Pair> for BinanceClient {
                 format!("unexpected RPC variant in fetch_balance: {:?}", other).into(),
             )),
         }
+    }
+
+    async fn fetch_open_orders(&self) -> Result<Vec<Order>, EngineError> {
+        // TODO: Implement fetch_open_orders via REST API or WebSocket RPC
+        // This should fetch all open orders from the exchange
+        unimplemented!("fetch_open_orders() - to be implemented for state reconciliation")
+    }
+
+    async fn fetch_trades(&self, pair: Option<&Pair>) -> Result<Vec<Trade>, EngineError> {
+        // TODO: Implement fetch_trades via REST API
+        // This should fetch private trade history, optionally filtered by pair
+        // This is for state reconciliation, not public trades
+        unimplemented!("fetch_trades() - to be implemented for state reconciliation")
     }
 }
 

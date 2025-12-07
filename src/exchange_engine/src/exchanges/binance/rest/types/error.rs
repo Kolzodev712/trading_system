@@ -1,16 +1,17 @@
 use reqwest::Error as ReqwestError;
+use smol_str::SmolStr;
 use thiserror::Error;
 
 #[derive(Clone, Debug, Error, Eq, PartialEq)]
 pub enum BinanceError {
     #[error("HTTP Error: {0}")]
-    HttpError(String),
+    HttpError(SmolStr),
     #[error("API Error: {0}")]
-    ApiError(String),
+    ApiError(SmolStr),
 }
 
 impl From<ReqwestError> for BinanceError {
     fn from(error: ReqwestError) -> Self {
-        BinanceError::HttpError(error.to_string())
+        BinanceError::HttpError(SmolStr::new(error.to_string()))
     }
 }

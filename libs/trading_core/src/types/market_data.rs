@@ -89,7 +89,7 @@ pub struct StructuredPublicTrade {
     /// Whether the trade was made by a market maker
     pub is_market_maker: bool,
     /// Trade ID (if available)
-    pub trade_id: Option<String>,
+    pub trade_id: Option<smol_str::SmolStr>,
 }
 
 #[cfg(test)]
@@ -112,10 +112,7 @@ mod tests {
             timestamp: 1734819696263,
         };
 
-        assert_eq!(
-            orderbook.best_bid_price(),
-            Some(Decimal::new(90000, 0))
-        );
+        assert_eq!(orderbook.best_bid_price(), Some(Decimal::new(90000, 0)));
     }
 
     #[test]
@@ -130,10 +127,7 @@ mod tests {
             timestamp: 1734819696263,
         };
 
-        assert_eq!(
-            orderbook.best_ask_price(),
-            Some(Decimal::new(91000, 0))
-        );
+        assert_eq!(orderbook.best_ask_price(), Some(Decimal::new(91000, 0)));
     }
 
     #[test]
@@ -214,10 +208,7 @@ mod tests {
                 Decimal::new(89900, 0),
                 Decimal::new(2, 0),
             ],
-            asks: vec![
-                Decimal::new(91000, 0),
-                Decimal::new(1, 0),
-            ],
+            asks: vec![Decimal::new(91000, 0), Decimal::new(1, 0)],
         };
 
         let serialized = serde_json::to_string(&orderbook).unwrap();
@@ -246,7 +237,7 @@ mod tests {
             quantity: Decimal::new(10, 2),
             timestamp: 1734819696263,
             is_market_maker: false,
-            trade_id: Some("12345".to_string()),
+            trade_id: Some(smol_str::SmolStr::new("12345")),
         };
 
         assert_eq!(trade.pair.base, "BTC");

@@ -6,6 +6,8 @@ This proposal outlines the migration from Redis-based communication to in-proces
 
 **Prerequisite**: This migration should be performed after **Proposal 03 (Level-Based Trading System)** is implemented. Level-based trading can work with Redis initially; the migration to channels is a performance optimization that can be done once the core trading functionality is stable.
 
+**Note**: After channel migration is complete, the hardcoded indicator calculation logic in `trading_engine/src/strategies.rs` (BuyLowSellHigh strategy) should be removed. The strategy will then subscribe to indicator updates via channels instead of calculating moving averages directly.
+
 ## Current State
 
 ### Current Architecture (Redis-Based)
@@ -51,6 +53,8 @@ Indicator Service → Channel → Trading Engine
 5. **Update Exchange Engine** to publish via channels (if not already)
 6. **Keep Redis code** behind feature flag for potential future Web UI use
 7. **Update Runner** to create channel pairs and wire services together
+8. **Remove hardcoded indicator logic** from Trading Engine after channels are in place (Trading Engine will subscribe to indicator updates via channels)
+9. **Support multiple consumers** via broadcast channels for fan-out scenarios (e.g., Market Data → Indicator Engine, Trading Engine, DB, Risk Service)
 
 ## Component Structure
 

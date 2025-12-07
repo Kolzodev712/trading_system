@@ -4,7 +4,7 @@
 
 This proposal outlines the implementation of a level-based trading system where trading commands (levels) are configured to open bid or ask orders. Levels use indicators for dynamic order requirements and are exchange-agnostic. The system includes robust lifecycle management, risk checks, and cancellation logic.
 
-**Prerequisite**: **Proposal 02 (Indicator Service)** must be implemented before this proposal. The Indicator Service provides indicator values (SMA, EMA, etc.) via channels that the Level-Based Trading System depends on. See Proposal 02 for detailed implementation of the Indicator Service.
+**Prerequisite**: ✅ **Proposal 02 (Indicator Engine) is COMPLETE**. The Indicator Engine provides indicator values (SMA, EMA, composite indicators, etc.) via channels that the Level-Based Trading System depends on.
 
 ## Current State Analysis
 
@@ -28,7 +28,7 @@ Orderbook → Strategy → Order Request → Exchange
 ```
 Config → Level Manager → Level Executor → Risk Checks → Exchange
          ↑                                    ↓
-    Indicators (Channel/gRPC) ← Market Data ← Indicator Service
+    Indicators (Channel) ← Market Data ← Indicator Engine (✅ COMPLETE)
 ```
 
 ## Architecture Overview
@@ -58,8 +58,8 @@ trading_system/
 │   ├── libs/
 │   │   └── ... (existing libs from Proposal 01)
 │   │
-│   ├── indicator_service/          # PREREQUISITE: See Proposal 02
-│   │   └── ... (implemented in Proposal 02)
+│   ├── indicator_engine/          # ✅ COMPLETE: See Proposal 02 (completed)
+│   │   └── ... (implemented and ready)
 │   │
 │   ├── trading_engine/
 │   │   ├── level/
@@ -778,7 +778,7 @@ impl LevelBasedEventLoop {
 }
 ```
 
-## Integration with Indicator Service
+## Integration with Indicator Engine (✅ COMPLETE)
 
 ### gRPC Service Definition
 

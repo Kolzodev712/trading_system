@@ -81,16 +81,19 @@ impl From<BinanceOrderRequest> for OrderRequest {
                 let mut params = std::collections::HashMap::new();
                 if let Some(time_in_force) = binance_order.time_in_force {
                     params.insert(
-                        "timeInForce".to_string(),
+                        SmolStr::new("timeInForce"),
                         match time_in_force {
-                            BinanceTimeInForce::Gtc => "GTC".to_string(),
-                            BinanceTimeInForce::Ioc => "IOC".to_string(),
-                            BinanceTimeInForce::Fok => "FOK".to_string(),
+                            BinanceTimeInForce::Gtc => SmolStr::new("GTC"),
+                            BinanceTimeInForce::Ioc => SmolStr::new("IOC"),
+                            BinanceTimeInForce::Fok => SmolStr::new("FOK"),
                         },
                     );
                 }
                 if let Some(recv_window) = binance_order.timestamp {
-                    params.insert("recvWindow".to_string(), recv_window.to_string());
+                    params.insert(
+                        SmolStr::new("recvWindow"),
+                        SmolStr::new(recv_window.to_string()),
+                    );
                 }
                 params
             },
@@ -210,7 +213,7 @@ mod tests {
     #[test]
     fn test_order_request_to_binance_order_request_conversion() {
         let mut exchange_params = std::collections::HashMap::new();
-        exchange_params.insert("timeInForce".to_string(), "GTC".to_string());
+        exchange_params.insert(SmolStr::new("timeInForce"), SmolStr::new("GTC"));
 
         let order_request = trading_core::types::exchange::OrderRequest {
             symbol: "BTCUSDT".into(),

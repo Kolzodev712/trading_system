@@ -1,13 +1,21 @@
 use exchange_engine::exchanges::binance::{config::BinanceConfig, ws_client::BinanceClient};
+use indicator_engine::indicators::{IndicatorConfig, PriceSource};
+use indicator_engine::IndicatorService;
 use market_data_engine::{
     config::{ExchangeConfig as MDExchangeConfig, MarketDataConfig},
     driver::{MarketDataDriver, Method},
 };
 use runner::{health::HealthServer, shutdown::ShutdownManager};
+use smol_str::SmolStr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{error, info, warn};
-use trading_core::{config::TradingSystemConfig, traits::TradingClient, types::common::Pair};
+use trading_core::{
+    channels::{indicator_update_channel, market_data_update_channel},
+    config::TradingSystemConfig,
+    traits::TradingClient,
+    types::common::Pair,
+};
 use trading_engine::{executor::StrategyExecutor, strategies::BuyLowSellHigh, strategy::Strategy};
 
 mod health;
@@ -130,6 +138,63 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Wait for market data to start publishing
     tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+
+    // 1.5. Initialize Indicator Service
+    // NOTE: Currently, the Indicator Service is set up but won't receive data until
+    // the Market Data Engine is updated to publish to channels (Proposal 04).
+    // For now, this creates the structure and registers indicators.
+    info!("Initializing Indicator Service...");
+    let (_market_data_tx, market_data_rx) = market_data_update_channel();
+    let (indicator_tx, _indicator_rx) = indicator_update_channel();
+
+    let mut indicator_service = IndicatorService::new();
+    indicator_service.initialize(
+        market_data_rx,
+        indicator_tx,
+        1, // Publish every 1 second
+    );
+
+    // Register default indicators (can be configured later)
+    let pair_str = symbol.convert_to_smolstr();
+    let sma_config = IndicatorConfig {
+        id: SmolStr::new(format!("sma_20_{}", pair_str)),
+        name: SmolStr::new("SMA"),
+        pair: pair_str.clone(),
+        period: 20,
+        source: PriceSource::Close,
+    };
+    if let Err(e) = indicator_service.register_indicator(sma_config) {
+        warn!("Failed to register SMA indicator: {e}");
+    }
+
+    let ema_config = IndicatorConfig {
+        id: SmolStr::new(format!("ema_12_{}", pair_str)),
+        name: SmolStr::new("EMA"),
+        pair: pair_str,
+        period: 12,
+        source: PriceSource::Close,
+    };
+    if let Err(e) = indicator_service.register_indicator(ema_config) {
+        warn!("Failed to register EMA indicator: {e}");
+    }
+
+    // Start Indicator Service
+    // NOTE: This will run but won't receive data until Market Data Engine publishes to channels
+    let mut shutdown_rx_indicator = shutdown_manager.subscribe();
+    let indicator_handle = tokio::spawn(async move {
+        tokio::select! {
+            result = indicator_service.run() => {
+                if let Err(e) = result {
+                    error!("Indicator service error: {e}");
+                }
+            }
+            _ = shutdown_rx_indicator.recv() => {
+                info!("Indicator service shutting down");
+            }
+        }
+    });
+
+    info!("Indicator Service initialized (awaiting channel integration in Proposal 04)");
 
     // 2. Create Trading Client
     info!("Creating Trading Client...");
@@ -326,6 +391,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let _ = execution_report_handle.await;
             let _ = health_handle.await;
             let _ = executor_handle.await;
+            let _ = indicator_handle.await;
         } => {
             info!("All components shut down successfully");
         }

@@ -10,7 +10,8 @@ members = [
     "libs/trading_core",
     "src/exchange_engine",
     "src/trading_engine",
-    "src/market_data_engine", 
+    "src/market_data_engine",
+    "src/indicator_engine", 
     "src/runner",
 ]
 

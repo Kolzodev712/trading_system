@@ -2,6 +2,7 @@
 use crate::types::common::*;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
+use smol_str::SmolStr;
 use std::collections::HashMap;
 
 /// Order request
@@ -21,7 +22,7 @@ pub struct OrderRequest {
     /// Exchange's timestamp of the order
     pub timestamp: Option<u64>,
     /// Custom params specific to exchanges:
-    pub exchange_params: HashMap<String, String>,
+    pub exchange_params: HashMap<SmolStr, SmolStr>,
 }
 
 /// Order
@@ -103,7 +104,7 @@ pub struct Position {
 #[serde(rename_all = "camelCase")]
 pub struct Trade {
     /// Trade ID
-    pub trade_id: String,
+    pub trade_id: SmolStr,
     /// Order ID that this trade belongs to
     pub order_id: OrderId,
     /// Trading pair
@@ -131,7 +132,7 @@ mod tests {
     #[test]
     fn test_order_request_creation() {
         let mut exchange_params = HashMap::new();
-        exchange_params.insert("timeInForce".to_string(), "GTC".to_string());
+        exchange_params.insert(SmolStr::new("timeInForce"), SmolStr::new("GTC"));
 
         let order_request = OrderRequest {
             symbol: "BTCUSDT".into(),
@@ -212,7 +213,7 @@ mod tests {
     #[test]
     fn test_trade_creation() {
         let trade = Trade {
-            trade_id: "12345".to_string(),
+            trade_id: SmolStr::new("12345"),
             order_id: OrderId::new("67890".into()),
             pair: Pair::new("BTC", "USDT"),
             price: Decimal::new(90000, 0),
@@ -223,7 +224,7 @@ mod tests {
             fee_currency: "BTC".into(),
         };
 
-        assert_eq!(trade.trade_id, "12345");
+        assert_eq!(trade.trade_id, SmolStr::new("12345"));
         assert_eq!(trade.side, Side::Buy);
         assert_eq!(trade.fee_currency, "BTC");
     }
@@ -231,14 +232,12 @@ mod tests {
     #[test]
     fn test_account_info_creation() {
         let account_info = AccountInfo {
-            balances: vec![
-                Balance {
-                    symbol: "BTC".into(),
-                    free: Decimal::new(1, 0),
-                    used: Decimal::ZERO,
-                    total: Decimal::new(1, 0),
-                },
-            ],
+            balances: vec![Balance {
+                symbol: "BTC".into(),
+                free: Decimal::new(1, 0),
+                used: Decimal::ZERO,
+                total: Decimal::new(1, 0),
+            }],
             account_type: AccountType::Spot,
             update_time: MillisecondTimestamp(1734819696263),
         };
@@ -304,7 +303,7 @@ mod tests {
     #[test]
     fn test_trade_serialization() {
         let trade = Trade {
-            trade_id: "12345".to_string(),
+            trade_id: SmolStr::new("12345"),
             order_id: OrderId::new("67890".into()),
             pair: Pair::new("BTC", "USDT"),
             price: Decimal::new(90000, 0),

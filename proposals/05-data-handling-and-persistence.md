@@ -20,8 +20,13 @@ This proposal outlines the implementation of state management and data persisten
 7. **Market Data Persistence** (Feature Flag: `persist_market_data`):
    - **Orderbooks, Public Trades**: Logic exists, disabled initially (handled in-memory by state manager)
    - Publishing option available for future analysis, disabled initially
-8. **Collection Structure**: Single collection per trading bot
+8. **Collection Structure**: Single collection per trading bot (except indicators - see below)
 9. **Exchange State as SOT**: Exchange state is source of truth, MongoDB is backup for config only
+10. **Indicator Persistence**: Indicators stored in separate `indicators` collection (shared across bots/integrations)
+    - **Simple Indicators**: Rust-implemented indicators (SMA, EMA, etc.)
+    - **Complex/Composite Indicators**: Formula-based indicators defined in JSON config
+    - **Shared Collection**: Multiple bots/integrations can use the same indicator definitions
+    - **Persistence**: All indicator configurations persisted to MongoDB for reuse
 
 ## Architecture Overview
 
@@ -676,6 +681,54 @@ impl LevelPersistence {
 }
 ```
 
+### Indicators Collection (Shared)
+
+**Collection**: `indicators` (shared across all bots/integrations)
+
+**Purpose**: Store indicator definitions that can be reused across multiple trading bots or integrations.
+
+**Simple Indicator Document Structure**:
+```json
+{
+  "_id": "sma_20_btcusdt",
+  "indicator_id": "sma_20_btcusdt",
+  "indicator_type": "simple",
+  "name": "SMA",
+  "pair": "BTCUSDT",
+  "period": 20,
+  "source": "Close",
+  "created_at": 1234567890,
+  "updated_at": 1234567890
+}
+```
+
+**Composite Indicator Document Structure**:
+```json
+{
+  "_id": "golden_cross_btcusdt",
+  "indicator_id": "golden_cross_btcusdt",
+  "indicator_type": "composite",
+  "name": "Golden Cross",
+  "pair": "BTCUSDT",
+  "expression": {
+    "subtract": [
+      {"simple": "ema_50_btcusdt"},
+      {"simple": "ema_200_btcusdt"}
+    ]
+  },
+  "dependencies": ["ema_50_btcusdt", "ema_200_btcusdt"],
+  "created_at": 1234567890,
+  "updated_at": 1234567890
+}
+```
+
+**Key Points**:
+- Indicators are stored in a separate collection from bot configurations
+- Multiple bots can reference the same indicator by ID
+- Simple indicators are Rust-implemented (SMA, EMA, etc.)
+- Composite indicators are formula-based and depend on simple indicators
+- Circular dependencies are prevented (complex indicators depend on simple ones, not vice versa)
+
 ## Integration Points
 
 ### 1. Exchange Engine Integration
@@ -729,6 +782,25 @@ if let Some(config) = persistence.load_levels().await? {
 }
 ```
 
+### 4. Indicator Engine Persistence
+
+```rust
+// In indicator engine
+let indicator_persistence = IndicatorPersistence::new(mongo_client);
+
+// On startup - load indicators from MongoDB
+let indicators = indicator_persistence.load_all_indicators().await?;
+for indicator_config in indicators {
+    indicator_service.register_indicator(indicator_config)?;
+}
+
+// When new indicator is created (from UI or TUI)
+indicator_persistence.save_indicator(&indicator_config).await?;
+
+// When indicator is updated
+indicator_persistence.update_indicator(&indicator_config).await?;
+```
+
 ## Configuration
 
 ### MongoDB Configuration
@@ -738,13 +810,14 @@ if let Some(config) = persistence.load_levels().await? {
   "mongo": {
     "connection_string": "mongodb://localhost:27017",
     "database": "trading_system",
-    "collections": {
-      "bot_config": "bot_configs",
-      "exchange_state": "exchange_states",
-      "market_data_state": "market_data_states",
-      "historical_trades": "historical_trades",
-      "historical_candles": "historical_candles"
-    }
+      "collections": {
+        "bot_config": "bot_configs",
+        "indicators": "indicators",
+        "exchange_state": "exchange_states",
+        "market_data_state": "market_data_states",
+        "historical_trades": "historical_trades",
+        "historical_candles": "historical_candles"
+      }
   },
   "persistence": {
     "enabled": false,  // Disabled initially

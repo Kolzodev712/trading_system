@@ -323,7 +323,10 @@ mod tests {
     #[test]
     fn test_order_status_display() {
         assert_eq!(format!("{}", OrderStatus::New), "New");
-        assert_eq!(format!("{}", OrderStatus::PartiallyFilled), "PartiallyFilled");
+        assert_eq!(
+            format!("{}", OrderStatus::PartiallyFilled),
+            "PartiallyFilled"
+        );
         assert_eq!(format!("{}", OrderStatus::Filled), "Filled");
         assert_eq!(format!("{}", OrderStatus::Canceled), "Canceled");
         assert_eq!(format!("{}", OrderStatus::PendingCancel), "PendingCancel");

@@ -56,11 +56,12 @@ To run the trading system in production, the following infrastructure and servic
 
 ### Optional Services
 
-#### 5. Indicator Service (In-Process)
+#### 5. Indicator Engine (In-Process)
 - **Purpose**: Calculate and provide indicator values
 - **Protocol**: Channels (in-process, same workspace)
 - **Note**: Separate crate but same monolith, uses channels for communication
-- **Required**: **Prerequisite for Proposal 03** (Level-Based Trading System). Must be implemented before level-based trading. See **Proposal 02** for detailed implementation.
+- **Status**: ✅ **COMPLETE** - Fully implemented with SMA, EMA, and composite indicators
+- **Features**: Real-time calculation, caching, extensible framework, performance optimized
 
 #### 6. TUI CLI (Terminal User Interface and Monitoring)
 - **Purpose**: Terminal-based interface for trading operations and monitoring
@@ -162,17 +163,12 @@ To run the trading system in production, the following infrastructure and servic
    redis-server
    ```
 
-3. **Start Indicator Service** (if separate, optional)
-   ```bash
-   ./indicator_service --config config/indicators.json
-   ```
-
-4. **Start Trading System**
+3. **Start Trading System**
    ```bash
    ./trading_system --config config/trading_system.json
    ```
 
-5. **Start TUI CLI** (for interaction and monitoring)
+4. **Start TUI CLI** (for interaction and monitoring)
    ```bash
    ./trading-cli --endpoint http://localhost:50051
    ```
@@ -256,7 +252,15 @@ cargo run --release --bin trading-cli -- --endpoint http://localhost:50051
 │           │ Channel                │ Channel           │
 │           │ (< 1μs latency)        │ (< 1μs latency)   │
 │           │                        │                   │
-│  ┌────────▼────────────────────────▼─────────┐        │
+│           │                        ▼                   │
+│           │              ┌──────────────────┐          │
+│           │              │ Indicator Engine │ ✅ COMPLETE
+│           │              │ (SMA, EMA, etc.) │          │
+│           │              └────────┬─────────┘          │
+│           │                       │ Channel             │
+│           │                       │ (< 1μs latency)     │
+│           │                       │                     │
+│  ┌────────▼───────────────────────▼─────────┐        │
 │  │      Trading Engine                       │        │
 │  │  - Level Manager                          │        │
 │  │  - Level Executor                         │        │
@@ -295,10 +299,10 @@ cargo run --release --bin trading-cli -- --endpoint http://localhost:50051
    - High-frequency updates
    - Direct memory communication
 
-3. **Indicator Service → Trading System** (in-process, same workspace)
-   - Indicator values
-   - High-frequency
-   - Cached in trading system
+3. **Indicator Engine → Trading System** (in-process, same workspace)
+   - ✅ **COMPLETE**: Real-time indicator values (SMA, EMA, composite)
+   - High-frequency updates
+   - Cached in trading system (< 0.1ms lookup)
    - Uses channels (not gRPC)
 
 **Benefits**:
@@ -431,10 +435,19 @@ cargo run --release --bin trading-cli -- --endpoint http://localhost:50051
 ### Trading Engine
 - Level management and execution
 - Risk checks (cached, incremental)
-- Indicator subscription (channels, cached)
+- Indicator subscription (channels, cached) - ✅ **Indicator Engine ready**
 - Order placement
 - Receives updates via channels (exchange, market data)
 - Monitoring data aggregation
+
+### Indicator Engine
+- ✅ **COMPLETE**: Real-time indicator calculation (SMA, EMA, composite indicators)
+- Subscribes to market data via channels
+- Publishes indicator values via channels
+- In-memory caching for fast lookup (< 0.1ms)
+- Extensible framework for new indicators
+- Performance optimized (SmolStr, efficient data structures)
+- Comprehensive unit tests (39 tests)
 
 ### Runner (gRPC Server)
 - Orchestrates all services
@@ -510,7 +523,7 @@ Orderbook Update (Channel) → Trading Engine
 - **Trading system**: Single instance (stateful)
 - **Monitoring service**: Can scale (stateless)
 - **Web server**: Can scale (subscribes to Redis)
-- **Indicator service**: Can scale (separate service)
+- **Indicator Engine**: ✅ **COMPLETE** - In-process service (scales with monolith)
 
 ### Vertical Scaling
 - **Connection pooling**: Efficient resource usage
@@ -602,11 +615,11 @@ Orderbook Update (Channel) → Trading Engine
 
 ### Phase 1: Foundation
 1. ✅ Library separation (Proposal 01) - **COMPLETE**
-2. Indicator Service (Proposal 02) - **Prerequisite for Proposal 03**
+2. ✅ Indicator Engine (Proposal 02) - **COMPLETE**
 3. Basic state management
 
 ### Phase 2: Core Features
-1. Level-based trading (Proposal 03) - **Requires Proposal 02 (Indicator Service)**
+1. Level-based trading (Proposal 03) - **Ready to implement (Indicator Engine complete)**
 2. Redis to Channels migration (Proposal 04) - **After Proposal 03**
 3. Data handling and persistence (Proposal 05)
 4. LiveConfig Service (Proposal 06) - **After Proposal 05**

@@ -44,7 +44,7 @@ pub enum EngineError {
     HttpRequestError(#[from] reqwest::Error),
 
     #[error("HTTP custom error: {0}")]
-    HttpCustomError(String),
+    HttpCustomError(SmolStr),
 
     #[error("Invalid header name: {0}")]
     InvalidHeaderName(#[from] InvalidHeaderName),

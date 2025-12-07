@@ -477,12 +477,46 @@ message MonitoringData {
     repeated Trade trades = 3;
     repeated Position positions = 4;
     AggregatedData aggregated = 5;
+    repeated IndicatorValue indicators = 6;  // Current indicator values
+    IndicatorMetadata indicator_metadata = 7; // Available indicators and their configs
 }
 
 message AggregatedData {
     OverallStatistics overall = 1;
     map<string, PairStatistics> per_pair = 2;
     map<string, LevelStatistics> per_level = 3;
+}
+
+message IndicatorValue {
+    string indicator_id = 1;
+    string indicator_name = 2;
+    string pair = 3;
+    string value = 4;  // Decimal as string
+    int64 timestamp = 5;
+    int32 period = 6;
+    bool is_composite = 7;  // true if composite indicator
+    repeated string dependencies = 8;  // For composite indicators
+}
+
+message IndicatorMetadata {
+    repeated SimpleIndicatorInfo simple_indicators = 1;
+    repeated CompositeIndicatorInfo composite_indicators = 2;
+}
+
+message SimpleIndicatorInfo {
+    string id = 1;
+    string name = 2;  // "SMA", "EMA", etc.
+    string pair = 3;
+    int32 period = 4;
+    string source = 5;  // "Close", "Open", "High", "Low", etc.
+}
+
+message CompositeIndicatorInfo {
+    string id = 1;
+    string name = 2;
+    string pair = 3;
+    string expression_json = 4;  // JSON representation of expression tree
+    repeated string dependencies = 5;
 }
 
 // ... other message types
@@ -511,6 +545,8 @@ message AggregatedData {
 - Trades
 - Positions
 - Risk Metrics
+- **Indicators** (Simple and Composite)
+- **Available Indicators** (Indicator Library Window)
 - Multi-View (Split Screen)
 
 ### System Monitoring
@@ -519,6 +555,164 @@ message AggregatedData {
 - Connection Status
 - Performance Metrics
 - Logs
+
+## Indicator Display in TUI
+
+### Indicator Values Window
+
+**Purpose**: Display real-time indicator values for all registered indicators.
+
+**Layout**:
+```
+┌─────────────────────────────────────────────────────────┐
+│ Indicator Values                    [BTCUSDT] [ETHUSDT] │
+├─────────────────────────────────────────────────────────┤
+│ ID              │ Name │ Pair    │ Value    │ Period   │
+├─────────────────┼──────┼─────────┼──────────┼──────────┤
+│ sma_20_btcusdt  │ SMA  │ BTCUSDT │ 45,230.5 │ 20       │
+│ ema_12_btcusdt  │ EMA  │ BTCUSDT │ 45,180.2 │ 12       │
+│ golden_cross_btc│ *GC  │ BTCUSDT │ 50.3     │ 2        │
+│ rsi_14_btcusdt  │ RSI  │ BTCUSDT │ 65.4     │ 14       │
+└─────────────────────────────────────────────────────────┘
+```
+
+**Features**:
+- **Color Coding**:
+  - Green: Bullish indicators (e.g., price above SMA)
+  - Red: Bearish indicators (e.g., price below SMA)
+  - Yellow: Neutral/warning values
+- **Composite Indicator Marker**: `*` prefix for composite indicators
+- **Sorting**: By pair, by name, by value
+- **Filtering**: By pair, by indicator type (simple/composite)
+- **Real-time Updates**: Values update as indicators recalculate
+
+### Available Indicators Window
+
+**Purpose**: Display all available indicators (simple and composite) with their configurations. Used for creating new composite indicators in TUI.
+
+**Layout**:
+```
+┌─────────────────────────────────────────────────────────┐
+│ Available Indicators                                     │
+├─────────────────────────────────────────────────────────┤
+│ Simple Indicators:                                       │
+│ ┌─────────────────────────────────────────────────────┐ │
+│ │ ID              │ Name │ Pair    │ Period │ Source  │ │
+│ ├─────────────────┼──────┼─────────┼────────┼─────────┤ │
+│ │ sma_20_btcusdt  │ SMA  │ BTCUSDT │ 20     │ Close   │ │
+│ │ ema_12_btcusdt  │ EMA  │ BTCUSDT │ 12     │ Close   │ │
+│ │ rsi_14_btcusdt  │ RSI  │ BTCUSDT │ 14     │ Close   │ │
+│ └─────────────────────────────────────────────────────┘ │
+│                                                           │
+│ Composite Indicators:                                    │
+│ ┌─────────────────────────────────────────────────────┐ │
+│ │ ID              │ Name        │ Pair    │ Expression│ │
+│ ├─────────────────┼─────────────┼─────────┼───────────┤ │
+│ │ golden_cross_btc│ Golden Cross│ BTCUSDT │ EMA50-EMA200│ │
+│ │ macd_btcusdt    │ MACD        │ BTCUSDT │ EMA12-EMA26│ │
+│ └─────────────────────────────────────────────────────┘ │
+│                                                           │
+│ [Create Composite] [Edit] [Delete] [View Expression]      │
+└─────────────────────────────────────────────────────────┘
+```
+
+**Features**:
+- **Simple Indicators Table**: Shows all simple indicators with their configuration
+- **Composite Indicators Table**: Shows all composite indicators with their expression
+- **Expression Display**: For composite indicators, show readable expression (e.g., "EMA50 - EMA200")
+- **Actions**:
+  - **Create Composite**: Open composite indicator builder
+  - **Edit**: Edit existing composite indicator
+  - **Delete**: Remove indicator
+  - **View Expression**: Show full expression tree in JSON format
+
+### Composite Indicator Builder (TUI)
+
+**Purpose**: Create new composite indicators using available simple indicators.
+
+**Layout**:
+```
+┌─────────────────────────────────────────────────────────┐
+│ Create Composite Indicator                               │
+├─────────────────────────────────────────────────────────┤
+│ ID: [golden_cross_btcusdt________]                       │
+│ Name: [Golden Cross________________]                     │
+│ Pair: [BTCUSDT]                                          │
+│                                                           │
+│ Expression Builder:                                      │
+│ ┌─────────────────────────────────────────────────────┐ │
+│ │ Available Indicators:                                 │ │
+│ │ • sma_20_btcusdt (SMA, Period: 20)                    │ │
+│ │ • ema_50_btcusdt (EMA, Period: 50)                    │ │
+│ │ • ema_200_btcusdt (EMA, Period: 200)                   │ │
+│ └─────────────────────────────────────────────────────┘ │
+│                                                           │
+│ Expression:                                              │
+│ ┌─────────────────────────────────────────────────────┐ │
+│ │ [ema_50_btcusdt] - [ema_200_btcusdt]               │ │
+│ └─────────────────────────────────────────────────────┘ │
+│                                                           │
+│ Operations: [+][-][*][/][min][max][abs][sqrt][if]        │
+│                                                           │
+│ Dependencies: ema_50_btcusdt, ema_200_btcusdt           │
+│                                                           │
+│ [Validate] [Save] [Cancel]                                │
+└─────────────────────────────────────────────────────────┘
+```
+
+**Features**:
+- **Expression Builder**: Visual builder for creating expressions
+- **Available Indicators List**: Shows all simple indicators that can be used
+- **Operations Panel**: Buttons for arithmetic, functions, and conditionals
+- **Dependency Validation**: Automatically extracts and validates dependencies
+- **Expression Preview**: Shows readable expression as user builds it
+- **Validation**: Checks for circular dependencies and missing indicators
+
+### Indicator Data in gRPC
+
+**Data Flow**:
+1. **Indicator Engine** → Calculates indicator values
+2. **Indicator Engine** → Publishes to channel (`IndicatorUpdate`)
+3. **Trading Engine** → Subscribes to indicator updates
+4. **Trading Engine** → Aggregates indicator data
+5. **gRPC Server** → Includes indicators in `MonitoringData`
+6. **TUI** → Receives and displays indicator values
+
+**gRPC Service Methods** (to be added):
+```protobuf
+service TradingCliService {
+    // ... existing methods ...
+    
+    // Indicator management
+    rpc GetIndicators(GetIndicatorsRequest) returns (GetIndicatorsResponse);
+    rpc GetIndicatorMetadata(GetIndicatorMetadataRequest) returns (GetIndicatorMetadataResponse);
+    rpc CreateCompositeIndicator(CreateCompositeIndicatorRequest) returns (CreateCompositeIndicatorResponse);
+    rpc UpdateCompositeIndicator(UpdateCompositeIndicatorRequest) returns (UpdateCompositeIndicatorResponse);
+    rpc DeleteIndicator(DeleteIndicatorRequest) returns (DeleteIndicatorResponse);
+}
+```
+
+**Indicator Data Structure**:
+- **Simple Indicators**: Include `id`, `name`, `pair`, `value`, `period`, `source`
+- **Composite Indicators**: Include `id`, `name`, `pair`, `value`, `dependencies`, `expression_json`
+- **Real-time Updates**: Indicator values are included in `MonitoringDataUpdate` stream
+
+### Display Format Examples
+
+**Simple Indicator**:
+```
+sma_20_btcusdt | SMA | BTCUSDT | 45,230.50 | 20 | Close
+```
+
+**Composite Indicator**:
+```
+golden_cross_btcusdt | *Golden Cross | BTCUSDT | 50.30 | 2 deps | EMA50-EMA200
+```
+
+**Expression Display**:
+- **Arithmetic**: `EMA50 - EMA200`
+- **Functions**: `min(SMA20, EMA12)`, `abs(RSI - 50)`
+- **Conditionals**: `if(EMA50 > EMA200, 1, 0)`
 
 ## Integration in Runner
 

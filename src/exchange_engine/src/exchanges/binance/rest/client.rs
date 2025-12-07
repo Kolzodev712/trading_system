@@ -104,10 +104,10 @@ impl BinanceHttpClient {
         let text = response.text().await?;
 
         if !status.is_success() {
-            return Err(EngineError::HttpCustomError(format!(
+            return Err(EngineError::HttpCustomError(SmolStr::new(format!(
                 "Request failed with status {} and body: {}",
                 status, text
-            )));
+            ))));
         }
 
         let mapped_response = deserialize_or_none::<Res>(&text)?;
@@ -133,12 +133,10 @@ impl RestExchangeHandler for BinanceHandler {
         text: &str,
     ) -> Result<(), EngineError> {
         if !status.is_success() {
-            Err({
-                EngineError::HttpCustomError(format!(
-                    "Request to {} failed with status {} and body: {}",
-                    rest_url, status, text
-                ))
-            })
+            Err(EngineError::HttpCustomError(SmolStr::new(format!(
+                "Request to {} failed with status {} and body: {}",
+                rest_url, status, text
+            ))))
         } else {
             Ok(())
         }

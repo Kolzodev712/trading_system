@@ -1,16 +1,17 @@
 //! Channel types for indicator updates
 use rust_decimal::Decimal;
+use smol_str::SmolStr;
 use tokio::sync::mpsc;
 
 /// Indicator update message
 #[derive(Debug, Clone)]
 pub struct IndicatorUpdate {
     /// Indicator instance ID
-    pub indicator_id: String,
+    pub indicator_id: SmolStr,
     /// Indicator name (e.g., "SMA", "EMA")
-    pub indicator_name: String,
+    pub indicator_name: SmolStr,
     /// Trading pair
-    pub pair: String,
+    pub pair: SmolStr,
     /// Calculated value
     pub value: Decimal,
     /// Timestamp when the value was calculated

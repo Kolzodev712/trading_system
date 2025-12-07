@@ -1,5 +1,5 @@
 use trading_core::{
-    types::market_data::Orderbook,
+    types::market_data::LegacyOrderbook as Orderbook,
     utils::{deserialize_smol_str, serialize_smol_str},
 };
 

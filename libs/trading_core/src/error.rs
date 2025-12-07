@@ -94,3 +94,46 @@ impl From<tungstenite::Error> for EngineError {
         EngineError::WsConnectionError(Box::new(err))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_engine_error_new_custom_error() {
+        let error = EngineError::new_custom_error("test error".into());
+        match error {
+            EngineError::CustomError(_) => {}
+            _ => panic!("Expected CustomError"),
+        }
+    }
+
+    #[test]
+    fn test_engine_error_display() {
+        let error = EngineError::NoMessageHandler;
+        let display = format!("{}", error);
+        assert!(display.contains("Missing Message Handler"));
+    }
+
+    #[test]
+    fn test_engine_error_channel_send_error() {
+        let error = EngineError::ChannelSendError("test".into());
+        let display = format!("{}", error);
+        assert!(display.contains("Channel send error"));
+        assert!(display.contains("test"));
+    }
+
+    #[test]
+    fn test_engine_error_unsupported_exchange() {
+        let error = EngineError::UnsupportedExchange;
+        let display = format!("{}", error);
+        assert!(display.contains("Unsupported Exchange"));
+    }
+
+    #[test]
+    fn test_engine_error_invalid_config() {
+        let error = EngineError::InvalidConfig;
+        let display = format!("{}", error);
+        assert!(display.contains("Invalid config"));
+    }
+}

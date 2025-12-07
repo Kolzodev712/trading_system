@@ -264,3 +264,212 @@ pub enum Exchange {
     Binance,
     Unsupported,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json;
+
+    #[test]
+    fn test_pair_new() {
+        let pair = Pair::new("BTC", "USDT");
+        assert_eq!(pair.base, "BTC");
+        assert_eq!(pair.quote, "USDT");
+    }
+
+    #[test]
+    fn test_pair_convert_to_smolstr() {
+        let pair = Pair::new("BTC", "USDT");
+        let symbol = pair.convert_to_smolstr();
+        assert_eq!(symbol.as_str(), "BTCUSDT");
+    }
+
+    #[test]
+    fn test_pair_display() {
+        let pair = Pair::new("ETH", "USDC");
+        assert_eq!(format!("{}", pair), "ETH/USDC");
+    }
+
+    #[test]
+    fn test_pair_serialization() {
+        let pair = Pair::new("BTC", "USDT");
+        let serialized = serde_json::to_string(&pair).unwrap();
+        assert!(serialized.contains("BTC"));
+        assert!(serialized.contains("USDT"));
+    }
+
+    #[test]
+    fn test_pair_deserialization() {
+        let json = r#"{"base":"BTC","quote":"USDT"}"#;
+        let pair: Pair = serde_json::from_str(json).unwrap();
+        assert_eq!(pair.base, "BTC");
+        assert_eq!(pair.quote, "USDT");
+    }
+
+    #[test]
+    fn test_side_display() {
+        assert_eq!(format!("{}", Side::Buy), "Buy");
+        assert_eq!(format!("{}", Side::Sell), "Sell");
+    }
+
+    #[test]
+    fn test_side_from_to_smolstr() {
+        let buy_str: SmolStr = Side::Buy.into();
+        assert_eq!(buy_str.as_str(), "Buy");
+        let sell_str: SmolStr = Side::Sell.into();
+        assert_eq!(sell_str.as_str(), "Sell");
+    }
+
+    #[test]
+    fn test_order_status_display() {
+        assert_eq!(format!("{}", OrderStatus::New), "New");
+        assert_eq!(format!("{}", OrderStatus::PartiallyFilled), "PartiallyFilled");
+        assert_eq!(format!("{}", OrderStatus::Filled), "Filled");
+        assert_eq!(format!("{}", OrderStatus::Canceled), "Canceled");
+        assert_eq!(format!("{}", OrderStatus::PendingCancel), "PendingCancel");
+        assert_eq!(format!("{}", OrderStatus::Rejected), "Rejected");
+        assert_eq!(format!("{}", OrderStatus::Expired), "Expired");
+    }
+
+    #[test]
+    fn test_order_id_new() {
+        let order_id = OrderId::new("12345".into());
+        assert_eq!(order_id.as_str(), "12345");
+    }
+
+    #[test]
+    fn test_order_id_from_u64() {
+        let order_id: OrderId = 12345u64.into();
+        assert_eq!(order_id.as_str(), "12345");
+    }
+
+    #[test]
+    fn test_order_id_from_string() {
+        let order_id: OrderId = "67890".to_string().into();
+        assert_eq!(order_id.as_str(), "67890");
+    }
+
+    #[test]
+    fn test_order_id_from_str() {
+        let order_id: OrderId = "11111".into();
+        assert_eq!(order_id.as_str(), "11111");
+    }
+
+    #[test]
+    fn test_order_id_serialization() {
+        let order_id = OrderId::new("12345".into());
+        let serialized = serde_json::to_string(&order_id).unwrap();
+        assert_eq!(serialized, "\"12345\"");
+    }
+
+    #[test]
+    fn test_order_id_deserialization() {
+        let json = "\"67890\"";
+        let order_id: OrderId = serde_json::from_str(json).unwrap();
+        assert_eq!(order_id.as_str(), "67890");
+    }
+
+    #[test]
+    fn test_symbol_from_str() {
+        let symbol: Symbol = "BTC".into();
+        assert_eq!(symbol.as_ref(), "BTC");
+    }
+
+    #[test]
+    fn test_symbol_from_string() {
+        let symbol: Symbol = "ETH".to_string().into();
+        assert_eq!(symbol.as_ref(), "ETH");
+    }
+
+    #[test]
+    fn test_symbol_from_smolstr() {
+        let smol_str = SmolStr::new("USDT");
+        let symbol: Symbol = smol_str.into();
+        assert_eq!(symbol.as_ref(), "USDT");
+    }
+
+    #[test]
+    fn test_symbol_partial_eq_str() {
+        let symbol: Symbol = "BTC".into();
+        assert_eq!(symbol, "BTC");
+        assert_ne!(symbol, "ETH");
+    }
+
+    #[test]
+    fn test_symbol_display() {
+        let symbol: Symbol = "BTC".into();
+        assert_eq!(format!("{}", symbol), "BTC");
+    }
+
+    #[test]
+    fn test_symbol_serialization() {
+        let symbol: Symbol = "BTC".into();
+        let serialized = serde_json::to_string(&symbol).unwrap();
+        assert_eq!(serialized, "\"BTC\"");
+    }
+
+    #[test]
+    fn test_symbol_deserialization() {
+        let json = "\"ETH\"";
+        let symbol: Symbol = serde_json::from_str(json).unwrap();
+        assert_eq!(symbol.as_ref(), "ETH");
+    }
+
+    #[test]
+    fn test_millisecond_timestamp() {
+        let ts = MillisecondTimestamp(1734819696263);
+        assert_eq!(ts.0, 1734819696263);
+    }
+
+    #[test]
+    fn test_millisecond_timestamp_serialization() {
+        let ts = MillisecondTimestamp(1734819696263);
+        let serialized = serde_json::to_string(&ts).unwrap();
+        assert_eq!(serialized, "1734819696263");
+    }
+
+    #[test]
+    fn test_millisecond_timestamp_deserialization() {
+        let json = "1734819696263";
+        let ts: MillisecondTimestamp = serde_json::from_str(json).unwrap();
+        assert_eq!(ts.0, 1734819696263);
+    }
+
+    #[test]
+    fn test_exchange_serialization() {
+        let exchange = Exchange::Binance;
+        let serialized = serde_json::to_string(&exchange).unwrap();
+        assert_eq!(serialized, "\"Binance\"");
+    }
+
+    #[test]
+    fn test_exchange_deserialization() {
+        let json = "\"Binance\"";
+        let exchange: Exchange = serde_json::from_str(json).unwrap();
+        assert_eq!(exchange, Exchange::Binance);
+    }
+
+    #[test]
+    fn test_instrument_type_serialization() {
+        let inst_type = InstrumentType::Spot;
+        let serialized = serde_json::to_string(&inst_type).unwrap();
+        assert_eq!(serialized, "\"Spot\"");
+    }
+
+    #[test]
+    fn test_instrument_creation() {
+        let instrument = Instrument {
+            instrument_type: InstrumentType::Spot,
+            pair: Pair::new("BTC", "USDT"),
+        };
+        assert_eq!(instrument.instrument_type, InstrumentType::Spot);
+        assert_eq!(instrument.pair.base, "BTC");
+    }
+
+    #[test]
+    fn test_account_type_serialization() {
+        let account_type = AccountType::Spot;
+        let serialized = serde_json::to_string(&account_type).unwrap();
+        assert_eq!(serialized, "\"Spot\"");
+    }
+}

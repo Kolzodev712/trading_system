@@ -7,7 +7,11 @@ pub use common::*;
 
 // Re-export exchange types (excluding Trade to avoid conflict with market_data::Trade)
 pub use exchange::{
-    AccountInfo, Balance, Order, OrderRequest, Position,
+    AccountInfo,
+    Balance,
+    Order,
+    OrderRequest,
+    Position,
     // Note: exchange::Trade is NOT re-exported here to avoid conflict with market_data::Trade
     // Use exchange::Trade explicitly if needed
 };

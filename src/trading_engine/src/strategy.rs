@@ -163,3 +163,242 @@ pub trait Strategy: Send + Sync {
         None // Default implementation - strategies can override
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use trading_core::types::common::{Side, Symbol};
+
+    #[test]
+    fn test_trading_state_new() {
+        let state = TradingState::new();
+        assert!(state.positions.is_empty());
+        assert!(state.active_orders.is_empty());
+        assert!(state.pending_orders.is_empty());
+    }
+
+    #[test]
+    fn test_trading_state_add_order_new() {
+        let mut state = TradingState::new();
+        let pair = Pair::new("BTC", "USDT");
+        let order = Order {
+            order_id: OrderId::new("12345".into()),
+            symbol: "BTCUSDT".into(),
+            side: Side::Buy,
+            price: Decimal::new(90000, 0),
+            amount: Decimal::new(10, 2),
+            internal_created_at: 1734819700000,
+            exchange_created_at: Some(1734819696263),
+            status: OrderStatus::New,
+            filled_amount: Decimal::ZERO,
+        };
+
+        state.add_order(order.clone());
+        assert_eq!(state.active_orders.len(), 1);
+        assert_eq!(state.pending_orders.len(), 1);
+        assert!(state.pending_orders.contains_key(&order.order_id));
+    }
+
+    #[test]
+    fn test_trading_state_add_order_filled() {
+        let mut state = TradingState::new();
+        let order = Order {
+            order_id: OrderId::new("12345".into()),
+            symbol: "BTCUSDT".into(),
+            side: Side::Buy,
+            price: Decimal::new(90000, 0),
+            amount: Decimal::new(10, 2),
+            internal_created_at: 1734819700000,
+            exchange_created_at: Some(1734819696263),
+            status: OrderStatus::Filled,
+            filled_amount: Decimal::new(10, 2),
+        };
+
+        state.add_order(order.clone());
+        assert_eq!(state.active_orders.len(), 1);
+        assert_eq!(state.pending_orders.len(), 0); // Filled orders not pending
+    }
+
+    #[test]
+    fn test_trading_state_remove_order() {
+        let mut state = TradingState::new();
+        let order_id = OrderId::new("12345".into());
+        let order = Order {
+            order_id: order_id.clone(),
+            symbol: "BTCUSDT".into(),
+            side: Side::Buy,
+            price: Decimal::new(90000, 0),
+            amount: Decimal::new(10, 2),
+            internal_created_at: 1734819700000,
+            exchange_created_at: Some(1734819696263),
+            status: OrderStatus::New,
+            filled_amount: Decimal::ZERO,
+        };
+
+        state.add_order(order);
+        assert_eq!(state.active_orders.len(), 1);
+
+        state.remove_order(&order_id);
+        assert_eq!(state.active_orders.len(), 0);
+        assert_eq!(state.pending_orders.len(), 0);
+    }
+
+    #[test]
+    fn test_trading_state_update_order_status_to_filled() {
+        let mut state = TradingState::new();
+        let order_id = OrderId::new("12345".into());
+        let order = Order {
+            order_id: order_id.clone(),
+            symbol: "BTCUSDT".into(),
+            side: Side::Buy,
+            price: Decimal::new(90000, 0),
+            amount: Decimal::new(10, 2),
+            internal_created_at: 1734819700000,
+            exchange_created_at: Some(1734819696263),
+            status: OrderStatus::New,
+            filled_amount: Decimal::ZERO,
+        };
+
+        state.add_order(order);
+        assert_eq!(state.pending_orders.len(), 1);
+
+        state.update_order_status(&order_id, OrderStatus::Filled, Some(Decimal::new(10, 2)));
+        assert_eq!(state.pending_orders.len(), 0);
+        assert_eq!(
+            state.active_orders.get(&order_id).unwrap().status,
+            OrderStatus::Filled
+        );
+        assert_eq!(
+            state.active_orders.get(&order_id).unwrap().filled_amount,
+            Decimal::new(10, 2)
+        );
+    }
+
+    #[test]
+    fn test_trading_state_update_position_add() {
+        let mut state = TradingState::new();
+        let pair = Pair::new("BTC", "USDT");
+
+        state.update_position(pair.clone(), Decimal::new(1, 0), Decimal::new(90000, 0));
+        let position = state.get_position(&pair).unwrap();
+        assert_eq!(position.quantity, Decimal::new(1, 0));
+        assert_eq!(position.avg_price, Decimal::new(90000, 0));
+    }
+
+    #[test]
+    fn test_trading_state_update_position_add_multiple() {
+        let mut state = TradingState::new();
+        let pair = Pair::new("BTC", "USDT");
+
+        // First buy at 90000
+        state.update_position(pair.clone(), Decimal::new(1, 0), Decimal::new(90000, 0));
+        // Second buy at 91000
+        state.update_position(pair.clone(), Decimal::new(1, 0), Decimal::new(91000, 0));
+
+        let position = state.get_position(&pair).unwrap();
+        assert_eq!(position.quantity, Decimal::new(2, 0));
+        // Average should be (90000 + 91000) / 2 = 90500
+        assert_eq!(position.avg_price, Decimal::new(90500, 0));
+    }
+
+    #[test]
+    fn test_trading_state_update_position_reduce() {
+        let mut state = TradingState::new();
+        let pair = Pair::new("BTC", "USDT");
+
+        // Add position
+        state.update_position(pair.clone(), Decimal::new(2, 0), Decimal::new(90000, 0));
+        // Reduce position (sell)
+        state.update_position(pair.clone(), Decimal::new(-1, 0), Decimal::new(91000, 0));
+
+        let position = state.get_position(&pair).unwrap();
+        assert_eq!(position.quantity, Decimal::new(1, 0));
+    }
+
+    #[test]
+    fn test_trading_state_update_position_close() {
+        let mut state = TradingState::new();
+        let pair = Pair::new("BTC", "USDT");
+
+        // Add position
+        state.update_position(pair.clone(), Decimal::new(1, 0), Decimal::new(90000, 0));
+        // Close position completely
+        state.update_position(pair.clone(), Decimal::new(-1, 0), Decimal::new(91000, 0));
+
+        assert!(state.get_position(&pair).is_none());
+    }
+
+    #[test]
+    fn test_trading_state_get_active_order_count() {
+        let mut state = TradingState::new();
+        let pair = Pair::new("BTC", "USDT");
+
+        let order1 = Order {
+            order_id: OrderId::new("1".into()),
+            symbol: "BTCUSDT".into(),
+            side: Side::Buy,
+            price: Decimal::new(90000, 0),
+            amount: Decimal::new(10, 2),
+            internal_created_at: 1734819700000,
+            exchange_created_at: None,
+            status: OrderStatus::New,
+            filled_amount: Decimal::ZERO,
+        };
+
+        let order2 = Order {
+            order_id: OrderId::new("2".into()),
+            symbol: "BTCUSDT".into(),
+            side: Side::Buy,
+            price: Decimal::new(90000, 0),
+            amount: Decimal::new(10, 2),
+            internal_created_at: 1734819700000,
+            exchange_created_at: None,
+            status: OrderStatus::New,
+            filled_amount: Decimal::ZERO,
+        };
+
+        let order3 = Order {
+            order_id: OrderId::new("3".into()),
+            symbol: "ETHUSDT".into(), // Different symbol
+            side: Side::Buy,
+            price: Decimal::new(3000, 0),
+            amount: Decimal::new(10, 2),
+            internal_created_at: 1734819700000,
+            exchange_created_at: None,
+            status: OrderStatus::New,
+            filled_amount: Decimal::ZERO,
+        };
+
+        state.add_order(order1);
+        state.add_order(order2);
+        state.add_order(order3);
+
+        assert_eq!(state.get_active_order_count(&pair), 2);
+    }
+
+    #[test]
+    fn test_trading_state_get_stale_orders() {
+        let mut state = TradingState::new();
+        let order_id = OrderId::new("12345".into());
+        let order = Order {
+            order_id: order_id.clone(),
+            symbol: "BTCUSDT".into(),
+            side: Side::Buy,
+            price: Decimal::new(90000, 0),
+            amount: Decimal::new(10, 2),
+            internal_created_at: 1734819700000,
+            exchange_created_at: Some(1734819696263),
+            status: OrderStatus::New,
+            filled_amount: Decimal::ZERO,
+        };
+
+        state.add_order(order);
+
+        // Manually set a very old timestamp
+        let old_timestamp = 1000; // Very old
+        state.pending_orders.insert(order_id.clone(), old_timestamp);
+
+        let stale = state.get_stale_orders(60); // 60 second timeout
+        assert!(stale.contains(&order_id));
+    }
+}

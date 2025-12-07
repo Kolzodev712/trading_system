@@ -91,3 +91,165 @@ pub struct StructuredPublicTrade {
     /// Trade ID (if available)
     pub trade_id: Option<String>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rust_decimal::Decimal;
+
+    #[test]
+    fn test_structured_orderbook_best_bid_price() {
+        let orderbook = StructuredOrderbook {
+            pair: Pair::new("BTC", "USDT"),
+            bids: vec![
+                (Decimal::new(90000, 0), Decimal::new(1, 0)),
+                (Decimal::new(89900, 0), Decimal::new(2, 0)),
+            ],
+            asks: vec![
+                (Decimal::new(91000, 0), Decimal::new(1, 0)),
+                (Decimal::new(91100, 0), Decimal::new(2, 0)),
+            ],
+            timestamp: 1734819696263,
+        };
+
+        assert_eq!(
+            orderbook.best_bid_price(),
+            Some(Decimal::new(90000, 0))
+        );
+    }
+
+    #[test]
+    fn test_structured_orderbook_best_ask_price() {
+        let orderbook = StructuredOrderbook {
+            pair: Pair::new("BTC", "USDT"),
+            bids: vec![(Decimal::new(90000, 0), Decimal::new(1, 0))],
+            asks: vec![
+                (Decimal::new(91000, 0), Decimal::new(1, 0)),
+                (Decimal::new(91100, 0), Decimal::new(2, 0)),
+            ],
+            timestamp: 1734819696263,
+        };
+
+        assert_eq!(
+            orderbook.best_ask_price(),
+            Some(Decimal::new(91000, 0))
+        );
+    }
+
+    #[test]
+    fn test_structured_orderbook_best_prices_empty() {
+        let orderbook = StructuredOrderbook {
+            pair: Pair::new("BTC", "USDT"),
+            bids: vec![],
+            asks: vec![],
+            timestamp: 1734819696263,
+        };
+
+        assert_eq!(orderbook.best_bid_price(), None);
+        assert_eq!(orderbook.best_ask_price(), None);
+    }
+
+    #[test]
+    fn test_structured_orderbook_mid_price() {
+        let orderbook = StructuredOrderbook {
+            pair: Pair::new("BTC", "USDT"),
+            bids: vec![(Decimal::new(90000, 0), Decimal::new(1, 0))],
+            asks: vec![(Decimal::new(91000, 0), Decimal::new(1, 0))],
+            timestamp: 1734819696263,
+        };
+
+        let mid = orderbook.mid_price().unwrap();
+        assert_eq!(mid, Decimal::new(90500, 0));
+    }
+
+    #[test]
+    fn test_structured_orderbook_mid_price_missing_bid() {
+        let orderbook = StructuredOrderbook {
+            pair: Pair::new("BTC", "USDT"),
+            bids: vec![],
+            asks: vec![(Decimal::new(91000, 0), Decimal::new(1, 0))],
+            timestamp: 1734819696263,
+        };
+
+        assert_eq!(orderbook.mid_price(), None);
+    }
+
+    #[test]
+    fn test_structured_orderbook_total_volume() {
+        let orderbook = StructuredOrderbook {
+            pair: Pair::new("BTC", "USDT"),
+            bids: vec![
+                (Decimal::new(90000, 0), Decimal::new(1, 0)),
+                (Decimal::new(89900, 0), Decimal::new(2, 0)),
+            ],
+            asks: vec![
+                (Decimal::new(91000, 0), Decimal::new(3, 0)),
+                (Decimal::new(91100, 0), Decimal::new(4, 0)),
+            ],
+            timestamp: 1734819696263,
+        };
+
+        let total_volume = orderbook.total_volume();
+        assert_eq!(total_volume, Decimal::new(10, 0)); // 1 + 2 + 3 + 4
+    }
+
+    #[test]
+    fn test_structured_orderbook_total_volume_empty() {
+        let orderbook = StructuredOrderbook {
+            pair: Pair::new("BTC", "USDT"),
+            bids: vec![],
+            asks: vec![],
+            timestamp: 1734819696263,
+        };
+
+        assert_eq!(orderbook.total_volume(), Decimal::ZERO);
+    }
+
+    #[test]
+    fn test_legacy_orderbook_serialization() {
+        let orderbook = LegacyOrderbook {
+            bids: vec![
+                Decimal::new(90000, 0),
+                Decimal::new(1, 0),
+                Decimal::new(89900, 0),
+                Decimal::new(2, 0),
+            ],
+            asks: vec![
+                Decimal::new(91000, 0),
+                Decimal::new(1, 0),
+            ],
+        };
+
+        let serialized = serde_json::to_string(&orderbook).unwrap();
+        assert!(serialized.contains("bids"));
+        assert!(serialized.contains("asks"));
+    }
+
+    #[test]
+    fn test_legacy_trade_serialization() {
+        let trade = LegacyTrade {
+            price: Decimal::new(90000, 0),
+            quantity: Decimal::new(10, 2),
+            time: 1734819696263,
+            is_market_maker: false,
+        };
+
+        let serialized = serde_json::to_string(&trade).unwrap();
+        assert!(serialized.contains("90000"));
+    }
+
+    #[test]
+    fn test_structured_public_trade_creation() {
+        let trade = StructuredPublicTrade {
+            pair: Pair::new("BTC", "USDT"),
+            price: Decimal::new(90000, 0),
+            quantity: Decimal::new(10, 2),
+            timestamp: 1734819696263,
+            is_market_maker: false,
+            trade_id: Some("12345".to_string()),
+        };
+
+        assert_eq!(trade.pair.base, "BTC");
+        assert_eq!(trade.price, Decimal::new(90000, 0));
+    }
+}

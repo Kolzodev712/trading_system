@@ -134,12 +134,14 @@ impl From<BinanceOrderResponse> for Order {
             .map(|s| s.into())
             .unwrap_or(trading_core::types::common::OrderStatus::New);
         let filled_amount = binance_res.executed_qty.unwrap_or_default();
+        // amount should be the full, original order amount (orig_qty), not the executed amount
+        let amount = binance_res.orig_qty.unwrap_or_default();
 
         Order {
             symbol: binance_res.symbol.into(),
             side: binance_res.side.unwrap_or_default().into(),
             price: binance_res.price.unwrap_or_default(),
-            amount: binance_res.executed_qty.unwrap_or_default(),
+            amount,
             order_id: binance_res.order_id.into(),
             exchange_created_at: binance_res.transact_time,
             internal_created_at: binance_res.working_time.unwrap_or_default(),
@@ -322,7 +324,8 @@ mod tests {
         assert_eq!(order.symbol, "BTCUSDT");
         assert_eq!(order.side, Side::Buy);
         assert_eq!(order.price, Decimal::new(90000, 0));
-        assert_eq!(order.amount, Decimal::new(5, 2)); // Only executed amount matters
+        assert_eq!(order.amount, Decimal::new(10, 2)); // Full original order amount (orig_qty)
+        assert_eq!(order.filled_amount, Decimal::new(5, 2)); // Executed/filled amount
         assert_eq!(order.order_id, OrderId::new("12345".into()));
         assert_eq!(order.exchange_created_at, Some(1734819696263));
         assert_eq!(order.internal_created_at, 1734819700000_u64);

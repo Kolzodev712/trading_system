@@ -1,6 +1,9 @@
 use crate::exchanges::binance::common_types::BinanceOrderType;
+use crate::exchanges::binance::rest::client::BinanceHttpClient;
 use smol_str::SmolStr;
 use trading_core::{
+    error::EngineError,
+    rest::HttpMethod,
     traits::TradingClient,
     types::{
         common::{OrderId, Pair},
@@ -33,7 +36,7 @@ use tokio::{
     time::{sleep, timeout, Duration},
 };
 use tracing::{debug, error, warn};
-use trading_core::{error::EngineError, traits::PrivateDataClient, types::common::Exchange};
+use trading_core::{traits::PrivateDataClient, types::common::Exchange};
 
 /// Metadata stored for each order to enable cancellation by ID
 #[derive(Debug, Clone)]
@@ -61,6 +64,8 @@ pub struct BinanceClient {
             >,
         >,
     >,
+    /// REST HTTP client for reconciliation calls
+    rest_client: BinanceHttpClient,
 }
 
 impl BinanceClient {
@@ -72,6 +77,7 @@ impl BinanceClient {
         let session = Arc::new(RwLock::new(None));
         let ws_client = BinanceWSClient::new(signer.clone(), session.clone());
         let subscription_handler = BinanceSubscriptionHandler::new(signer, session);
+        let rest_client = BinanceHttpClient::new(config.clone());
 
         BinanceClient {
             config,
@@ -83,6 +89,7 @@ impl BinanceClient {
             shutdown_tx,
             order_tracker: Arc::new(RwLock::new(HashMap::new())),
             execution_report_tx: Arc::new(Mutex::new(None)),
+            rest_client,
         }
     }
 
@@ -549,16 +556,116 @@ impl TradingClient<OrderRequest, Pair> for BinanceClient {
     }
 
     async fn fetch_open_orders(&self) -> Result<Vec<Order>, EngineError> {
-        // TODO: Implement fetch_open_orders via REST API or WebSocket RPC
-        // This should fetch all open orders from the exchange
-        unimplemented!("fetch_open_orders() - to be implemented for state reconciliation")
+        use crate::exchanges::binance::rest::types::{
+            common::BinanceServerTime,
+            open_orders::{BinanceOpenOrdersRequest, BinanceOpenOrdersResponse},
+        };
+
+        // Get server time for timestamp
+        let time_response: Option<Option<BinanceServerTime>> = self
+            .rest_client
+            .call::<(), Option<BinanceServerTime>>("time", HttpMethod::GET, None, None, None, false)
+            .await?;
+
+        let server_time = time_response
+            .flatten()
+            .ok_or_else(|| {
+                EngineError::CustomError(anyhow::anyhow!(
+                    "Failed to get server time for open orders request"
+                ))
+            })?
+            .server_time;
+
+        // Request all open orders (no symbol filter)
+        let params = BinanceOpenOrdersRequest {
+            symbol: None, // None = all symbols
+            timestamp: server_time,
+        };
+
+        let response: Option<BinanceOpenOrdersResponse> = self
+            .rest_client
+            .call::<BinanceOpenOrdersRequest, BinanceOpenOrdersResponse>(
+                "openOrders",
+                HttpMethod::GET,
+                Some(params),
+                None,
+                None,
+                true, // Signed request
+            )
+            .await?;
+
+        let orders = response.unwrap_or_default();
+        Ok(orders.into_iter().map(Order::from).collect())
     }
 
     async fn fetch_trades(&self, pair: Option<&Pair>) -> Result<Vec<Trade>, EngineError> {
-        // TODO: Implement fetch_trades via REST API
-        // This should fetch private trade history, optionally filtered by pair
-        // This is for state reconciliation, not public trades
-        unimplemented!("fetch_trades() - to be implemented for state reconciliation")
+        use crate::exchanges::binance::rest::types::{
+            common::BinanceServerTime,
+            trades::{BinanceTradesRequest, BinanceTradesResponse},
+        };
+
+        // If no pair specified, we can't fetch trades (Binance requires symbol)
+        let symbol = if let Some(p) = pair {
+            p.convert_to_smolstr()
+        } else {
+            // Return empty if no pair specified
+            // In a real scenario, you might want to fetch for all configured pairs
+            return Ok(Vec::new());
+        };
+
+        let _ = pair; // Acknowledge parameter usage
+
+        // Get server time for timestamp
+        let time_response: Option<Option<BinanceServerTime>> = self
+            .rest_client
+            .call::<(), Option<BinanceServerTime>>("time", HttpMethod::GET, None, None, None, false)
+            .await?;
+
+        let server_time = time_response
+            .flatten()
+            .ok_or_else(|| {
+                EngineError::CustomError(anyhow::anyhow!(
+                    "Failed to get server time for trades request"
+                ))
+            })?
+            .server_time;
+
+        // Request trades for the symbol (last 500 trades)
+        let params = BinanceTradesRequest {
+            symbol,
+            start_time: None,
+            end_time: None,
+            from_id: None,
+            limit: Some(500), // Max 1000, but 500 is reasonable
+            timestamp: server_time,
+        };
+
+        let response: Option<BinanceTradesResponse> = self
+            .rest_client
+            .call::<BinanceTradesRequest, BinanceTradesResponse>(
+                "myTrades",
+                HttpMethod::GET,
+                Some(params),
+                None,
+                None,
+                true, // Signed request
+            )
+            .await?;
+
+        let trades = response.unwrap_or_default();
+        Ok(trades.into_iter().map(Trade::from).collect())
+    }
+
+    async fn fetch_market_data_snapshot(&self, _pair: &Pair) -> Result<(), EngineError> {
+        // TODO: Implement fetch_market_data_snapshot
+        // This should fetch asset/symbol data (trading rules, symbol info, price filters, lot sizes, etc.)
+        // from Binance /api/v3/exchangeInfo endpoint
+        // This data is used to simplify level configuration
+        // See Proposal 08 for details on ExchangeMarketData structure
+        //
+        // For now, this is a placeholder. The return type will be ExchangeMarketData
+        // once that type is defined in Proposal 08 implementation.
+        unimplemented!("fetch_market_data_snapshot() - to be implemented for asset data (trading rules, symbol info, etc.)")
     }
 }
 

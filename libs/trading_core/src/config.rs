@@ -154,3 +154,197 @@ impl TradingSystemConfig {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json;
+
+    #[test]
+    fn test_trading_system_config_validation_success() {
+        let config = TradingSystemConfig {
+            system: SystemConfig {
+                log_level: "info".to_string(),
+                shutdown_timeout_secs: 30,
+            },
+            exchange: ExchangeConfig {
+                exchange: Exchange::Binance,
+                exchange_specific: serde_json::json!({}),
+            },
+            strategy: StrategyConfig {
+                strategy_type: "BuyLowSellHigh".to_string(),
+                position_size: Decimal::new(100, 0),
+                max_position: Decimal::new(1000, 0),
+                buy_threshold_percent: Decimal::new(2, 0),
+                sell_threshold_percent: Decimal::new(2, 0),
+                stop_loss_percent: Some(Decimal::new(5, 0)),
+                take_profit_percent: Some(Decimal::new(10, 0)),
+                max_active_orders: 10,
+                price_history_size: 100,
+                min_price_history: 10,
+                min_order_size: Some(Decimal::new(1, 5)),
+                step_size: Some(Decimal::new(1, 5)),
+                tick_size: Some(Decimal::new(1, 2)),
+                min_notional: Some(Decimal::new(5, 0)),
+            },
+            server: ServerConfig {
+                bind_address: "0.0.0.0".to_string(),
+                port: 8080,
+            },
+            redis: RedisConfig {
+                url: "redis://localhost:6379".to_string(),
+                enabled: false,
+            },
+        };
+
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_trading_system_config_validation_position_size_zero() {
+        let mut config = create_valid_config();
+        config.strategy.position_size = Decimal::ZERO;
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_trading_system_config_validation_max_position_zero() {
+        let mut config = create_valid_config();
+        config.strategy.max_position = Decimal::ZERO;
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_trading_system_config_validation_position_size_exceeds_max() {
+        let mut config = create_valid_config();
+        config.strategy.position_size = Decimal::new(2000, 0);
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_trading_system_config_validation_buy_threshold_zero() {
+        let mut config = create_valid_config();
+        config.strategy.buy_threshold_percent = Decimal::ZERO;
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_trading_system_config_validation_sell_threshold_zero() {
+        let mut config = create_valid_config();
+        config.strategy.sell_threshold_percent = Decimal::ZERO;
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_trading_system_config_validation_stop_loss_zero() {
+        let mut config = create_valid_config();
+        config.strategy.stop_loss_percent = Some(Decimal::ZERO);
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_trading_system_config_validation_take_profit_zero() {
+        let mut config = create_valid_config();
+        config.strategy.take_profit_percent = Some(Decimal::ZERO);
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_redis_config_default_enabled() {
+        let json = r#"{"url":"redis://localhost:6379"}"#;
+        let redis_config: RedisConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(redis_config.enabled, false);
+    }
+
+    #[test]
+    fn test_redis_config_explicit_enabled() {
+        let json = r#"{"url":"redis://localhost:6379","enabled":true}"#;
+        let redis_config: RedisConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(redis_config.enabled, true);
+    }
+
+    #[test]
+    fn test_config_serialization() {
+        let config = create_valid_config();
+        let serialized = serde_json::to_string(&config).unwrap();
+        assert!(serialized.contains("Binance"));
+        assert!(serialized.contains("BuyLowSellHigh"));
+    }
+
+    #[test]
+    fn test_config_deserialization() {
+        let json = r#"
+        {
+            "system": {
+                "log_level": "info",
+                "shutdown_timeout_secs": 30
+            },
+            "exchange": {
+                "exchange": "Binance",
+                "binance": {}
+            },
+            "strategy": {
+                "strategy_type": "BuyLowSellHigh",
+                "position_size": "100",
+                "max_position": "1000",
+                "buy_threshold_percent": "2",
+                "sell_threshold_percent": "2",
+                "stop_loss_percent": "5",
+                "take_profit_percent": "10",
+                "max_active_orders": 10,
+                "price_history_size": 100,
+                "min_price_history": 10
+            },
+            "server": {
+                "bind_address": "0.0.0.0",
+                "port": 8080
+            },
+            "redis": {
+                "url": "redis://localhost:6379",
+                "enabled": false
+            }
+        }
+        "#;
+
+        let config: TradingSystemConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(config.system.log_level, "info");
+        assert_eq!(config.exchange.exchange, Exchange::Binance);
+    }
+
+    fn create_valid_config() -> TradingSystemConfig {
+        TradingSystemConfig {
+            system: SystemConfig {
+                log_level: "info".to_string(),
+                shutdown_timeout_secs: 30,
+            },
+            exchange: ExchangeConfig {
+                exchange: Exchange::Binance,
+                exchange_specific: serde_json::json!({}),
+            },
+            strategy: StrategyConfig {
+                strategy_type: "BuyLowSellHigh".to_string(),
+                position_size: Decimal::new(100, 0),
+                max_position: Decimal::new(1000, 0),
+                buy_threshold_percent: Decimal::new(2, 0),
+                sell_threshold_percent: Decimal::new(2, 0),
+                stop_loss_percent: Some(Decimal::new(5, 0)),
+                take_profit_percent: Some(Decimal::new(10, 0)),
+                max_active_orders: 10,
+                price_history_size: 100,
+                min_price_history: 10,
+                min_order_size: Some(Decimal::new(1, 5)),
+                step_size: Some(Decimal::new(1, 5)),
+                tick_size: Some(Decimal::new(1, 2)),
+                min_notional: Some(Decimal::new(5, 0)),
+            },
+            server: ServerConfig {
+                bind_address: "0.0.0.0".to_string(),
+                port: 8080,
+            },
+            redis: RedisConfig {
+                url: "redis://localhost:6379".to_string(),
+                enabled: false,
+            },
+        }
+    }
+}

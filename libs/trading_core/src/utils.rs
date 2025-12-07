@@ -102,3 +102,80 @@ pub fn generate_string_params(params: &mut HashMap<SmolStr, SmolStr>) -> HashMap
         .map(|(k, v)| (k.to_string(), v.to_string()))
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json;
+
+    #[test]
+    fn test_current_timestamp() {
+        let ts1 = current_timestamp();
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        let ts2 = current_timestamp();
+        assert!(ts2 > ts1);
+    }
+
+    #[test]
+    fn test_generate_custom_uuid() {
+        let uuid1 = generate_custom_uuid();
+        let uuid2 = generate_custom_uuid();
+        assert_ne!(uuid1, uuid2);
+        assert!(!uuid1.is_empty());
+        assert!(!uuid2.is_empty());
+    }
+
+    #[test]
+    fn test_serialize_deserialize_smol_str() {
+        let original = SmolStr::new("test_string");
+        let serialized = serde_json::to_string(&original).unwrap();
+        let deserialized: SmolStr = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(original, deserialized);
+    }
+
+    #[test]
+    fn test_serialize_deserialize_vec_smol_str() {
+        let original = vec![
+            SmolStr::new("one"),
+            SmolStr::new("two"),
+            SmolStr::new("three"),
+        ];
+        let serialized = serde_json::to_string(&original).unwrap();
+        let deserialized: Vec<SmolStr> = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(original, deserialized);
+    }
+
+    #[test]
+    fn test_serialize_deserialize_option_smol_str_some() {
+        let original = Some(SmolStr::new("test"));
+        let serialized = serde_json::to_string(&original).unwrap();
+        let deserialized: Option<SmolStr> = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(original, deserialized);
+    }
+
+    #[test]
+    fn test_serialize_deserialize_option_smol_str_none() {
+        let original: Option<SmolStr> = None;
+        let serialized = serde_json::to_string(&original).unwrap();
+        let deserialized: Option<SmolStr> = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(original, deserialized);
+    }
+
+    #[test]
+    fn test_generate_string_params() {
+        let mut params = HashMap::new();
+        params.insert(SmolStr::new("key1"), SmolStr::new("value1"));
+        params.insert(SmolStr::new("key2"), SmolStr::new("value2"));
+
+        let string_params = generate_string_params(&mut params);
+        assert_eq!(string_params.get("key1"), Some(&"value1".to_string()));
+        assert_eq!(string_params.get("key2"), Some(&"value2".to_string()));
+    }
+
+    #[test]
+    fn test_generate_string_params_empty() {
+        let mut params = HashMap::new();
+        let string_params = generate_string_params(&mut params);
+        assert!(string_params.is_empty());
+    }
+}

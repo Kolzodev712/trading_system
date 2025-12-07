@@ -22,17 +22,11 @@ To run the trading system in production, the following infrastructure and servic
 - **Backup**: Recommended for production (config backup only, not state)
 - **Example Connection**: `mongodb://localhost:27017/trading_system`
 
-#### 2. Redis Instance (Optional - Only for Web UI)
-- **Purpose**: Pub/Sub for broadcast communication (Monitoring Service → Web Server)
+#### 2. Redis Instance (Optional - Feature Flag)
+- **Purpose**: Currently used for internal communication (to be migrated to channels per Proposal 04)
 - **Version**: Redis 6.0+ (or compatible)
-- **Connection**: Connection string required in configuration (only if using web UI)
-- **Channels**:
-  - `monitoring:snapshots` - UI snapshots (debounced)
-  - `monitoring:updates` - Real-time updates (if needed)
-- **Memory**: Minimal (only snapshots, debounced)
-- **Persistence**: Not required (stateless snapshots)
-- **Example Connection**: `redis://localhost:6379`
-- **Note**: **NOT REQUIRED for TUI CLI** - TUI CLI connects directly to Trading System via gRPC, bypassing Redis and Monitoring Service. Redis is only needed when implementing web-based UI (future enhancement).
+- **Connection**: Connection string required in configuration
+- **Note**: **Will be removed** after Proposal 04 (Redis → Channels migration). Redis code will be kept behind feature flag for potential future Web UI use (if needed).
 
 #### 3. Exchange API Access
 - **Exchange**: Binance (spot trading)
@@ -62,32 +56,19 @@ To run the trading system in production, the following infrastructure and servic
 
 ### Optional Services
 
-#### 5. Indicator Service (Separate Service)
+#### 5. Indicator Service (In-Process)
 - **Purpose**: Calculate and provide indicator values
-- **Protocol**: gRPC streaming
-- **Port**: Configurable
-- **Note**: Can be integrated into trading system or run separately
-- **Required**: If using indicator-based levels (Proposal 02)
+- **Protocol**: Channels (in-process, same workspace)
+- **Note**: Separate crate but same monolith, uses channels for communication
+- **Required**: **Prerequisite for Proposal 03** (Level-Based Trading System). Must be implemented before level-based trading. See **Proposal 02** for detailed implementation.
 
-#### 6. Monitoring Service (Optional - Only for Web UI)
-- **Purpose**: Transport layer for web UI data
-- **Protocol**: gRPC (receives from Trading System), Redis (publishes to Web Server)
-- **State**: Stateless (can scale horizontally)
-- **Note**: **NOT REQUIRED for TUI CLI** - TUI CLI connects directly to Trading System via gRPC. Monitoring Service is only needed when implementing web-based UI (future enhancement).
-
-#### 7. Web Server (UI Backend) (Optional - Future Enhancement)
-- **Purpose**: Web UI backend (if using web interface)
-- **Protocol**: HTTP/WebSocket
-- **Subscribes**: Redis pub/sub channels
-- **Note**: **NOT REQUIRED for TUI CLI** - TUI CLI (Proposal 07) is the primary interface. Web Server is only needed for future web-based UI implementation.
-
-#### 8. TUI CLI (Terminal User Interface)
-- **Purpose**: Terminal-based interface for trading operations
-- **Protocol**: gRPC client (connects to Trading System)
+#### 6. TUI CLI (Terminal User Interface and Monitoring)
+- **Purpose**: Terminal-based interface for trading operations and monitoring
+- **Protocol**: gRPC client (connects to Trading System gRPC server in runner)
 - **Dependencies**: 
   - Terminal with color support
   - Keyboard input support
-- **Note**: Alternative to web UI, recommended for production
+- **Note**: **Primary interface** - TUI IS the monitoring interface. No separate monitoring service needed.
 
 ### System Requirements
 
@@ -191,12 +172,7 @@ To run the trading system in production, the following infrastructure and servic
    ./trading_system --config config/trading_system.json
    ```
 
-5. **Start Monitoring Service** (only if using web UI, not required for TUI CLI)
-   ```bash
-   ./monitoring_service --config config/monitoring.json
-   ```
-
-6. **Start TUI CLI** (for interaction)
+5. **Start TUI CLI** (for interaction and monitoring)
    ```bash
    ./trading-cli --endpoint http://localhost:50051
    ```
@@ -245,9 +221,7 @@ For development or testing with TUI CLI, minimal setup:
 **Optional (only for web UI)**:
 - **Redis** (only needed for web UI, not TUI CLI)
 - **MongoDB** (can be added later when persistence is needed)
-- **Monitoring Service** (only needed for web UI, not TUI CLI)
-
-**Note**: TUI CLI connects directly to Trading System via gRPC, so Redis and Monitoring Service are not required.
+**Note**: TUI CLI connects directly to Trading System via gRPC (gRPC server in runner), so Redis is not required for TUI. TUI IS the monitoring interface.
 
 ### Quick Start Command Reference
 
@@ -292,20 +266,16 @@ cargo run --release --bin trading-cli -- --endpoint http://localhost:50051
 │           │                                            │
 │           │ Channel (in-process) OR gRPC (external)   │
 │           │                                            │
-│  ┌────────▼──────────┐                                │
-│  │ Monitoring Service│ (Optional, in-process)         │
-│  │ (Transport Layer) │                                │
-│  └────────┬──────────┘                                │
-│           │                                            │
-│           │ Redis Pub/Sub (only for web UI, optional) │
-│           │                                            │
 └───────────┼────────────────────────────────────────────┘
             │
-            │ gRPC (External Only)
+            │ gRPC Server (in runner)
             │
 ┌───────────▼──────────┐
 │   TUI CLI            │ (External Process)
 │   (gRPC Client)      │
+│   - Monitoring       │
+│   - Level Management │
+│   - System Health    │
 └──────────────────────┘
 ```
 
@@ -325,14 +295,11 @@ cargo run --release --bin trading-cli -- --endpoint http://localhost:50051
    - High-frequency updates
    - Direct memory communication
 
-3. **Indicator Service → Trading System** (if in-process)
+3. **Indicator Service → Trading System** (in-process, same workspace)
    - Indicator values
    - High-frequency
    - Cached in trading system
-
-4. **Trading System → Monitoring Service** (if in-process)
-   - Aggregated data
-   - High-frequency
+   - Uses channels (not gRPC)
 
 **Benefits**:
 - Ultra-low latency (< 1μs vs 0.5-2ms for gRPC)
@@ -344,19 +311,11 @@ cargo run --release --bin trading-cli -- --endpoint http://localhost:50051
 ### gRPC (External Services Only)
 
 **Used For** (External processes):
-1. **Trading System → TUI CLI**
+1. **Trading System (gRPC Server in runner) → TUI CLI**
    - Level management
-   - Monitoring data
+   - Monitoring data streaming
    - System health
    - External process (must use gRPC)
-
-2. **Trading System → Monitoring Service** (if external)
-   - Aggregated data
-   - Low-latency (0.5-2ms)
-
-3. **Indicator Service → Trading System** (if external)
-   - Indicator values
-   - Low-latency (0.5-2ms)
 
 **Benefits**:
 - Required for external processes
@@ -366,21 +325,17 @@ cargo run --release --bin trading-cli -- --endpoint http://localhost:50051
 - Connection pooling: Reuse connections
 - Type-safe: Compile-time checks
 
-### Redis Pub/Sub (Broadcast, Multi-Subscriber) - Optional, Only for Web UI
+### Redis Pub/Sub (Currently Used, To Be Removed)
 
-**Used For**:
-1. **Monitoring Service → Web Server** (future web UI only)
-   - UI snapshots
-   - Occasional updates (debounced, e.g., every 5 seconds)
-   - Multiple web server instances possible
+**Current Usage**:
+1. **Market Data Engine → Redis → Trading Engine** (to be migrated to channels per Proposal 04)
 
-**Benefits**:
-- Decoupled services
-- Multiple subscribers
-- Simple deployment
-- Fire-and-forget pattern
+**Future Usage** (Optional, Feature Flag):
+- Only if Web UI is implemented in the future
+- Would be used for Web Server communication (if needed)
+- Currently not planned - TUI CLI is the primary interface
 
-**Note**: **NOT REQUIRED for TUI CLI** - TUI CLI (Proposal 07) connects directly to Trading System via gRPC, bypassing Redis and Monitoring Service entirely. Redis is only needed when implementing web-based UI (future enhancement).
+**Note**: **Redis will be removed** from internal communication after Proposal 04 migration. Redis code kept behind feature flag for potential future Web UI use.
 
 ## Monolith Architecture
 
@@ -476,17 +431,22 @@ cargo run --release --bin trading-cli -- --endpoint http://localhost:50051
 ### Trading Engine
 - Level management and execution
 - Risk checks (cached, incremental)
-- Indicator subscription (channel/gRPC, cached)
+- Indicator subscription (channels, cached)
 - Order placement
 - Receives updates via channels (exchange, market data)
-- gRPC server for TUI CLI (external)
+- Monitoring data aggregation
 
-### Monitoring Service (Optional)
-- Receives data via channels (if in-process) or gRPC (if external)
-- Transforms to UI format
-- Publishes to Redis (web server, only for web UI)
-- Stateless transport layer
-- **NOT REQUIRED for TUI CLI**
+### Runner (gRPC Server)
+- Orchestrates all services
+- Creates channel pairs and wires services together
+- Exposes gRPC server for TUI CLI
+- Provides level management, monitoring data, system health endpoints
+
+### TUI CLI (Terminal User Interface and Monitoring)
+- Connects to Trading System via gRPC (external process)
+- Receives monitoring data via gRPC streaming
+- Displays real-time trading data, level management, system health
+- **IS the monitoring interface** - no separate monitoring service needed
 
 ### Level Manager
 - Level lifecycle management
@@ -501,7 +461,6 @@ cargo run --release --bin trading-cli -- --endpoint http://localhost:50051
 Exchange WebSocket → ExchangeStateManager
     ├── Update in-memory state
     ├── Publish to Channel → Trading System (ultra-low latency)
-    ├── Publish to Channel/gRPC → Monitoring Service (if enabled)
     └── Persist to MongoDB (if enabled, lazy, batched)
 ```
 
@@ -511,7 +470,6 @@ Exchange WebSocket → ExchangeStateManager
 Exchange WebSocket → MarketDataStateManager
     ├── Update in-memory state
     ├── Publish to Channel → Trading System (ultra-low latency)
-    ├── Publish to Channel/gRPC → Monitoring Service (if enabled)
     └── Persist to MongoDB (if enabled, lazy, batched)
 ```
 
@@ -519,11 +477,12 @@ Exchange WebSocket → MarketDataStateManager
 
 ```
 Orderbook Update (Channel) → Trading Engine
-    ├── Get indicators (from cache, channel/gRPC)
+    ├── Get indicators (from cache, channels)
     ├── Resolve level (exchange data priority, cached)
     ├── Risk check (cached metrics, incremental)
     ├── Place order (if allowed)
-    └── Update state
+    ├── Update state
+    └── Aggregate monitoring data (for gRPC server)
 ```
 
 ## Performance Characteristics
@@ -531,7 +490,6 @@ Orderbook Update (Channel) → Trading Engine
 ### Latency
 - **In-process channels**: < 1μs (ultra-low latency)
 - **External gRPC**: < 10ms (for TUI CLI)
-- **Redis pub/sub**: < 5ms (debounced, only for web UI)
 - **Risk checks**: < 1ms (cached)
 - **Indicator lookup**: < 0.1ms (in-memory cache)
 
@@ -644,22 +602,21 @@ Orderbook Update (Channel) → Trading Engine
 
 ### Phase 1: Foundation
 1. Library separation (Proposal 01)
-2. gRPC communication layer setup
+2. Indicator Service (Proposal 02) - **Prerequisite for Proposal 03**
 3. Basic state management
 
 ### Phase 2: Core Features
-1. Level-based trading (Proposal 02)
-2. Risk system (Proposal 05)
-3. Market data integration (Proposal 06)
+1. Level-based trading (Proposal 03) - **Requires Proposal 02 (Indicator Service)**
+2. Redis to Channels migration (Proposal 04) - **After Proposal 03**
+3. Data handling and persistence (Proposal 05)
+4. LiveConfig Service (Proposal 06) - **After Proposal 05**
+5. Risk system (Proposal 07)
+6. Market data integration (Proposal 08)
 
-### Phase 3: Data & Monitoring
-1. Data handling and persistence (Proposal 04)
-2. Monitoring system (Proposal 03)
-
-### Phase 4: Optimization
-1. Performance tuning
-2. Load testing
-3. Optimization based on metrics
+### Phase 3: User Interface & Quality
+1. TUI CLI and Monitoring (Proposal 09)
+2. Testing Strategy (Proposal 10) - Comprehensive test coverage
+3. Code Optimization and Performance Review (Proposal 11) - Final optimization pass
 
 ## Success Metrics
 

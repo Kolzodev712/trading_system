@@ -1,4 +1,4 @@
-# Proposal 06: Exchange Market Data Integration
+# Proposal 08: Exchange Market Data Integration
 
 ## Overview
 

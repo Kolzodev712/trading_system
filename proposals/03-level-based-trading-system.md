@@ -1,8 +1,10 @@
-# Proposal 02: Level-Based Trading System
+# Proposal 03: Level-Based Trading System
 
 ## Overview
 
 This proposal outlines the implementation of a level-based trading system where trading commands (levels) are configured to open bid or ask orders. Levels use indicators for dynamic order requirements and are exchange-agnostic. The system includes robust lifecycle management, risk checks, and cancellation logic.
+
+**Prerequisite**: **Proposal 02 (Indicator Service)** must be implemented before this proposal. The Indicator Service provides indicator values (SMA, EMA, etc.) via channels that the Level-Based Trading System depends on. See Proposal 02 for detailed implementation of the Indicator Service.
 
 ## Current State Analysis
 
@@ -55,6 +57,9 @@ trading_system/
 ├── src/
 │   ├── libs/
 │   │   └── ... (existing libs from Proposal 01)
+│   │
+│   ├── indicator_service/          # PREREQUISITE: See Proposal 02
+│   │   └── ... (implemented in Proposal 02)
 │   │
 │   ├── trading_engine/
 │   │   ├── level/

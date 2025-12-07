@@ -1,18 +1,27 @@
-# Proposal 04: Data Handling and Persistence
+# Proposal 05: Data Handling and Persistence
 
 ## Overview
 
-This proposal outlines the implementation of state management and data persistence across the trading system. It introduces `ExchangeStateManager` and `MarketDataStateManager` to handle in-memory state, publish data to trading system and UI, and provide MongoDB persistence capabilities (initially disabled). MongoDB is used for trading configuration persistence (levels, risk limits) with a single collection per trading bot.
+This proposal outlines the implementation of state management and data persistence across the trading system. It introduces `ExchangeStateManager` and `MarketDataStateManager` to handle in-memory state, publish data to trading system and UI, and provide MongoDB persistence capabilities (initially disabled via feature flags). MongoDB is used for trading configuration persistence (levels, risk limits, bot configuration) with a single collection per trading bot.
+
+**Note**: Runtime configuration changes (LiveConfig Service) are covered in **Proposal 06 (LiveConfig Service)**. This proposal focuses on state management and persistence infrastructure.
 
 ## Key Requirements
 
 1. **State Managers**: Exchange and Market Data state managers for in-memory state management
-2. **Publishing**: Publish all updates to trading system and UI (Redis pub/sub)
-3. **MongoDB Persistence**: Capability to persist state data (disabled initially via trigger)
-4. **Configuration Persistence**: MongoDB stores levels configuration (managed by level manager)
-5. **Historical Data Logic**: Ready but unused (public trades, candles)
-6. **Collection Structure**: Single collection per trading bot
-7. **Exchange State as SOT**: Exchange state is source of truth, MongoDB is backup for config only
+2. **Publishing**: Publish all updates to trading system and UI via channels (after Proposal 03)
+3. **MongoDB Persistence**: Capability to persist state data (disabled initially via feature flag)
+4. **Configuration Persistence**: MongoDB stores bot configuration and levels configuration (managed by level manager)
+   - **Bot Config**: Entire bot configuration (key elements for startup, excluding API keys) + levels for each bot and their specific values → **Always persisted**
+   - **Levels**: Level configurations and their values → **Always persisted**
+5. **State Persistence** (Feature Flag: `persist_state`):
+   - **Positions, Orders, Balances**: Logic exists, disabled initially (handled in-memory by state manager)
+   - **Private Trades**: Publishing option available for future analysis, disabled initially
+7. **Market Data Persistence** (Feature Flag: `persist_market_data`):
+   - **Orderbooks, Public Trades**: Logic exists, disabled initially (handled in-memory by state manager)
+   - Publishing option available for future analysis, disabled initially
+8. **Collection Structure**: Single collection per trading bot
+9. **Exchange State as SOT**: Exchange state is source of truth, MongoDB is backup for config only
 
 ## Architecture Overview
 
@@ -101,6 +110,8 @@ trading_system/
 │   │       └── persistence.rs         # NEW: Levels config MongoDB persistence
 │   │
 │   └── ... (existing)
+│
+│   Note: LiveConfig Service is implemented in Proposal 06
 ```
 
 ## Detailed Component Design
@@ -578,6 +589,10 @@ pub struct PublicTradeDocument {
     pub trade_id: String,
 }
 
+### 11. Live Config Service (`live_config/service.rs`)
+
+**Purpose**: Enables runtime configuration changes (e.g., modifying level values while the bot is running).
+
 /// Candle document (historical, disabled initially)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CandleDocument {
@@ -597,7 +612,7 @@ pub struct CandleDocument {
 
 ### 11. Level Manager Persistence (`trading_engine/level/persistence.rs`)
 
-**Purpose**: MongoDB persistence for levels configuration.
+**Purpose**: MongoDB persistence for levels configuration. Note: Runtime updates to levels are handled by the LiveConfig Service (Proposal 06).
 
 ```rust
 pub struct LevelPersistence {

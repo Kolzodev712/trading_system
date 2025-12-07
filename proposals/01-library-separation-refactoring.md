@@ -2,7 +2,7 @@
 
 ## Overview
 
-This proposal outlines the refactoring of the trading system into a modular, plug-and-play architecture. The goal is to separate key functionalities into independent libraries that serve single purposes, making the system more maintainable, testable, and extensible.
+This proposal outlines the refactoring of the trading system into a modular, monolith architecture with clear separation of concerns. The goal is to create a foundation library (`libs/core`) that provides shared types, traits, and infrastructure (REST/WebSocket clients), while keeping Exchange Engine and Market Data Engine as completely independent, self-contained services that manage their own state and communicate via in-process channels.
 
 ## Current State Analysis
 
@@ -21,325 +21,459 @@ trading_system/
 
 1. **Tight Coupling**: `core_logic` mixes generic abstractions with exchange-specific code
 2. **Monolithic Engines**: `exchange_engine` and `market_data_engine` are tightly coupled to Binance
-3. **Hard to Extend**: Adding a new exchange requires changes across multiple modules
-4. **Unclear Boundaries**: Shared utilities and exchange-specific code are intermingled
-5. **Testing Difficulty**: Hard to test components in isolation
+3. **Unclear Boundaries**: Exchange and market data types are mixed together
+4. **State Management**: No clear ownership of state management
+5. **Communication**: Uses Redis for everything, not optimized for monolith
 
 ## Target Architecture
 
 ### Proposed Structure
+
 ```
 trading_system/
 ├── src/
 │   ├── libs/
-│   │   ├── exchange/                    # Exchange integration library
-│   │   │   ├── core/                     # Core exchange abstractions
-│   │   │   │   ├── lib.rs
-│   │   │   │   ├── traits.rs             # TradingClient, PrivateDataClient
-│   │   │   │   ├── types.rs              # Order, OrderRequest, Balance, AccountInfo
-│   │   │   │   ├── error.rs              # Exchange-specific errors
-│   │   │   │   └── config.rs            # Exchange config abstractions
-│   │   │   └── binance/                  # Binance implementation
-│   │   │       ├── lib.rs
-│   │   │       ├── ws_client.rs
-│   │   │       ├── rest_client.rs
-│   │   │       ├── websocket/
-│   │   │       ├── config.rs
-│   │   │       └── authenticator.rs
-│   │   │
-│   │   ├── market_data/                  # Market data library
-│   │   │   ├── core/                     # Core market data abstractions
-│   │   │   │   ├── lib.rs
-│   │   │   │   ├── traits.rs            # MarketDataClient
-│   │   │   │   ├── types.rs             # Orderbook, Trade
-│   │   │   │   ├── error.rs
-│   │   │   │   └── config.rs
-│   │   │   └── binance/                  # Binance implementation
-│   │   │       ├── lib.rs
-│   │   │       ├── client.rs
-│   │   │       ├── websocket/
-│   │   │       └── config.rs
-│   │   │
-│   │   └── shared/                       # Common types for exchange & market_data
-│   │       ├── lib.rs
-│   │       ├── data_types.rs             # Pair, Side, OrderType, OrderStatus, etc.
-│   │       ├── redis.rs                  # Redis messaging utilities
-│   │       ├── circuit_breaker.rs
-│   │       ├── retry.rs
-│   │       ├── error.rs                  # Common error types
-│   │       └── utils.rs
+│   │   └── core/                          # Shared foundation
+│   │       ├── Cargo.toml
+│   │       ├── src/
+│   │       │   ├── lib.rs
+│   │       │   ├── types/                 # ALL data types (organized by domain)
+│   │       │   │   ├── mod.rs
+│   │       │   │   ├── common.rs          # Pair, Side, OrderType, OrderStatus, etc.
+│   │       │   │   ├── exchange.rs        # Order, Balance, Position, Trade
+│   │       │   │   └── market_data.rs     # Orderbook, PublicTrade
+│   │       │   ├── rest/                  # REST client infrastructure
+│   │       │   │   ├── mod.rs
+│   │       │   │   ├── client.rs          # Generic REST client
+│   │       │   │   ├── authenticated.rs   # Auth support hooks
+│   │       │   │   └── unauthenticated.rs # Non-auth support
+│   │       │   ├── websocket/             # WebSocket client infrastructure
+│   │       │   │   ├── mod.rs
+│   │       │   │   ├── client.rs          # Generic WS client
+│   │       │   │   ├── authenticated.rs   # Auth streams hooks
+│   │       │   │   └── unauthenticated.rs # Public streams hooks
+│   │       │   ├── traits/                # Abstractions only
+│   │       │   │   ├── mod.rs
+│   │       │   │   ├── trading.rs         # TradingClient trait
+│   │       │   │   ├── market_data.rs     # MarketDataClient trait
+│   │       │   │   └── private_data.rs    # PrivateDataClient trait
+│   │       │   ├── channels/              # In-process channel types
+│   │       │   │   ├── mod.rs
+│   │       │   │   ├── exchange.rs        # Exchange update channels
+│   │       │   │   └── market_data.rs     # Market data update channels
+│   │       │   ├── grpc/                  # gRPC utilities (NOT proto definitions)
+│   │       │   │   ├── mod.rs
+│   │       │   │   ├── client.rs          # Generic gRPC client utilities
+│   │       │   │   ├── server.rs          # Generic gRPC server utilities
+│   │       │   │   ├── connection_pool.rs # Connection pooling
+│   │       │   │   └── retry.rs           # Retry logic for gRPC
+│   │       │   ├── error.rs               # Common error types
+│   │       │   ├── config.rs               # Common config types
+│   │       │   └── utils.rs               # Shared utilities
+│   │       └── proto/                     # Optional: shared common proto (minimal)
+│   │           └── common.proto          # Only truly common types (Pair, Side, etc.)
 │   │
-│   ├── trading_engine/                    # Core trading system (NOT a library)
-│   │   ├── lib.rs
-│   │   ├── strategy.rs                   # Strategy trait
-│   │   ├── strategies.rs                 # Strategy implementations
-│   │   ├── executor.rs                   # Strategy execution
-│   │   ├── state.rs                      # TradingState, Position
-│   │   ├── reconciliation.rs
-│   │   ├── backtest.rs
-│   │   └── strategy_manager.rs
+│   ├── exchange_engine/                   # Self-contained exchange service
+│   │   ├── Cargo.toml
+│   │   ├── proto/                         # Own proto definitions
+│   │   │   ├── exchange.proto
+│   │   │   └── build.rs
+│   │   ├── src/
+│   │   │   ├── main.rs
+│   │   │   ├── lib.rs
+│   │   │   ├── state/                     # Own state management
+│   │   │   │   ├── mod.rs
+│   │   │   │   ├── manager.rs             # ExchangeStateManager
+│   │   │   │   └── types.rs
+│   │   │   ├── exchanges/                 # Exchange implementations
+│   │   │   │   ├── mod.rs
+│   │   │   │   └── binance/
+│   │   │   │       ├── mod.rs
+│   │   │   │       ├── client.rs          # Implements TradingClient
+│   │   │   │       ├── rest.rs
+│   │   │   │       └── websocket.rs
+│   │   │   ├── channels/                  # Channel publishers
+│   │   │   │   ├── mod.rs
+│   │   │   │   └── publisher.rs           # Publishes to channels
+│   │   │   └── persistence/              # Own persistence (optional)
+│   │   │       └── mongo.rs
+│   │   └── proto/                         # Generated proto code
+│   │       └── mod.rs
 │   │
-│   └── runner/                            # Orchestration
-│       ├── lib.rs
-│       ├── main.rs
-│       ├── health.rs
-│       └── shutdown.rs
+│   ├── market_data_engine/                # Self-contained market data service
+│   │   ├── Cargo.toml
+│   │   ├── proto/                         # Own proto definitions
+│   │   │   ├── market_data.proto
+│   │   │   └── build.rs
+│   │   ├── src/
+│   │   │   ├── main.rs
+│   │   │   ├── lib.rs
+│   │   │   ├── state/                     # Own state management
+│   │   │   │   ├── mod.rs
+│   │   │   │   ├── manager.rs             # MarketDataStateManager
+│   │   │   │   └── types.rs
+│   │   │   ├── exchanges/                 # Market data implementations
+│   │   │   │   ├── mod.rs
+│   │   │   │   └── binance/
+│   │   │   │       ├── mod.rs
+│   │   │   │       ├── client.rs          # Implements MarketDataClient
+│   │   │   │       ├── rest.rs
+│   │   │   │       └── websocket.rs
+│   │   │   ├── channels/                  # Channel publishers
+│   │   │   │   ├── mod.rs
+│   │   │   │   └── publisher.rs           # Publishes to channels
+│   │   │   └── persistence/               # Own persistence (optional)
+│   │   │       └── mongo.rs
+│   │   └── proto/                         # Generated proto code
+│   │       └── mod.rs
+│   │
+│   ├── trading_engine/                    # Core trading system
+│   │   ├── Cargo.toml
+│   │   ├── proto/                         # Own proto definitions (for TUI CLI)
+│   │   │   ├── trading.proto
+│   │   │   └── build.rs
+│   │   ├── src/
+│   │   │   ├── main.rs
+│   │   │   ├── lib.rs
+│   │   │   ├── channels/                  # Channel subscribers
+│   │   │   │   ├── mod.rs
+│   │   │   │   ├── exchange_subscriber.rs # Subscribes to exchange channels
+│   │   │   │   └── market_data_subscriber.rs # Subscribes to market data channels
+│   │   │   ├── grpc/                     # gRPC server (for TUI CLI)
+│   │   │   │   ├── mod.rs
+│   │   │   │   ├── server.rs
+│   │   │   │   └── service.rs
+│   │   │   └── ... (existing trading logic)
+│   │   └── proto/                         # Generated proto code
+│   │       └── mod.rs
+│   │
+│   └── runner/                            # Orchestration (monolith entry point)
+│       ├── Cargo.toml
+│       └── src/
+│           ├── main.rs
+│           └── lib.rs
 ```
 
-### Key Principles
+## Key Principles
 
-1. **Single Responsibility**: Each library serves one clear purpose
-2. **Trait-Based Design**: Core libraries define traits; implementations live in exchange-specific modules
-3. **Shared Common Types**: `shared` library contains types used by both `exchange` and `market_data`
-4. **Trading Engine is Application Code**: Not a library, but the core trading system that uses the libraries
-5. **Plug-and-Play**: New exchanges can be added by implementing traits in new modules
+1. **Core Library**: Shared foundation with types, traits, REST/WS clients, channels, gRPC utilities
+2. **Independent Services**: Exchange Engine and Market Data Engine are completely self-contained
+3. **State Ownership**: Each service manages its own state (no shared state management)
+4. **In-Process Communication**: Channels for internal monolith communication (ultra-low latency)
+5. **External Communication**: gRPC only for external services (TUI CLI)
+6. **Per-Service Proto**: Each service defines its own proto (for external APIs)
+7. **Data Types by Domain**: Types organized by domain (exchange, market_data, common), not by service
+
+## Communication Architecture
+
+### Monolith Internal Communication (Channels)
+
+**In-Process Channels** (< 1μs latency):
+```
+Exchange Engine → Channel → Trading Engine
+Market Data Engine → Channel → Trading Engine
+```
+
+**Benefits**:
+- Ultra-low latency (< 1μs vs 0.5-2ms for gRPC)
+- No serialization overhead
+- Direct memory access
+- Simple and efficient
+
+### External Communication (gRPC)
+
+**gRPC for External Services**:
+```
+Trading Engine → gRPC → TUI CLI (external process)
+```
+
+**Benefits**:
+- Required for external processes (can't use channels)
+- Type-safe with proto definitions
+- Efficient binary protocol
 
 ## Detailed Component Breakdown
 
-### 1. `libs/shared/` - Common Types Library
+### 1. `libs/core/` - Shared Foundation Library
 
-**Purpose**: Shared utilities and data types used by both exchange and market_data libraries.
+**Purpose**: Provides shared types, traits, REST/WebSocket clients, channels, and gRPC utilities.
 
 **Contents**:
-- `data_types.rs`: `Pair`, `Side`, `OrderType`, `OrderStatus`, `OrderId`, `InstrumentType`, `AccountType`, `DataType`
-- `redis.rs`: `RedisClient`, `RedisMessage`, channel constants (for broadcast scenarios)
-- `grpc/`: gRPC communication layer
-  - `client.rs`: gRPC client utilities and connection pooling
-  - `server.rs`: gRPC server utilities
-  - `streaming.rs`: Streaming helpers for unidirectional/bidirectional streams
-- `circuit_breaker.rs`: `CircuitBreaker` implementation
-- `retry.rs`: Retry logic with exponential backoff
-- `error.rs`: Common error types (`EngineError` base)
-- `utils.rs`: Serialization utilities, helpers
+
+#### Types (`types/`)
+- `common.rs`: `Pair`, `Side`, `OrderType`, `OrderStatus`, `OrderId`, `InstrumentType`, `AccountType`, `DataType`
+- `exchange.rs`: `Order`, `OrderRequest`, `Balance`, `AccountInfo`, `Position`, `Trade`
+- `market_data.rs`: `Orderbook`, `PublicTrade`
+
+**Organized by domain, not by service**.
+
+#### REST Client (`rest/`)
+- `client.rs`: Generic REST client with hooks for authentication
+- `authenticated.rs`: Hooks for authenticated requests
+- `unauthenticated.rs`: Hooks for non-authenticated requests
+
+**Provides infrastructure, not implementations**.
+
+#### WebSocket Client (`websocket/`)
+- `client.rs`: Generic WebSocket client with hooks
+- `authenticated.rs`: Hooks for authenticated streams
+- `unauthenticated.rs`: Hooks for public streams
+
+**Provides infrastructure, not implementations**.
+
+#### Traits (`traits/`)
+- `trading.rs`: `TradingClient` trait (what every exchange engine should implement)
+- `market_data.rs`: `MarketDataClient` trait (what every market data engine should implement)
+- `private_data.rs`: `PrivateDataClient` trait (for authenticated streams)
+
+**Abstractions only, no implementations**.
+
+#### Channels (`channels/`)
+- `exchange.rs`: Exchange update channel types
+  ```rust
+  pub type ExchangeUpdateSender = mpsc::UnboundedSender<ExchangeUpdate>;
+  pub type ExchangeUpdateReceiver = mpsc::UnboundedReceiver<ExchangeUpdate>;
+  
+  pub struct ExchangeUpdate {
+      pub orders: Vec<Order>,
+      pub balances: Vec<Balance>,
+      pub positions: Vec<Position>,
+      pub trades: Vec<Trade>,
+  }
+  ```
+- `market_data.rs`: Market data update channel types
+  ```rust
+  pub type MarketDataUpdateSender = mpsc::UnboundedSender<MarketDataUpdate>;
+  pub type MarketDataUpdateReceiver = mpsc::UnboundedReceiver<MarketDataUpdate>;
+  
+  pub struct MarketDataUpdate {
+      pub orderbooks: Vec<Orderbook>,
+      pub trades: Vec<PublicTrade>,
+  }
+  ```
+
+#### gRPC Utilities (`grpc/`)
+- `client.rs`: Generic gRPC client utilities (connection pooling, retry)
+- `server.rs`: Generic gRPC server utilities
+- `connection_pool.rs`: Connection pooling
+- `retry.rs`: Retry logic for gRPC
+
+**Utilities only, NOT proto definitions**.
+
+#### Error Types (`error.rs`)
+- Common error types that are integration-agnostic
+- Services can extend with service-specific errors
+- Service-specific errors can be mapped to common errors
 
 **Dependencies**: 
-- `redis`, `tokio`, `serde`, `thiserror`, `smol_str`, `rust_decimal`, `chrono`
+- `tokio`, `serde`, `thiserror`, `smol_str`, `rust_decimal`, `chrono`
 - `tonic` (gRPC framework), `prost` (protobuf)
 
-**Exports**: Public API for common types, utilities, and gRPC helpers
+**Does NOT contain**:
+- State management
+- Business logic
+- Exchange-specific implementations
+- Service-specific code
+- Proto definitions (services define their own)
 
-**Communication Strategy**:
-- **gRPC**: For high-frequency, direct service-to-service communication (trading→monitoring, market data→trading, indicators→trading)
-- **Redis Pub/Sub**: For broadcast scenarios and multi-subscriber patterns (monitoring→web server)
+### 2. `exchange_engine/` - Self-Contained Exchange Service
 
-### 2. `libs/exchange/core/` - Exchange Core Abstractions
+**Purpose**: Independent exchange trading service with own state management.
 
-**Purpose**: Define the exchange integration interface and core types.
+**Contains**:
 
-**Contents**:
-- `traits.rs`: 
-  - `TradingClient<OrderRequest>` trait
-  - `PrivateDataClient` trait
-- `types.rs`: 
-  - `Order`, `OrderRequest`, `Balance`, `AccountInfo`
-- `error.rs`: Exchange-specific error variants
-- `config.rs`: Exchange configuration abstractions
+#### State Management (`state/`)
+- `manager.rs`: `ExchangeStateManager` (in-memory state)
+- Own state, no shared state
+- Manages: orders, balances, positions, trades
 
-**Dependencies**: 
-- `shared` (for common types)
-- `async-trait`, `tokio`
+#### Exchange Implementations (`exchanges/`)
+- `binance/`: Binance exchange implementation
+- Implements `TradingClient`, `PrivateDataClient` traits from core
+- Uses core REST/WebSocket clients
 
-**Exports**: Public traits and types that exchange implementations must use
+#### Channel Publishers (`channels/`)
+- `publisher.rs`: Publishes state updates to channels
+- Sends `ExchangeUpdate` to Trading Engine via channel
 
-### 3. `libs/exchange/binance/` - Binance Exchange Implementation
+#### Proto Definitions (`proto/`)
+- `exchange.proto`: Own proto definition (for future external APIs)
+- Generated Rust code in `src/proto/`
 
-**Purpose**: Binance-specific implementation of exchange traits.
+#### Persistence (`persistence/`)
+- `mongo.rs`: MongoDB integration (optional)
+- Own persistence logic
 
-**Contents**:
-- `ws_client.rs`: `BinanceClient` implementing `TradingClient` and `PrivateDataClient`
-- `rest_client.rs`: REST API client for Binance
-- `websocket/`: WebSocket message types and handlers
-- `config.rs`: Binance-specific configuration
-- `authenticator.rs`: Binance authentication logic
+**Dependencies**:
+- `libs/core` (traits, types, REST/WS clients, channels)
+- Own crates (can be modular internally)
 
-**Dependencies**: 
-- `exchange/core` (for traits)
-- `shared` (for common types)
-- Binance-specific dependencies
+**Completely independent** - no dependencies on other services.
 
-**Exports**: `BinanceClient`, `BinanceConfig`, and related types
+### 3. `market_data_engine/` - Self-Contained Market Data Service
 
-### 4. `libs/market_data/core/` - Market Data Core Abstractions
+**Purpose**: Independent market data service with own state management.
 
-**Purpose**: Define the market data interface and core types.
+**Contains**:
 
-**Contents**:
-- `traits.rs`: `MarketDataClient` trait
-- `types.rs`: `Orderbook`, `Trade`
-- `error.rs`: Market data specific errors
-- `config.rs`: Market data configuration abstractions
+#### State Management (`state/`)
+- `manager.rs`: `MarketDataStateManager` (in-memory state)
+- Own state, no shared state
+- Manages: orderbooks, public trades
 
-**Dependencies**: 
-- `shared` (for common types)
-- `async-trait`, `tokio`
+#### Market Data Implementations (`exchanges/`)
+- `binance/`: Binance market data implementation
+- Implements `MarketDataClient` trait from core
+- Uses core REST/WebSocket clients
 
-**Exports**: Public traits and types for market data implementations
+#### Channel Publishers (`channels/`)
+- `publisher.rs`: Publishes market data updates to channels
+- Sends `MarketDataUpdate` to Trading Engine via channel
 
-### 5. `libs/market_data/binance/` - Binance Market Data Implementation
+#### Proto Definitions (`proto/`)
+- `market_data.proto`: Own proto definition (for future external APIs)
+- Generated Rust code in `src/proto/`
 
-**Purpose**: Binance-specific implementation of market data traits.
+#### Persistence (`persistence/`)
+- `mongo.rs`: MongoDB integration (optional)
+- Own persistence logic
 
-**Contents**:
-- `client.rs`: `BinanceClient` implementing `MarketDataClient`
-- `websocket/`: WebSocket message types and handlers
-- `config.rs`: Binance-specific market data configuration
+**Dependencies**:
+- `libs/core` (traits, types, REST/WS clients, channels)
+- Own crates (can be modular internally)
 
-**Dependencies**: 
-- `market_data/core` (for traits)
-- `shared` (for common types, Redis)
-- Binance-specific dependencies
+**Completely independent** - no dependencies on other services.
 
-**Exports**: `BinanceClient`, `BinanceConfig`, and related types
+### 4. `trading_engine/` - Core Trading System
 
-### 6. `trading_engine/` - Core Trading System
+**Purpose**: Trading logic, strategy execution, level management, risk system.
 
-**Purpose**: Trading logic, strategy execution, and order management.
+**Contains**:
 
-**Contents**: (No changes to structure, only dependency updates)
-- `strategy.rs`: Strategy trait (depends on `exchange/core` traits)
-- `strategies.rs`: Strategy implementations
-- `executor.rs`: Strategy executor
-- `state.rs`: Trading state management
-- `reconciliation.rs`: Position reconciliation
+#### Channel Subscribers (`channels/`)
+- `exchange_subscriber.rs`: Subscribes to exchange update channels
+- `market_data_subscriber.rs`: Subscribes to market data update channels
+- Receives updates from Exchange Engine and Market Data Engine
 
-**Dependencies**: 
-- `exchange/core` (for `TradingClient` trait)
-- `market_data/core` (for `MarketDataClient` trait)
-- `shared` (for common types, Redis, utilities)
+#### gRPC Server (`grpc/`)
+- `server.rs`: gRPC server for TUI CLI
+- `service.rs`: Implements trading proto service
+- Only for external communication (TUI CLI)
 
-**Note**: This is NOT a library - it's the core application logic
+#### Trading Logic
+- Level management, risk system, strategy execution
+- Uses data from channel subscribers
 
-### 7. `runner/` - Orchestration
+**Dependencies**:
+- `libs/core` (traits, types, channels, gRPC utilities)
+- Own proto definitions (for TUI CLI)
 
-**Purpose**: Wire everything together and run the system.
+### 5. `runner/` - Monolith Orchestration
 
-**Dependencies**: 
+**Purpose**: Wire everything together and run the monolith.
+
+**Responsibilities**:
+- Create channel pairs (exchange, market_data)
+- Start Exchange Engine with channel sender
+- Start Market Data Engine with channel sender
+- Start Trading Engine with channel receivers
+- Start gRPC server (for TUI CLI)
+- Orchestrate shutdown
+
+**Dependencies**:
+- `exchange_engine`
+- `market_data_engine`
 - `trading_engine`
-- `exchange/binance` (or other exchange implementations)
-- `market_data/binance` (or other market data implementations)
-- `shared`
+- `libs/core`
+
+## Communication Flow
+
+### Internal (Monolith) - Channels
+
+```
+Exchange Engine
+    ├── Fetches from Exchange (REST/WebSocket)
+    ├── Updates ExchangeStateManager (in-memory)
+    └── Publishes to Channel → Trading Engine
+
+Market Data Engine
+    ├── Fetches from Exchange (REST/WebSocket)
+    ├── Updates MarketDataStateManager (in-memory)
+    └── Publishes to Channel → Trading Engine
+
+Trading Engine
+    ├── Subscribes to Exchange Channel
+    ├── Subscribes to Market Data Channel
+    ├── Processes updates
+    └── Makes trading decisions
+```
+
+### External - gRPC
+
+```
+Trading Engine
+    ├── gRPC Server (listening)
+    └── Serves TUI CLI requests
+
+TUI CLI
+    ├── gRPC Client
+    └── Connects to Trading Engine gRPC server
+```
 
 ## Migration Plan
 
-### Phase 1: Create New Library Structure
+### Phase 1: Create Core Library
 
-1. **Create `libs/shared/`**
-   - Create `Cargo.toml` for shared library
-   - Move from `core_logic/src/`:
-     - `data/base_data.rs` → `libs/shared/src/data_types.rs`
-     - `redis.rs` → `libs/shared/src/redis.rs`
-     - `circuit_breaker.rs` → `libs/shared/src/circuit_breaker.rs`
-     - `retry.rs` → `libs/shared/src/retry.rs`
-     - `error.rs` → `libs/shared/src/error.rs` (base error types)
-     - `utils.rs` → `libs/shared/src/utils.rs`
-   - Update imports and exports
+1. **Create `libs/core/`**
+   - Create `Cargo.toml`
+   - Move types from `core_logic/src/data/` → `libs/core/src/types/`
+   - Organize by domain (common, exchange, market_data)
+   - Create REST/WebSocket client infrastructure
+   - Create trait definitions
+   - Create channel types
+   - Create gRPC utilities (NOT proto definitions)
+   - Create error types
 
-2. **Create `libs/exchange/core/`**
-   - Create `Cargo.toml` (depends on `shared`)
-   - Move from `core_logic/src/`:
-     - `traits.rs` (TradingClient, PrivateDataClient parts) → `libs/exchange/core/src/traits.rs`
-     - `data/private_data.rs` → `libs/exchange/core/src/types.rs`
-   - Create `libs/exchange/core/src/error.rs` (exchange-specific error variants)
-   - Create `libs/exchange/core/src/config.rs` (exchange config abstractions)
+### Phase 2: Refactor Exchange Engine
 
-3. **Create `libs/exchange/binance/`**
-   - Create `Cargo.toml` (depends on `exchange/core`, `shared`)
-   - Move from `exchange_engine/src/exchanges/binance/`:
-     - All Binance-specific code
-   - Update to implement `exchange/core` traits
+1. **Update `exchange_engine/`**
+   - Add state management (own state)
+   - Add channel publishers
+   - Create own proto definitions
+   - Update to use core traits, types, clients
+   - Remove dependencies on other services
 
-4. **Create `libs/market_data/core/`**
-   - Create `Cargo.toml` (depends on `shared`)
-   - Move from `core_logic/src/`:
-     - `traits.rs` (MarketDataClient part) → `libs/market_data/core/src/traits.rs`
-     - `data/public_data.rs` → `libs/market_data/core/src/types.rs`
-   - Create `libs/market_data/core/src/error.rs`
-   - Create `libs/market_data/core/src/config.rs`
+### Phase 3: Refactor Market Data Engine
 
-5. **Create `libs/market_data/binance/`**
-   - Create `Cargo.toml` (depends on `market_data/core`, `shared`)
-   - Move from `market_data_engine/src/exchanges/binance/`:
-     - All Binance-specific code
-   - Update to implement `market_data/core` traits
+1. **Update `market_data_engine/`**
+   - Add state management (own state)
+   - Add channel publishers
+   - Create own proto definitions
+   - Update to use core traits, types, clients
+   - Remove dependencies on other services
 
-### Phase 2: Update Existing Modules
+### Phase 4: Update Trading Engine
 
 1. **Update `trading_engine/`**
-   - Update `Cargo.toml` dependencies:
-     - Remove: `core_logic`, `exchange_engine`, `market_data_engine`
-     - Add: `exchange/core`, `market_data/core`, `shared`
-   - Update imports throughout:
-     - `core_logic::data::...` → `shared::data_types::...` or `exchange::core::types::...`
-     - `core_logic::traits::TradingClient` → `exchange::core::traits::TradingClient`
-     - `core_logic::redis::...` → `shared::redis::...`
-     - `core_logic::circuit_breaker::...` → `shared::circuit_breaker::...`
-     - `core_logic::retry::...` → `shared::retry::...`
+   - Add channel subscribers
+   - Add gRPC server (for TUI CLI)
+   - Create own proto definitions
+   - Update to use core types, channels
+   - Remove dependencies on exchange_engine, market_data_engine
 
-2. **Update `runner/`**
-   - Update `Cargo.toml` dependencies:
-     - Remove: `core_logic`, `exchange_engine`, `market_data_engine`
-     - Add: `exchange/binance`, `market_data/binance`, `shared`
-   - Update imports:
-     - `exchange_engine::exchanges::binance::...` → `exchange::binance::...`
-     - `market_data_engine::exchanges::binance::...` → `market_data::binance::...`
-     - `core_logic::...` → `shared::...` or appropriate library
+### Phase 5: Update Runner
 
-### Phase 3: Cleanup
+1. **Update `runner/`**
+   - Create channel pairs
+   - Wire services together
+   - Start all services in monolith
+   - Handle shutdown
 
-1. **Remove Old Modules**
-   - Delete `src/core_logic/`
-   - Delete `src/exchange_engine/`
-   - Delete `src/market_data_engine/`
+## Dependency Structure
 
-2. **Update Workspace**
-   - Update root `Cargo.toml` workspace members
-   - Remove old packages, add new ones
-
-3. **Update Tests**
-   - Move integration tests to appropriate locations
-   - Update test imports
-
-## File Mapping Reference
-
-### From `core_logic/src/`:
-
-| Current File | New Location |
-|-------------|--------------|
-| `data/base_data.rs` | `libs/shared/src/data_types.rs` |
-| `data/private_data.rs` | `libs/exchange/core/src/types.rs` |
-| `data/public_data.rs` | `libs/market_data/core/src/types.rs` |
-| `traits.rs` (TradingClient parts) | `libs/exchange/core/src/traits.rs` |
-| `traits.rs` (MarketDataClient parts) | `libs/market_data/core/src/traits.rs` |
-| `redis.rs` | `libs/shared/src/redis.rs` |
-| `circuit_breaker.rs` | `libs/shared/src/circuit_breaker.rs` |
-| `retry.rs` | `libs/shared/src/retry.rs` |
-| `error.rs` | `libs/shared/src/error.rs` (base) + split to exchange/market_data cores |
-| `utils.rs` | `libs/shared/src/utils.rs` |
-| `config.rs` | Split: exchange config → `libs/exchange/core/src/config.rs`, market data config → `libs/market_data/core/src/config.rs` |
-
-### From `exchange_engine/src/`:
-
-| Current File | New Location |
-|-------------|--------------|
-| `exchanges/binance/*` | `libs/exchange/binance/*` |
-| `driver.rs` | Remove (functionality moves to runner) |
-| `config.rs` | `libs/exchange/binance/src/config.rs` |
-
-### From `market_data_engine/src/`:
-
-| Current File | New Location |
-|-------------|--------------|
-| `exchanges/binance/*` | `libs/market_data/binance/*` |
-| `driver.rs` | Remove (functionality moves to runner) |
-| `config.rs` | `libs/market_data/binance/src/config.rs` |
-| `messages.rs` | `libs/market_data/binance/src/messages.rs` (or keep in core if generic) |
-
-## Dependency Updates
-
-### `libs/shared/Cargo.toml`
+### `libs/core/Cargo.toml`
 ```toml
 [dependencies]
-redis = { workspace = true }
 tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -347,193 +481,76 @@ thiserror = { workspace = true }
 smol_str = { workspace = true }
 rust_decimal = { workspace = true }
 chrono = { workspace = true }
-# gRPC dependencies
+reqwest = { workspace = true }
+tungstenite = { workspace = true }
+# gRPC utilities (NOT proto)
 tonic = "0.11"
 prost = "0.12"
 prost-types = "0.12"
 ```
 
-### `libs/exchange/core/Cargo.toml`
+### `exchange_engine/Cargo.toml`
 ```toml
 [dependencies]
-shared = { path = "../shared" }
-async-trait = { workspace = true }
-tokio = { workspace = true }
+core = { path = "../libs/core" }
+# Proto generation
+prost = "0.12"
+prost-build = "0.12"
+tonic = "0.11"
+# Exchange-specific
+mongodb = { workspace = true } # Optional
 ```
 
-### `libs/exchange/binance/Cargo.toml`
+### `market_data_engine/Cargo.toml`
 ```toml
 [dependencies]
-exchange-core = { path = "../core" }
-shared = { path = "../../shared" }
-# ... Binance-specific dependencies
-```
-
-### `libs/market_data/core/Cargo.toml`
-```toml
-[dependencies]
-shared = { path = "../shared" }
-async-trait = { workspace = true }
-tokio = { workspace = true }
-```
-
-### `libs/market_data/binance/Cargo.toml`
-```toml
-[dependencies]
-market-data-core = { path = "../core" }
-shared = { path = "../../shared" }
-# ... Binance-specific dependencies
+core = { path = "../libs/core" }
+# Proto generation
+prost = "0.12"
+prost-build = "0.12"
+tonic = "0.11"
+# Market data-specific
+mongodb = { workspace = true } # Optional
 ```
 
 ### `trading_engine/Cargo.toml`
 ```toml
 [dependencies]
-exchange-core = { path = "../libs/exchange/core" }
-market-data-core = { path = "../libs/market_data/core" }
-shared = { path = "../libs/shared" }
-# Remove: core_logic, exchange_engine, market_data_engine
+core = { path = "../libs/core" }
+# Proto generation
+prost = "0.12"
+prost-build = "0.12"
+tonic = "0.11"
+# Trading-specific
+mongodb = { workspace = true } # For config persistence
 ```
 
 ### `runner/Cargo.toml`
 ```toml
 [dependencies]
+exchange_engine = { path = "../exchange_engine" }
+market_data_engine = { path = "../market_data_engine" }
 trading_engine = { path = "../trading_engine" }
-exchange-binance = { path = "../libs/exchange/binance" }
-market-data-binance = { path = "../libs/market_data/binance" }
-shared = { path = "../libs/shared" }
-# Remove: core_logic, exchange_engine, market_data_engine
+core = { path = "../libs/core" }
 ```
 
-## Import Path Changes
+## Benefits
 
-### Before:
-```rust
-use core_logic::data::base_data::Pair;
-use core_logic::traits::TradingClient;
-use core_logic::redis::RedisClient;
-use exchange_engine::exchanges::binance::ws_client::BinanceClient;
-```
-
-### After:
-```rust
-use shared::data_types::Pair;
-use exchange::core::traits::TradingClient;
-use shared::redis::RedisClient;
-use exchange::binance::BinanceClient;
-```
-
-## Testing Strategy
-
-1. **Unit Tests**: Each library should have its own test suite
-   - `libs/shared/tests/` - Test utilities and common types
-   - `libs/exchange/core/tests/` - Test trait contracts
-   - `libs/exchange/binance/tests/` - Test Binance implementation
-   - `libs/market_data/core/tests/` - Test market data traits
-   - `libs/market_data/binance/tests/` - Test Binance market data
-
-2. **Integration Tests**: Update existing integration tests
-   - Update imports to use new library paths
-   - Ensure all tests still pass
-
-3. **Mock Implementations**: Create mock implementations for testing
-   - `libs/exchange/core/tests/mocks.rs` - Mock TradingClient
-   - `libs/market_data/core/tests/mocks.rs` - Mock MarketDataClient
-
-## Rollback Plan
-
-1. Keep old modules in a `_old/` directory during migration
-2. Use feature flags to switch between old and new implementations
-3. Maintain git branches for each phase
-4. Test thoroughly before removing old code
-
-## Benefits After Migration
-
-1. **Clear Separation**: Each library has a single, well-defined purpose
-2. **Easy Extension**: Add new exchanges by creating new implementation modules
-3. **Better Testing**: Test libraries in isolation with mock implementations
-4. **Reduced Coupling**: Trading engine depends on traits, not implementations
-5. **Maintainability**: Changes are localized to specific libraries
-6. **Reusability**: Libraries can be used independently in other projects
-7. **Efficient Communication**: gRPC for high-frequency updates, Redis for broadcasts
-8. **Performance Optimized**: Binary protocol (protobuf) reduces serialization overhead
-
-## Potential Challenges
-
-1. **Circular Dependencies**: Ensure `shared` doesn't depend on `exchange` or `market_data`
-2. **Breaking Changes**: Some internal APIs may need adjustment
-3. **Test Updates**: All tests need import path updates
-4. **Documentation**: Update all documentation to reflect new structure
-
-## Success Criteria
-
-- [ ] All libraries compile independently
-- [ ] All existing tests pass
-- [ ] No circular dependencies
-- [ ] Trading engine compiles with new dependencies
-- [ ] Runner successfully orchestrates all components
-- [ ] System runs end-to-end without errors
-- [ ] Code is more maintainable and extensible
-
-## Next Steps
-
-1. Review and approve this proposal
-2. Create feature branch for migration
-3. Execute Phase 1 (create new structure)
-4. Execute Phase 2 (update existing modules)
-5. Execute Phase 3 (cleanup)
-6. Update documentation
-7. Merge to main
-
-## Communication Architecture
-
-### gRPC for High-Frequency Communication
-
-**Use gRPC for**:
-- Trading System → Monitoring Service (high-frequency updates)
-- Market Data → Trading System (orderbook updates)
-- Indicator Service → Trading System (indicator updates)
-
-**Benefits**:
-- Binary protocol (protobuf) - 3-10x smaller than JSON
-- Lower latency with HTTP/2 multiplexing
-- Built-in backpressure and flow control
-- Type-safe with compile-time checks
-- Streaming support for real-time updates
-
-### Redis Pub/Sub for Broadcast Scenarios
-
-**Use Redis for**:
-- Monitoring Service → Web Server (multiple subscribers possible)
-- Broadcast notifications
-- Occasional full snapshots
-
-**Benefits**:
-- Decoupled services (no direct connections)
-- Multiple subscribers
-- Simple deployment
-- Fire-and-forget pattern
-
-### Implementation
-
-The `shared` library provides:
-- `grpc/client.rs`: Connection pooling, client utilities
-- `grpc/server.rs`: Server setup, streaming helpers
-- `grpc/streaming.rs`: Unidirectional/bidirectional stream helpers
-
-## Performance Optimizations
-
-1. **Connection Pooling**: Reuse gRPC connections
-2. **Batching**: Batch updates where possible (configurable)
-3. **Caching**: Cache frequently accessed data
-4. **Async Processing**: Non-blocking operations
-5. **Lazy Evaluation**: Calculate only when needed
+1. **True Independence**: Exchange Engine and Market Data Engine are completely independent
+2. **Ultra-Low Latency**: Channels for internal communication (< 1μs)
+3. **Clear Separation**: Core = foundation, Services = implementations
+4. **Better Organization**: Data types by domain, not by service
+5. **State Ownership**: Each service manages its own state
+6. **Easy Testing**: Services can be tested independently
+7. **Deployment Flexibility**: Can separate later if needed (add gRPC layer)
+8. **Maintainability**: Changes are localized to specific services
 
 ## Notes
 
-- Keep workspace structure as-is (no major reorganization)
-- `trading_engine` remains application code, not a library
-- `shared` contains only types/utilities used by both exchange and market_data
-- All exchange-specific code lives in `exchange/binance/`
-- All market data-specific code lives in `market_data/binance/`
-- gRPC for direct service-to-service, Redis for broadcasts
-
+- **Monolith Architecture**: All services run in same process
+- **Channels for Internal**: Ultra-low latency in-process communication
+- **gRPC for External**: Only for external services (TUI CLI)
+- **Per-Service Proto**: Each service defines its own proto (for external APIs)
+- **Core Provides Utilities**: gRPC utilities in core, NOT proto definitions
+- **State Management**: Each service manages its own state
+- **Data Types by Domain**: Organized by domain (exchange, market_data, common)

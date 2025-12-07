@@ -26,7 +26,7 @@ Orderbook → Strategy → Order Request → Exchange
 ```
 Config → Level Manager → Level Executor → Risk Checks → Exchange
          ↑                                    ↓
-    Indicators (gRPC Stream) ← Market Data ← Indicator Service (separate crate)
+    Indicators (Channel/gRPC) ← Market Data ← Indicator Service
 ```
 
 ## Architecture Overview
@@ -64,7 +64,7 @@ trading_system/
 │   │   │   ├── manager.rs            # Level lifecycle management
 │   │   │   ├── executor.rs           # Level execution logic
 │   │   │   ├── resolver.rs           # Resolves indicator values for levels
-│   │   │   └── indicator_subscriber.rs # gRPC subscriber for indicators
+│   │   │   └── indicator_subscriber.rs # Channel/gRPC subscriber for indicators
 │   │   │
 │   │   ├── risk/
 │   │   │   ├── mod.rs
@@ -857,7 +857,7 @@ message IndicatorUpdate {
 ### Phase 4: Indicator Integration
 
 1. **Create Indicator Subscriber**
-   - Subscribe to Redis indicator channel
+   - Subscribe to indicator channel (in-process) or gRPC (external)
    - Cache indicator values
    - Update cache on new values
 
@@ -963,6 +963,7 @@ message IndicatorUpdate {
 - Configuration format designed for future MongoDB migration
 - Levels are exchange-agnostic through configuration abstraction
 - Event loop includes built-in risk mitigation and cancellation logic
-- **gRPC for indicators** - high-frequency, low-latency streaming
+- **Channels for indicators** (in-process) - ultra-low latency streaming
+- **gRPC for indicators** (external) - low-latency streaming if indicator service is separate
 - **Performance optimized** - caching, batching, incremental updates
 

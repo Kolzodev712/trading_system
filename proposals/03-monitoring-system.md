@@ -2,7 +2,9 @@
 
 ## Overview
 
-This proposal outlines the implementation of a monitoring system that acts as a transport layer between the trading system and the UI. The trading system handles all data fetching, updates, reconciliation, and aggregation. The monitoring system receives this data, transforms it to UI-optimized format, and publishes it via Redis pub/sub for low-latency delivery to the web server.
+This proposal outlines the implementation of a monitoring system that acts as a transport layer between the trading system and a **web-based UI** (future enhancement). The trading system handles all data fetching, updates, reconciliation, and aggregation. The monitoring system receives this data, transforms it to UI-optimized format, and publishes it via Redis pub/sub for low-latency delivery to the web server.
+
+**Important Note**: This monitoring system is **optional** and only required if implementing a web-based UI. The **TUI CLI (Proposal 07)** connects directly to the Trading System via gRPC, bypassing the Monitoring Service and Redis entirely. For initial production deployment with TUI CLI, Redis and the Monitoring Service are **not required**.
 
 ## Key Requirements
 
@@ -12,6 +14,8 @@ This proposal outlines the implementation of a monitoring system that acts as a 
 4. **Pub/Sub Delivery**: Low-latency Redis pub/sub (not push-based) to web server
 5. **Aggregation**: Receives aggregated data (per pair, per level, overall) from trading system
 6. **No State Management**: Stateless - just receives, transforms, publishes
+7. **Optional for TUI**: Not required for TUI CLI (Proposal 07) - TUI connects directly to Trading System via gRPC
+8. **Required for Web UI**: Only needed when implementing web-based UI (future enhancement)
 
 ## Architecture Overview
 
@@ -27,7 +31,7 @@ This proposal outlines the implementation of a monitoring system that acts as a 
 │ - Aggregates    │
 │ - Reconciles    │
 └────────┬────────┘
-         │ gRPC Stream (high-frequency)
+         │ Channel (in-process) OR gRPC (external)
          │ (orders, balances, positions, trades)
          ▼
 ┌─────────────────┐
@@ -39,7 +43,7 @@ This proposal outlines the implementation of a monitoring system that acts as a 
 │ - Publishes UI  │
 └────────┬────────┘
          │ Redis Pub/Sub (occasional snapshots)
-         │ (monitoring:ui)
+         │ (monitoring:ui) - Only for web UI
          ▼
 ┌─────────────────┐
 │   Web Server    │
@@ -61,8 +65,14 @@ This proposal outlines the implementation of a monitoring system that acts as a 
 ```
 
 **Communication Strategy**:
-- **gRPC Streaming**: Trading System → Monitoring Service (high-frequency, low-latency)
-- **Redis Pub/Sub**: Monitoring Service → Web Server (broadcast, multiple subscribers)
+- **In-Process Channels**: Trading System → Monitoring Service (if in-process, ultra-low latency < 1μs)
+- **External gRPC**: Trading System → Monitoring Service (if separate process, low-latency 0.5-2ms)
+- **Redis Pub/Sub**: Monitoring Service → Web Server (broadcast, multiple subscribers, only for web UI)
+
+**Alternative: TUI CLI (Proposal 07)**:
+- **Direct gRPC**: TUI CLI → Trading System (external process, bypasses Monitoring Service and Redis)
+- **No Redis Required**: TUI CLI does not use Redis or Monitoring Service
+- **Simpler Architecture**: Direct connection for terminal-based interface
 
 ## Component Structure
 
@@ -783,3 +793,5 @@ Web Server (subscribes) → UI Clients
 - **Monitoring service publishes to monitoring:ui** - UI-optimized format
 - **Stateless design** - monitoring service has no state, just transforms and forwards
 - **Performance optimized** - batching, debouncing, caching, connection pooling
+- **Optional for TUI CLI** - TUI CLI (Proposal 07) connects directly to Trading System via gRPC, bypassing Monitoring Service and Redis
+- **Required only for web UI** - Redis and Monitoring Service are only needed when implementing web-based UI (future enhancement)

@@ -23,18 +23,16 @@ Exchange Engine (Binance, etc.)
     ↓
 ExchangeStateManager
     ├── In-Memory State (orders, balances, positions, private trades)
-    ├── Publish to Trading System (gRPC stream: high-frequency)
-    ├── Publish to Monitoring (gRPC stream: high-frequency)
-    ├── Publish to UI (Redis: monitoring:ui - occasional snapshots)
+    ├── Publish to Trading System (Channel: in-process, ultra-low latency)
+    ├── Publish to Monitoring (Channel: in-process OR gRPC: external)
     └── Persist to MongoDB (disabled via trigger, lazy evaluation)
 
 Market Data Engine (Binance, etc.)
     ↓
 MarketDataStateManager
     ├── In-Memory State (orderbooks, public trades)
-    ├── Publish to Trading System (gRPC stream: high-frequency)
-    ├── Publish to Monitoring (gRPC stream: high-frequency)
-    ├── Publish to UI (Redis: monitoring:ui - occasional snapshots)
+    ├── Publish to Trading System (Channel: in-process, ultra-low latency)
+    ├── Publish to Monitoring (Channel: in-process OR gRPC: external)
     └── Persist to MongoDB (disabled via trigger, lazy evaluation)
 
 Level Manager

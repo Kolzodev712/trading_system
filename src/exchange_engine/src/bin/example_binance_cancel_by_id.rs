@@ -6,7 +6,6 @@
 //!
 //! **Note**: This requires valid Binance API keys in `config/binance_config.json`
 
-use core_logic::traits::PrivateDataClient;
 use exchange_engine::exchanges::binance::{
     common_types::{BinanceOrderType, BinanceSymbol},
     config::BinanceConfig,
@@ -17,6 +16,7 @@ use smol_str::ToSmolStr;
 use std::{fs, sync::Arc};
 use tokio::sync::RwLock;
 use tracing::{debug, error, info};
+use trading_core::traits::PrivateDataClient;
 
 fn load_binance_config(file_path: &str) -> Result<BinanceConfig, Box<dyn std::error::Error>> {
     let config_data = fs::read_to_string(file_path)?;

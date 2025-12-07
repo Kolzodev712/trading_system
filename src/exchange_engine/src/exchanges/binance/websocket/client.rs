@@ -20,12 +20,6 @@ use super::types::{
     user_data::events::{BinanceWSMessage, ParsedBinanceMessage},
 };
 use async_trait::async_trait;
-use core_logic::{
-    authenticator::ExchangeAuthenticator,
-    error::EngineError,
-    utils::generate_custom_uuid,
-    ws_client::{MessageHandler, SubscriptionHandler, WebSocketClient},
-};
 use futures_util::{
     stream::{SplitSink, Stream, StreamExt},
     SinkExt,
@@ -44,6 +38,12 @@ use tokio_tungstenite::{
     MaybeTlsStream, WebSocketStream,
 };
 use tracing::{debug, error, warn};
+use trading_core::{
+    authenticator::ExchangeAuthenticator,
+    error::EngineError,
+    utils::generate_custom_uuid,
+    websocket::client::{MessageHandler, SubscriptionHandler, WebSocketClient},
+};
 
 pub const BINANCE_WS_URL: &str = "wss://ws-api.binance.com:443/ws-api/v3";
 pub const LOGON_SESSION: &str = "session.logon";

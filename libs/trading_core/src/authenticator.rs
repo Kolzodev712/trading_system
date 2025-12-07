@@ -1,4 +1,5 @@
-use super::error::EngineError;
+//! Authentication trait for exchanges
+use crate::error::EngineError;
 use smol_str::SmolStr;
 use std::collections::BTreeMap;
 

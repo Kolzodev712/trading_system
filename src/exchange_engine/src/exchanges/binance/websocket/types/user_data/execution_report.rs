@@ -1,8 +1,8 @@
 use crate::exchanges::binance::common_types::{
     BinanceOrderStatus, BinanceOrderType, BinanceSide, BinanceTimeInForce,
 };
-use core_logic::data::{base_data::OrderStatus, private_data::Order};
-use core_logic::utils::{deserialize_smol_str, serialize_smol_str};
+use trading_core::types::{common::OrderStatus, exchange::Order};
+use trading_core::utils::{deserialize_smol_str, serialize_smol_str};
 
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
@@ -92,8 +92,8 @@ impl From<ExecutionReport> for Order {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use core_logic::data::{base_data::Side, private_data::Order};
     use rust_decimal::Decimal;
+    use trading_core::types::{common::Side, exchange::Order};
 
     #[test]
     fn test_deserialization_execution_report() {

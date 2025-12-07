@@ -4,8 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+trading_core = { path = "../../libs/trading_core" }
 trading_engine = { path = "../trading_engine" }
-core_logic = { path = "../core_logic" }
 exchange_engine = { path = "../exchange_engine" }
 market_data_engine = { path = "../market_data_engine" }
 

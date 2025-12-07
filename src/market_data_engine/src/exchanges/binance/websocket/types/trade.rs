@@ -1,11 +1,11 @@
-use core_logic::{
-    data::public_data::Trade,
-    utils::{deserialize_smol_str, serialize_smol_str},
-};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use smol_str::SmolStr;
 use std::primitive::str;
+use trading_core::{
+    types::market_data::LegacyTrade as Trade,
+    utils::{deserialize_smol_str, serialize_smol_str},
+};
 
 #[derive(Debug, PartialEq, Eq, Deserialize, Serialize, Clone)]
 pub struct BinanceTrade {

@@ -8,7 +8,6 @@
 //! **Note**: This requires valid Binance API keys in `config/binance_config.json`
 //! **Warning**: This will place a real test order on Binance testnet
 
-use core_logic::traits::PrivateDataClient;
 use exchange_engine::exchanges::binance::{
     common_types::{BinanceOrderType, BinanceSide, BinanceSymbol, BinanceTimeInForce},
     config::BinanceConfig,
@@ -21,6 +20,7 @@ use rust_decimal::Decimal;
 use std::{fs, sync::Arc};
 use tokio::sync::RwLock;
 use tracing::{error, info};
+use trading_core::traits::PrivateDataClient;
 
 fn load_binance_config(file_path: &str) -> Result<BinanceConfig, Box<dyn std::error::Error>> {
     let config_data = fs::read_to_string(file_path)?;

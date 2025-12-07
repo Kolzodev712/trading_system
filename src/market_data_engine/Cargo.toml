@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-core_logic = { path = "../core_logic" }
+trading_core = { path = "../../libs/trading_core" }
 
 # Logging
 tracing = { workspace = true }

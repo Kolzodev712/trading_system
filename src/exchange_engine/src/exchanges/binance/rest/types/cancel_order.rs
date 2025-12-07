@@ -1,10 +1,10 @@
 use crate::exchanges::binance::common_types::{
     BinanceOrderStatus, BinanceOrderType, BinanceSide, BinanceTimeInForce,
 };
-use core_logic::utils::{deserialize_smol_str, serialize_smol_str};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use smol_str::SmolStr;
+use trading_core::utils::{deserialize_smol_str, serialize_smol_str};
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]

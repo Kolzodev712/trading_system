@@ -1,10 +1,6 @@
-// General level error abstraction for the trading system
+//! Common error types for the trading system
 use anyhow::Error;
-use redis::RedisError;
-use reqwest::{
-    self,
-    header::{InvalidHeaderName, InvalidHeaderValue},
-};
+use reqwest::header::{InvalidHeaderName, InvalidHeaderValue};
 use smol_str::SmolStr;
 use thiserror::Error;
 use tokio::sync::mpsc::error::TryRecvError;
@@ -79,9 +75,6 @@ pub enum EngineError {
 
     #[error("Invalid config")]
     InvalidConfig,
-
-    #[error("Redis error: {0}")]
-    RedisError(#[from] RedisError),
 
     #[error("Unsupported Exchange")]
     UnsupportedExchange,

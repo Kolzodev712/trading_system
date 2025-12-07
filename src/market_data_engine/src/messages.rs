@@ -1,11 +1,11 @@
 use async_trait::async_trait;
-use core_logic::{
-    data::public_data::{Orderbook, Trade},
-    error::EngineError,
-    redis::{RedisClient, RedisMessage, ORDERBOOK_CHANNEL, TRADE_CHANNEL},
-};
 use std::fmt::Debug;
 use tracing::debug;
+use trading_core::{
+    error::EngineError,
+    redis::{RedisClient, RedisMessage, ORDERBOOK_CHANNEL, TRADE_CHANNEL},
+    types::market_data::{LegacyOrderbook as Orderbook, LegacyTrade as Trade},
+};
 
 /// Trait that defines how messages (orderbooks, trades) should be processed.
 #[async_trait]
@@ -50,9 +50,9 @@ impl WSMessageHandler for RedisMessageHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use core_logic::data::public_data::{Orderbook, Trade};
     use rust_decimal::Decimal;
     use std::sync::{Arc, Mutex};
+    use trading_core::types::market_data::{LegacyOrderbook as Orderbook, LegacyTrade as Trade};
 
     #[derive(Debug, Clone)]
     struct MockRedisClient {

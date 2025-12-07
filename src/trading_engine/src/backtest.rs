@@ -1,8 +1,8 @@
 use super::strategy::Strategy;
-use core_logic::{data::public_data::Orderbook, error::EngineError};
 use rust_decimal::Decimal;
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use trading_core::{error::EngineError, types::market_data::Orderbook};
 
 /// Simple backtesting framework
 pub struct BacktestEngine<S: Strategy> {
@@ -59,7 +59,7 @@ impl<S: Strategy> BacktestEngine<S> {
                 let cost = mid_price * req.amount;
 
                 match req.side {
-                    core_logic::data::base_data::Side::Buy => {
+                    trading_core::types::common::Side::Buy => {
                         if self.balance >= cost {
                             self.balance -= cost;
                             let total_cost = self.avg_price * self.position + cost;
@@ -77,7 +77,7 @@ impl<S: Strategy> BacktestEngine<S> {
                             });
                         }
                     }
-                    core_logic::data::base_data::Side::Sell => {
+                    trading_core::types::common::Side::Sell => {
                         if self.position >= req.amount {
                             let revenue = mid_price * req.amount;
                             let pnl = (mid_price - self.avg_price) * req.amount;

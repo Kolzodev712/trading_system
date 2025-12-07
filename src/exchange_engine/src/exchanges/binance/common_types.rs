@@ -1,10 +1,10 @@
-use core_logic::{
-    data::base_data::{OrderStatus, OrderType, Pair, Side},
-    utils::{deserialize_smol_str, serialize_smol_str},
-};
 use serde::{Deserialize, Serialize};
 use smol_str::SmolStr;
 use std::fmt::{Display, Formatter, Result};
+use trading_core::{
+    types::common::{OrderStatus, OrderType, Pair, Side},
+    utils::{deserialize_smol_str, serialize_smol_str},
+};
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]

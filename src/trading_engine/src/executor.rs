@@ -1,14 +1,14 @@
 use super::{reconciliation::PositionReconciler, strategy::Strategy};
 use anyhow;
-use core_logic::{
+use trading_core::{
     circuit_breaker::{order_circuit_breaker, CircuitBreaker},
-    data::{base_data::Pair, private_data::Order},
     error::EngineError,
     redis::{RedisMessage, ORDERBOOK_CHANNEL},
     retry::{order_retry_config, retry_with_backoff},
     traits::TradingClient,
+    types::{common::Pair, exchange::Order},
 };
-use exchange_engine::exchanges::binance::websocket::types::user_data::execution_report::ExecutionReport;
+// ExecutionReport removed - use Order directly from channels
 use rust_decimal::Decimal;
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
@@ -25,7 +25,7 @@ use tracing::{debug, error, info, warn};
 /// 6. Circuit breaker for error handling
 pub struct StrategyExecutor<S: Strategy + 'static> {
     strategy: Arc<RwLock<S>>,
-    trading_client: Arc<RwLock<dyn TradingClient<core_logic::data::private_data::OrderRequest>>>,
+    trading_client: Arc<RwLock<dyn TradingClient<trading_core::types::exchange::OrderRequest>>>,
     redis_url: String,
     symbol: Pair,
     circuit_breaker: Arc<Mutex<CircuitBreaker>>,
@@ -41,9 +41,7 @@ pub struct StrategyExecutor<S: Strategy + 'static> {
 impl<S: Strategy> StrategyExecutor<S> {
     pub fn new(
         strategy: Arc<RwLock<S>>,
-        trading_client: Arc<
-            RwLock<dyn TradingClient<core_logic::data::private_data::OrderRequest>>,
-        >,
+        trading_client: Arc<RwLock<dyn TradingClient<trading_core::types::exchange::OrderRequest>>>,
         redis_url: String,
         symbol: Pair,
         min_order_size: Decimal,
@@ -169,7 +167,7 @@ impl<S: Strategy> StrategyExecutor<S> {
                         let mut strat = strategy_for_cleanup.write().await;
                         strat.get_state_mut().update_order_status(
                             &order_id,
-                            core_logic::data::base_data::OrderStatus::Canceled,
+                            trading_core::types::common::OrderStatus::Canceled,
                             None,
                         );
                     }
@@ -185,8 +183,24 @@ impl<S: Strategy> StrategyExecutor<S> {
                 error = e
             ))
         })?;
-        let mut pubsub_conn = redis::Client::open(redis_url)?.get_async_pubsub().await?;
-        pubsub_conn.subscribe(ORDERBOOK_CHANNEL).await?;
+        let mut pubsub_conn = redis::Client::open(redis_url)
+            .map_err(|e| {
+                EngineError::CustomError(anyhow::anyhow!("Failed to open Redis client: {}", e))
+            })?
+            .get_async_pubsub()
+            .await
+            .map_err(|e| {
+                EngineError::CustomError(anyhow::anyhow!("Failed to get Redis pubsub: {}", e))
+            })?;
+        pubsub_conn
+            .subscribe(ORDERBOOK_CHANNEL)
+            .await
+            .map_err(|e| {
+                EngineError::CustomError(anyhow::anyhow!(
+                    "Failed to subscribe to Redis channel: {}",
+                    e
+                ))
+            })?;
 
         let mut stream = pubsub_conn.on_message();
         while let Some(message) = stream.next().await {
@@ -255,7 +269,7 @@ impl<S: Strategy> StrategyExecutor<S> {
                         match trading_client.read().await.fetch_balance().await {
                             Ok(balances) => {
                                 match req.side {
-                                    core_logic::data::base_data::Side::Buy => {
+                                    trading_core::types::common::Side::Buy => {
                                         // Find quote currency balance (USDC for BTC/USDC)
                                         let quote_balance = balances
                                             .iter()
@@ -285,7 +299,7 @@ impl<S: Strategy> StrategyExecutor<S> {
                                             required = required_balance
                                         );
                                     }
-                                    core_logic::data::base_data::Side::Sell => {
+                                    trading_core::types::common::Side::Sell => {
                                         // Find base currency balance (BTC for BTC/USDC)
                                         let base_balance = balances
                                             .iter()
@@ -428,7 +442,7 @@ impl<S: Strategy> StrategyExecutor<S> {
                         match result {
                             Ok(mut order) => {
                                 // Ensure order has New status
-                                order.status = core_logic::data::base_data::OrderStatus::New;
+                                order.status = trading_core::types::common::OrderStatus::New;
                                 order.filled_amount = rust_decimal::Decimal::ZERO;
 
                                 info!(
@@ -481,12 +495,7 @@ impl<S: Strategy> StrategyExecutor<S> {
     }
 
     /// Handle execution report from exchange
-    pub async fn handle_execution_report(
-        &self,
-        report: &ExecutionReport,
-    ) -> Result<(), EngineError> {
-        let order: Order = report.clone().into();
-
+    pub async fn handle_execution_report(&self, order: &Order) -> Result<(), EngineError> {
         let mut strategy_guard = self.strategy.write().await;
         strategy_guard.on_execution_report(&order).await?;
 

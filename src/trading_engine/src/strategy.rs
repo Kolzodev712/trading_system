@@ -1,14 +1,14 @@
 use async_trait::async_trait;
-use core_logic::{
-    data::{
-        base_data::{OrderId, OrderStatus, Pair},
-        private_data::{Order, OrderRequest},
-        public_data::Orderbook,
-    },
-    error::EngineError,
-};
 use rust_decimal::Decimal;
 use std::collections::HashMap;
+use trading_core::{
+    error::EngineError,
+    types::{
+        common::{OrderId, OrderStatus, Pair},
+        exchange::{Order, OrderRequest},
+        market_data::Orderbook,
+    },
+};
 
 /// Represents a position in a trading pair
 #[derive(Debug, Clone)]

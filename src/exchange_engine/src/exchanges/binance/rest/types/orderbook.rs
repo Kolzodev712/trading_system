@@ -1,5 +1,5 @@
-use core_logic::{
-    data::public_data::Orderbook,
+use trading_core::{
+    types::market_data::Orderbook,
     utils::{deserialize_smol_str, serialize_smol_str},
 };
 

@@ -1,8 +1,8 @@
-use core_logic::data::private_data::Balance;
-use core_logic::utils::{deserialize_smol_str, serialize_smol_str};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use smol_str::SmolStr;
+use trading_core::types::exchange::Balance;
+use trading_core::utils::{deserialize_smol_str, serialize_smol_str};
 
 /// See: <https://developers.binance.com/docs/binance-spot-api-docs/user-data-stream>
 
@@ -75,8 +75,8 @@ impl From<OutboundAccountPosition> for Vec<Balance> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use core_logic::data::private_data::Balance;
     use rust_decimal::Decimal;
+    use trading_core::types::exchange::Balance;
 
     #[test]
     fn test_deserialization_outbound_account_position() {

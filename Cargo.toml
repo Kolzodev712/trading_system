@@ -7,12 +7,12 @@ edition = "2021"
 
 [workspace]
 members = [
-    "src/core_logic", 
+    "libs/trading_core",
     "src/exchange_engine",
     "src/trading_engine",
     "src/market_data_engine", 
-    "src/runner", 
-    ]
+    "src/runner",
+]
 
 [workspace.dependencies]
 # Logging
@@ -74,7 +74,7 @@ tokio-test = "0.4"
 [dev-dependencies]
 runner = { path = "src/runner" }
 trading_engine = { path = "src/trading_engine" }
-core_logic = { path = "src/core_logic" }
+trading_core = { path = "libs/trading_core" }
 exchange_engine = { path = "src/exchange_engine" }
 rust_decimal = { workspace = true }
 serde_json = { workspace = true }

@@ -1,11 +1,6 @@
 use super::super::{config::BinanceConfig, utils::deserialize_or_none};
 use crate::exchanges::binance::sign::BinanceAuthenticator;
 use async_trait::async_trait;
-use core_logic::{
-    authenticator::ExchangeAuthenticator,
-    error::EngineError,
-    rest_client::{HttpMethod, RestExchangeHandler},
-};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use smol_str::SmolStr;
@@ -14,6 +9,11 @@ use std::{
     fmt::Debug,
 };
 use tracing::debug;
+use trading_core::{
+    authenticator::ExchangeAuthenticator,
+    error::EngineError,
+    rest::{HttpMethod, RestExchangeHandler},
+};
 
 const BINANCE_SPOT_URL: &str = "https://api.binance.com/api/v3/";
 

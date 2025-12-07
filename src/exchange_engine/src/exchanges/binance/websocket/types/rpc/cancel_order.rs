@@ -1,13 +1,13 @@
 use crate::exchanges::binance::common_types::{
     BinanceOrderStatus, BinanceOrderType, BinanceSide, BinanceTimeInForce,
 };
-use core_logic::data::macros::Symbol;
+use trading_core::types::common::Symbol;
 
 use super::super::common::{BinanceRateLimit, SessionLogonParams};
-use core_logic::utils::{deserialize_smol_str, serialize_smol_str};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use smol_str::SmolStr;
+use trading_core::utils::{deserialize_smol_str, serialize_smol_str};
 
 // https://developers.binance.com/docs/binance-spot-api-docs/websocket-api/trading-requests#cancel-order-trade
 #[derive(Debug, Clone, Eq, PartialEq, Deserialize, Serialize)]

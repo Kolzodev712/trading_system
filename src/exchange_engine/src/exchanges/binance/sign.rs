@@ -1,5 +1,5 @@
 use anyhow::anyhow;
-use core_logic::{authenticator::ExchangeAuthenticator, error::EngineError};
+use trading_core::{authenticator::ExchangeAuthenticator, error::EngineError};
 
 use async_trait::async_trait;
 use hmac::{Hmac, Mac};

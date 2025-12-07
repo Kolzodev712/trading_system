@@ -1,19 +1,19 @@
 use crate::exchanges::binance::common_types::{
     BinanceOrderStatus, BinanceOrderType, BinanceSide, BinanceTimeInForce,
 };
-use core_logic::{
-    data::{
-        base_data::{OrderType, Side},
-        private_data::{Order, OrderRequest},
+use rust_decimal::Decimal;
+use serde::{Deserialize, Serialize};
+use smol_str::SmolStr;
+use trading_core::{
+    types::{
+        common::{OrderType, Side},
+        exchange::{Order, OrderRequest},
     },
     utils::{
         deserialize_smol_str, serialize_enum_as_display, serialize_option_enum_as_display,
         serialize_smol_str,
     },
 };
-use rust_decimal::Decimal;
-use serde::{Deserialize, Serialize};
-use smol_str::SmolStr;
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -132,7 +132,7 @@ impl From<BinanceOrderResponse> for Order {
         let status = binance_res
             .status
             .map(|s| s.into())
-            .unwrap_or(core_logic::data::base_data::OrderStatus::New);
+            .unwrap_or(trading_core::types::common::OrderStatus::New);
         let filled_amount = binance_res.executed_qty.unwrap_or_default();
 
         Order {
@@ -152,8 +152,8 @@ impl From<BinanceOrderResponse> for Order {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use core_logic::data::base_data::OrderId;
     use serde_json;
+    use trading_core::types::common::OrderId;
 
     /// Test serialization of BinanceOrderRequest (struct → JSON)
     #[test]
@@ -210,7 +210,7 @@ mod tests {
         let mut exchange_params = std::collections::HashMap::new();
         exchange_params.insert("timeInForce".to_string(), "GTC".to_string());
 
-        let order_request = core_logic::data::private_data::OrderRequest {
+        let order_request = trading_core::types::exchange::OrderRequest {
             symbol: "BTCUSDT".into(),
             side: Side::Buy,
             price: Decimal::new(90000, 0),

@@ -1,5 +1,5 @@
-use core_logic::error::EngineError;
 use serde::Deserialize;
+use trading_core::error::EngineError;
 
 /// Deserializes a JSON string into an optional type.
 ///

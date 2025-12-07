@@ -1,7 +1,7 @@
 use super::{config::MarketDataConfig, messages::RedisMessageHandler};
 use crate::{config::ExchangeConfig, exchanges::binance::client::BinanceClient};
-use core_logic::{error::EngineError, redis::RedisClient, traits::MarketDataClient};
 use tracing::error;
+use trading_core::{error::EngineError, redis::RedisClient, traits::MarketDataClient};
 
 #[derive(Debug, Clone)]
 pub enum Method {

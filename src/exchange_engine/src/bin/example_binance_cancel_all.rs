@@ -7,7 +7,6 @@
 //! **Note**: This requires valid Binance API keys in `config/binance_config.json`
 //! **Warning**: This will cancel ALL open orders for the configured trading pair
 
-use core_logic::traits::PrivateDataClient;
 use exchange_engine::exchanges::binance::{
     common_types::BinanceSymbol, config::BinanceConfig,
     websocket::types::rpc::cancel_all::BinanceWsCancelAllOrdersReqParams, ws_client::BinanceClient,
@@ -15,6 +14,7 @@ use exchange_engine::exchanges::binance::{
 use std::{fs, sync::Arc};
 use tokio::sync::RwLock;
 use tracing::{error, info};
+use trading_core::traits::PrivateDataClient;
 
 fn load_binance_config(file_path: &str) -> Result<BinanceConfig, Box<dyn std::error::Error>> {
     let config_data = fs::read_to_string(file_path)?;

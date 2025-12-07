@@ -1,12 +1,12 @@
 use crate::exchanges::binance::common_types::BinanceOrderType;
-use core_logic::{
-    data::{
-        base_data::{OrderId, Pair},
-        private_data::{Balance, Order, OrderRequest},
-    },
-    traits::TradingClient,
-};
 use smol_str::SmolStr;
+use trading_core::{
+    traits::TradingClient,
+    types::{
+        common::{OrderId, Pair},
+        exchange::{Balance, Order, OrderRequest},
+    },
+};
 
 use super::super::binance::websocket::types::rpc::{
     cancel_all::BinanceWsCancelAllOrdersReqParams,
@@ -27,13 +27,13 @@ use super::{
 };
 use crate::exchanges::binance::sign::BinanceWsAuthenticator;
 use async_trait::async_trait;
-use core_logic::{error::EngineError, traits::PrivateDataClient, Exchange};
 use std::{collections::HashMap, fmt::Debug, sync::Arc};
 use tokio::{
     sync::{broadcast, mpsc, oneshot, Mutex, RwLock},
     time::{sleep, timeout, Duration},
 };
 use tracing::{debug, error, warn};
+use trading_core::{error::EngineError, traits::PrivateDataClient, types::common::Exchange};
 
 /// Metadata stored for each order to enable cancellation by ID
 #[derive(Debug, Clone)]

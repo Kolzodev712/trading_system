@@ -1,16 +1,16 @@
-use core_logic::{
-    data::{
-        base_data::Pair,
-        public_data::{Orderbook, Trade},
+use serde::{Deserialize, Serialize};
+use smol_str::{SmolStr, ToSmolStr};
+use std::primitive::str;
+use trading_core::{
+    types::{
+        common::Pair,
+        market_data::{LegacyOrderbook as Orderbook, LegacyTrade as Trade},
     },
     utils::{
         deserialize_option_smol_str, deserialize_smol_str, deserialize_vec_smol_str,
         serialize_option_smol_str, serialize_smol_str, serialize_vec_smol_str,
     },
 };
-use serde::{Deserialize, Serialize};
-use smol_str::{SmolStr, ToSmolStr};
-use std::primitive::str;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct BinanceWSMessage {

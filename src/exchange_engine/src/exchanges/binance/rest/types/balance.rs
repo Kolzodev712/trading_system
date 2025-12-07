@@ -1,10 +1,9 @@
-use core_logic::data::{
-    base_data::AccountType,
-    macros::{MillisecondTimestamp, Symbol},
-    private_data::{AccountInfo, Balance},
-};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
+use trading_core::types::{
+    common::{AccountType, MillisecondTimestamp, Symbol},
+    exchange::{AccountInfo, Balance},
+};
 
 #[derive(Debug, Clone, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]

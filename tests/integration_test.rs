@@ -2,10 +2,10 @@
 // These tests verify that all components work together correctly
 
 mod integration {
-    use core_logic::{config::TradingSystemConfig, data::base_data::Pair, traits::TradingClient};
     use exchange_engine::exchanges::binance::{config::BinanceConfig, ws_client::BinanceClient};
     use std::sync::Arc;
     use tokio::sync::RwLock;
+    use trading_core::{config::TradingSystemConfig, traits::TradingClient, types::common::Pair};
     use trading_engine::{strategies::BuyLowSellHigh, strategy::Strategy};
 
     /// Test that the system can load configuration
@@ -15,7 +15,7 @@ mod integration {
         assert!(config.is_ok(), "Should load config file");
 
         let config = config.unwrap();
-        assert_eq!(config.exchange.exchange, core_logic::Exchange::Binance);
+        assert_eq!(config.exchange.exchange, trading_core::Exchange::Binance);
         assert_eq!(config.strategy.strategy_type, "BuyLowSellHigh");
     }
 
@@ -39,7 +39,7 @@ mod integration {
 
         let symbol = Pair::new("BTC", "USDT");
         let trading_client: Arc<
-            RwLock<dyn TradingClient<core_logic::data::private_data::OrderRequest>>,
+            RwLock<dyn TradingClient<trading_core::types::exchange::OrderRequest>>,
         > = Arc::new(RwLock::new(BinanceClient::new(binance_config, 1024)));
 
         let strategy = BuyLowSellHigh::new(
@@ -65,10 +65,9 @@ mod integration {
     /// Test order status tracking
     #[tokio::test]
     async fn test_order_status_tracking() {
-        use core_logic::data::{
-            base_data::{OrderId, OrderStatus},
-            macros::Symbol,
-            private_data::Order,
+        use trading_core::types::{
+            common::{OrderId, OrderStatus, Symbol},
+            exchange::Order,
         };
 
         let mut state = trading_engine::strategy::TradingState::new();
@@ -77,7 +76,7 @@ mod integration {
         let order = Order {
             order_id: OrderId::new("test123".into()),
             symbol: Symbol::from("BTCUSDT"),
-            side: core_logic::data::base_data::Side::Buy,
+            side: trading_core::types::common::Side::Buy,
             price: rust_decimal::Decimal::new(50000, 0),
             amount: rust_decimal::Decimal::new(1, 3),
             internal_created_at: 0,
@@ -108,7 +107,7 @@ mod integration {
     /// Test circuit breaker
     #[tokio::test]
     async fn test_circuit_breaker() {
-        use core_logic::circuit_breaker::CircuitBreaker;
+        use trading_core::circuit_breaker::CircuitBreaker;
 
         let cb = CircuitBreaker::new(3, 60);
 
@@ -132,7 +131,7 @@ mod integration {
     /// Test position reconciliation logic (without actual exchange call)
     #[tokio::test]
     async fn test_position_reconciliation_logic() {
-        use core_logic::data::base_data::Pair;
+        use trading_core::types::common::Pair;
         use trading_engine::strategy::TradingState;
 
         let mut state = TradingState::new();
@@ -154,10 +153,9 @@ mod integration {
     /// Test stale order detection
     #[tokio::test]
     async fn test_stale_order_detection() {
-        use core_logic::data::{
-            base_data::{OrderId, OrderStatus},
-            macros::Symbol,
-            private_data::Order,
+        use trading_core::types::{
+            common::{OrderId, OrderStatus, Symbol},
+            exchange::Order,
         };
         use trading_engine::strategy::TradingState;
 
@@ -167,7 +165,7 @@ mod integration {
         let order = Order {
             order_id: OrderId::new("test123".into()),
             symbol: Symbol::from("BTCUSDT"),
-            side: core_logic::data::base_data::Side::Buy,
+            side: trading_core::types::common::Side::Buy,
             price: rust_decimal::Decimal::new(50000, 0),
             amount: rust_decimal::Decimal::new(1, 3),
             internal_created_at: 0,
@@ -204,7 +202,7 @@ mod integration {
 
         let symbol = Pair::new("BTC", "USDT");
         let trading_client: Arc<
-            RwLock<dyn TradingClient<core_logic::data::private_data::OrderRequest>>,
+            RwLock<dyn TradingClient<trading_core::types::exchange::OrderRequest>>,
         > = Arc::new(RwLock::new(BinanceClient::new(binance_config, 1024)));
 
         let strategy = Arc::new(RwLock::new(BuyLowSellHigh::new(
@@ -229,7 +227,7 @@ mod integration {
     /// Test strategy decision making with orderbook
     #[tokio::test]
     async fn test_strategy_orderbook_decision() {
-        use core_logic::data::public_data::Orderbook;
+        use trading_core::types::market_data::Orderbook;
         use trading_engine::strategies::BuyLowSellHigh;
 
         let config = TradingSystemConfig::load_from_file("config/trading_system.json").unwrap();
@@ -239,7 +237,7 @@ mod integration {
 
         let symbol = Pair::new("BTC", "USDT");
         let trading_client: Arc<
-            RwLock<dyn TradingClient<core_logic::data::private_data::OrderRequest>>,
+            RwLock<dyn TradingClient<trading_core::types::exchange::OrderRequest>>,
         > = Arc::new(RwLock::new(BinanceClient::new(binance_config, 1024)));
 
         let mut strategy = BuyLowSellHigh::new(
@@ -288,14 +286,14 @@ mod integration {
         );
         assert_eq!(
             order_request.as_ref().unwrap().side,
-            core_logic::data::base_data::Side::Buy
+            trading_core::types::common::Side::Buy
         );
     }
 
     /// Test strategy stop-loss logic
     #[tokio::test]
     async fn test_strategy_stop_loss() {
-        use core_logic::data::public_data::Orderbook;
+        use trading_core::types::market_data::Orderbook;
         use trading_engine::{strategies::BuyLowSellHigh, strategy::Strategy};
 
         let config = TradingSystemConfig::load_from_file("config/trading_system.json").unwrap();
@@ -305,7 +303,7 @@ mod integration {
 
         let symbol = Pair::new("BTC", "USDT");
         let trading_client: Arc<
-            RwLock<dyn TradingClient<core_logic::data::private_data::OrderRequest>>,
+            RwLock<dyn TradingClient<trading_core::types::exchange::OrderRequest>>,
         > = Arc::new(RwLock::new(BinanceClient::new(binance_config, 1024)));
 
         let mut strategy = BuyLowSellHigh::new(
@@ -357,14 +355,14 @@ mod integration {
         assert!(order_request.is_some());
         assert_eq!(
             order_request.as_ref().unwrap().side,
-            core_logic::data::base_data::Side::Sell
+            trading_core::types::common::Side::Sell
         );
     }
 
     /// Test strategy take-profit logic
     #[tokio::test]
     async fn test_strategy_take_profit() {
-        use core_logic::data::public_data::Orderbook;
+        use trading_core::types::market_data::Orderbook;
         use trading_engine::{strategies::BuyLowSellHigh, strategy::Strategy};
 
         let config = TradingSystemConfig::load_from_file("config/trading_system.json").unwrap();
@@ -374,7 +372,7 @@ mod integration {
 
         let symbol = Pair::new("BTC", "USDT");
         let trading_client: Arc<
-            RwLock<dyn TradingClient<core_logic::data::private_data::OrderRequest>>,
+            RwLock<dyn TradingClient<trading_core::types::exchange::OrderRequest>>,
         > = Arc::new(RwLock::new(BinanceClient::new(binance_config, 1024)));
 
         let mut strategy = BuyLowSellHigh::new(
@@ -426,14 +424,14 @@ mod integration {
         assert!(order_request.is_some());
         assert_eq!(
             order_request.as_ref().unwrap().side,
-            core_logic::data::base_data::Side::Sell
+            trading_core::types::common::Side::Sell
         );
     }
 
     /// Test retry logic
     #[tokio::test]
     async fn test_retry_logic() {
-        use core_logic::retry::{order_retry_config, retry_with_backoff};
+        use trading_core::retry::{order_retry_config, retry_with_backoff};
 
         let config = order_retry_config();
         let mut attempts = 0;
@@ -459,7 +457,7 @@ mod integration {
     /// Test position update logic
     #[tokio::test]
     async fn test_position_updates() {
-        use core_logic::data::base_data::Pair;
+        use trading_core::types::common::Pair;
         use trading_engine::strategy::TradingState;
 
         let mut state = TradingState::new();
@@ -501,7 +499,7 @@ mod integration {
     /// Test max position limit
     #[tokio::test]
     async fn test_max_position_limit() {
-        use core_logic::data::public_data::Orderbook;
+        use trading_core::types::market_data::Orderbook;
         use trading_engine::{strategies::BuyLowSellHigh, strategy::Strategy};
 
         let config = TradingSystemConfig::load_from_file("config/trading_system.json").unwrap();
@@ -511,7 +509,7 @@ mod integration {
 
         let symbol = Pair::new("BTC", "USDT");
         let trading_client: Arc<
-            RwLock<dyn TradingClient<core_logic::data::private_data::OrderRequest>>,
+            RwLock<dyn TradingClient<trading_core::types::exchange::OrderRequest>>,
         > = Arc::new(RwLock::new(BinanceClient::new(binance_config, 1024)));
 
         let mut strategy = BuyLowSellHigh::new(
@@ -565,11 +563,10 @@ mod integration {
     /// Test active order limit
     #[tokio::test]
     async fn test_active_order_limit() {
-        use core_logic::data::public_data::Orderbook;
-        use core_logic::data::{
-            base_data::{OrderId, OrderStatus},
-            macros::Symbol,
-            private_data::Order,
+        use trading_core::types::{
+            common::{OrderId, OrderStatus, Symbol},
+            exchange::Order,
+            market_data::Orderbook,
         };
         use trading_engine::{strategies::BuyLowSellHigh, strategy::Strategy};
 
@@ -580,7 +577,7 @@ mod integration {
 
         let symbol = Pair::new("BTC", "USDT");
         let trading_client: Arc<
-            RwLock<dyn TradingClient<core_logic::data::private_data::OrderRequest>>,
+            RwLock<dyn TradingClient<trading_core::types::exchange::OrderRequest>>,
         > = Arc::new(RwLock::new(BinanceClient::new(binance_config, 1024)));
 
         let mut strategy = BuyLowSellHigh::new(
@@ -613,7 +610,7 @@ mod integration {
             let order = Order {
                 order_id: OrderId::new(format!("order{}", i).into()),
                 symbol: Symbol::from("BTCUSDT"),
-                side: core_logic::data::base_data::Side::Buy,
+                side: trading_core::types::common::Side::Buy,
                 price: avg_price,
                 amount: rust_decimal::Decimal::new(1, 3),
                 internal_created_at: 0,
@@ -643,7 +640,7 @@ mod integration {
     /// Test price history building
     #[tokio::test]
     async fn test_price_history_building() {
-        use core_logic::data::public_data::Orderbook;
+        use trading_core::types::market_data::Orderbook;
         use trading_engine::{strategies::BuyLowSellHigh, strategy::Strategy};
 
         let config = TradingSystemConfig::load_from_file("config/trading_system.json").unwrap();
@@ -653,7 +650,7 @@ mod integration {
 
         let symbol = Pair::new("BTC", "USDT");
         let trading_client: Arc<
-            RwLock<dyn TradingClient<core_logic::data::private_data::OrderRequest>>,
+            RwLock<dyn TradingClient<trading_core::types::exchange::OrderRequest>>,
         > = Arc::new(RwLock::new(BinanceClient::new(binance_config, 1024)));
 
         let mut strategy = BuyLowSellHigh::new(

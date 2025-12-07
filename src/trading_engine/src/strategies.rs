@@ -1,19 +1,18 @@
 use super::strategy::{Strategy, TradingState};
 use async_trait::async_trait;
-use core_logic::{
-    data::{
-        base_data::{OrderStatus, OrderType, Pair, Side},
-        macros::Symbol,
-        private_data::{Order, OrderRequest},
-        public_data::Orderbook,
-    },
-    error::EngineError,
-    traits::TradingClient,
-};
 use rust_decimal::Decimal;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
+use trading_core::{
+    error::EngineError,
+    traits::TradingClient,
+    types::{
+        common::{OrderStatus, OrderType, Pair, Side, Symbol},
+        exchange::{Order, OrderRequest},
+        market_data::Orderbook,
+    },
+};
 
 /// Simple "Buy Low, Sell High" strategy using mean reversion
 ///

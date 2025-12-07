@@ -1,4 +1,5 @@
-use crate::Exchange;
+//! Configuration types for the trading system
+use crate::types::common::Exchange;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
@@ -32,7 +33,7 @@ pub struct SystemConfig {
 }
 
 /// Generic exchange configuration that stores exchange-specific config as opaque JSON
-/// This allows core_logic to remain exchange-agnostic
+/// This allows core to remain exchange-agnostic
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExchangeConfig {
     /// Exchange name
@@ -107,6 +108,14 @@ pub struct ServerConfig {
 pub struct RedisConfig {
     /// Redis connection URL
     pub url: String,
+
+    /// Whether Redis is enabled
+    #[serde(default = "default_redis_enabled")]
+    pub enabled: bool,
+}
+
+fn default_redis_enabled() -> bool {
+    false
 }
 
 impl TradingSystemConfig {

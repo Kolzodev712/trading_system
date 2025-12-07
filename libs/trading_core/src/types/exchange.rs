@@ -1,11 +1,10 @@
-//! A general level data abstraction for External data types, using in the external system logic for authenticated requests.
-use super::{
-    base_data::{AccountType, OrderId, OrderStatus, OrderType, Side},
-    macros::{MillisecondTimestamp, Symbol},
-};
+//! Exchange-related types (orders, balances, positions, trades)
+use crate::types::common::*;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+
+/// Order request
 #[derive(Debug, Clone, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OrderRequest {
@@ -24,6 +23,8 @@ pub struct OrderRequest {
     /// Custom params specific to exchanges:
     pub exchange_params: HashMap<String, String>,
 }
+
+/// Order
 #[derive(Debug, Clone, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Order {
@@ -53,6 +54,7 @@ fn default_order_status() -> OrderStatus {
     OrderStatus::New
 }
 
+/// Account information
 #[derive(Debug, Clone, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AccountInfo {
@@ -64,6 +66,7 @@ pub struct AccountInfo {
     pub update_time: MillisecondTimestamp,
 }
 
+/// Balance
 #[derive(Debug, Clone, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Balance {
@@ -75,4 +78,46 @@ pub struct Balance {
     pub used: Decimal,
     /// The total amount of balance available which should be the sum of [`Balance::free`] and [`Balance::used`]
     pub total: Decimal,
+}
+
+/// Position
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Position {
+    /// Trading pair
+    pub pair: Pair,
+    /// Position size (positive for long, negative for short)
+    pub quantity: Decimal,
+    /// Average entry price
+    pub avg_price: Decimal,
+    /// Current market price
+    pub current_price: Decimal,
+    /// Unrealized P&L
+    pub unrealized_pnl: Decimal,
+    /// Last update timestamp
+    pub last_update: u64,
+}
+
+/// Trade (private trade from execution reports)
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Trade {
+    /// Trade ID
+    pub trade_id: String,
+    /// Order ID that this trade belongs to
+    pub order_id: OrderId,
+    /// Trading pair
+    pub pair: Pair,
+    /// Trade price
+    pub price: Decimal,
+    /// Trade quantity
+    pub quantity: Decimal,
+    /// Trade side
+    pub side: Side,
+    /// Trade timestamp
+    pub timestamp: u64,
+    /// Fee amount
+    pub fee: Decimal,
+    /// Fee currency
+    pub fee_currency: Symbol,
 }

@@ -1,4 +1,4 @@
-use core_logic::{error::EngineError, Exchange};
+use trading_core::{error::EngineError, types::common::Exchange};
 
 use super::exchanges::binance::config::BinanceConfig;
 use serde::{Deserialize, Serialize};
@@ -40,8 +40,8 @@ mod tests {
     use crate::exchanges::binance::config::BinanceCredentials;
 
     use super::*;
-    use core_logic::data::base_data::Pair;
     use serde_json;
+    use trading_core::types::common::Pair;
 
     // Sample config JSON for deserialization
     const CONFIG_JSON: &str = r#"

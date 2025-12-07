@@ -1,21 +1,19 @@
 use super::strategy::TradingState;
-use core_logic::{data::base_data::Pair, error::EngineError, traits::TradingClient};
 use rust_decimal::Decimal;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{info, warn};
+use trading_core::{error::EngineError, traits::TradingClient, types::common::Pair};
 
 /// Reconciles internal trading state with exchange balances
 #[derive(Clone)]
 pub(crate) struct PositionReconciler {
-    trading_client: Arc<RwLock<dyn TradingClient<core_logic::data::private_data::OrderRequest>>>,
+    trading_client: Arc<RwLock<dyn TradingClient<trading_core::types::exchange::OrderRequest>>>,
 }
 
 impl PositionReconciler {
     pub fn new(
-        trading_client: Arc<
-            RwLock<dyn TradingClient<core_logic::data::private_data::OrderRequest>>,
-        >,
+        trading_client: Arc<RwLock<dyn TradingClient<trading_core::types::exchange::OrderRequest>>>,
     ) -> Self {
         Self { trading_client }
     }

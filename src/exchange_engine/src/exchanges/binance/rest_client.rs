@@ -10,10 +10,10 @@ use super::{
         },
     },
 };
-use core_logic::{
-    data::{macros::MillisecondTimestamp, private_data::Balance},
+use trading_core::{
     error::EngineError,
-    rest_client::HttpMethod,
+    rest::HttpMethod,
+    types::{common::MillisecondTimestamp, exchange::Balance},
 };
 
 const TIME: &str = "time";

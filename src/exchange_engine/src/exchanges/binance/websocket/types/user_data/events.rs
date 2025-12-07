@@ -3,11 +3,11 @@ use super::{
     outbound_account_position::{BalanceUpdate, OutboundAccountPosition},
 };
 
-use core_logic::utils::{deserialize_smol_str, serialize_smol_str};
 use serde::de::{self, Deserializer};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use smol_str::{SmolStr, ToSmolStr};
+use trading_core::utils::{deserialize_smol_str, serialize_smol_str};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct BinanceWSMessage {

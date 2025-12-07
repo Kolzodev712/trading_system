@@ -7,18 +7,18 @@ use super::{
 };
 use crate::messages::WSMessageHandler;
 use async_trait::async_trait;
-use core_logic::{
-    data::{
-        base_data::{DataType, Pair},
-        public_data::{Orderbook, Trade},
-    },
-    error::EngineError,
-    traits::MarketDataClient,
-    Exchange,
-};
 use std::fmt::Debug;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info};
+use trading_core::{
+    error::EngineError,
+    traits::MarketDataClient,
+    types::{
+        common::{DataType, Pair},
+        market_data::{LegacyOrderbook as Orderbook, LegacyTrade as PublicTrade},
+    },
+    Exchange,
+};
 
 #[derive(Debug)]
 pub struct BinanceClient {
@@ -169,7 +169,7 @@ impl MarketDataClient for BinanceClient {
         unimplemented!()
     }
 
-    async fn trade_snapshot(&self, _pair: Pair) -> Result<Trade, EngineError> {
+    async fn trade_snapshot(&self, _pair: Pair) -> Result<PublicTrade, EngineError> {
         unimplemented!()
     }
 }

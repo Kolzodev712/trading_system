@@ -1,14 +1,14 @@
 use super::config::{ExchangeConfig, ExchangeEngineConfig};
 use crate::exchanges::binance::ws_client::BinanceClient as BinanceWSClient;
-use core_logic::{
-    data::{
-        base_data::{OrderId, Pair},
-        private_data::OrderRequest,
-    },
+use tracing::{debug, error};
+use trading_core::{
     error::EngineError,
     traits::TradingClient,
+    types::{
+        common::{OrderId, Pair},
+        exchange::OrderRequest,
+    },
 };
-use tracing::{debug, error};
 
 #[derive(Debug, Clone)]
 pub enum Method {

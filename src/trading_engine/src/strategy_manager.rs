@@ -1,7 +1,7 @@
 use super::strategy::Strategy;
-use core_logic::{data::private_data::Order, data::public_data::Orderbook, error::EngineError};
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use trading_core::{error::EngineError, types::exchange::Order, types::market_data::Orderbook};
 
 /// Manages multiple strategies
 pub struct StrategyManager {
@@ -22,7 +22,7 @@ impl StrategyManager {
     pub async fn on_orderbook(
         &self,
         orderbook: &Orderbook,
-    ) -> Result<Vec<core_logic::data::private_data::OrderRequest>, EngineError> {
+    ) -> Result<Vec<trading_core::types::exchange::OrderRequest>, EngineError> {
         let mut requests = Vec::new();
 
         for strategy in &self.strategies {

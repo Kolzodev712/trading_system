@@ -1,12 +1,12 @@
 use super::super::common::SessionLogonParams;
-use core_logic::data::private_data::Balance;
-use core_logic::utils::{
-    deserialize_option_smol_str, deserialize_smol_str, serialize_option_smol_str,
-    serialize_smol_str,
-};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use smol_str::SmolStr;
+use trading_core::types::exchange::Balance;
+use trading_core::utils::{
+    deserialize_option_smol_str, deserialize_smol_str, serialize_option_smol_str,
+    serialize_smol_str,
+};
 
 /// See: <https://developers.binance.com/docs/binance-spot-api-docs/websocket-api/account-requests>
 #[derive(Debug, Clone, Eq, PartialEq, Deserialize, Serialize)]

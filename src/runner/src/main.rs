@@ -1,4 +1,3 @@
-use core_logic::{config::TradingSystemConfig, data::base_data::Pair, traits::TradingClient};
 use exchange_engine::exchanges::binance::{config::BinanceConfig, ws_client::BinanceClient};
 use market_data_engine::{
     config::{ExchangeConfig as MDExchangeConfig, MarketDataConfig},
@@ -8,6 +7,7 @@ use runner::{health::HealthServer, shutdown::ShutdownManager};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{error, info, warn};
+use trading_core::{config::TradingSystemConfig, traits::TradingClient, types::common::Pair};
 use trading_engine::{executor::StrategyExecutor, strategies::BuyLowSellHigh, strategy::Strategy};
 
 mod health;
@@ -144,7 +144,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Clone client for connection check before moving it
     let binance_client_for_check = binance_client.clone();
     let trading_client: Arc<
-        RwLock<dyn TradingClient<core_logic::data::private_data::OrderRequest>>,
+        RwLock<dyn TradingClient<trading_core::types::exchange::OrderRequest>>,
     > = Arc::new(RwLock::new(binance_client.clone()));
 
     let mut shutdown_rx_ws = shutdown_manager.subscribe();
@@ -235,7 +235,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 report = exec_report_rx.recv() => {
                     match report {
                         Some(report) => {
-                            let order: core_logic::data::private_data::Order = report.into();
+                            let order: trading_core::types::exchange::Order = report.into();
                             let mut strat = strategy_for_reports.write().await;
                             if let Err(e) = strat.on_execution_report(&order).await {
                                 error!("Error handling execution report: {e}");

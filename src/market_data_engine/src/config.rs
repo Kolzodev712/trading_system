@@ -1,4 +1,4 @@
-use core_logic::{error::EngineError, Exchange};
+use trading_core::{error::EngineError, types::common::Exchange};
 
 use super::exchanges::binance::config::BinanceConfig;
 use serde::{Deserialize, Serialize};
@@ -39,8 +39,11 @@ impl ConfigGetter<BinanceConfig> for ExchangeConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use core_logic::{data::base_data::Pair, error::EngineError, Exchange};
     use serde_json;
+    use trading_core::{
+        error::EngineError,
+        types::common::{Exchange, Pair},
+    };
 
     // Test for deserialization of MarketDataConfig
     #[test]

@@ -1,4 +1,4 @@
-use core_logic::data::public_data::Orderbook;
+use trading_core::types::market_data::Orderbook;
 
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};

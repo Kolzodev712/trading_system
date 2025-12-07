@@ -1,10 +1,9 @@
+use serde::{Deserialize, Serialize};
+use smol_str::SmolStr;
 use std::{
     collections::HashMap,
     time::{SystemTime, UNIX_EPOCH},
 };
-
-use serde::{Deserialize, Serialize};
-use smol_str::SmolStr;
 use uuid::Uuid;
 
 pub fn current_timestamp() -> u64 {

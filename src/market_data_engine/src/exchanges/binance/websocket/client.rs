@@ -4,15 +4,6 @@ use super::types::{
     trade::BinanceTrade,
 };
 use async_trait::async_trait;
-use core_logic::{
-    data::{
-        base_data::DataType,
-        public_data::{Orderbook, Trade},
-    },
-    error::EngineError,
-    utils::generate_custom_uuid,
-    ws_client::{MessageHandler, SubscriptionHandler, WebSocketClient},
-};
 use futures_util::{stream::StreamExt, SinkExt};
 use serde_json::Value;
 use smol_str::SmolStr;
@@ -23,6 +14,15 @@ use tokio_tungstenite::{
     MaybeTlsStream, WebSocketStream,
 };
 use tracing::{debug, error};
+use trading_core::{
+    error::EngineError,
+    types::{
+        common::DataType,
+        market_data::{LegacyOrderbook as Orderbook, LegacyTrade as Trade},
+    },
+    utils::generate_custom_uuid,
+    websocket::client::{MessageHandler, SubscriptionHandler, WebSocketClient},
+};
 
 pub const BINANCE_WS_URL: &str = "wss://stream.binance.com:9443/ws";
 

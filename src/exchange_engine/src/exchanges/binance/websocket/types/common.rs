@@ -1,7 +1,7 @@
 use super::{rpc::BinanceRpcResponse, user_data::events::ParsedBinanceMessage};
-use core_logic::utils::{deserialize_smol_str, serialize_smol_str};
 use serde::{Deserialize, Serialize};
 use smol_str::SmolStr;
+use trading_core::utils::{deserialize_smol_str, serialize_smol_str};
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum BinanceInbound {

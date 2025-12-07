@@ -3,10 +3,10 @@ pub mod execution_report;
 pub mod outbound_account_position;
 
 use super::user_data::events::ParsedBinanceMessage;
-use core_logic::{error::EngineError, ws_client::MessageHandler};
 use smol_str::SmolStr;
 use tokio_tungstenite::tungstenite::protocol::CloseFrame;
 use tracing::debug;
+use trading_core::{error::EngineError, websocket::client::MessageHandler};
 
 #[derive(Debug, Clone)]
 pub struct DataHandler;

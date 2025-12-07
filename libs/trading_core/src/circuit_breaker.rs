@@ -1,3 +1,4 @@
+//! Circuit breaker pattern for handling repeated failures
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 use tracing::{error, info, warn};

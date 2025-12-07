@@ -1,19 +1,19 @@
 use crate::exchanges::binance::common_types::{
     BinanceOrderType, BinanceSide, BinanceSymbol, BinanceTimeInForce,
 };
-use core_logic::{
-    data::{
-        base_data::OrderId,
-        private_data::{Order, OrderRequest},
-    },
+use trading_core::{
     error::EngineError,
+    types::{
+        common::OrderId,
+        exchange::{Order, OrderRequest},
+    },
 };
 
 use super::super::common::{BinanceRateLimit, SessionLogonParams};
-use core_logic::utils::{deserialize_smol_str, serialize_enum_as_display, serialize_smol_str};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use smol_str::SmolStr;
+use trading_core::utils::{deserialize_smol_str, serialize_enum_as_display, serialize_smol_str};
 
 // https://developers.binance.com/docs/binance-spot-api-docs/websocket-api/trading-requests#place-new-order-trade
 #[derive(Debug, Clone, Eq, PartialEq, Deserialize, Serialize)]
@@ -167,7 +167,7 @@ pub fn map_open_order_to_core(
         price: params.price,
         amount: params.quantity,
         side: params.side.into(),
-        status: core_logic::data::base_data::OrderStatus::New,
+        status: trading_core::types::common::OrderStatus::New,
         filled_amount: rust_decimal::Decimal::ZERO,
         internal_created_at: chrono::Utc::now().timestamp_millis() as u64,
         exchange_created_at: Some(result.transact_time as u64),

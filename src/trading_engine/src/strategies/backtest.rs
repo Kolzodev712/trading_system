@@ -2,7 +2,7 @@ use crate::state::Strategy;
 use rust_decimal::Decimal;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use trading_core::{error::EngineError, types::market_data::Orderbook};
+use trading_core::{error::EngineError, types::market_data::LegacyOrderbook as Orderbook};
 
 /// Simple backtesting framework
 pub struct BacktestEngine<S: Strategy> {

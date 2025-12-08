@@ -1,10 +1,10 @@
-# Proposal 06: Live Config Service
+# Proposal 06b: Live Config Service
 
 ## Overview
 
 This proposal outlines the implementation of a LiveConfig Service that enables runtime configuration changes to the trading system without requiring a restart. The service allows modifying level values, bot configuration, and risk limits while the bot is running, with validation, persistence, and real-time updates to affected components.
 
-**Key Insight**: The LiveConfig Service is implemented after Proposal 05 (Data Handling and Persistence), as it depends on MongoDB for configuration persistence and requires the Level Manager and Risk Manager to be in place.
+**Key Insight**: The LiveConfig Service is implemented after Proposal 06 (MongoDB Persistence and Configuration Storage), as it depends on MongoDB for configuration persistence and requires the Level Manager and Risk Manager to be in place.
 
 ## Key Requirements
 

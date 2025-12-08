@@ -2,8 +2,8 @@ use async_trait::async_trait;
 use std::fmt::Debug;
 use tracing::debug;
 use trading_core::{
+    channels::market_data::{MarketDataUpdate, MarketDataUpdateSender},
     error::EngineError,
-    redis::{RedisClient, RedisMessage, ORDERBOOK_CHANNEL, TRADE_CHANNEL},
     types::market_data::{LegacyOrderbook as Orderbook, LegacyTrade as Trade},
 };
 
@@ -15,17 +15,69 @@ pub trait WSMessageHandler: Send + Sync + Debug {
 }
 
 #[derive(Debug)]
+/// **Handles incoming WebSocket messages and publishes them via broadcast channels**
+pub struct ChannelMessageHandler {
+    market_data_tx: MarketDataUpdateSender,
+}
+
+impl ChannelMessageHandler {
+    pub fn new(market_data_tx: MarketDataUpdateSender) -> Self {
+        Self { market_data_tx }
+    }
+}
+
+#[async_trait]
+impl WSMessageHandler for ChannelMessageHandler {
+    async fn handle_orderbook(&self, orderbook: Orderbook) -> Result<(), EngineError> {
+        self.market_data_tx
+            .send(MarketDataUpdate::Orderbook(orderbook))
+            .map_err(|e| {
+                EngineError::CustomError(anyhow::anyhow!(
+                    "Failed to send orderbook to channel: {error}",
+                    error = e
+                ))
+            })?;
+
+        debug!("Published orderbook to channel.");
+        Ok(())
+    }
+
+    async fn handle_trade(&self, trade: Trade) -> Result<(), EngineError> {
+        self.market_data_tx
+            .send(MarketDataUpdate::Trade(trade))
+            .map_err(|e| {
+                EngineError::CustomError(anyhow::anyhow!(
+                    "Failed to send trade to channel: {error}",
+                    error = e
+                ))
+            })?;
+
+        debug!("Published trade to channel.");
+        Ok(())
+    }
+}
+
+// Keep Redis handler behind feature flag for future Web UI
+#[cfg(feature = "redis")]
+use trading_core::redis::{RedisClient, RedisMessage, ORDERBOOK_CHANNEL, TRADE_CHANNEL};
+
+#[cfg(feature = "redis")]
+#[derive(Debug)]
 /// **Handles incoming WebSocket messages and publishes them to Redis**
+///
+/// This is kept behind the `redis` feature flag for potential future Web UI use.
 pub struct RedisMessageHandler {
     redis_client: RedisClient,
 }
 
+#[cfg(feature = "redis")]
 impl RedisMessageHandler {
     pub fn new(redis_client: RedisClient) -> Self {
         Self { redis_client }
     }
 }
 
+#[cfg(feature = "redis")]
 #[async_trait]
 impl WSMessageHandler for RedisMessageHandler {
     async fn handle_orderbook(&self, orderbook: Orderbook) -> Result<(), EngineError> {
@@ -51,76 +103,34 @@ impl WSMessageHandler for RedisMessageHandler {
 mod tests {
     use super::*;
     use rust_decimal::Decimal;
-    use std::sync::{Arc, Mutex};
-    use trading_core::types::market_data::{LegacyOrderbook as Orderbook, LegacyTrade as Trade};
-
-    #[derive(Debug, Clone)]
-    struct MockRedisClient {
-        pub published: Arc<Mutex<Vec<(String, RedisMessage)>>>,
-    }
-
-    impl MockRedisClient {
-        fn new() -> Self {
-            Self {
-                published: Arc::new(Mutex::new(Vec::new())),
-            }
-        }
-
-        async fn publish(&self, channel: &str, message: RedisMessage) -> Result<(), EngineError> {
-            self.published
-                .lock()
-                .unwrap()
-                .push((channel.to_string(), message));
-            Ok(())
-        }
-    }
-
-    #[derive(Debug)]
-    struct MockRedisMessageHandler {
-        redis_client: MockRedisClient,
-    }
-
-    impl MockRedisMessageHandler {
-        fn new(redis_client: MockRedisClient) -> Self {
-            Self { redis_client }
-        }
-    }
-
-    #[async_trait::async_trait]
-    impl WSMessageHandler for MockRedisMessageHandler {
-        async fn handle_orderbook(&self, orderbook: Orderbook) -> Result<(), EngineError> {
-            let message = RedisMessage::OrderbookMessage(orderbook);
-            self.redis_client.publish(ORDERBOOK_CHANNEL, message).await
-        }
-
-        async fn handle_trade(&self, trade: Trade) -> Result<(), EngineError> {
-            let message = RedisMessage::TradeMessage(trade);
-            self.redis_client.publish(TRADE_CHANNEL, message).await
-        }
-    }
+    use trading_core::{
+        channels::market_data::{market_data_update_channel, MarketDataUpdate},
+        types::market_data::{LegacyOrderbook as Orderbook, LegacyTrade as Trade},
+    };
 
     #[tokio::test]
-    async fn test_orderbook_is_published_to_redis() {
-        let mock_client = MockRedisClient::new();
-        let handler = MockRedisMessageHandler::new(mock_client.clone());
+    async fn test_channel_message_handler_orderbook() {
+        let (tx, mut rx) = market_data_update_channel(100);
+        let handler = ChannelMessageHandler::new(tx);
 
         let orderbook = Orderbook {
-            bids: vec![],
-            asks: vec![],
+            bids: vec![Decimal::new(50000, 0), Decimal::new(1, 0)],
+            asks: vec![Decimal::new(51000, 0), Decimal::new(1, 0)],
         };
 
         handler.handle_orderbook(orderbook.clone()).await.unwrap();
 
-        let log = mock_client.published.lock().unwrap();
-        assert_eq!(log.len(), 1);
-        assert_eq!(log[0].0, ORDERBOOK_CHANNEL);
-        assert_eq!(log[0].1, RedisMessage::OrderbookMessage(orderbook));
+        let received = rx.recv().await.unwrap();
+        match received {
+            MarketDataUpdate::Orderbook(ob) => assert_eq!(ob, orderbook),
+            _ => panic!("Expected Orderbook variant"),
+        }
     }
 
     #[tokio::test]
-    async fn test_trade_is_published_to_redis() {
-        let mock_client = MockRedisClient::new();
-        let handler = MockRedisMessageHandler::new(mock_client.clone());
+    async fn test_channel_message_handler_trade() {
+        let (tx, mut rx) = market_data_update_channel(100);
+        let handler = ChannelMessageHandler::new(tx);
 
         let trade = Trade {
             price: Decimal::new(123456, 2),
@@ -131,9 +141,34 @@ mod tests {
 
         handler.handle_trade(trade.clone()).await.unwrap();
 
-        let log = mock_client.published.lock().unwrap();
-        assert_eq!(log.len(), 1);
-        assert_eq!(log[0].0, TRADE_CHANNEL);
-        assert_eq!(log[0].1, RedisMessage::TradeMessage(trade));
+        let received = rx.recv().await.unwrap();
+        match received {
+            MarketDataUpdate::Trade(t) => assert_eq!(t, trade),
+            _ => panic!("Expected Trade variant"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_channel_message_handler_fan_out() {
+        let (tx, _) = market_data_update_channel(100);
+        let handler = ChannelMessageHandler::new(tx.clone());
+
+        // Create multiple receivers to test fan-out
+        let mut rx1 = tx.subscribe();
+        let mut rx2 = tx.subscribe();
+
+        let orderbook = Orderbook {
+            bids: vec![Decimal::new(50000, 0)],
+            asks: vec![Decimal::new(51000, 0)],
+        };
+
+        handler.handle_orderbook(orderbook.clone()).await.unwrap();
+
+        // Both receivers should get the update
+        let received1 = rx1.recv().await.unwrap();
+        let received2 = rx2.recv().await.unwrap();
+
+        assert!(matches!(received1, MarketDataUpdate::Orderbook(_)));
+        assert!(matches!(received2, MarketDataUpdate::Orderbook(_)));
     }
 }

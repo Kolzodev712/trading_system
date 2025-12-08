@@ -1,7 +1,9 @@
 //! Channel types for indicator updates
+//!
+//! Uses broadcast channels for fan-out to multiple consumers (Trading Engine, TUI, etc.)
 use rust_decimal::Decimal;
 use smol_str::SmolStr;
-use tokio::sync::mpsc;
+use tokio::sync::broadcast;
 
 /// Indicator update message
 #[derive(Debug, Clone)]
@@ -20,13 +22,18 @@ pub struct IndicatorUpdate {
     pub period: usize,
 }
 
-/// Indicator update channel sender
-pub type IndicatorUpdateSender = mpsc::UnboundedSender<IndicatorUpdate>;
+/// Indicator update channel sender (broadcast for fan-out)
+pub type IndicatorUpdateSender = broadcast::Sender<IndicatorUpdate>;
 
-/// Indicator update channel receiver
-pub type IndicatorUpdateReceiver = mpsc::UnboundedReceiver<IndicatorUpdate>;
+/// Indicator update channel receiver (broadcast for fan-out)
+pub type IndicatorUpdateReceiver = broadcast::Receiver<IndicatorUpdate>;
 
-/// Create a new indicator update channel pair
-pub fn indicator_update_channel() -> (IndicatorUpdateSender, IndicatorUpdateReceiver) {
-    mpsc::unbounded_channel()
+/// Create a new indicator update broadcast channel
+///
+/// # Arguments
+/// * `capacity` - Channel capacity (number of messages to buffer). Use 1000 for high-frequency updates.
+pub fn indicator_update_channel(
+    capacity: usize,
+) -> (IndicatorUpdateSender, IndicatorUpdateReceiver) {
+    broadcast::channel(capacity)
 }

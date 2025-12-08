@@ -24,6 +24,15 @@ This document provides a comprehensive overview of the entire trading system arc
 - **Security**: `SecretString` type for API keys/secrets prevents accidental exposure in logs
 - **Dependencies**: Added `rust_decimal_macros` for cleaner decimal literals
 
+### ✅ Redis to Channels Migration (COMPLETE)
+- **Channel Infrastructure**: Broadcast channels implemented in `trading_core` for ultra-low latency (< 1μs)
+- **Market Data Engine**: Migrated from Redis to broadcast channels for publishing market data
+- **Trading Engine**: Both `StrategyExecutor` and `LevelBasedEventLoop` now consume from channels instead of Redis
+- **Indicator Engine**: Updated to use broadcast channels for market data updates
+- **Fan-out Support**: Multiple consumers (Trading Engine, Indicator Engine) can subscribe to same channel
+- **Redis Optional**: Redis dependency removed from Trading Engine, optional in Runner (behind feature flag for future Web UI)
+- **Performance**: Eliminated Redis serialization overhead, direct memory access via channels
+
 ## Prerequisites & Infrastructure Requirements
 
 To run the trading system in production, the following infrastructure and services must be set up and running:
@@ -42,11 +51,11 @@ To run the trading system in production, the following infrastructure and servic
 - **Backup**: Recommended for production (config backup only, not state)
 - **Example Connection**: `mongodb://localhost:27017/trading_system`
 
-#### 2. Redis Instance (Optional - Feature Flag)
-- **Purpose**: Currently used for internal communication (to be migrated to channels per Proposal 04)
-- **Version**: Redis 6.0+ (or compatible)
-- **Connection**: Connection string required in configuration
-- **Note**: **Will be removed** after Proposal 04 (Redis → Channels migration). Redis code will be kept behind feature flag for potential future Web UI use (if needed).
+#### 2. Redis Instance (Optional - Feature Flag Only)
+- **Purpose**: Not required for internal communication (channels are used instead)
+- **Version**: Redis 6.0+ (or compatible) - only if Web UI feature is enabled
+- **Connection**: Connection string optional in configuration (defaults to disabled)
+- **Note**: **Redis is no longer used for internal communication**. All internal communication uses broadcast channels. Redis code is kept behind feature flag (`--features redis`) for potential future Web UI use only.
 
 #### 3. Exchange API Access
 - **Exchange**: Binance (spot trading)
@@ -317,20 +326,25 @@ cargo run --release --bin trading-cli -- --endpoint http://localhost:50051
 ### In-Process Channels (Monolith Internal Communication)
 
 **Used For** (Ultra-low latency < 1μs):
-1. **Exchange Engine → Trading System**
+1. **Exchange Engine → Trading System & Risk Engine**
    - Orders, balances, positions, trades
    - High-frequency updates
+   - **Broadcast channel** for fan-out to multiple consumers
    - Direct memory communication
+   - Each consumer tracks its own lag
 
-2. **Market Data Engine → Trading System**
+2. **Market Data Engine → Trading System & Indicator Engine**
    - Orderbook updates
    - Public trades
    - High-frequency updates
+   - **Broadcast channel** for fan-out to multiple consumers
    - Direct memory communication
+   - Each consumer tracks its own lag
 
 3. **Indicator Engine → Trading System** (in-process, same workspace)
    - ✅ **COMPLETE**: Real-time indicator values (SMA, EMA, composite)
    - High-frequency updates
+   - **Broadcast channel** for fan-out
    - Cached in trading system (< 0.1ms lookup)
    - Uses channels (not gRPC)
 
@@ -358,17 +372,17 @@ cargo run --release --bin trading-cli -- --endpoint http://localhost:50051
 - Connection pooling: Reuse connections
 - Type-safe: Compile-time checks
 
-### Redis Pub/Sub (Currently Used, To Be Removed)
+### Redis (Optional, Feature Flag Only)
 
-**Current Usage**:
-1. **Market Data Engine → Redis → Trading Engine** (to be migrated to channels per Proposal 04)
+**Status**: **Not used for internal communication** - All internal communication uses broadcast channels.
 
 **Future Usage** (Optional, Feature Flag):
 - Only if Web UI is implemented in the future
 - Would be used for Web Server communication (if needed)
 - Currently not planned - TUI CLI is the primary interface
+- Can be enabled with `--features redis` if needed
 
-**Note**: **Redis will be removed** from internal communication after Proposal 04 migration. Redis code kept behind feature flag for potential future Web UI use.
+**Note**: **Redis has been removed** from internal communication. All internal communication uses broadcast channels (< 1μs latency). Redis code kept behind feature flag for potential future Web UI use only.
 
 ## Monolith Architecture
 
@@ -445,21 +459,177 @@ cargo run --release --bin trading-cli -- --endpoint http://localhost:50051
 - Stale data fallback: Use stale cache if fresh fetch fails
 - Connection pooling: Reuse HTTP connections
 
+## State Management Architecture
+
+### Overview
+
+The system uses a clear separation between **State Managers** (full state management with publishing) and **Caching Only** (fast lookup, no state management). This architecture ensures proper data flow, separation of concerns, and security.
+
+### State Managers (Full State Management)
+
+#### 1. ExchangeStateManager (Exchange Engine)
+
+**Purpose**: Manages raw exchange data (balances, orders, trades from WebSocket). **Single point of contact with exchange for account data.**
+
+**Responsibilities**:
+- Manages in-memory state: balances, orders, trades from WebSocket
+- Performs WS vs REST reconciliation (exchange-level reconciliation)
+- Publishes all updates via broadcast channels to Trading Engine, Risk Engine, TUI
+- MongoDB persistence capability (disabled initially, lazy evaluation)
+
+**Key Principle**: Exchange Engine is the **only** component that calls exchange for account data. All other components rely on ExchangeStateManager.
+
+**Data Flow**:
+```
+Exchange WebSocket → ExchangeStateManager
+    ├── Update in-memory state
+    ├── WS vs REST Reconciliation (periodic)
+    ├── Publish via Broadcast Channel
+    │   ├──→ Trading Engine (subscribes, updates TradingState)
+    │   ├──→ Risk Engine (subscribes, updates risk cache)
+    │   └──→ TUI (via gRPC aggregation)
+    └── Persist to MongoDB* (if enabled)
+```
+
+#### 2. MarketDataStateManager (Market Data Engine)
+
+**Purpose**: Manages market data state (orderbooks, public trades).
+
+**Responsibilities**:
+- Manages in-memory state: orderbooks, public trades
+- Publishes all updates via broadcast channels to Indicator Engine, Trading Engine, TUI
+- MongoDB persistence capability (disabled initially, lazy evaluation)
+
+**Data Flow**:
+```
+Exchange WebSocket → MarketDataStateManager
+    ├── Update in-memory state
+    ├── Publish via Broadcast Channel
+    │   ├──→ Indicator Engine (subscribes, updates indicator cache)
+    │   ├──→ Trading Engine (for level execution)
+    │   └──→ TUI (via gRPC aggregation)
+    └── Persist to MongoDB* (if enabled)
+```
+
+#### 3. TradingState (Trading Engine)
+
+**Purpose**: Manages trading-specific state (positions, active orders). **Derived from ExchangeStateManager via channels.**
+
+**Responsibilities**:
+- Manages in-memory state: positions (derived from balances), active orders (only orders we placed), pending orders
+- **Derived from ExchangeStateManager** via channel subscriptions
+- **Does NOT call exchange directly** - relies on ExchangeStateManager
+- Reconciles with ExchangeStateManager (not with exchange directly)
+- Used by strategies and levels for trading decisions
+
+**Key Principle**: Trading Engine **does NOT** call exchange directly. It relies entirely on ExchangeStateManager for account data.
+
+**Data Flow**:
+```
+ExchangeStateManager (via broadcast channel) → Trading Engine
+    ├── ExchangeStateSubscriber receives updates
+    ├── Updates TradingState
+    │   ├── Update positions (derived from balances)
+    │   ├── Update active orders (only orders we placed)
+    │   └── Update pending orders
+    ├── Periodic Reconciliation with ExchangeStateManager
+    └── Used by strategies/levels for trading decisions
+```
+
+### Caching Only (No State Management)
+
+#### 4. Indicator Engine Cache
+
+**Purpose**: Caches calculated indicator values for fast lookup (< 0.1ms).
+
+**Responsibilities**:
+- Caches calculated indicator values (SMA, EMA, composite indicators)
+- Receives updates from MarketDataStateManager via channels
+- Fast lookup for trading decisions
+
+**Not a State Manager**: No state management, no publishing, just caching.
+
+#### 5. Risk Engine Cache
+
+**Purpose**: Caches risk metrics for fast lookup. Can also call exchange directly for independent verification.
+
+**Responsibilities**:
+- Caches risk metrics (P&L, exposure, risk limits)
+- Receives updates from ExchangeStateManager via channels
+- **Can call exchange directly** for independent verification (second layer of security)
+- Alarms if discrepancies detected between ExchangeStateManager and direct exchange calls
+
+**Not a State Manager**: No state management, no publishing, just caching with verification capability.
+
+**Key Principle**: Risk Engine acts as an **independent checker** that can verify state correctness by calling exchange directly.
+
+#### 6. Asset Engine Cache
+
+**Purpose**: Caches static asset metadata (symbols, trading rules) with TTL-based refresh.
+
+**Responsibilities**:
+- Caches static asset metadata (symbols, trading rules, exchange limits)
+- TTL-based refresh from REST API (public endpoints, no authentication)
+- No state management (static data)
+
+**Not a State Manager**: No state management, no publishing, just caching static data.
+
+### Key Architectural Principles
+
+1. **Exchange Engine is the single point of contact** with exchange for account data
+   - Only ExchangeStateManager calls exchange for balances, orders, trades
+   - All other components rely on ExchangeStateManager
+
+2. **Trading Engine relies on ExchangeStateManager**
+   - Trading Engine does NOT call exchange directly
+   - TradingState is derived from ExchangeStateManager via channels
+   - TradingState reconciles with ExchangeStateManager (not with exchange)
+
+3. **Risk Engine is an independent checker**
+   - Receives data from ExchangeStateManager via channels
+   - Can also call exchange directly for verification
+   - Alarms if discrepancies detected
+
+4. **State Managers** (Exchange, Market Data, Trading) manage full state and publish
+5. **Caching Only** (Indicator, Risk, Asset) - fast lookup, no state management
+
+### Reconciliation Architecture
+
+#### Exchange-Level Reconciliation (ExchangeStateManager)
+- **What**: WebSocket state vs REST state
+- **Purpose**: Ensure ExchangeStateManager matches exchange authoritative state
+- **Frequency**: Periodic (configurable interval)
+- **Action**: Update ExchangeStateManager to match REST (REST is authoritative)
+
+#### Trading-Level Reconciliation (TradingState)
+- **What**: TradingState vs ExchangeStateManager
+- **Purpose**: Ensure TradingState matches ExchangeStateManager state
+- **Frequency**: Periodic (configurable interval)
+- **Action**: Update TradingState to match ExchangeStateManager
+- **Key Point**: TradingState reconciles with ExchangeStateManager (NOT with exchange directly)
+
+#### Risk Engine Verification (Independent Checker)
+- **What**: ExchangeStateManager state vs direct exchange calls
+- **Purpose**: Independent verification of state correctness
+- **Frequency**: Periodic (optional, configurable)
+- **Action**: Alarm if discrepancies detected
+- **Key Point**: Risk Engine can call exchange directly for verification
+
 ## Component Responsibilities
 
 ### Exchange Engine
-- Fetches orders, balances, positions, trades
-- Manages exchange state (in-memory, own state)
-- Publishes via channels (trading system, ultra-low latency)
-- Publishes via channels/gRPC (monitoring, if in-process/external)
+- **ExchangeStateManager**: Manages raw exchange data (balances, orders, trades from WebSocket)
+- **Single point of contact** with exchange for account data
+- Performs WS vs REST reconciliation (exchange-level)
+- Publishes all updates via broadcast channels (Trading Engine, Risk Engine, TUI)
 - MongoDB persistence (disabled, lazy, own persistence)
+- **Key Principle**: Only Exchange Engine calls exchange for account data
 
 ### Market Data Engine
-- Fetches orderbooks, public trades
-- Manages market data state (in-memory, own state)
-- Publishes via channels (trading system, ultra-low latency)
-- Publishes via channels/gRPC (monitoring, if in-process/external)
+- **MarketDataStateManager**: Manages market data state (orderbooks, public trades)
+- Publishes all updates via broadcast channels (Indicator Engine, Trading Engine, TUI)
 - MongoDB persistence (disabled, lazy, own persistence)
+- No reconciliation needed (market data is public)
 
 ### Trading Engine
 - ✅ **COMPLETE**: Level-based trading system (Proposal 03)
@@ -476,16 +646,18 @@ cargo run --release --bin trading-cli -- --endpoint http://localhost:50051
   - Strategy manager (`strategies/strategy_manager.rs`) for multiple strategies
   - Backtesting framework (`strategies/backtest.rs`)
 - ✅ **State Management**: `TradingState` in `state.rs` (renamed from `strategy.rs`)
-  - Positions tracking (`HashMap<Pair, Position>`)
-  - Active orders tracking (`HashMap<OrderId, Order>`)
+  - Positions tracking (`HashMap<Pair, Position>`) - derived from ExchangeStateManager balances
+  - Active orders tracking (`HashMap<OrderId, Order>`) - only orders we placed
   - Pending orders tracking with timestamps
   - Shared by both strategies and levels modes
-  - This is the trading engine's own state (not exchange-level state)
+  - **Derived from ExchangeStateManager** via channel subscriptions
+  - **Does NOT call exchange directly** - relies on ExchangeStateManager
 - ✅ **Position Reconciliation**: `PositionReconciler` in `reconciliation.rs`
-  - Fetches balances from exchange via `TradingClient::fetch_balance()`
-  - Compares with internal `TradingState`
-  - Updates state when discrepancies detected
+  - Reconciles TradingState with ExchangeStateManager (NOT with exchange directly)
+  - Compares TradingState positions with ExchangeStateManager balances
+  - Updates TradingState when discrepancies detected
   - Used by both modes
+  - **Key Principle**: Trading Engine does NOT call exchange directly
 - ✅ **Health Server**: Shared health monitoring (`health.rs`)
   - REST API for positions, orders, state
   - Used by both strategies and levels modes
@@ -511,12 +683,27 @@ cargo run --release --bin trading-cli -- --endpoint http://localhost:50051
 
 ### Indicator Engine
 - ✅ **COMPLETE**: Real-time indicator calculation (SMA, EMA, composite indicators)
-- Subscribes to market data via channels
+- **Caching Only** (not a state manager)
+- Subscribes to MarketDataStateManager via channels
 - Publishes indicator values via channels
 - In-memory caching for fast lookup (< 0.1ms)
 - Extensible framework for new indicators
 - Performance optimized (SmolStr, efficient data structures)
 - Comprehensive unit tests (39 tests)
+
+### Risk Engine
+- **Caching Only** (not a state manager)
+- Caches risk metrics (P&L, exposure, risk limits)
+- Receives updates from ExchangeStateManager via channels
+- **Can call exchange directly** for independent verification (second layer of security)
+- Alarms if discrepancies detected between ExchangeStateManager and direct exchange calls
+- **Key Principle**: Risk Engine acts as independent checker
+
+### Asset Engine
+- **Caching Only** (not a state manager)
+- Caches static asset metadata (symbols, trading rules, exchange limits)
+- TTL-based refresh from REST API (public endpoints, no authentication)
+- No state management (static data)
 
 ### Runner (Application Orchestrator)
 - ✅ **Dual Mode Support**: Both strategy and levels modes
@@ -580,6 +767,186 @@ Orderbook Update (Channel) → Trading Engine
     ├── Update state
     └── Aggregate monitoring data (for gRPC server)
 ```
+
+## Data Distribution Architecture
+
+### Exchange Engine WebSocket Stream Data
+
+The Exchange Engine receives real-time data from the exchange via WebSocket (Binance User Data Stream):
+
+1. **Balances** - Account balances (free, used, locked per asset)
+2. **Open Orders** - Active orders (pending, partially filled, status updates)
+3. **Trades** - Execution reports (fills, order status changes, trade history)
+
+### System Data Requirements
+
+#### 1. TUI (Terminal User Interface)
+**Needs: ALL DATA** (comprehensive monitoring interface)
+
+- **Orderbooks** (from Market Data Engine via channels)
+  - Real-time price levels, depth, best bid/ask
+  - Purpose: Display market conditions
+- **Balances** (from Exchange Engine WS via channels → Trading Engine → gRPC)
+  - Account balances, available funds, locked funds
+  - Purpose: Display account status
+- **Open Orders** (from Exchange Engine WS via channels → Trading Engine → gRPC)
+  - Active orders, status, fills, pending orders
+  - Purpose: Display order state
+- **Trades** (from Exchange Engine WS via channels → Trading Engine → gRPC)
+  - Execution history, fills, order updates
+  - Purpose: Display trade history
+- **Indicators** (from Indicator Engine via channels → Trading Engine → gRPC)
+  - Technical indicators, calculated values
+  - Purpose: Display technical analysis
+- **Risk Statistics** (from Risk Engine → Trading Engine → gRPC)
+  - P&L, exposure, risk metrics, limit status
+  - Purpose: Display risk monitoring
+
+**Why**: TUI is the primary monitoring interface - it needs all data for comprehensive display.
+
+---
+
+#### 2. Trading Engine
+**Needs: Balances, Open Orders, Trades**
+
+- **Balances** (from Exchange Engine WS via broadcast channel)
+  - Purpose: Position sizing, available funds calculation, reconciliation
+  - Usage: Level quantity resolution, position management
+- **Open Orders** (from Exchange Engine WS via broadcast channel)
+  - Purpose: Order state tracking, prevent duplicate orders, track active orders
+  - Usage: Level execution, order lifecycle management
+- **Trades** (from Exchange Engine WS via broadcast channel)
+  - Purpose: Execution reports, position updates, trigger strategy logic
+  - Usage: Update `TradingState`, trigger level fills, strategy callbacks
+
+**Why**: Core trading logic requires account state and order execution data to make trading decisions.
+
+---
+
+#### 3. Risk Engine
+**Needs: Balances, Open Orders, Trades**
+
+- **Balances** (from Exchange Engine WS via broadcast channel)
+  - Purpose: Calculate exposure, check balance thresholds, monitor available funds
+  - Usage: Risk checks, exposure calculations, balance-based limits
+- **Open Orders** (from Exchange Engine WS via broadcast channel)
+  - Purpose: Calculate pending exposure, check position limits, monitor order count
+  - Usage: Pre-trade risk checks, exposure limits, order count limits
+- **Trades** (from Exchange Engine WS via broadcast channel)
+  - Purpose: Calculate realized P&L, update risk metrics, track trade history
+  - Usage: P&L calculations, daily loss limits, trade history analysis
+
+**Why**: Risk calculations depend on account state, positions, and order exposure to prevent wipeouts.
+
+---
+
+#### 4. Indicator Engine
+**Needs: NONE from Exchange Engine WS**
+
+- **Orderbooks** (from Market Data Engine via channels)
+  - Purpose: Price data for indicator calculations
+  - Usage: SMA, EMA, composite indicators
+- **Trades** (from Market Data Engine - public trades via channels)
+  - Purpose: Trade data for volume-based indicators
+  - Usage: Volume indicators, trade-based calculations
+
+**Why**: Indicators use market data (public), not account-specific data (private). Indicator Engine is market-data focused.
+
+---
+
+#### 5. Level Manager/Executor
+**Needs: Balances (indirectly)**
+
+- **Balances** (from Exchange Engine WS → Trading Engine → Level Executor)
+  - Purpose: Position sizing, quantity resolution, balance-based level creation
+  - Usage: Level quantity calculation, balance percentage calculations
+
+**Why**: Levels need balance info for sizing, but typically get it via Trading Engine state (not direct subscription).
+
+---
+
+### Data Flow Architecture
+
+```
+Exchange Engine WebSocket Stream
+    ↓ (broadcast channel - single source)
+    ├─→ Trading Engine
+    │   ├─ Balances (for position sizing, reconciliation)
+    │   ├─ Open Orders (for order state tracking)
+    │   └─ Trades (for execution reports, position updates)
+    │
+    ├─→ Risk Engine
+    │   ├─ Balances (for exposure calculation)
+    │   ├─ Open Orders (for pending exposure)
+    │   └─ Trades (for P&L calculation)
+    │
+    └─→ TUI (via gRPC from Trading Engine aggregation)
+        ├─ Balances (display)
+        ├─ Open Orders (display)
+        └─ Trades (display)
+
+Market Data Engine WebSocket Stream
+    ↓ (broadcast channel - single source)
+    ├─→ Indicator Engine
+    │   └─ Orderbooks/Trades (for indicator calculations)
+    │
+    ├─→ Trading Engine
+    │   └─ Orderbooks (for level execution, strategy decisions)
+    │
+    └─→ TUI (via gRPC from Trading Engine aggregation)
+        └─ Orderbooks (display)
+
+Indicator Engine
+    ↓ (broadcast channel - calculated values)
+    ├─→ Trading Engine
+    │   └─ Indicator Values (for level resolution, strategy decisions)
+    │
+    └─→ TUI (via gRPC from Trading Engine aggregation)
+        └─ Indicator Values (display)
+```
+
+### Channel Distribution Strategy
+
+**For Exchange Engine WS Data:**
+- **Broadcast Channel** (recommended)
+  - Single broadcast from Exchange Engine
+  - Trading Engine, Risk Engine subscribe independently
+  - Each tracks its own lag
+  - TUI receives aggregated data via gRPC (from Trading Engine)
+  - **Pros**: Single source, efficient fan-out, no duplication
+  - **Cons**: Need lag monitoring, slow consumers can drop messages (acceptable for TUI)
+
+**For Market Data Engine:**
+- **Broadcast Channel** (recommended)
+  - Single broadcast from Market Data Engine
+  - Indicator Engine, Trading Engine subscribe independently
+  - Each tracks its own lag
+  - **Pros**: Single source, efficient fan-out
+  - **Cons**: Need lag monitoring
+
+**For Indicator Engine:**
+- **Broadcast Channel** (recommended)
+  - Single broadcast from Indicator Engine
+  - Trading Engine subscribes, caches values
+  - TUI receives via gRPC aggregation
+  - **Pros**: Single source, efficient fan-out
+
+### Data Requirements Summary
+
+| System | Balances | Open Orders | Trades | Orderbooks | Indicators | Risk Stats |
+|--------|----------|-------------|--------|------------|-------------|------------|
+| **TUI** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **Trading Engine** | ✅ | ✅ | ✅ | ✅ (via Market Data) | ✅ (via Indicator Engine) | ❌ |
+| **Risk Engine** | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ (calculates) |
+| **Indicator Engine** | ❌ | ❌ | ❌ | ✅ | ❌ (calculates) | ❌ |
+| **Level Manager** | ✅ (indirect) | ❌ | ❌ | ✅ (via Market Data) | ✅ (via Indicator Engine) | ❌ |
+
+**Key Insights:**
+- **TUI needs everything** - it's the comprehensive monitoring interface
+- **Trading Engine needs account data** - balances, orders, trades for trading decisions
+- **Risk Engine needs account data** - balances, orders, trades for risk calculations
+- **Indicator Engine needs market data only** - orderbooks, public trades (no account data)
+- **Level Manager needs indirect access** - gets data via Trading Engine state
 
 ## Performance Characteristics
 
@@ -708,9 +1075,14 @@ Orderbook Update (Channel) → Trading Engine
    - Indicator-based price/quantity resolution
    - Level lifecycle management
    - Both strategy and levels modes fully functional
-2. Redis to Channels migration (Proposal 04) - **Next**
+2. ✅ Redis to Channels migration - **COMPLETE**
+   - Broadcast channels implemented for all internal communication
+   - Market Data Engine, Trading Engine, Indicator Engine all use channels
+   - Redis dependency removed from Trading Engine
+   - Ultra-low latency (< 1μs) communication
 3. Data handling and persistence (Proposal 05)
-4. LiveConfig Service (Proposal 06) - **After Proposal 05**
+4. MongoDB Persistence and Configuration Storage (Proposal 06) - **After Proposal 05**
+5. LiveConfig Service (Proposal 06b) - **After Proposal 06**
 5. Risk system (Proposal 07)
 6. Market data integration (Proposal 08)
 

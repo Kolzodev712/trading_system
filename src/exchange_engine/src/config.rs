@@ -80,10 +80,10 @@ mod tests {
             ExchangeConfig::Binance(ref binance_config) => {
                 assert_eq!(binance_config.symbol.base, "BTC");
                 assert_eq!(binance_config.symbol.quote, "USDT");
-                assert_eq!(binance_config.rest.api_key, "some_key");
-                assert_eq!(binance_config.rest.secret_key, "some_secret");
-                assert_eq!(binance_config.ws.api_key, "some_key");
-                assert_eq!(binance_config.ws.secret_key, "some_secret");
+                assert_eq!(binance_config.rest.api_key, "some_key".into());
+                assert_eq!(binance_config.rest.secret_key, "some_secret".into());
+                assert_eq!(binance_config.ws.api_key, "some_key".into());
+                assert_eq!(binance_config.ws.secret_key, "some_secret".into());
                 assert_eq!(binance_config.limit, Some(100));
                 assert_eq!(binance_config.base_delay, Some(2));
                 assert_eq!(binance_config.max_delay, Some(60));
@@ -155,10 +155,10 @@ mod tests {
 
         assert_eq!(retrieved_config.symbol.base, "BTC");
         assert_eq!(retrieved_config.symbol.quote, "USDT");
-        assert_eq!(retrieved_config.rest.api_key, "some_key");
-        assert_eq!(retrieved_config.rest.secret_key, "some_secret");
-        assert_eq!(retrieved_config.ws.api_key, "some_key");
-        assert_eq!(retrieved_config.ws.secret_key, "some_secret");
+        assert_eq!(retrieved_config.rest.api_key, "some_key".into());
+        assert_eq!(retrieved_config.rest.secret_key, "some_secret".into());
+        assert_eq!(retrieved_config.ws.api_key, "some_key".into());
+        assert_eq!(retrieved_config.ws.secret_key, "some_secret".into());
         assert_eq!(retrieved_config.limit, Some(100));
         assert_eq!(retrieved_config.base_delay, Some(2));
         assert_eq!(retrieved_config.max_delay, Some(60));

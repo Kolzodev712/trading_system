@@ -10,13 +10,12 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio::time::{interval, Duration};
-use tokio_stream::StreamExt;
+use trading_core::channels::market_data::{MarketDataUpdate, MarketDataUpdateReceiver};
 use trading_core::error::EngineError;
-use trading_core::redis::{RedisMessage, ORDERBOOK_CHANNEL};
 use trading_core::traits::TradingClient;
 use trading_core::types::common::Pair;
 use trading_core::types::exchange::{Order, OrderRequest};
-use trading_core::types::market_data::Orderbook;
+use trading_core::types::market_data::LegacyOrderbook as Orderbook;
 
 /// Level-based event loop
 pub struct LevelBasedEventLoop {
@@ -27,7 +26,7 @@ pub struct LevelBasedEventLoop {
     indicator_subscriber: Arc<RwLock<IndicatorSubscriber>>,
     trading_client: Arc<RwLock<dyn TradingClient<OrderRequest>>>,
     trading_state: Arc<RwLock<TradingState>>,
-    redis_url: String,
+    market_data_rx: MarketDataUpdateReceiver,
     symbol: Pair,
 }
 
@@ -41,7 +40,7 @@ impl LevelBasedEventLoop {
         indicator_subscriber: Arc<RwLock<IndicatorSubscriber>>,
         trading_client: Arc<RwLock<dyn TradingClient<OrderRequest>>>,
         trading_state: Arc<RwLock<TradingState>>,
-        redis_url: String,
+        market_data_rx: MarketDataUpdateReceiver,
         symbol: Pair,
     ) -> Self {
         Self {
@@ -52,7 +51,7 @@ impl LevelBasedEventLoop {
             indicator_subscriber,
             trading_client,
             trading_state,
-            redis_url,
+            market_data_rx,
             symbol,
         }
     }
@@ -111,59 +110,33 @@ impl LevelBasedEventLoop {
             subscriber.cache()
         };
 
-        // Subscribe to orderbook channel from Redis
-        let redis_url: redis::ConnectionInfo = self.redis_url.parse().map_err(|e| {
-            EngineError::CustomError(anyhow::anyhow!(
-                "Invalid Redis URL '{}': {}",
-                self.redis_url,
-                e
-            ))
-        })?;
-
-        let mut pubsub_conn = redis::Client::open(redis_url)
-            .map_err(|e| {
-                EngineError::CustomError(anyhow::anyhow!("Failed to open Redis client: {}", e))
-            })?
-            .get_async_pubsub()
-            .await
-            .map_err(|e| {
-                EngineError::CustomError(anyhow::anyhow!("Failed to get Redis pubsub: {}", e))
-            })?;
-
-        pubsub_conn
-            .subscribe(ORDERBOOK_CHANNEL)
-            .await
-            .map_err(|e| {
-                EngineError::CustomError(anyhow::anyhow!(
-                    "Failed to subscribe to Redis channel: {}",
-                    e
-                ))
-            })?;
-
-        let mut stream = pubsub_conn.on_message();
+        // Consume market data updates from channel
+        let mut market_data_rx = self.market_data_rx.resubscribe();
         let mut periodic_timer = interval(Duration::from_secs(1)); // Check every second
 
         loop {
             tokio::select! {
-                // Handle orderbook updates from Redis
-                message = stream.next() => {
-                    if let Some(msg) = message {
-                        let payload: String = msg.get_payload().map_err(|e| {
-                            EngineError::CustomError(anyhow::anyhow!("Failed to get Redis message payload: {}", e))
-                        })?;
-
-                        match serde_json::from_str::<RedisMessage>(&payload) {
-                            Ok(RedisMessage::OrderbookMessage(orderbook)) => {
-                                if let Err(e) = self.handle_orderbook(&orderbook, &subscriber_cache).await {
-                                    tracing::error!("Error handling orderbook: {}", e);
-                                }
+                // Handle market data updates from channel
+                update = market_data_rx.recv() => {
+                    match update {
+                        Ok(MarketDataUpdate::Orderbook(orderbook)) => {
+                            if let Err(e) = self.handle_orderbook(&orderbook, &subscriber_cache).await {
+                                tracing::error!("Error handling orderbook: {}", e);
                             }
-                            Ok(RedisMessage::TradeMessage(_)) => {
-                                // Ignore trades for now
-                            }
-                            Err(e) => {
-                                tracing::debug!("Failed to parse Redis message: {}", e);
-                            }
+                        }
+                        Ok(MarketDataUpdate::Trade(_)) => {
+                            // Ignore trades for now
+                            tracing::debug!("Received trade update (ignored)");
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                            tracing::warn!(
+                                "Market data receiver lagged, skipped {skipped} messages. This may indicate slow processing."
+                            );
+                            // Continue receiving - broadcast channels automatically skip lagged messages
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                            tracing::warn!("Market data channel closed - shutting down level-based event loop");
+                            return Ok(());
                         }
                     }
                 }

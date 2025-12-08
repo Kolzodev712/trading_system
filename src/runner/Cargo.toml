@@ -45,14 +45,15 @@ ring = { workspace = true }
 pem = { workspace = true }
 uuid = { workspace = true }
 
-# Utrils
+# Utils
 smol_str = { workspace = true }
 futures-util = { workspace = true }
 chrono = { workspace = true }
 rust_decimal = { workspace = true }
 base64 = { workspace = true }
-redis = { workspace = true }
 
+# Storage (optional, behind feature flag for future Web UI)
+redis = { workspace = true, optional = true }
 
 # HTTP Server
 axum = { workspace = true }
@@ -62,3 +63,6 @@ tower-http = { workspace = true }
 # Testing
 tokio-test = { workspace = true }
 
+[features]
+default = []
+redis = ["dep:redis"]

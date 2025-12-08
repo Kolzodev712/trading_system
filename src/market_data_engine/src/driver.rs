@@ -1,7 +1,9 @@
-use super::{config::MarketDataConfig, messages::RedisMessageHandler};
+use super::{config::MarketDataConfig, messages::ChannelMessageHandler};
 use crate::{config::ExchangeConfig, exchanges::binance::client::BinanceClient};
 use tracing::error;
-use trading_core::{error::EngineError, redis::RedisClient, traits::MarketDataClient};
+use trading_core::{
+    channels::market_data::MarketDataUpdateSender, error::EngineError, traits::MarketDataClient,
+};
 
 #[derive(Debug, Clone)]
 pub enum Method {
@@ -14,20 +16,27 @@ pub struct MarketDataDriver {
 }
 
 impl MarketDataDriver {
-    pub fn new(config: MarketDataConfig) -> Result<Self, EngineError> {
-        let redis_client = RedisClient::new(&config.redis_url)?;
-        let exchange_client = Self::create_exchange_client(&config, redis_client.clone())?;
+    /// Create a new MarketDataDriver with channel-based message handling
+    ///
+    /// # Arguments
+    /// * `config` - Market data configuration
+    /// * `market_data_tx` - Channel sender for publishing market data updates
+    pub fn new(
+        config: MarketDataConfig,
+        market_data_tx: MarketDataUpdateSender,
+    ) -> Result<Self, EngineError> {
+        let exchange_client = Self::create_exchange_client(&config, market_data_tx)?;
 
         Ok(Self { exchange_client })
     }
 
     pub fn create_exchange_client(
         config: &MarketDataConfig,
-        redis_client: RedisClient,
+        market_data_tx: MarketDataUpdateSender,
     ) -> Result<Box<dyn MarketDataClient>, EngineError> {
         match &config.exchange_config {
             ExchangeConfig::Binance(binance_config) => {
-                let message_handler = Box::new(RedisMessageHandler::new(redis_client));
+                let message_handler = Box::new(ChannelMessageHandler::new(market_data_tx));
                 Ok(Box::new(BinanceClient::new(
                     binance_config.clone(),
                     100,

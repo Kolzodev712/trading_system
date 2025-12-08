@@ -13,9 +13,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{error, info, warn};
 use trading_core::{
-    channels::{indicator_update_channel, market_data_update_channel},
-    traits::TradingClient,
-    types::common::Pair,
+    channels::indicator_update_channel, traits::TradingClient, types::common::Pair,
 };
 
 mod shutdown;
@@ -25,11 +23,11 @@ use clap::Parser;
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
-    /// Trading mode: "strategy" or "levels"
-    #[arg(short, long, default_value = "strategy")]
+    /// Trading mode: "strategies" or "levels"
+    #[arg(short, long, default_value = "levels")]
     mode: String,
 
-    /// Path to strategies config file (required if mode is "strategy")
+    /// Path to strategies config file (required if mode is "strategies")
     #[arg(short, long, default_value = "config/strategies.json")]
     strategies_config: String,
 
@@ -108,12 +106,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         max_delay: binance_config.max_delay,
     };
     let exchange_enum = bot_config.exchange.exchange.clone();
+    // Create market data channel
+    let (market_data_tx, market_data_rx) =
+        trading_core::channels::market_data::market_data_update_channel(1000);
+
     let market_data_config = MarketDataConfig {
-        redis_url: bot_config.redis.url.clone(),
+        redis_url: None, // Channels are used for internal communication
         exchange: exchange_enum,
         exchange_config: MDExchangeConfig::Binance(market_data_binance_config),
     };
-    let mut market_data_driver = MarketDataDriver::new(market_data_config)?;
+    let mut market_data_driver = MarketDataDriver::new(market_data_config, market_data_tx)?;
 
     let mut shutdown_rx_md = shutdown_manager.subscribe();
     let market_data_handle = tokio::spawn(async move {
@@ -129,47 +131,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
-    // Wait for market data to start and validate Redis connectivity
-    info!("Validating Redis connectivity...");
-    let redis_url: redis::ConnectionInfo = bot_config.redis.url.parse().map_err(|e| {
-        format!(
-            "Invalid Redis URL '{url}': {error}",
-            url = bot_config.redis.url,
-            error = e
-        )
-    })?;
-
-    let redis_client = redis::Client::open(redis_url.clone())
-        .map_err(|e| format!("Failed to create Redis client: {error}", error = e))?;
-
-    // Test Redis connection
-    let mut test_conn = redis_client.get_connection().map_err(|e| {
-        format!(
-            "Failed to connect to Redis: {error}. Please ensure Redis is running.",
-            error = e
-        )
-    })?;
-
-    let _: () = redis::cmd("PING")
-        .query(&mut test_conn)
-        .map_err(|e| format!("Redis PING failed: {error}", error = e))?;
-
-    info!("Redis connection validated successfully");
-
     // Wait for market data to start publishing
     tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
 
     // 1.5. Initialize Indicator Service
-    // NOTE: Currently, the Indicator Service is set up but won't receive data until
-    // the Market Data Engine is updated to publish to channels (Proposal 04).
-    // For now, this creates the structure and registers indicators.
     info!("Initializing Indicator Service...");
-    let (_market_data_tx, market_data_rx) = market_data_update_channel();
-    let (indicator_tx, _indicator_rx) = indicator_update_channel();
+    // Create a separate receiver for the indicator service (fan-out from same channel)
+    let indicator_market_data_rx = market_data_rx.resubscribe();
+    let (indicator_tx, _indicator_rx) = indicator_update_channel(1000);
 
     let mut indicator_service = IndicatorService::new();
     indicator_service.initialize(
-        market_data_rx,
+        indicator_market_data_rx,
         indicator_tx,
         1, // Publish every 1 second
     );
@@ -270,6 +243,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let services = SharedServices {
         trading_client,
         exec_report_rx,
+        market_data_rx,
         shutdown_manager,
         market_data_handle,
         trading_ws_handle,
@@ -277,14 +251,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     match args.mode.as_str() {
-        "strategy" => {
+        "strategies" => {
             strategy_runner(bot_config.clone(), args.strategies_config, services).await?;
         }
         "levels" => {
             level_runner(bot_config.clone(), args.levels_config, services).await?;
         }
         _ => {
-            return Err(format!("Unknown mode: {}. Use 'strategy' or 'levels'", args.mode).into());
+            return Err(
+                format!("Unknown mode: {}. Use 'strategies' or 'levels'", args.mode).into(),
+            );
         }
     }
 

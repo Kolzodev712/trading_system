@@ -2,16 +2,25 @@
 
 ## Overview
 
-This proposal outlines the integration of exchange market data (symbol info, trading rules, prices, etc.) into the level creation and management system. Market data is fetched via REST at bootstrap alongside other REST calls (balances, trades, open orders). Exchange values always take priority over config values, with config/UI as fallback. This is implemented as part of the `TradingClient` trait, requiring all exchanges to provide this functionality.
+This proposal outlines the integration of exchange market data (symbol info, trading rules, prices, etc.) into the level creation and management system. Market data is fetched via **public REST calls** at bootstrap. Exchange values always take priority over config values, with config/UI as fallback.
+
+**Key Architectural Decision**: Market data fetching (symbol info, trading rules, exchange limits) is handled by a **separate Asset Engine service**, not by the Trading Engine or Exchange Engine. This separation ensures:
+- Clear responsibility: Asset Engine = public asset data, Exchange Engine = trading operations
+- Reusability: Asset data can be used by config validation, level creation, and other services
+- Consistency: Follows the pattern of Market Data Engine and Exchange Engine as separate services
+
+**Note**: This proposal focuses on the Asset Engine design. The actual implementation will be done as part of future proposals. Redis to Channels migration is complete.
 
 ## Key Requirements
 
-1. **Market Data Fetching**: Fetch all market data (symbol info, trading rules, prices, orderbook snapshot, exchange limits) at bootstrap
-2. **Trait Requirement**: Part of `TradingClient` trait - all exchanges must implement
-3. **Priority System**: Exchange values always take priority over config values
-4. **Bootstrap Integration**: Fetch alongside balances, trades, open orders
-5. **TTL-Based Caching**: Cache market data with TTL (e.g., 5-10 minutes), refresh on-demand when stale
-6. **Fallback Strategy**: Fallback to JSON config or UI if exchange data unavailable
+1. **Asset Engine Service**: New service dedicated to fetching public asset data via REST (unsigned calls)
+2. **Market Data Fetching**: Fetch all market data (symbol info, trading rules, prices, orderbook snapshot, exchange limits) at bootstrap
+3. **Public REST Client**: Asset Engine uses unsigned REST calls (no API keys required)
+4. **Priority System**: Exchange values always take priority over config values
+5. **Bootstrap Integration**: Fetch at bootstrap, cache with TTL
+6. **TTL-Based Caching**: Cache market data with TTL (e.g., 5-10 minutes), refresh on-demand when stale
+7. **Fallback Strategy**: Fallback to JSON config or UI if exchange data unavailable
+8. **Exchange-Specific Implementations**: Each exchange (Binance, etc.) has its own asset data fetcher
 
 ## Architecture Overview
 
@@ -20,18 +29,48 @@ This proposal outlines the integration of exchange market data (symbol info, tra
 ```
 Bootstrap
     ↓
-Exchange REST Client
-    ├── fetch_balance()
-    ├── fetch_open_orders()
-    ├── fetch_trades()
-    └── fetch_market_data() (NEW)
-        ↓
-ExchangeStateManager
-    └── Store market data
+Asset Engine (NEW SERVICE)
+    ├── Public REST Client (unsigned)
+    │   ├── fetch_exchange_info() → Symbol info, trading rules
+    │   ├── fetch_ticker_prices() → Current prices
+    │   ├── fetch_orderbook_snapshot() → Orderbook depth
+    │   └── fetch_exchange_limits() → Rate limits, position limits
+    │
+    └── Asset Data Service
+        ├── Cache asset data (TTL-based)
+        ├── Provide symbol validation
+        └── Publish asset updates (optional, via channel)
         ↓
 Level Manager / Level Resolver
-    ├── Check Exchange Market Data (priority)
+    ├── Check Asset Engine Data (priority)
     └── Fallback to Config/UI
+```
+
+### Component Separation
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                    Asset Engine                          │
+│  (Public REST calls only - no authentication)          │
+├─────────────────────────────────────────────────────────┤
+│  exchanges/                                             │
+│    └── binance/                                         │
+│        ├── public_client.rs      (REST client, unsigned)│
+│        └── asset_service.rs      (caches, validates)     │
+└─────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────┐
+│                    Exchange Engine                       │
+│  (Trading operations - requires authentication)         │
+├─────────────────────────────────────────────────────────┤
+│  - WebSocket: Execution reports, balances, orders      │
+│  - REST: Signed calls for trading                      │
+└─────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────┐
+│                    Trading Engine                        │
+│  (Uses Asset Engine data for validation/resolution)     │
+└─────────────────────────────────────────────────────────┘
 ```
 
 ### Component Structure
@@ -39,65 +78,145 @@ Level Manager / Level Resolver
 ```
 trading_system/
 ├── src/
-│   ├── libs/
-│   │   ├── exchange/
-│   │   │   ├── core/
-│   │   │   │   └── traits.rs
-│   │   │   │       └── TradingClient trait
-│   │   │   │           └── fetch_market_data() (NEW)
-│   │   │   └── binance/
-│   │   │       ├── rest_client.rs
-│   │   │       │   └── fetch_market_data() (NEW implementation)
-│   │   │       └── state/
-│   │   │           └── manager.rs
-│   │   │               └── fetch_market_data() (bootstrap call)
-│   │   │
-│   │   └── shared/
-│   │       └── data_types.rs
-│   │           └── ExchangeMarketData types (NEW)
+│   ├── asset_engine/              (NEW SERVICE)
+│   │   ├── src/
+│   │   │   ├── lib.rs
+│   │   │   ├── service.rs         # AssetService - main service
+│   │   │   ├── cache.rs           # TTL-based caching
+│   │   │   └── exchanges/
+│   │   │       └── binance/
+│   │   │           ├── public_client.rs  # Public REST client (unsigned)
+│   │   │           └── asset_service.rs  # Binance-specific asset data
+│   │   └── Cargo.toml
+│   │
+│   ├── exchange_engine/           (EXISTING - trading operations)
+│   │   └── exchanges/
+│   │       └── binance/
+│   │           ├── ws_client.rs   # WebSocket (execution reports, balances)
+│   │           └── rest_client.rs  # Signed REST (trading operations)
 │   │
 │   └── trading_engine/
 │       └── level/
 │           ├── resolver.rs
-│           │   └── Use exchange market data (priority)
+│           │   └── Use Asset Engine data (priority)
 │           └── config.rs
 │               └── Resolve with priority system
+│
+└── libs/
+    └── trading_core/
+        └── types/
+            └── asset.rs           # Asset data types (NEW)
 ```
 
 ## Detailed Component Design
 
-### 1. TradingClient Trait Update (`exchange/core/traits.rs`)
+### 1. Asset Engine Service (`asset_engine/src/service.rs`)
 
-**Purpose**: Add market data fetching to the trait contract.
+**Purpose**: Main service for fetching and caching asset data.
 
 ```rust
+pub struct AssetService {
+    cache: Arc<RwLock<AssetDataCache>>,
+    exchange_clients: HashMap<Exchange, Box<dyn AssetDataClient>>,
+}
+
 #[async_trait]
-pub trait TradingClient<OrderRequest, InstrumentId = Pair>: Debug + Send + Sync + 'static
-where
-    OrderRequest: Send + Sync + 'static,
-    InstrumentId: Clone + Debug + Send + 'static,
-{
-    // ... existing methods ...
+pub trait AssetDataClient: Send + Sync + Debug {
+    /// Fetch exchange info (symbols, trading rules)
+    async fn fetch_exchange_info(&self) -> Result<ExchangeInfo, EngineError>;
     
-    /// Fetches market data for configured pairs
-    ///
-    /// This method must be implemented by all exchanges and should return
-    /// comprehensive market data including symbol info, trading rules, prices, etc.
-    ///
-    /// # Parameters
-    /// - `pairs`: List of trading pairs to fetch market data for
-    ///
-    /// # Returns
-    /// - `Ok(ExchangeMarketData)`: Market data for the requested pairs
-    /// - `Err(EngineError)`: If the fetch fails
-    async fn fetch_market_data(
+    /// Fetch current ticker prices
+    async fn fetch_ticker_prices(&self, pairs: &[Pair]) -> Result<HashMap<Pair, Decimal>, EngineError>;
+    
+    /// Fetch orderbook snapshot
+    async fn fetch_orderbook_snapshot(&self, pair: &Pair) -> Result<Orderbook, EngineError>;
+    
+    /// Fetch exchange limits (rate limits, position limits)
+    async fn fetch_exchange_limits(&self) -> Result<ExchangeLimits, EngineError>;
+}
+
+impl AssetService {
+    /// Fetch comprehensive market data for pairs
+    pub async fn fetch_market_data(
         &self,
-        pairs: &[InstrumentId],
-    ) -> Result<ExchangeMarketData, EngineError>;
+        exchange: Exchange,
+        pairs: &[Pair],
+    ) -> Result<ExchangeMarketData, EngineError> {
+        // Check cache first
+        if let Some(cached) = self.get_cached_market_data(exchange, pairs) {
+            if !cached.is_stale() {
+                return Ok(cached.data);
+            }
+        }
+        
+        // Fetch fresh data
+        let client = self.exchange_clients.get(&exchange)
+            .ok_or_else(|| EngineError::UnsupportedExchange)?;
+        
+        let exchange_info = client.fetch_exchange_info().await?;
+        let prices = client.fetch_ticker_prices(pairs).await?;
+        let limits = client.fetch_exchange_limits().await?;
+        
+        // Build market data
+        let market_data = ExchangeMarketData {
+            symbol_info: self.parse_symbol_info(&exchange_info, pairs)?,
+            trading_rules: self.parse_trading_rules(&exchange_info, pairs)?,
+            current_prices: prices,
+            exchange_limits: limits,
+            last_updated: current_timestamp(),
+        };
+        
+        // Update cache
+        self.update_cache(exchange, market_data.clone()).await;
+        
+        Ok(market_data)
+    }
 }
 ```
 
-### 2. Exchange Market Data Types (`shared/data_types.rs`)
+### 2. Asset Engine Binance Implementation (`asset_engine/src/exchanges/binance/public_client.rs`)
+
+**Purpose**: Binance-specific public REST client (unsigned calls only).
+
+```rust
+pub struct BinancePublicClient {
+    base_url: String,
+    http_client: Client,
+}
+
+impl BinancePublicClient {
+    pub fn new(base_url: String) -> Self {
+        Self {
+            base_url,
+            http_client: Client::new(),
+        }
+    }
+    
+    /// Fetch exchange info (public endpoint, no auth)
+    pub async fn fetch_exchange_info(&self) -> Result<BinanceExchangeInfo, EngineError> {
+        let url = format!("{}/api/v3/exchangeInfo", self.base_url);
+        let response = self.http_client
+            .get(&url)
+            .send()
+            .await?;
+        
+        let exchange_info: BinanceExchangeInfo = response.json().await?;
+        Ok(exchange_info)
+    }
+    
+    /// Fetch ticker prices (public endpoint, no auth)
+    pub async fn fetch_ticker_prices(&self, pairs: &[Pair]) -> Result<HashMap<Pair, Decimal>, EngineError> {
+        // Implementation
+    }
+    
+    /// Fetch orderbook snapshot (public endpoint, no auth)
+    pub async fn fetch_orderbook_snapshot(&self, pair: &Pair) -> Result<Orderbook, EngineError> {
+        // Implementation
+    }
+}
+```
+
+### 3. Exchange Market Data Types (`libs/trading_core/src/types/asset.rs`)
 
 **Purpose**: Common types for exchange market data.
 
@@ -233,191 +352,99 @@ pub enum RateLimitType {
 }
 ```
 
-### 3. Binance REST Client Implementation (`exchange/binance/rest_client.rs`)
+### 4. Asset Engine Integration in Runner (`runner/src/main.rs`)
 
-**Purpose**: Binance-specific implementation of market data fetching.
+**Purpose**: Initialize Asset Engine at bootstrap.
 
 ```rust
-impl TradingClient<OrderRequest> for BinanceClient {
-    async fn fetch_market_data(
-        &self,
-        pairs: &[Pair],
-    ) -> Result<ExchangeMarketData, EngineError> {
-        // 1. Fetch exchange info (symbols, trading rules)
-        let exchange_info = self.fetch_exchange_info().await?;
-        
-        // 2. Fetch current prices (ticker)
-        let prices = self.fetch_ticker_prices(pairs).await?;
-        
-        // 3. Fetch orderbook snapshots (optional, for depth)
-        let orderbooks = self.fetch_orderbook_snapshots(pairs).await?;
-        
-        // 4. Parse and build ExchangeMarketData
-        let market_data = self.build_market_data(
-            exchange_info,
-            prices,
-            orderbooks,
-            pairs,
-        )?;
-        
-        Ok(market_data)
-    }
+// At bootstrap
+let asset_service = AssetService::new()?;
+asset_service.register_exchange(
+    Exchange::Binance,
+    Box::new(BinancePublicClient::new(binance_base_url)),
+)?;
+
+// Fetch market data at bootstrap
+let market_data = asset_service
+    .fetch_market_data(Exchange::Binance, &configured_pairs)
+    .await?;
+
+// Pass to level manager/resolver
+let level_manager = LevelManager::new(
+    asset_service.clone(),  // Pass asset service for market data access
+    // ... other params
+);
+```
+
+### 5. Level Resolver Integration (`trading_engine/src/levels/resolver.rs`)
+
+**Purpose**: Use Asset Engine data for level resolution.
+
+```rust
+pub struct LevelResolver {
+    asset_service: Option<Arc<AssetService>>,  // Asset Engine reference
 }
 
-impl BinanceClient {
-    /// Fetch exchange info from Binance API
-    async fn fetch_exchange_info(&self) -> Result<BinanceExchangeInfo, EngineError>;
+impl LevelResolver {
+    /// Get trading rules for a pair (from Asset Engine)
+    pub async fn get_trading_rules(&self, pair: &Pair) -> Option<TradingRules> {
+        if let Some(service) = &self.asset_service {
+            service.get_trading_rules(pair).await
+        } else {
+            None  // Fallback to config
+        }
+    }
     
-    /// Fetch ticker prices for pairs
-    async fn fetch_ticker_prices(
-        &self,
-        pairs: &[Pair],
-    ) -> Result<HashMap<Pair, Decimal>, EngineError>;
-    
-    /// Fetch orderbook snapshots
-    async fn fetch_orderbook_snapshots(
-        &self,
-        pairs: &[Pair],
-    ) -> Result<HashMap<Pair, Orderbook>, EngineError>;
-    
-    /// Build ExchangeMarketData from Binance responses
-    fn build_market_data(
-        &self,
-        exchange_info: BinanceExchangeInfo,
-        prices: HashMap<Pair, Decimal>,
-        orderbooks: HashMap<Pair, Orderbook>,
-        pairs: &[Pair],
-    ) -> Result<ExchangeMarketData, EngineError>;
-    
-    /// Parse trading rules from Binance symbol filters
-    fn parse_trading_rules(
-        &self,
-        symbol: &BinanceSymbol,
-    ) -> Result<TradingRules, EngineError>;
+    /// Get current price for a pair (from Asset Engine)
+    pub async fn get_current_price(&self, pair: &Pair) -> Option<Decimal> {
+        if let Some(service) = &self.asset_service {
+            service.get_current_price(pair).await
+        } else {
+            None  // Fallback to config
+        }
+    }
 }
 ```
 
-### 4. Exchange State Manager Integration (`exchange/binance/state/manager.rs`)
+### 6. Asset Engine Caching (`asset_engine/src/cache.rs`)
 
-**Purpose**: Fetch and store market data at bootstrap.
+**Purpose**: TTL-based caching for asset data.
 
 ```rust
-impl ExchangeStateManager {
-    /// Bootstrap: Fetch all initial data including market data
-    pub async fn bootstrap(
-        &mut self,
-        configured_pairs: &[Pair],
-    ) -> Result<(), EngineError> {
-        // 1. Fetch balances
-        let balances = self.trading_client.read().await.fetch_balance().await?;
-        
-        // 2. Fetch open orders
-        let orders = self.fetch_open_orders(configured_pairs).await?;
-        
-        // 3. Fetch trades (last 24h)
-        let trades = self.fetch_trades(configured_pairs).await?;
-        
-        // 4. Fetch market data (NEW) - with caching
-        let market_data = self.fetch_market_data_cached(configured_pairs).await?;
-        
-        // 5. Store in state
-        self.state.write().await.market_data = market_data;
-        
-        Ok(())
-    }
-    
-    /// Fetch market data with TTL-based caching
-    async fn fetch_market_data_cached(
-        &self,
-        pairs: &[Pair],
-    ) -> Result<ExchangeMarketData, EngineError> {
-        // Check cache first
-        if let Some(cached) = self.get_cached_market_data(pairs) {
-            if !cached.is_stale() {
-                return Ok(cached.data);
+pub struct AssetDataCache {
+    data: HashMap<Exchange, ExchangeMarketData>,
+    cache_metadata: HashMap<Exchange, CacheMetadata>,
+    default_ttl: Duration,  // e.g., 5-10 minutes
+}
+
+pub struct CacheMetadata {
+    cached_at: Instant,
+    ttl: Duration,
+}
+
+impl AssetDataCache {
+    /// Get cached data if available and not stale
+    pub fn get(&self, exchange: Exchange) -> Option<&ExchangeMarketData> {
+        if let Some(metadata) = self.cache_metadata.get(&exchange) {
+            if metadata.cached_at.elapsed() < metadata.ttl {
+                return self.data.get(&exchange);
             }
         }
-        
-        // Cache miss or stale - fetch fresh
-        let market_data = self.trading_client.read().await
-            .fetch_market_data(pairs).await?;
-        
-        // Update cache
-        self.update_market_data_cache(market_data.clone()).await;
-        
-        Ok(market_data)
+        None
     }
     
-    /// Get cached market data if available and not stale
-    fn get_cached_market_data(&self, pairs: &[Pair]) -> Option<CachedMarketData>;
-    
-    /// Update market data cache
-    async fn update_market_data_cache(&self, data: ExchangeMarketData);
-    
-    /// Get trading rules for a pair
-    pub fn get_trading_rules(&self, pair: &Pair) -> Option<TradingRules> {
-        self.state.read().await
-            .market_data
-            .trading_rules
-            .get(pair)
-            .cloned()
-    }
-    
-    /// Get current price for a pair
-    pub fn get_current_price(&self, pair: &Pair) -> Option<Decimal> {
-        self.state.read().await
-            .market_data
-            .current_prices
-            .get(pair)
-            .cloned()
-    }
-    
-    /// Get symbol info for a pair
-    pub fn get_symbol_info(&self, pair: &Pair) -> Option<SymbolInfo> {
-        self.state.read().await
-            .market_data
-            .symbol_info
-            .get(pair)
-            .cloned()
+    /// Update cache
+    pub fn update(&mut self, exchange: Exchange, data: ExchangeMarketData) {
+        self.data.insert(exchange.clone(), data);
+        self.cache_metadata.insert(exchange, CacheMetadata {
+            cached_at: Instant::now(),
+            ttl: self.default_ttl,
+        });
     }
 }
 ```
 
-### 5. Exchange State Update (`exchange/binance/state/state.rs`)
-
-**Purpose**: Store market data in state with caching.
-
-```rust
-pub struct ExchangeState {
-    // ... existing fields ...
-    
-    /// Market data (fetched at bootstrap, cached with TTL)
-    pub market_data: ExchangeMarketData,
-    
-    /// Market data cache metadata
-    pub market_data_cache: MarketDataCache,
-}
-
-pub struct MarketDataCache {
-    data: ExchangeMarketData,
-    cached_at: Instant,
-    ttl: Duration,  // e.g., 5-10 minutes
-}
-
-impl MarketDataCache {
-    /// Check if cache is still valid
-    pub fn is_valid(&self) -> bool {
-        self.cached_at.elapsed() < self.ttl
-    }
-    
-    /// Check if cache is stale
-    pub fn is_stale(&self) -> bool {
-        !self.is_valid()
-    }
-}
-```
-
-### 6. Level Resolver Update (`trading_engine/level/resolver.rs`)
+### 7. Level Resolver Update (`trading_engine/level/resolver.rs`)
 
 **Purpose**: Use exchange market data with priority over config.
 
@@ -657,7 +684,7 @@ impl IndicatorResolver {
 }
 ```
 
-### 7. Level Config Priority System (`trading_engine/level/config.rs`)
+### 8. Level Config Priority System (`trading_engine/level/config.rs`)
 
 **Purpose**: Document and enforce priority system.
 
@@ -687,15 +714,22 @@ impl LevelConfig {
 ### 1. Bootstrap Integration
 
 ```rust
-// In runner/main.rs or exchange engine bootstrap
-let mut exchange_state_manager = ExchangeStateManager::new(...);
+// In runner/main.rs
+// 1. Initialize Asset Engine
+let asset_service = AssetService::new()?;
+asset_service.register_exchange(
+    Exchange::Binance,
+    Box::new(BinancePublicClient::new(binance_base_url)),
+)?;
 
-// Bootstrap: Fetch all data including market data (with caching)
-exchange_state_manager.bootstrap(&configured_pairs).await?;
+// 2. Fetch market data at bootstrap
+let market_data = asset_service
+    .fetch_market_data(Exchange::Binance, &configured_pairs)
+    .await?;
 
-// Now market data is available for level creation
+// 3. Initialize Level Manager with Asset Engine
 let level_manager = LevelManager::new(
-    exchange_state_manager.clone(),  // Pass for market data access
+    asset_service.clone(),  // Pass asset service for market data access
     // ... other params
 );
 ```
@@ -710,32 +744,35 @@ tokio::spawn(async move {
     loop {
         interval.tick().await;
         
-        // Check if cache is stale
-        if exchange_state_manager.is_market_data_stale() {
-            // Refresh market data
-            let market_data = exchange_state_manager
-                .fetch_market_data_cached(&configured_pairs)
-                .await?;
-            
-            // Update state
-            exchange_state_manager.update_market_data(market_data).await?;
+        // Refresh market data (Asset Engine handles caching internally)
+        if let Err(e) = asset_service
+            .fetch_market_data(Exchange::Binance, &configured_pairs)
+            .await
+        {
+            warn!("Failed to refresh market data: {}", e);
         }
     }
 });
 ```
 
-### 2. Level Creation Integration
+### 3. Level Creation Integration
 
 ```rust
 // In level manager
 impl LevelManager {
-    pub fn create_level(
+    pub async fn create_level(
         &mut self,
         config: LevelConfig,
-        exchange_data: Option<&ExchangeMarketData>,
     ) -> Result<Level, EngineError> {
+        // Get market data from Asset Engine
+        let market_data = if let Some(service) = &self.asset_service {
+            service.get_market_data(&config.symbol).await
+        } else {
+            None
+        };
+        
         // Resolve level config with priority
-        let resolved = config.resolve_with_priority(exchange_data, &config.symbol);
+        let resolved = config.resolve_with_priority(market_data.as_ref(), &config.symbol);
         
         // Create level with resolved values
         Level::new(resolved)
@@ -743,7 +780,7 @@ impl LevelManager {
 }
 ```
 
-### 3. Level Execution Integration
+### 4. Level Execution Integration
 
 ```rust
 // In level executor
@@ -754,9 +791,8 @@ impl LevelExecutor {
         indicators: &HashMap<String, IndicatorValue>,
         orderbook: Option<&Orderbook>,
     ) -> Result<ResolvedLevel, EngineError> {
-        // Get exchange market data
-        let market_data = self.exchange_state_manager
-            .get_market_data(&level.config.symbol);
+        // Get market data from Asset Engine (via resolver)
+        // Resolver already has Asset Engine reference
         
         // Resolve with priority
         let price = self.resolver.resolve_price(
@@ -764,14 +800,14 @@ impl LevelExecutor {
             &level.config.symbol,
             indicators,
             orderbook,
-        )?;
+        ).await?;
         
         let quantity = self.resolver.resolve_quantity(
             &level.config.quantity,
             &level.config.symbol,
             balance,
             price,
-        )?;
+        ).await?;
         
         Ok(ResolvedLevel { price, quantity, ... })
     }
@@ -780,48 +816,43 @@ impl LevelExecutor {
 
 ## Error Handling
 
-### 1. Exchange Data Unavailable
+### 1. Asset Engine Data Unavailable
 
 ```rust
 // In level resolver
-if let Some(rules) = self.get_trading_rules(pair) {
-    // Use exchange data
+if let Some(rules) = self.get_trading_rules(pair).await {
+    // Use Asset Engine data
 } else {
     // Fallback to config
-    warn!("Exchange market data unavailable for {}, using config values", pair);
+    warn!("Asset Engine data unavailable for {}, using config values", pair);
     // Use config values
 }
 ```
 
-### 2. Exchange Data Fetch Failure
+### 2. Asset Engine Fetch Failure
 
 ```rust
 // In bootstrap
-match trading_client.fetch_market_data(&pairs).await {
+match asset_service.fetch_market_data(Exchange::Binance, &pairs).await {
     Ok(market_data) => {
-        // Store in state with cache metadata
-        state.market_data = market_data;
-        state.market_data_cache.update(Instant::now());
+        // Asset Engine handles caching internally
+        info!("Market data fetched successfully");
     }
     Err(e) => {
         warn!("Failed to fetch market data: {}. Levels will use config values.", e);
-        // Continue with empty market data - will fallback to config
-        // Try to use cached data if available (even if stale)
-        if let Some(cached) = state.market_data_cache.get_stale() {
-            warn!("Using stale cached market data");
-            state.market_data = cached;
-        }
+        // Continue - Asset Engine may have stale cache
+        // Level resolver will fallback to config if Asset Engine unavailable
     }
 }
 ```
 
-### 3. Invalid Exchange Data
+### 3. Invalid Asset Data
 
 ```rust
-// Validate exchange data
+// Validate asset data
 if let Some(rules) = &trading_rules {
     if rules.min_order_size <= Decimal::ZERO {
-        warn!("Invalid min_order_size from exchange, using config");
+        warn!("Invalid min_order_size from Asset Engine, using config");
         // Fallback to config
     }
 }
@@ -830,16 +861,11 @@ if let Some(rules) = &trading_rules {
 ### 4. Cache Stale
 
 ```rust
-// When cache is stale, refresh in background
-if market_data_cache.is_stale() {
-    // Use stale data for now (better than nothing)
-    // Trigger background refresh
-    tokio::spawn(async move {
-        if let Ok(fresh_data) = fetch_market_data().await {
-            update_cache(fresh_data).await;
-        }
-    });
-}
+// Asset Engine handles cache refresh internally
+// When cache is stale, Asset Engine can:
+// 1. Use stale data (if available)
+// 2. Trigger background refresh
+// 3. Fallback to config if refresh fails
 ```
 
 ## Performance Optimizations
@@ -885,16 +911,18 @@ if market_data_cache.is_stale() {
 
 ## Success Criteria
 
-- [ ] `fetch_market_data()` added to `TradingClient` trait
-- [ ] All exchanges implement `fetch_market_data()`
-- [ ] Market data fetched at bootstrap
+- [ ] Asset Engine service created
+- [ ] Asset Engine uses public REST client (unsigned calls only)
+- [ ] Binance implementation in Asset Engine
+- [ ] Asset Engine caches data with TTL
+- [ ] Market data fetched at bootstrap via Asset Engine
 - [ ] Exchange values take priority over config
-- [ ] Fallback to config when exchange data unavailable
-- [ ] Level resolver uses exchange trading rules
-- [ ] Quantities rounded to step size (from exchange)
-- [ ] Prices rounded to tick size (from exchange)
-- [ ] Min/max validations use exchange limits
-- [ ] System works with or without exchange data
+- [ ] Fallback to config when Asset Engine data unavailable
+- [ ] Level resolver uses Asset Engine trading rules
+- [ ] Quantities rounded to step size (from Asset Engine)
+- [ ] Prices rounded to tick size (from Asset Engine)
+- [ ] Min/max validations use Asset Engine limits
+- [ ] System works with or without Asset Engine data
 
 ## Future Enhancements (Out of Scope)
 
@@ -905,13 +933,15 @@ if market_data_cache.is_stale() {
 
 ## Notes
 
-- **Part of TradingClient trait** - all exchanges must implement
-- **Fetched at bootstrap** - alongside balances, trades, orders
+- **Separate Asset Engine service** - dedicated to public asset data
+- **Public REST calls only** - no authentication required
+- **Fetched at bootstrap** - via Asset Engine
 - **Exchange values always priority** - most accurate source
-- **Config/UI as fallback** - when exchange data unavailable
+- **Config/UI as fallback** - when Asset Engine data unavailable
 - **TTL-based caching** - Cache for 5-10 minutes, refresh on-demand
-- **Integrated in exchange engine** - not a separate system
 - **Used in level resolver** - for price/quantity resolution and validation
-- **Background refresh** - Refresh cache before expiration
+- **Background refresh** - Asset Engine handles cache refresh
 - **Stale data fallback** - Use stale cache if fresh fetch fails
+- **Follows service pattern** - Similar to Market Data Engine and Exchange Engine
+- **Reusable** - Asset data can be used by config validation, level creation, etc.
 

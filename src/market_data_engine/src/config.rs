@@ -9,7 +9,10 @@ pub trait ConfigGetter<T> {
 
 #[derive(Debug, PartialEq, Eq, Deserialize, Serialize, Clone)]
 pub struct MarketDataConfig {
-    pub redis_url: String,
+    /// Redis URL (optional, only needed if using Redis feature)
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub redis_url: Option<String>,
     pub exchange: Exchange,
     pub exchange_config: ExchangeConfig,
 }
@@ -50,7 +53,6 @@ mod tests {
     fn test_market_data_config_deserialization() {
         let json = r#"
         {
-            "redis_url": "redis://localhost:6379",
             "exchange": "Binance",
             "exchange_config": {
                 "Binance": {
@@ -68,7 +70,7 @@ mod tests {
 
         let config: MarketDataConfig = serde_json::from_str(json).unwrap();
 
-        assert_eq!(config.redis_url, "redis://localhost:6379");
+        assert_eq!(config.redis_url, None);
         assert_eq!(config.exchange, Exchange::Binance);
         assert_eq!(
             config.exchange_config,
@@ -89,7 +91,7 @@ mod tests {
     #[test]
     fn test_get_exchange_config_success() {
         let config = MarketDataConfig {
-            redis_url: "redis://localhost:6379".into(),
+            redis_url: None,
             exchange: Exchange::Binance,
             exchange_config: ExchangeConfig::Binance(BinanceConfig {
                 symbol: Pair {

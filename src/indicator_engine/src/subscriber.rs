@@ -20,43 +20,78 @@ impl MarketDataSubscriber {
 
     /// Start listening for market data updates
     pub async fn run(&mut self) -> Result<(), SubscriberError> {
-        while let Some(update) = self.receiver.recv().await {
-            self.handle_update(update).await?;
+        loop {
+            match self.receiver.recv().await {
+                Ok(update) => {
+                    if let Err(e) = self.handle_update(update).await {
+                        tracing::error!("Error handling market data update: {}", e);
+                    }
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                    tracing::warn!(
+                        "Market data receiver lagged, skipped {skipped} messages. This may indicate slow processing."
+                    );
+                    // Continue receiving - broadcast channels automatically skip lagged messages
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                    tracing::warn!("Market data channel closed - shutting down subscriber");
+                    break;
+                }
+            }
         }
         Ok(())
     }
 
     async fn handle_update(&self, update: MarketDataUpdate) -> Result<(), SubscriberError> {
-        // Process orderbook updates
-        for orderbook in update.orderbooks {
-            let bid_price = orderbook
-                .best_bid_price()
-                .ok_or_else(|| SubscriberError::MissingPrice(SmolStr::new("bid")))?;
-            let ask_price = orderbook
-                .best_ask_price()
-                .ok_or_else(|| SubscriberError::MissingPrice(SmolStr::new("ask")))?;
+        match update {
+            MarketDataUpdate::Orderbook(orderbook) => {
+                // LegacyOrderbook doesn't have best_bid_price/best_ask_price methods
+                // We need to extract prices from the bids/asks vectors
+                let bid_price = orderbook
+                    .bids
+                    .get(0)
+                    .copied()
+                    .ok_or_else(|| SubscriberError::MissingPrice(SmolStr::new("bid")))?;
+                let ask_price = orderbook
+                    .asks
+                    .get(0)
+                    .copied()
+                    .ok_or_else(|| SubscriberError::MissingPrice(SmolStr::new("ask")))?;
 
-            let price_point = PricePoint::from_orderbook(
-                bid_price,
-                ask_price,
-                orderbook.total_volume(),
-                orderbook.timestamp,
-            );
+                // Calculate total volume
+                let total_volume: rust_decimal::Decimal = orderbook
+                    .bids
+                    .iter()
+                    .skip(1)
+                    .step_by(2)
+                    .chain(orderbook.asks.iter().skip(1).step_by(2))
+                    .sum();
 
-            let pair_str = orderbook.pair.convert_to_smolstr();
-            self.calculator
-                .update(pair_str.as_str(), price_point)
-                .map_err(SubscriberError::CalculatorError)?;
-        }
+                // Use current timestamp since LegacyOrderbook doesn't have timestamp field
+                let timestamp = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_millis() as u64;
 
-        // Process trade updates
-        for trade in update.trades {
-            let price_point = PricePoint::from_trade(trade.price, trade.quantity, trade.timestamp);
+                let price_point =
+                    PricePoint::from_orderbook(bid_price, ask_price, total_volume, timestamp);
 
-            let pair_str = trade.pair.convert_to_smolstr();
-            self.calculator
-                .update(pair_str.as_str(), price_point)
-                .map_err(SubscriberError::CalculatorError)?;
+                // For LegacyOrderbook, we don't have pair info, so we'll need to handle this differently
+                // For now, we'll skip pair-specific updates or use a default
+                // TODO: Update to use StructuredOrderbook which has pair info
+                self.calculator
+                    .update("default", price_point) // Using "default" as placeholder
+                    .map_err(SubscriberError::CalculatorError)?;
+            }
+            MarketDataUpdate::Trade(trade) => {
+                let price_point = PricePoint::from_trade(trade.price, trade.quantity, trade.time);
+
+                // For LegacyTrade, we don't have pair info
+                // TODO: Update to use StructuredPublicTrade which has pair info
+                self.calculator
+                    .update("default", price_point) // Using "default" as placeholder
+                    .map_err(SubscriberError::CalculatorError)?;
+            }
         }
 
         Ok(())

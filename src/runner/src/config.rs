@@ -17,7 +17,8 @@ pub struct BotConfig {
     /// HTTP server configuration
     pub server: ServerConfig,
 
-    /// Redis configuration
+    /// Redis configuration (optional, only needed if using Redis feature)
+    #[serde(default)]
     pub redis: RedisConfig,
 
     /// Feature flags
@@ -59,19 +60,29 @@ pub struct ServerConfig {
     pub port: u16,
 }
 
-/// Redis configuration
+/// Redis configuration (optional, only needed if using Redis feature for Web UI)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RedisConfig {
-    /// Redis connection URL
+    /// Redis connection URL (optional)
+    #[serde(default)]
     pub url: String,
 
-    /// Whether Redis is enabled
+    /// Whether Redis is enabled (defaults to false - channels are used for internal communication)
     #[serde(default = "default_redis_enabled")]
     pub enabled: bool,
 }
 
 fn default_redis_enabled() -> bool {
     false
+}
+
+impl Default for RedisConfig {
+    fn default() -> Self {
+        Self {
+            url: String::new(),
+            enabled: false,
+        }
+    }
 }
 
 /// Feature flags for enabling/disabling system features
@@ -98,7 +109,7 @@ fn default_true() -> bool {
     true
 }
 
-/// Strategy-specific configuration - trading parameters for strategy mode
+/// Strategy-specific configuration - trading parameters for strategies mode
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StrategiesConfig {
     /// Strategy type: "BuyLowSellHigh", "MeanReversion", etc.
@@ -165,9 +176,8 @@ impl BotConfig {
         if self.server.port == 0 {
             return Err("Server port must be greater than zero".to_string());
         }
-        if self.redis.url.is_empty() && self.redis.enabled {
-            return Err("Redis URL cannot be empty when Redis is enabled".to_string());
-        }
+        // Redis validation removed - channels are used for internal communication
+        // Redis is only needed if Web UI feature is enabled (future)
         Ok(())
     }
 }
@@ -210,7 +220,3 @@ impl StrategiesConfig {
         Ok(())
     }
 }
-
-// Legacy type alias for backward compatibility during migration
-/// @deprecated: Use BotConfig instead. This will be removed.
-pub type TradingSystemConfig = BotConfig;

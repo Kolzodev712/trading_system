@@ -61,19 +61,20 @@ pub struct SharedServices {
     pub exec_report_rx: tokio::sync::mpsc::Receiver<
         exchange_engine::exchanges::binance::websocket::types::user_data::execution_report::ExecutionReport,
     >,
+    pub market_data_rx: trading_core::channels::market_data::MarketDataUpdateReceiver,
     pub shutdown_manager: ShutdownManager,
     pub market_data_handle: JoinHandle<()>,
     pub trading_ws_handle: JoinHandle<()>,
     pub indicator_handle: JoinHandle<()>,
 }
 
-/// Run strategy mode
+/// Run strategies mode
 pub async fn strategy_runner(
     bot_config: BotConfig,
     strategies_config_path: String,
     services: SharedServices,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    info!("=== Running in STRATEGY mode ===");
+    info!("=== Running in STRATEGIES mode ===");
 
     let strategies_config = StrategiesConfig::load_from_file(&strategies_config_path)?;
     strategies_config.validate()?;
@@ -110,7 +111,7 @@ pub async fn strategy_runner(
     let executor = StrategyExecutor::new(
         strategy.clone(),
         services.trading_client.clone(),
-        bot_config.redis.url.clone(),
+        services.market_data_rx.resubscribe(),
         strategies_config.symbol.clone(),
         min_order_size,
         step_size,
@@ -254,7 +255,7 @@ pub async fn level_runner(
 
     // Create indicator subscriber
     // NOTE: For now, create a new channel. In the future, this should come from SharedServices
-    let (_indicator_tx, indicator_rx) = indicator_update_channel();
+    let (_indicator_tx, indicator_rx) = indicator_update_channel(1000);
     let indicator_subscriber = Arc::new(RwLock::new(IndicatorSubscriber::new(indicator_rx)));
 
     // Start indicator subscriber task
@@ -294,7 +295,7 @@ pub async fn level_runner(
         indicator_subscriber,
         services.trading_client.clone(),
         trading_state.clone(),
-        bot_config.redis.url.clone(),
+        services.market_data_rx.resubscribe(),
         symbol.clone(),
     );
 

@@ -39,10 +39,10 @@ ring = { workspace = true }
 pem = { workspace = true }
 uuid = { workspace = true }
 
-# Storage
-redis = { workspace = true }
+# Storage (optional, behind feature flag)
+redis = { workspace = true, optional = true }
 
-# Utrils
+# Utils
 smol_str = { workspace = true }
 futures-util = { workspace = true }
 chrono = { workspace = true }
@@ -53,4 +53,6 @@ rand = { workspace = true }
 # Testing
 tokio-test = { workspace = true }
 
-
+[features]
+default = []
+redis = ["dep:redis"]

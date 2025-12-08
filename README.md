@@ -5,7 +5,7 @@ A modular, exchange-agnostic trading system built in Rust with support for real-
 ## Features
 
 - **Exchange Integration**: Currently supports Binance (spot trading)
-- **Real-time Market Data**: WebSocket-based orderbook streaming via Redis
+- **Real-time Market Data**: WebSocket-based orderbook streaming via broadcast channels
 - **Strategy Execution**: BuyLowSellHigh strategy with stop-loss and take-profit
 - **Order Management**: Full order lifecycle tracking with status management
 - **Position Reconciliation**: Automatic position sync with exchange
@@ -17,7 +17,7 @@ A modular, exchange-agnostic trading system built in Rust with support for real-
 
 The system is organized into several modules:
 
-- **`core_logic`**: Core abstractions, data types, and traits
+- **`trading_core`**: Core abstractions, data types, traits, and channel infrastructure
 - **`exchange_engine`**: Exchange-specific implementations (Binance)
 - **`market_data_engine`**: Market data collection and streaming
 - **`trading_engine`**: Strategy execution and order management
@@ -25,8 +25,8 @@ The system is organized into several modules:
 
 ### Data Flow
 
-1. **Market Data Engine** → Connects to Binance WebSocket → Receives orderbook updates → Publishes to Redis
-2. **Strategy Executor** → Subscribes to Redis → Receives orderbook updates → Calls strategy logic
+1. **Market Data Engine** → Connects to Binance WebSocket → Receives orderbook updates → Publishes to broadcast channels
+2. **Strategy Executor** → Subscribes to channels → Receives orderbook updates → Calls strategy logic
 3. **Strategy** → Analyzes orderbook → Generates order requests → Returns to executor
 4. **Strategy Executor** → Places orders via Trading Client → Tracks order status
 5. **Exchange Engine** → Executes orders on Binance → Sends execution reports → Updates strategy state

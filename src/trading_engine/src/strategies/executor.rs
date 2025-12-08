@@ -1,9 +1,8 @@
 use crate::{reconciliation::PositionReconciler, state::Strategy};
-use anyhow;
 use trading_core::{
+    channels::market_data::{MarketDataUpdate, MarketDataUpdateReceiver},
     circuit_breaker::{order_circuit_breaker, CircuitBreaker},
     error::EngineError,
-    redis::{RedisMessage, ORDERBOOK_CHANNEL},
     retry::{order_retry_config, retry_with_backoff},
     traits::TradingClient,
     types::{common::Pair, exchange::Order},
@@ -13,11 +12,10 @@ use rust_decimal::Decimal;
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
 use tokio::time::{interval, Duration};
-use tokio_stream::StreamExt;
 use tracing::{debug, error, info, warn};
 
 /// Executes a trading strategy by:
-/// 1. Consuming market data from Redis
+/// 1. Consuming market data from channels
 /// 2. Calling strategy.on_orderbook() for each update
 /// 3. Placing orders through the trading client
 /// 4. Handling execution reports
@@ -26,7 +24,7 @@ use tracing::{debug, error, info, warn};
 pub struct StrategyExecutor<S: Strategy + 'static> {
     strategy: Arc<RwLock<S>>,
     trading_client: Arc<RwLock<dyn TradingClient<trading_core::types::exchange::OrderRequest>>>,
-    redis_url: String,
+    market_data_rx: MarketDataUpdateReceiver,
     symbol: Pair,
     circuit_breaker: Arc<Mutex<CircuitBreaker>>,
     #[allow(dead_code)] // Used in spawned tasks
@@ -42,7 +40,7 @@ impl<S: Strategy> StrategyExecutor<S> {
     pub fn new(
         strategy: Arc<RwLock<S>>,
         trading_client: Arc<RwLock<dyn TradingClient<trading_core::types::exchange::OrderRequest>>>,
-        redis_url: String,
+        market_data_rx: MarketDataUpdateReceiver,
         symbol: Pair,
         min_order_size: Decimal,
         step_size: Decimal,
@@ -53,7 +51,7 @@ impl<S: Strategy> StrategyExecutor<S> {
         Self {
             strategy,
             trading_client,
-            redis_url,
+            market_data_rx,
             symbol,
             circuit_breaker: Arc::new(Mutex::new(order_circuit_breaker())),
             reconciler,
@@ -70,7 +68,7 @@ impl<S: Strategy> StrategyExecutor<S> {
         self
     }
 
-    /// Main execution loop - consumes orderbooks from Redis and executes strategy
+    /// Main execution loop - consumes orderbooks from channels and executes strategy
     pub async fn run(&self) -> Result<(), EngineError> {
         debug!(
             "Starting strategy executor for {symbol:?}",
@@ -82,6 +80,7 @@ impl<S: Strategy> StrategyExecutor<S> {
         let symbol = self.symbol.clone();
         let circuit_breaker = Arc::clone(&self.circuit_breaker);
         let order_timeout = self.order_timeout_secs;
+        let mut market_data_rx = self.market_data_rx.resubscribe();
 
         // Start periodic reconciliation task
         let strategy_for_recon = Arc::clone(&strategy);
@@ -175,44 +174,10 @@ impl<S: Strategy> StrategyExecutor<S> {
             }
         });
 
-        // Subscribe to orderbook channel
-        let redis_url: redis::ConnectionInfo = self.redis_url.parse().map_err(|e| {
-            EngineError::CustomError(anyhow::anyhow!(
-                "Invalid Redis URL '{url}': {error}. Please check your Redis configuration.",
-                url = self.redis_url,
-                error = e
-            ))
-        })?;
-        let mut pubsub_conn = redis::Client::open(redis_url)
-            .map_err(|e| {
-                EngineError::CustomError(anyhow::anyhow!("Failed to open Redis client: {}", e))
-            })?
-            .get_async_pubsub()
-            .await
-            .map_err(|e| {
-                EngineError::CustomError(anyhow::anyhow!("Failed to get Redis pubsub: {}", e))
-            })?;
-        pubsub_conn
-            .subscribe(ORDERBOOK_CHANNEL)
-            .await
-            .map_err(|e| {
-                EngineError::CustomError(anyhow::anyhow!(
-                    "Failed to subscribe to Redis channel: {}",
-                    e
-                ))
-            })?;
-
-        let mut stream = pubsub_conn.on_message();
-        while let Some(message) = stream.next().await {
-            let payload: String = message
-                .get_payload()
-                .map_err(|e| EngineError::CustomError(anyhow::anyhow!(
-                    "Failed to get Redis message payload: {error}. This may indicate a Redis connection issue.",
-                    error = e
-                )))?;
-
-            match serde_json::from_str::<RedisMessage>(&payload) {
-                Ok(RedisMessage::OrderbookMessage(orderbook)) => {
+        // Consume market data updates from channel
+        loop {
+            match market_data_rx.recv().await {
+                Ok(MarketDataUpdate::Orderbook(orderbook)) => {
                     // Get strategy decision
                     let order_request = {
                         let mut strat = strategy.write().await;
@@ -478,15 +443,19 @@ impl<S: Strategy> StrategyExecutor<S> {
                         }
                     }
                 }
-                Ok(RedisMessage::TradeMessage(_)) => {
+                Ok(MarketDataUpdate::Trade(_)) => {
                     // Ignore trades for now
+                    debug!("Received trade update (ignored)");
                 }
-                Err(e) => {
-                    debug!(
-                        "Failed to parse Redis message: {error}. Payload: {payload:.100}...",
-                        error = e,
-                        payload = payload
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                    warn!(
+                        "Market data receiver lagged, skipped {skipped} messages. This may indicate slow processing."
                     );
+                    // Continue receiving - broadcast channels automatically skip lagged messages
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                    warn!("Market data channel closed - shutting down strategy executor");
+                    break;
                 }
             }
         }

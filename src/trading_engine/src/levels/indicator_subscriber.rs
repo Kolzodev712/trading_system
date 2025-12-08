@@ -28,18 +28,32 @@ impl IndicatorSubscriber {
 
     /// Start listening for indicator updates
     pub async fn run(&mut self) -> Result<(), SubscriberError> {
-        while let Some(update) = self.receiver.recv().await {
-            let indicator_value = IndicatorValue {
-                indicator_id: update.indicator_id.clone(),
-                indicator_name: update.indicator_name.clone(),
-                pair: update.pair.clone(),
-                value: update.value,
-                timestamp: update.timestamp,
-                period: update.period,
-            };
+        loop {
+            match self.receiver.recv().await {
+                Ok(update) => {
+                    let indicator_value = IndicatorValue {
+                        indicator_id: update.indicator_id.clone(),
+                        indicator_name: update.indicator_name.clone(),
+                        pair: update.pair.clone(),
+                        value: update.value,
+                        timestamp: update.timestamp,
+                        period: update.period,
+                    };
 
-            let mut indicators = self.indicators.write().await;
-            indicators.insert(update.indicator_id.clone(), indicator_value);
+                    let mut indicators = self.indicators.write().await;
+                    indicators.insert(update.indicator_id.clone(), indicator_value);
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                    tracing::warn!(
+                        "Indicator receiver lagged, skipped {skipped} messages. This may indicate slow processing."
+                    );
+                    // Continue receiving - broadcast channels automatically skip lagged messages
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                    tracing::warn!("Indicator channel closed - shutting down subscriber");
+                    break;
+                }
+            }
         }
         Ok(())
     }

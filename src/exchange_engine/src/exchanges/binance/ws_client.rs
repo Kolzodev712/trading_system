@@ -1,12 +1,13 @@
 use crate::exchanges::binance::common_types::BinanceOrderType;
 use crate::exchanges::binance::rest::client::BinanceHttpClient;
+use crate::state::manager::ExchangeStateManager;
 use smol_str::SmolStr;
 use trading_core::{
     error::EngineError,
     rest::HttpMethod,
     traits::TradingClient,
     types::{
-        common::{OrderId, Pair},
+        common::{OrderId, OrderStatus, Pair, Symbol},
         exchange::{Balance, Order, OrderRequest, Trade},
     },
 };
@@ -38,13 +39,6 @@ use tokio::{
 use tracing::{debug, error, warn};
 use trading_core::{traits::PrivateDataClient, types::common::Exchange};
 
-/// Metadata stored for each order to enable cancellation by ID
-#[derive(Debug, Clone)]
-struct OrderMetadata {
-    symbol: SmolStr,
-    order_type: BinanceOrderType,
-}
-
 #[derive(Debug, Clone)]
 pub struct BinanceClient {
     pub(crate) config: BinanceConfig,
@@ -54,18 +48,10 @@ pub struct BinanceClient {
     connection_session: Arc<RwLock<Option<ConnectionSession>>>,
     subscription_handler: BinanceSubscriptionHandler,
     shutdown_tx: broadcast::Sender<()>,
-    /// Tracks order metadata (symbol, order_type) by OrderId for cancellation
-    order_tracker: Arc<RwLock<HashMap<OrderId, OrderMetadata>>>,
-    /// Channel for forwarding execution reports to strategy
-    execution_report_tx: Arc<
-        Mutex<
-            Option<
-                mpsc::Sender<super::websocket::types::user_data::execution_report::ExecutionReport>,
-            >,
-        >,
-    >,
     /// REST HTTP client for reconciliation calls
     rest_client: BinanceHttpClient,
+    /// Exchange state manager (optional - for state management and publishing)
+    state_manager: Arc<tokio::sync::Mutex<Option<Arc<ExchangeStateManager>>>>,
 }
 
 impl BinanceClient {
@@ -87,22 +73,18 @@ impl BinanceClient {
             connection_session: Arc::new(RwLock::new(None)),
             subscription_handler,
             shutdown_tx,
-            order_tracker: Arc::new(RwLock::new(HashMap::new())),
-            execution_report_tx: Arc::new(Mutex::new(None)),
             rest_client,
+            state_manager: Arc::new(tokio::sync::Mutex::new(None)),
         }
+    }
+
+    /// Set the exchange state manager
+    pub async fn set_state_manager(&self, state_manager: Arc<ExchangeStateManager>) {
+        *self.state_manager.lock().await = Some(state_manager);
     }
 
     pub async fn get_connection_session(&self) -> Option<ConnectionSession> {
         self.connection_session.read().await.clone()
-    }
-
-    /// Set the execution report channel for forwarding execution reports to strategy
-    pub async fn set_execution_report_channel(
-        &self,
-        tx: mpsc::Sender<super::websocket::types::user_data::execution_report::ExecutionReport>,
-    ) {
-        *self.execution_report_tx.lock().await = Some(tx);
     }
 
     pub async fn stream(&mut self) -> Result<(), EngineError> {
@@ -210,16 +192,128 @@ impl BinanceClient {
                     }
                     Some(BinanceInbound::Event(evt)) => {
                         match evt {
-                            ParsedBinanceMessage::OutboundAccountPosition(p) => debug!("Position: {:?}", p),
-                            ParsedBinanceMessage::BalanceUpdate(b) => debug!("Balance: {:?}", b),
-                            ParsedBinanceMessage::ExecutionReport(r) => {
-                                debug!("Exec rpt: {:?}", r);
-                                // Forward execution report to strategy if channel exists
-                                if let Some(tx) = self.execution_report_tx.lock().await.as_ref() {
-                                    if tx.send(r.clone()).await.is_err() {
-                                        debug!("Execution report channel closed");
+                            ParsedBinanceMessage::OutboundAccountPosition(position) => {
+                                debug!("OutboundAccountPosition: {:?}", position);
+
+                                // Update state manager if available
+                                if let Some(state_mgr) = self.state_manager.lock().await.as_ref() {
+                                    let balances: Vec<Balance> = position.into();
+                                    if let Err(e) = state_mgr.update_balances(balances).await {
+                                        warn!("Failed to update balances in state manager: {}", e);
                                     }
                                 }
+                            }
+                            ParsedBinanceMessage::BalanceUpdate(update) => {
+                                debug!("BalanceUpdate (delta): asset={}, delta={}", update.asset, update.delta);
+
+                                // Apply delta to current balance
+                                if let Some(state_mgr) = self.state_manager.lock().await.as_ref() {
+                                    let state_arc = state_mgr.get_state();
+                                    let state = state_arc.read().await;
+
+                                    // Get current balance or create new one
+                                    let current_balance = state.get_balance(update.asset.as_str())
+                                        .cloned()
+                                        .unwrap_or_else(|| Balance {
+                                            symbol: update.asset.clone().into(),
+                                            free: rust_decimal::Decimal::ZERO,
+                                            used: rust_decimal::Decimal::ZERO,
+                                            total: rust_decimal::Decimal::ZERO,
+                                        });
+
+                                    drop(state);
+
+                                    // Apply delta to free balance (delta can be positive or negative)
+                                    let updated_balance = Balance {
+                                        symbol: update.asset.clone().into(),
+                                        free: current_balance.free + update.delta,
+                                        used: current_balance.used,
+                                        total: current_balance.free + update.delta + current_balance.used,
+                                    };
+
+                                    if let Err(e) = state_mgr.update_balance(updated_balance).await {
+                                        warn!("Failed to update balance from delta: {}", e);
+                                    }
+                                }
+                            }
+                            ParsedBinanceMessage::ExecutionReport(report) => {
+                                debug!("Exec rpt: {:?}", report);
+
+                                // Clone report for trade creation (before converting to Order which takes ownership)
+                                let report_for_trade = report.clone();
+                                let order_status: OrderStatus = report.order_status.clone().into();
+
+                                // Convert to Order and update state manager if available
+                                let order: Order = report.clone().into();
+
+                                if let Some(state_mgr) = self.state_manager.lock().await.as_ref() {
+                                    // Update order in state
+                                    if let Err(e) = state_mgr.update_order(order.clone()).await {
+                                        warn!("Failed to update order in state manager: {}", e);
+                                    }
+
+                                    // Create Trade when order is filled (Filled or PartiallyFilled)
+                                    if matches!(order_status, OrderStatus::Filled | OrderStatus::PartiallyFilled) {
+                                        // Get the cumulative filled quantity (total filled so far)
+                                        let cumulative_filled = report_for_trade.cumulative_filled_quantity
+                                            .unwrap_or_else(|| {
+                                                if order_status == OrderStatus::Filled {
+                                                    report_for_trade.quantity
+                                                } else {
+                                                    rust_decimal::Decimal::ZERO
+                                                }
+                                            });
+
+                                        // Calculate delta (new fill amount) by comparing with previous filled_amount from state
+                                        let order_id = report_for_trade.order_id.into();
+                                        let previous_filled = {
+                                            let state_arc = state_mgr.get_state();
+                                            let state = state_arc.read().await;
+                                            state.get_order_by_id(&order_id)
+                                                .map(|o| o.filled_amount)
+                                                .unwrap_or(rust_decimal::Decimal::ZERO)
+                                        };
+
+                                        // Delta is the new fill amount in this ExecutionReport
+                                        let fill_delta = cumulative_filled - previous_filled;
+
+                                        // Only create trade if there's actually a new fill (delta > 0)
+                                        if fill_delta > rust_decimal::Decimal::ZERO {
+                                            // Get pair from symbol registry
+                                            let state_arc = state_mgr.get_state();
+                                            let state = state_arc.read().await;
+                                            let pair = state.symbol_registry()
+                                                .get_pair(&report_for_trade.symbol.clone().into())
+                                                .cloned();
+                                            drop(state);
+
+                                            if let Some(pair) = pair {
+                                                // Create trade from execution report
+                                                let trade = Trade {
+                                                    trade_id: format!("{}_{}", report_for_trade.order_id, report_for_trade.transaction_time).into(),
+                                                    order_id: report_for_trade.order_id.into(),
+                                                    pair,
+                                                    price: report_for_trade.price,
+                                                    quantity: fill_delta, // Use delta, not cumulative
+                                                    side: report_for_trade.side.clone().into(),
+                                                    timestamp: report_for_trade.transaction_time,
+                                                    fee: rust_decimal::Decimal::ZERO, // Fee not available in ExecutionReport
+                                                    fee_currency: Symbol::from("USDT"), // Default, will be updated from REST if needed
+                                                };
+
+                                                if let Err(e) = state_mgr.add_trade(trade).await {
+                                                    warn!("Failed to add trade from execution report: {}", e);
+                                                }
+                                            } else {
+                                                warn!("Could not find pair for symbol {} when creating trade", report_for_trade.symbol);
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // Note: Execution reports are published via ExchangeStateManager's
+                                // exchange_update channel. Strategies should subscribe to ExchangeUpdate::Order
+                                // instead of using a separate execution_report channel.
                             }
                             ParsedBinanceMessage::Raw(r) => debug!("Raw msg: {r}"),
                         }
@@ -469,16 +563,6 @@ impl TradingClient<OrderRequest, Pair> for BinanceClient {
         match resp {
             BinanceRpcResponse::OpenOrder(ws_resp) => {
                 let order = map_open_order_to_core(params_for_map.clone(), ws_resp.clone())?;
-
-                // Store order metadata for future cancellation
-                let symbol = SmolStr::from(&req.symbol);
-                let order_type = BinanceOrderType::from(req.order_type);
-                let metadata = OrderMetadata { symbol, order_type };
-                {
-                    let mut tracker = self.order_tracker.write().await;
-                    tracker.insert(order.order_id.clone(), metadata);
-                }
-
                 Ok(order)
             }
             other => Err(EngineError::new_custom_error(
@@ -489,22 +573,28 @@ impl TradingClient<OrderRequest, Pair> for BinanceClient {
 
     async fn cancel_order_by_id(&self, order_id: OrderId) -> Result<(), EngineError> {
         // Binance WebSocket API requires symbol, orig_client_order_id, and order_type.
-        // Look up the order metadata from our tracker.
-        let metadata = {
-            let tracker = self.order_tracker.read().await;
-            tracker.get(&order_id).cloned()
-        };
-
-        let (symbol, order_type) = match metadata {
-            Some(meta) => (meta.symbol, meta.order_type),
-            None => {
-                // Fallback: use config symbol and default to Limit if order not found in tracker
-                // This handles cases where orders were created before tracking was implemented
-                // or orders created outside this client instance
-                debug!(
-                    "Order {order_id} not found in tracker, using config symbol and default order type",
-                    order_id = order_id.as_str()
-                );
+        // Get order from state manager (authoritative source).
+        let (symbol, order_type) = {
+            if let Some(state_mgr) = self.state_manager.lock().await.as_ref() {
+                if let Some(order) = state_mgr.get_order_by_id(&order_id).await {
+                    // Extract symbol and order_type from the order
+                    let symbol = order.symbol.clone();
+                    // Infer order_type from order (we don't store it, so default to Limit)
+                    // This is acceptable since Binance accepts cancellation without exact order_type match
+                    (symbol.as_ref().into(), BinanceOrderType::Limit)
+                } else {
+                    // Order not in state - use config symbol as fallback
+                    debug!(
+                        "Order {order_id} not found in state, using config symbol",
+                        order_id = order_id.as_str()
+                    );
+                    (
+                        self.config.symbol.convert_to_smolstr(),
+                        BinanceOrderType::Limit,
+                    )
+                }
+            } else {
+                // State manager not available - use config symbol as fallback
                 (
                     self.config.symbol.convert_to_smolstr(),
                     BinanceOrderType::Limit,
@@ -516,12 +606,6 @@ impl TradingClient<OrderRequest, Pair> for BinanceClient {
         let params = BinanceWsCancelOrderReqParams::new(symbol, orig_client_order_id, order_type);
         let resp = self.cancel_order_rpc(params).await?;
         Self::ensure_ok(&resp)?;
-
-        // Remove from tracker after successful cancellation
-        {
-            let mut tracker = self.order_tracker.write().await;
-            tracker.remove(&order_id);
-        }
 
         Ok(())
     }
@@ -540,19 +624,63 @@ impl TradingClient<OrderRequest, Pair> for BinanceClient {
     }
 
     async fn fetch_balance(&self) -> Result<Vec<Balance>, EngineError> {
-        let rpc = self
-            .subscription_handler
-            .create_account_status_request()
-            .await?;
-        let resp = self.send_rpc_and_wait(rpc).await?;
-        Self::ensure_ok(&resp)?;
+        // Use REST API for reconciliation (RPC requires WebSocket connection)
+        use crate::exchanges::binance::rest::types::{
+            balance::{BinanceAccountInfo, BinanceBalanceRequest},
+            common::BinanceServerTime,
+        };
+        use trading_core::types::common::MillisecondTimestamp;
 
-        match resp {
-            BinanceRpcResponse::AccountStatus(ws_resp) => Ok(ws_resp.into()),
-            other => Err(EngineError::new_custom_error(
-                format!("unexpected RPC variant in fetch_balance: {:?}", other).into(),
-            )),
-        }
+        // Get server time for timestamp
+        let time_response: Option<Option<BinanceServerTime>> = self
+            .rest_client
+            .call::<(), Option<BinanceServerTime>>("time", HttpMethod::GET, None, None, None, false)
+            .await?;
+
+        let server_time = time_response
+            .flatten()
+            .ok_or_else(|| {
+                EngineError::CustomError(anyhow::anyhow!(
+                    "Failed to get server time for balance request"
+                ))
+            })?
+            .server_time;
+
+        // Request account balance
+        let params = BinanceBalanceRequest {
+            omit_zero_balances: Some(true),
+            timestamp: MillisecondTimestamp(server_time),
+        };
+
+        let response: Option<BinanceAccountInfo> = self
+            .rest_client
+            .call::<BinanceBalanceRequest, Option<BinanceAccountInfo>>(
+                "account",
+                HttpMethod::GET,
+                Some(params),
+                None,
+                None,
+                true, // Signed request
+            )
+            .await?
+            .flatten();
+
+        let account_info = response.ok_or_else(|| {
+            EngineError::CustomError(anyhow::anyhow!("Expected account info, but received None"))
+        })?;
+
+        let balances: Vec<Balance> = account_info
+            .balances
+            .into_iter()
+            .map(|binance_balance| Balance {
+                symbol: binance_balance.asset,
+                free: binance_balance.free,
+                used: binance_balance.locked,
+                total: binance_balance.free + binance_balance.locked,
+            })
+            .collect();
+
+        Ok(balances)
     }
 
     async fn fetch_open_orders(&self) -> Result<Vec<Order>, EngineError> {

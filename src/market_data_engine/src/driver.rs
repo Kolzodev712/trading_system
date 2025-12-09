@@ -1,8 +1,13 @@
-use super::{config::MarketDataConfig, messages::ChannelMessageHandler};
-use crate::{config::ExchangeConfig, exchanges::binance::client::BinanceClient};
+use super::{config::MarketDataConfig, messages::StateManagerMessageHandler};
+use crate::{
+    config::ExchangeConfig, exchanges::binance::client::BinanceClient,
+    state::manager::MarketDataStateManager,
+};
+use std::sync::Arc;
 use tracing::error;
 use trading_core::{
-    channels::market_data::MarketDataUpdateSender, error::EngineError, traits::MarketDataClient,
+    channels::market_data::MarketDataUpdateSender, error::EngineError,
+    registry::symbol::SymbolRegistry, traits::MarketDataClient, types::common::Pair,
 };
 
 #[derive(Debug, Clone)]
@@ -13,30 +18,57 @@ pub enum Method {
 
 pub struct MarketDataDriver {
     exchange_client: Box<dyn MarketDataClient>,
+    state_manager: Arc<MarketDataStateManager>,
 }
 
 impl MarketDataDriver {
-    /// Create a new MarketDataDriver with channel-based message handling
+    /// Create a new MarketDataDriver with state manager-based message handling
     ///
     /// # Arguments
     /// * `config` - Market data configuration
     /// * `market_data_tx` - Channel sender for publishing market data updates
+    ///
+    /// The driver creates its own symbol registry from the config's pair information.
     pub fn new(
         config: MarketDataConfig,
         market_data_tx: MarketDataUpdateSender,
     ) -> Result<Self, EngineError> {
-        let exchange_client = Self::create_exchange_client(&config, market_data_tx)?;
+        // Extract pair from config and create symbol registry
+        let pair = match &config.exchange_config {
+            ExchangeConfig::Binance(binance_config) => Pair::new(
+                binance_config.symbol.base.as_str(),
+                binance_config.symbol.quote.as_str(),
+            ),
+        };
+        let symbol_registry = Arc::new(SymbolRegistry::from_pairs(vec![pair]));
 
-        Ok(Self { exchange_client })
+        // Create state manager with symbol registry
+        let state_manager = Arc::new(MarketDataStateManager::new(
+            market_data_tx.clone(),
+            symbol_registry,
+        ));
+
+        // Create exchange client with state manager handler
+        let exchange_client = Self::create_exchange_client(&config, state_manager.clone())?;
+
+        Ok(Self {
+            exchange_client,
+            state_manager,
+        })
     }
 
-    pub fn create_exchange_client(
+    /// Get the state manager
+    pub fn get_state_manager(&self) -> Arc<MarketDataStateManager> {
+        self.state_manager.clone()
+    }
+
+    fn create_exchange_client(
         config: &MarketDataConfig,
-        market_data_tx: MarketDataUpdateSender,
+        state_manager: Arc<MarketDataStateManager>,
     ) -> Result<Box<dyn MarketDataClient>, EngineError> {
         match &config.exchange_config {
             ExchangeConfig::Binance(binance_config) => {
-                let message_handler = Box::new(ChannelMessageHandler::new(market_data_tx));
+                let message_handler = Box::new(StateManagerMessageHandler::new(state_manager));
                 Ok(Box::new(BinanceClient::new(
                     binance_config.clone(),
                     100,

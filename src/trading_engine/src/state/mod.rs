@@ -1,3 +1,8 @@
+//! Trading state management
+//!
+//! This module provides TradingState (data structure) and TradingStateManager
+//! (state manager that subscribes to ExchangeStateManager and manages trading state).
+
 use async_trait::async_trait;
 use rust_decimal::Decimal;
 use std::collections::HashMap;
@@ -9,6 +14,10 @@ use trading_core::{
         market_data::Orderbook,
     },
 };
+
+pub mod manager;
+pub mod reconciler;
+pub mod subscriber;
 
 /// Represents a position in a trading pair
 #[derive(Debug, Clone)]

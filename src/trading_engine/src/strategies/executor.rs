@@ -1,4 +1,4 @@
-use crate::{reconciliation::PositionReconciler, state::Strategy};
+use crate::state::Strategy;
 use trading_core::{
     channels::market_data::{MarketDataUpdate, MarketDataUpdateReceiver},
     circuit_breaker::{order_circuit_breaker, CircuitBreaker},
@@ -27,9 +27,9 @@ pub struct StrategyExecutor<S: Strategy + 'static> {
     market_data_rx: MarketDataUpdateReceiver,
     symbol: Pair,
     circuit_breaker: Arc<Mutex<CircuitBreaker>>,
-    #[allow(dead_code)] // Used in spawned tasks
-    reconciler: PositionReconciler,
+    trading_state_manager: Arc<crate::state::manager::TradingStateManager>,
     order_timeout_secs: u64,
+    reconciliation_interval_secs: u64,
     min_order_size: Decimal,
     step_size: Decimal,
     tick_size: Decimal,
@@ -42,20 +42,22 @@ impl<S: Strategy> StrategyExecutor<S> {
         trading_client: Arc<RwLock<dyn TradingClient<trading_core::types::exchange::OrderRequest>>>,
         market_data_rx: MarketDataUpdateReceiver,
         symbol: Pair,
+        trading_state_manager: Arc<crate::state::manager::TradingStateManager>,
+        reconciliation_interval_secs: u64,
         min_order_size: Decimal,
         step_size: Decimal,
         tick_size: Decimal,
         min_notional: Decimal,
     ) -> Self {
-        let reconciler = PositionReconciler::new(Arc::clone(&trading_client));
         Self {
             strategy,
             trading_client,
             market_data_rx,
             symbol,
             circuit_breaker: Arc::new(Mutex::new(order_circuit_breaker())),
-            reconciler,
+            trading_state_manager,
             order_timeout_secs: 300, // 5 minutes default timeout for limit orders
+            reconciliation_interval_secs,
             min_order_size,
             step_size,
             tick_size,
@@ -79,71 +81,77 @@ impl<S: Strategy> StrategyExecutor<S> {
         let trading_client = Arc::clone(&self.trading_client);
         let symbol = self.symbol.clone();
         let circuit_breaker = Arc::clone(&self.circuit_breaker);
-        let order_timeout = self.order_timeout_secs;
         let mut market_data_rx = self.market_data_rx.resubscribe();
 
         // Start periodic reconciliation task
-        let strategy_for_recon = Arc::clone(&strategy);
-        let symbol_for_recon = symbol.clone();
-        let trading_client_for_recon = Arc::clone(&trading_client);
+        // Start periodic reconciliation using TradingStateManager
+        let trading_state_manager_for_recon = Arc::clone(&self.trading_state_manager);
+        let symbol_for_recon = self.symbol.clone();
+        let strategy_for_price = Arc::clone(&strategy);
+        let reconciliation_interval_secs = self.reconciliation_interval_secs;
         tokio::spawn(async move {
-            let mut interval = interval(Duration::from_secs(300)); // Every 5 minutes
+            info!(
+                "Starting periodic trading-level reconciliation (interval: {} seconds)",
+                reconciliation_interval_secs
+            );
+            let mut interval = interval(Duration::from_secs(reconciliation_interval_secs));
             loop {
                 interval.tick().await;
-                // Get the last known price before acquiring write lock
+
+                info!(
+                    "Running periodic trading-level reconciliation for {}",
+                    symbol_for_recon
+                );
+
+                // Get current price from strategy if available
                 let current_price = {
-                    let strat = strategy_for_recon.read().await;
+                    let strat = strategy_for_price.read().await;
                     strat.get_last_price()
                 };
 
-                let mut strat = strategy_for_recon.write().await;
-                let state = strat.get_state_mut();
-
-                // Create a new reconciler for this task to avoid lifetime issues
-                let task_reconciler =
-                    PositionReconciler::new(Arc::clone(&trading_client_for_recon));
-                match task_reconciler
-                    .reconcile(state, &symbol_for_recon, current_price)
+                // Reconcile using TradingStateManager
+                match trading_state_manager_for_recon
+                    .reconcile(&symbol_for_recon, current_price)
                     .await
                 {
                     Ok(result) => {
                         if result.reconciled {
-                            debug!(
-                                "Position reconciled for {symbol}: internal={internal_qty}, exchange={exchange_qty}, discrepancy={discrepancy}",
+                            info!(
+                                "Trading-level reconciliation completed for {symbol}: internal={internal_qty}, exchange={exchange_qty}, discrepancy={discrepancy}",
                                 symbol = result.symbol,
                                 internal_qty = result.internal_quantity,
                                 exchange_qty = result.exchange_quantity,
                                 discrepancy = result.discrepancy
                             );
+                        } else {
+                            info!(
+                                "Trading-level reconciliation for {symbol}: no discrepancies found",
+                                symbol = result.symbol
+                            );
                         }
                     }
                     Err(e) => {
-                        // Check if it's a connection error - these are expected during reconnection
-                        let error_msg = format!("{e}");
-                        if error_msg.contains("Channel Closed")
-                            || error_msg.contains("Connection Closed")
-                        {
-                            debug!(
-                                "Position reconciliation skipped - WebSocket reconnecting. Will retry on next interval."
-                            );
-                        } else {
-                            warn!("Position reconciliation failed: {e}");
-                        }
+                        error!("Trading-level reconciliation error: {e}");
                     }
                 }
             }
         });
 
         // Start stale order cleanup task
-        let strategy_for_cleanup = Arc::clone(&strategy);
+        // Uses TradingStateManager to get stale orders
+        let trading_state_manager_for_cleanup = Arc::clone(&self.trading_state_manager);
         let trading_client_for_cleanup = Arc::clone(&trading_client);
+        let order_timeout = self.order_timeout_secs;
         tokio::spawn(async move {
             let mut interval = interval(Duration::from_secs(60)); // Every minute
             loop {
                 interval.tick().await;
+
+                // Get stale orders from TradingStateManager
+                let trading_state = trading_state_manager_for_cleanup.get_state();
                 let stale_orders = {
-                    let strat = strategy_for_cleanup.read().await;
-                    strat.get_state().get_stale_orders(order_timeout)
+                    let state_guard = trading_state.read().await;
+                    state_guard.get_stale_orders(order_timeout)
                 };
 
                 for order_id in stale_orders {
@@ -162,13 +170,10 @@ impl<S: Strategy> StrategyExecutor<S> {
                             order_id = order_id.as_str()
                         );
                     } else {
-                        // Update order status to Canceled
-                        let mut strat = strategy_for_cleanup.write().await;
-                        strat.get_state_mut().update_order_status(
-                            &order_id,
-                            trading_core::types::common::OrderStatus::Canceled,
-                            None,
-                        );
+                        // Remove order from TradingStateManager
+                        trading_state_manager_for_cleanup
+                            .remove_order(&order_id)
+                            .await;
                     }
                 }
             }
@@ -177,11 +182,15 @@ impl<S: Strategy> StrategyExecutor<S> {
         // Consume market data updates from channel
         loop {
             match market_data_rx.recv().await {
-                Ok(MarketDataUpdate::Orderbook(orderbook)) => {
-                    // Get strategy decision
+                Ok(MarketDataUpdate::Orderbook { orderbook, .. }) => {
+                    // Get strategy decision using TradingStateManager's state
                     let order_request = {
+                        let trading_state = self.trading_state_manager.get_state();
+                        let state = {
+                            let state_guard = trading_state.read().await;
+                            state_guard.clone()
+                        };
                         let mut strat = strategy.write().await;
-                        let state = strat.get_state().clone();
                         match strat.on_orderbook(&orderbook, &state).await {
                             Ok(req) => req,
                             Err(e) => {
@@ -212,10 +221,11 @@ impl<S: Strategy> StrategyExecutor<S> {
                         }
                         drop(cb);
 
-                        // Check active orders limit
+                        // Check active orders limit from TradingStateManager
+                        let trading_state = self.trading_state_manager.get_state();
                         let active_count = {
-                            let strat = strategy.read().await;
-                            strat.get_state().get_active_order_count(&symbol)
+                            let state = trading_state.read().await;
+                            state.get_active_order_count(&symbol)
                         };
 
                         if active_count >= 5 {
@@ -422,9 +432,8 @@ impl<S: Strategy> StrategyExecutor<S> {
                                 // Record success in circuit breaker
                                 circuit_breaker.lock().await.record_success();
 
-                                // Add to active orders
-                                let mut strat = strategy.write().await;
-                                strat.get_state_mut().add_order(order);
+                                // Add order to TradingStateManager (single source of truth)
+                                self.trading_state_manager.add_order(order).await;
                             }
                             Err(e) => {
                                 warn!(
@@ -443,7 +452,7 @@ impl<S: Strategy> StrategyExecutor<S> {
                         }
                     }
                 }
-                Ok(MarketDataUpdate::Trade(_)) => {
+                Ok(MarketDataUpdate::Trade { .. }) => {
                     // Ignore trades for now
                     debug!("Received trade update (ignored)");
                 }

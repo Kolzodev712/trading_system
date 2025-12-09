@@ -2975,6 +2975,7 @@ dependencies = [
  "axum 0.7.9",
  "base64 0.22.1",
  "chrono",
+ "exchange_engine",
  "futures-util",
  "hex",
  "hmac",

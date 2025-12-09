@@ -114,10 +114,14 @@ impl BinanceClient {
     async fn handle_message(&self, message: ParsedBinanceMessage) -> Result<(), EngineError> {
         if let Some(handler) = &self.message_handler {
             match message {
-                ParsedBinanceMessage::OrderBook(orderbook) => {
-                    handler.handle_orderbook(orderbook).await?
+                ParsedBinanceMessage::OrderBook { symbol, orderbook } => {
+                    handler
+                        .handle_orderbook_with_symbol(&symbol, orderbook)
+                        .await?
                 }
-                ParsedBinanceMessage::Trade(trade) => handler.handle_trade(trade).await?,
+                ParsedBinanceMessage::Trade { symbol, trade } => {
+                    handler.handle_trade_with_symbol(&symbol, trade).await?
+                }
                 _ => {
                     debug!("Ignored unknown message: {message:?}");
                 }

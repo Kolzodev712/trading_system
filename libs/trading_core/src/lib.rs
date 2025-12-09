@@ -4,6 +4,7 @@ pub mod circuit_breaker;
 pub mod error;
 pub mod grpc;
 pub mod redis;
+pub mod registry;
 pub mod rest;
 pub mod retry;
 pub mod secret;

@@ -22,8 +22,8 @@ pub struct Pair {
 impl Pair {
     pub fn new(base: &str, quote: &str) -> Self {
         Pair {
-            base: base.into(),
-            quote: quote.into(),
+            base: SmolStr::new(base),
+            quote: SmolStr::new(quote),
         }
     }
 

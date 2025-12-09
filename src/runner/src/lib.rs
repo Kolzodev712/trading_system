@@ -16,15 +16,13 @@ use trading_engine::levels::{
     CancellationManager, IndicatorSubscriber, LevelBasedEventLoop, LevelExecutor, LevelManager,
     RiskManager,
 };
-use trading_engine::state::{Strategy, TradingState};
+use trading_engine::state::Strategy;
 use trading_engine::strategies::{BuyLowSellHigh, StrategyExecutor};
 
 /// Shared execution report handler
 /// Processes execution reports from the exchange and calls the provided handler function
 async fn execution_report_handler<F, Fut>(
-    mut exec_report_rx: tokio::sync::mpsc::Receiver<
-        exchange_engine::exchanges::binance::websocket::types::user_data::execution_report::ExecutionReport,
-    >,
+    mut exchange_update_rx: trading_core::channels::exchange::ExchangeUpdateReceiver,
     mut shutdown_rx: tokio::sync::broadcast::Receiver<()>,
     handler: F,
 ) where
@@ -33,16 +31,21 @@ async fn execution_report_handler<F, Fut>(
 {
     loop {
         tokio::select! {
-            report = exec_report_rx.recv() => {
-                match report {
-                    Some(report) => {
-                        let order: trading_core::types::exchange::Order = report.into();
+            update = exchange_update_rx.recv() => {
+                match update {
+                    Ok(trading_core::channels::exchange::ExchangeUpdate::Order(order)) => {
                         if let Err(e) = handler(order).await {
                             error!("Error handling execution report: {e}");
                         }
                     }
-                    None => {
-                        info!("Execution report channel closed");
+                    Ok(_) => {
+                        // Ignore non-order updates (balances, trades, positions)
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                        warn!("Execution report handler lagged, skipped {} messages", skipped);
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                        info!("Exchange update channel closed");
                         break;
                     }
                 }
@@ -58,14 +61,13 @@ async fn execution_report_handler<F, Fut>(
 /// Shared services needed for both modes
 pub struct SharedServices {
     pub trading_client: Arc<RwLock<dyn TradingClient<OrderRequest>>>,
-    pub exec_report_rx: tokio::sync::mpsc::Receiver<
-        exchange_engine::exchanges::binance::websocket::types::user_data::execution_report::ExecutionReport,
-    >,
+    pub exec_report_rx: trading_core::channels::exchange::ExchangeUpdateReceiver,
     pub market_data_rx: trading_core::channels::market_data::MarketDataUpdateReceiver,
     pub shutdown_manager: ShutdownManager,
     pub market_data_handle: JoinHandle<()>,
     pub trading_ws_handle: JoinHandle<()>,
     pub indicator_handle: JoinHandle<()>,
+    pub trading_state_manager: Arc<trading_engine::state::manager::TradingStateManager>,
 }
 
 /// Run strategies mode
@@ -108,11 +110,15 @@ pub async fn strategy_runner(
         .min_notional
         .unwrap_or_else(|| rust_decimal::Decimal::new(5, 0));
 
+    let trading_reconciliation_interval_secs =
+        bot_config.reconciliation.trading_level_interval_ms / 1000;
     let executor = StrategyExecutor::new(
         strategy.clone(),
         services.trading_client.clone(),
         services.market_data_rx.resubscribe(),
         strategies_config.symbol.clone(),
+        services.trading_state_manager.clone(),
+        trading_reconciliation_interval_secs,
         min_order_size,
         step_size,
         tick_size,
@@ -123,7 +129,7 @@ pub async fn strategy_runner(
     let strategy_for_reports = Arc::clone(&strategy);
     let shutdown_rx_reports = services.shutdown_manager.subscribe();
     let exec_report_rx = services.exec_report_rx;
-    let execution_report_handle = tokio::spawn(async move {
+    let _execution_report_handle = tokio::spawn(async move {
         execution_report_handler(exec_report_rx, shutdown_rx_reports, move |order| {
             let strategy = Arc::clone(&strategy_for_reports);
             async move {
@@ -138,11 +144,8 @@ pub async fn strategy_runner(
         .await;
     });
 
-    // Get TradingState from strategy for health server
-    let trading_state_for_health = {
-        let strat = strategy.read().await;
-        Arc::new(RwLock::new(strat.get_state().clone()))
-    };
+    // Get TradingState from TradingStateManager for health server
+    let trading_state_for_health = services.trading_state_manager.get_state();
     let health_server = TradingHealthServer::new(trading_state_for_health);
     let server_config = bot_config.server.clone();
     let mut shutdown_rx_health = services.shutdown_manager.subscribe();
@@ -208,7 +211,6 @@ pub async fn strategy_runner(
         _ = async {
             let _ = services.market_data_handle.await;
             let _ = services.trading_ws_handle.await;
-            let _ = execution_report_handle.await;
             let _ = health_handle.await;
             let _ = executor_handle.await;
             let _ = services.indicator_handle.await;
@@ -240,9 +242,6 @@ pub async fn level_runner(
         .map_err(|e| format!("Failed to load levels config: {e}"))?;
 
     info!("Loaded {} levels", level_manager.get_all_levels().len());
-
-    // Create trading state
-    let trading_state = Arc::new(RwLock::new(TradingState::new()));
 
     // Create level executor
     let level_executor = Arc::new(LevelExecutor::new(services.trading_client.clone()));
@@ -287,6 +286,8 @@ pub async fn level_runner(
         .ok_or("No levels configured")?;
 
     // Create level-based event loop
+    let trading_reconciliation_interval_secs =
+        bot_config.reconciliation.trading_level_interval_ms / 1000;
     let event_loop = LevelBasedEventLoop::new(
         Arc::new(RwLock::new(level_manager)),
         level_executor,
@@ -294,55 +295,18 @@ pub async fn level_runner(
         cancellation_manager,
         indicator_subscriber,
         services.trading_client.clone(),
-        trading_state.clone(),
         services.market_data_rx.resubscribe(),
         symbol.clone(),
+        services.trading_state_manager.clone(),
+        trading_reconciliation_interval_secs,
     );
 
-    // Set up execution report handler
-    let trading_state_for_reports = Arc::clone(&trading_state);
-    let symbol_for_reports = symbol.clone();
-    let shutdown_rx_reports = services.shutdown_manager.subscribe();
-    let exec_report_rx = services.exec_report_rx;
-    let execution_report_handle = tokio::spawn(async move {
-        execution_report_handler(exec_report_rx, shutdown_rx_reports, move |order| {
-            let state = Arc::clone(&trading_state_for_reports);
-            let symbol = symbol_for_reports.clone();
-            async move {
-                let mut state = state.write().await;
+    // Note: TradingStateManager automatically handles execution reports via ExchangeStateManager subscription
+    // Execution reports are published through the exchange_update channel and handled by TradingStateManager
+    // No separate execution report handler needed - TradingStateManager is the single source of truth
 
-                // Update order status in trading state
-                state.update_order_status(
-                    &order.order_id,
-                    order.status.clone(),
-                    Some(order.filled_amount),
-                );
-
-                // If filled, update position
-                if matches!(
-                    order.status,
-                    trading_core::types::common::OrderStatus::Filled
-                ) {
-                    let quantity = if matches!(order.side, trading_core::types::common::Side::Buy) {
-                        order.filled_amount
-                    } else {
-                        -order.filled_amount
-                    };
-
-                    // Use the symbol from level config (assumes all orders are for same symbol)
-                    state.update_position(symbol, quantity, order.price);
-                }
-
-                // TODO: Update level manager with order status
-                // This requires mapping order_id to level_id which should be stored
-                Ok(())
-            }
-        })
-        .await;
-    });
-
-    // Set up health server
-    let health_server = TradingHealthServer::new(trading_state.clone());
+    // Set up health server using TradingStateManager's state
+    let health_server = TradingHealthServer::new(services.trading_state_manager.get_state());
     let server_config = bot_config.server.clone();
     let mut shutdown_rx_health = services.shutdown_manager.subscribe();
     let health_handle = tokio::spawn(async move {
@@ -402,7 +366,6 @@ pub async fn level_runner(
         _ = async {
             let _ = services.market_data_handle.await;
             let _ = services.trading_ws_handle.await;
-            let _ = execution_report_handle.await;
             let _ = health_handle.await;
             let _ = event_loop_handle.await;
             let _ = subscriber_handle.await;

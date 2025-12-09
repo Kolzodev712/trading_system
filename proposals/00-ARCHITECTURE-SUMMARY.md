@@ -465,16 +465,37 @@ cargo run --release --bin trading-cli -- --endpoint http://localhost:50051
 
 The system uses a clear separation between **State Managers** (full state management with publishing) and **Caching Only** (fast lookup, no state management). This architecture ensures proper data flow, separation of concerns, and security.
 
+**Key Components**:
+- **SymbolRegistry**: Centralized bidirectional mapping between `Symbol` (e.g., "BTCUSDT") and `Pair` (e.g., BTC/USDT) for reliable conversions across all services
+- **State Managers**: Full state management with in-memory state, reconciliation, and channel publishing
+- **Caching Services**: Fast lookup caches for indicators, risk metrics, and asset metadata
+
 ### State Managers (Full State Management)
 
 #### 1. ExchangeStateManager (Exchange Engine)
 
 **Purpose**: Manages raw exchange data (balances, orders, trades from WebSocket). **Single point of contact with exchange for account data.**
 
+**Location**: `src/exchange_engine/src/state/`
+
+**Structure**:
+- `state.rs`: `ExchangeState` - in-memory state structure with `SymbolRegistry` for symbol↔pair conversions
+- `manager.rs`: `ExchangeStateManager` - orchestrates state updates, reconciliation, and publishing
+- `publisher.rs`: `ExchangeStatePublisher` - publishes updates via broadcast channels
+- `reconciler.rs`: `StateReconciler` - performs WS vs REST reconciliation
+
 **Responsibilities**:
 - Manages in-memory state: balances, orders, trades from WebSocket
+- Uses `SymbolRegistry` for reliable `Symbol` ↔ `Pair` conversions
 - Performs WS vs REST reconciliation (exchange-level reconciliation)
+  - **Bootstrap reconciliation**: Initial REST fetch on startup to initialize state
+  - **Periodic reconciliation**: Configurable interval (default: 180000ms = 3 minutes)
+  - REST is authoritative - WS state is updated to match REST if discrepancies found
 - Publishes all updates via broadcast channels to Trading Engine, Risk Engine, TUI
+- Processes WebSocket updates:
+  - `BalanceUpdate` messages update balances (delta-based)
+  - `ExecutionReport` messages update orders and create trades (for filled/partially filled orders)
+  - `OutboundAccountPosition` messages update all balances
 - MongoDB persistence capability (disabled initially, lazy evaluation)
 
 **Key Principle**: Exchange Engine is the **only** component that calls exchange for account data. All other components rely on ExchangeStateManager.
@@ -482,8 +503,10 @@ The system uses a clear separation between **State Managers** (full state manage
 **Data Flow**:
 ```
 Exchange WebSocket → ExchangeStateManager
-    ├── Update in-memory state
-    ├── WS vs REST Reconciliation (periodic)
+    ├── Update in-memory state (using SymbolRegistry for conversions)
+    ├── WS vs REST Reconciliation (bootstrap + periodic)
+    │   ├── Bootstrap: Initial REST fetch on startup
+    │   └── Periodic: Configurable interval (default: 180000ms)
     ├── Publish via Broadcast Channel
     │   ├──→ Trading Engine (subscribes, updates TradingState)
     │   ├──→ Risk Engine (subscribes, updates risk cache)
@@ -495,32 +518,57 @@ Exchange WebSocket → ExchangeStateManager
 
 **Purpose**: Manages market data state (orderbooks, public trades).
 
+**Location**: `src/market_data_engine/src/state/`
+
+**Structure**:
+- `state.rs`: `MarketDataState` - in-memory state structure
+- `manager.rs`: `MarketDataStateManager` - orchestrates state updates and publishing
+- `publisher.rs`: `MarketDataStatePublisher` - publishes updates via broadcast channels
+
 **Responsibilities**:
 - Manages in-memory state: orderbooks, public trades
+- Uses `SymbolRegistry` for reliable `Symbol` ↔ `Pair` conversions
 - Publishes all updates via broadcast channels to Indicator Engine, Trading Engine, TUI
+  - Updates include `Pair` information for proper routing
 - MongoDB persistence capability (disabled initially, lazy evaluation)
 
 **Data Flow**:
 ```
 Exchange WebSocket → MarketDataStateManager
-    ├── Update in-memory state
-    ├── Publish via Broadcast Channel
+    ├── Update in-memory state (using SymbolRegistry for conversions)
+    ├── Publish via Broadcast Channel (with Pair information)
     │   ├──→ Indicator Engine (subscribes, updates indicator cache)
     │   ├──→ Trading Engine (for level execution)
     │   └──→ TUI (via gRPC aggregation)
     └── Persist to MongoDB* (if enabled)
 ```
 
-#### 3. TradingState (Trading Engine)
+#### 3. TradingStateManager (Trading Engine)
 
 **Purpose**: Manages trading-specific state (positions, active orders). **Derived from ExchangeStateManager via channels.**
+
+**Location**: `src/trading_engine/src/state/`
+
+**Structure**:
+- `state.rs`: `TradingState` - in-memory state structure (positions, active orders, pending orders)
+- `manager.rs`: `TradingStateManager` - orchestrates state updates, subscription, and reconciliation
+- `subscriber.rs`: `ExchangeStateSubscriber` - subscribes to `ExchangeStateManager` updates via channels
+- `reconciler.rs`: `PositionReconciler` - reconciles `TradingState` with `ExchangeStateManager` (not with exchange directly)
 
 **Responsibilities**:
 - Manages in-memory state: positions (derived from balances), active orders (only orders we placed), pending orders
 - **Derived from ExchangeStateManager** via channel subscriptions
+  - `ExchangeStateSubscriber` listens to `ExchangeUpdate` messages (Order, Balance, Trade)
+  - Updates `TradingState` based on received updates
+  - Only tracks orders we placed (filters out external orders)
 - **Does NOT call exchange directly** - relies on ExchangeStateManager
 - Reconciles with ExchangeStateManager (not with exchange directly)
+  - **Periodic reconciliation**: Configurable interval (default: 180000ms = 3 minutes)
+  - Compares positions and active orders with `ExchangeStateManager`
+  - Updates `TradingState` if discrepancies found
+  - Handles channel lag scenarios (if messages were dropped)
 - Used by strategies and levels for trading decisions
+- Provides methods: `add_order()`, `update_order()`, `remove_order()`, `reconcile()`
 
 **Key Principle**: Trading Engine **does NOT** call exchange directly. It relies entirely on ExchangeStateManager for account data.
 
@@ -528,11 +576,14 @@ Exchange WebSocket → MarketDataStateManager
 ```
 ExchangeStateManager (via broadcast channel) → Trading Engine
     ├── ExchangeStateSubscriber receives updates
-    ├── Updates TradingState
-    │   ├── Update positions (derived from balances)
-    │   ├── Update active orders (only orders we placed)
-    │   └── Update pending orders
+    │   ├── Order updates → Update TradingState.active_orders
+    │   ├── Balance updates → Derive positions (future: balance-based position derivation)
+    │   └── Trade updates → Update positions and order fills
+    ├── TradingStateManager orchestrates updates
     ├── Periodic Reconciliation with ExchangeStateManager
+    │   ├── Compare positions (TradingState vs ExchangeStateManager balances)
+    │   ├── Compare active orders (TradingState vs ExchangeStateManager orders)
+    │   └── Update TradingState if discrepancies found
     └── Used by strategies/levels for trading decisions
 ```
 
@@ -593,45 +644,209 @@ ExchangeStateManager (via broadcast channel) → Trading Engine
 4. **State Managers** (Exchange, Market Data, Trading) manage full state and publish
 5. **Caching Only** (Indicator, Risk, Asset) - fast lookup, no state management
 
+### SymbolRegistry
+
+**Purpose**: Centralized bidirectional mapping between `Symbol` (e.g., "BTCUSDT") and `Pair` (e.g., BTC/USDT).
+
+**Location**: `libs/trading_core/src/registry/symbol.rs`
+
+**Why Needed**:
+- Exchanges provide symbols as strings (e.g., "BTCUSDT")
+- System uses `Pair` types for clearer base/quote separation
+- Avoids unreliable parsing logic (`Pair::from_symbol` was removed)
+- Ensures consistency across all services
+
+**Structure**:
+- `symbol_to_pair: HashMap<Symbol, Pair>` - forward lookup
+- `pair_to_symbol: HashMap<Pair, Symbol>` - reverse lookup
+
+**Usage**:
+- Each service creates its own `SymbolRegistry` from configuration
+- `ExchangeStateManager` uses registry for symbol↔pair conversions
+- `MarketDataStateManager` uses registry for symbol↔pair conversions
+- Services are decoupled - each manages its own registry instance
+
+**Methods**:
+- `new()` - Create empty registry
+- `from_pairs(pairs: Vec<Pair>)` - Create from pair list (auto-generates symbols)
+- `register(symbol, pair)` - Add bidirectional mapping
+- `get_pair(symbol)` - Get Pair from Symbol
+- `get_symbol(pair)` - Get Symbol from Pair
+
 ### Reconciliation Architecture
 
 #### Exchange-Level Reconciliation (ExchangeStateManager)
-- **What**: WebSocket state vs REST state
-- **Purpose**: Ensure ExchangeStateManager matches exchange authoritative state
-- **Frequency**: Periodic (configurable interval)
-- **Action**: Update ExchangeStateManager to match REST (REST is authoritative)
 
-#### Trading-Level Reconciliation (TradingState)
-- **What**: TradingState vs ExchangeStateManager
-- **Purpose**: Ensure TradingState matches ExchangeStateManager state
-- **Frequency**: Periodic (configurable interval)
-- **Action**: Update TradingState to match ExchangeStateManager
-- **Key Point**: TradingState reconciles with ExchangeStateManager (NOT with exchange directly)
+**What**: WebSocket state vs REST state
+
+**Purpose**: Ensure `ExchangeStateManager` matches exchange authoritative state (REST is authoritative)
+
+**Implementation**: `src/exchange_engine/src/state/reconciler.rs` - `StateReconciler`
+
+**Process**:
+1. **Bootstrap Reconciliation** (on startup):
+   - Fetches balances, orders, trades from REST API
+   - Initializes `ExchangeState` with REST data
+   - Logs fetched counts and any discrepancies
+   - Runs before WebSocket connection is established
+
+2. **Periodic Reconciliation** (ongoing):
+   - Configurable interval (default: 180000ms = 3 minutes)
+   - Fetches balances, orders, trades from REST API
+   - Compares with current WebSocket state
+   - Updates `ExchangeState` to match REST if discrepancies found
+   - Logs all reconciliation activities (info level)
+
+**Configuration**:
+- `reconciliation.exchange_level_interval_ms` - Interval in milliseconds (default: 180000)
+- `reconciliation.enabled` - Enable/disable reconciliation (default: true)
+
+**Logging**:
+- Info logs for bootstrap start, fetch operations, comparisons, and results
+- Warning logs for discrepancies found
+- Info logs for periodic reconciliation runs
+
+#### Trading-Level Reconciliation (TradingStateManager)
+
+**What**: `TradingState` vs `ExchangeStateManager`
+
+**Purpose**: Ensure `TradingState` matches `ExchangeStateManager` state (catches channel lag, subscriber bugs, calculation errors)
+
+**Implementation**: `src/trading_engine/src/state/reconciler.rs` - `PositionReconciler`
+
+**Process**:
+1. **Periodic Reconciliation** (ongoing):
+   - Configurable interval (default: 180000ms = 3 minutes)
+   - Compares `TradingState` positions with `ExchangeStateManager` balances
+   - Compares `TradingState` active orders with `ExchangeStateManager` orders
+   - Updates `TradingState` to match `ExchangeStateManager` if discrepancies found
+   - Logs all reconciliation activities (info level)
+
+**Key Points**:
+- `TradingState` reconciles with `ExchangeStateManager` (NOT with exchange directly)
+- Trading Engine does NOT call exchange directly
+- Handles channel lag scenarios (if messages were dropped)
+- Safety net for subscriber bugs or calculation errors
+
+**Configuration**:
+- `reconciliation.trading_level_interval_ms` - Interval in milliseconds (default: 180000)
+- `reconciliation.enabled` - Enable/disable reconciliation (default: true)
+
+**Logging**:
+- Info logs for reconciliation start, comparisons, and results
+- Warning logs for discrepancies found
+- Info logs for successful reconciliation (no discrepancies)
 
 #### Risk Engine Verification (Independent Checker)
-- **What**: ExchangeStateManager state vs direct exchange calls
-- **Purpose**: Independent verification of state correctness
-- **Frequency**: Periodic (optional, configurable)
-- **Action**: Alarm if discrepancies detected
-- **Key Point**: Risk Engine can call exchange directly for verification
+
+**What**: `ExchangeStateManager` state vs direct exchange calls
+
+**Purpose**: Independent verification of state correctness (second layer of security)
+
+**Frequency**: Periodic (optional, configurable) - **Not yet implemented**
+
+**Action**: Alarm if discrepancies detected
+
+**Key Point**: Risk Engine can call exchange directly for verification (independent of `ExchangeStateManager`)
 
 ## Component Responsibilities
 
 ### Exchange Engine
+
+**Structure**:
+- **Top-Level Runner** (`src/exchange_engine/src/run.rs`):
+  - Exchange-agnostic entry point
+  - Creates channels, `SymbolRegistry`, `TradingClient`, `ExchangeStateManager`
+  - Configures reconciliation (bootstrap + periodic)
+  - Creates exchange-specific driver and spawns its event loop
+  - Returns state manager and channels for external use
+
+- **Exchange-Specific Drivers** (`src/exchange_engine/src/exchanges/{exchange}/driver.rs`):
+  - Implements `ExchangeDriver` trait (defined in `libs/trading_core/src/traits/exchange_driver.rs`)
+  - Handles protocol-specific communication and WebSocket management
+  - Integrates with `ExchangeStateManager` to update state on WebSocket events
+  - Each exchange has its own driver (e.g., `BinanceDriver`)
+
+- **State Management** (`src/exchange_engine/src/state/`):
+  - `ExchangeStateManager`: Orchestrates state updates, reconciliation, and publishing
+  - `ExchangeState`: In-memory state with `SymbolRegistry` for conversions
+  - `ExchangeStatePublisher`: Publishes updates via broadcast channels
+  - `StateReconciler`: Performs WS vs REST reconciliation
+
+**Key Responsibilities**:
 - **ExchangeStateManager**: Manages raw exchange data (balances, orders, trades from WebSocket)
 - **Single point of contact** with exchange for account data
-- Performs WS vs REST reconciliation (exchange-level)
+- Performs WS vs REST reconciliation (exchange-level):
+  - Bootstrap reconciliation on startup (REST fetch)
+  - Periodic reconciliation at configurable interval (default: 180000ms)
 - Publishes all updates via broadcast channels (Trading Engine, Risk Engine, TUI)
+- Processes WebSocket updates:
+  - `BalanceUpdate` messages (delta-based balance updates)
+  - `ExecutionReport` messages (order updates and trade creation)
+  - `OutboundAccountPosition` messages (full balance snapshot)
 - MongoDB persistence (disabled, lazy, own persistence)
 - **Key Principle**: Only Exchange Engine calls exchange for account data
 
+**Architecture**:
+```
+run.rs (exchange-agnostic)
+    ├── Creates channels, SymbolRegistry, TradingClient
+    ├── Creates ExchangeStateManager
+    ├── Bootstrap reconciliation (REST fetch)
+    ├── Starts periodic reconciliation
+    └── Creates exchange-specific driver
+        └── driver.run() (exchange-specific)
+            ├── Sets state manager on client
+            └── Starts WebSocket event loop
+                └── Updates ExchangeStateManager on WebSocket events
+```
+
 ### Market Data Engine
+
+**Structure**:
+- **State Management** (`src/market_data_engine/src/state/`):
+  - `MarketDataStateManager`: Orchestrates state updates and publishing
+  - `MarketDataState`: In-memory state structure (orderbooks, public trades)
+  - `MarketDataStatePublisher`: Publishes updates via broadcast channels
+  - Uses `SymbolRegistry` for reliable `Symbol` ↔ `Pair` conversions
+
+**Key Responsibilities**:
 - **MarketDataStateManager**: Manages market data state (orderbooks, public trades)
+- Uses `SymbolRegistry` for symbol↔pair conversions
 - Publishes all updates via broadcast channels (Indicator Engine, Trading Engine, TUI)
+  - Updates include `Pair` information for proper routing
 - MongoDB persistence (disabled, lazy, own persistence)
 - No reconciliation needed (market data is public)
 
 ### Trading Engine
+
+**State Management** (`src/trading_engine/src/state/`):
+- ✅ **TradingStateManager**: Orchestrates state updates, subscription, and reconciliation
+  - Manages `TradingState` (in-memory state)
+  - Runs `ExchangeStateSubscriber` to receive updates from `ExchangeStateManager`
+  - Provides `reconcile()` method for periodic reconciliation
+  - Provides methods: `add_order()`, `update_order()`, `remove_order()`
+- ✅ **TradingState** (`state/state.rs`):
+  - Positions tracking (`HashMap<Pair, Position>`) - derived from ExchangeStateManager balances
+  - Active orders tracking (`HashMap<OrderId, Order>`) - only orders we placed
+  - Pending orders tracking with timestamps
+  - Shared by both strategies and levels modes
+  - **Derived from ExchangeStateManager** via channel subscriptions
+  - **Does NOT call exchange directly** - relies on ExchangeStateManager
+- ✅ **ExchangeStateSubscriber** (`state/subscriber.rs`):
+  - Subscribes to `ExchangeStateManager` updates via broadcast channels
+  - Handles `ExchangeUpdate::Order`, `ExchangeUpdate::Balance`, `ExchangeUpdate::Trade`
+  - Updates `TradingState` based on received updates
+  - Handles channel lag (`RecvError::Lagged`) with warnings
+- ✅ **PositionReconciler** (`state/reconciler.rs`):
+  - Reconciles `TradingState` with `ExchangeStateManager` (NOT with exchange directly)
+  - Compares positions and active orders
+  - Updates `TradingState` when discrepancies detected
+  - Periodic reconciliation at configurable interval (default: 180000ms)
+  - Used by both strategies and levels modes
+  - **Key Principle**: Trading Engine does NOT call exchange directly
+
+**Trading Modes**:
 - ✅ **COMPLETE**: Level-based trading system (Proposal 03)
   - Level management and execution (`levels/manager.rs`, `levels/executor.rs`)
   - Level lifecycle (Created, Posted, Filled, Cancelled, Paused, Removed)
@@ -640,56 +855,50 @@ ExchangeStateManager (via broadcast channel) → Trading Engine
   - Cancellation manager (`levels/cancellation/manager.rs`)
   - Event loop (`levels/event_loop.rs`) for orderbook processing and level execution
   - Indicator subscriber (`levels/indicator_subscriber.rs`) for real-time indicator values
+  - Uses `TradingStateManager` for all state interactions
 - ✅ **COMPLETE**: Strategy-based trading system
-  - Strategy trait (`state.rs`) and implementations (`strategies/strategies.rs`)
-  - Strategy executor (`strategies/executor.rs`) with Redis orderbook subscription
+  - Strategy trait (`state/state.rs`) and implementations (`strategies/strategies.rs`)
+  - Strategy executor (`strategies/executor.rs`) with channel-based orderbook subscription
   - Strategy manager (`strategies/strategy_manager.rs`) for multiple strategies
   - Backtesting framework (`strategies/backtest.rs`)
-- ✅ **State Management**: `TradingState` in `state.rs` (renamed from `strategy.rs`)
-  - Positions tracking (`HashMap<Pair, Position>`) - derived from ExchangeStateManager balances
-  - Active orders tracking (`HashMap<OrderId, Order>`) - only orders we placed
-  - Pending orders tracking with timestamps
-  - Shared by both strategies and levels modes
-  - **Derived from ExchangeStateManager** via channel subscriptions
-  - **Does NOT call exchange directly** - relies on ExchangeStateManager
-- ✅ **Position Reconciliation**: `PositionReconciler` in `reconciliation.rs`
-  - Reconciles TradingState with ExchangeStateManager (NOT with exchange directly)
-  - Compares TradingState positions with ExchangeStateManager balances
-  - Updates TradingState when discrepancies detected
-  - Used by both modes
-  - **Key Principle**: Trading Engine does NOT call exchange directly
-- ✅ **Health Server**: Shared health monitoring (`health.rs`)
-  - REST API for positions, orders, state
-  - Used by both strategies and levels modes
-- **Module Structure**:
-  - `state.rs`: Shared `TradingState`, `Position`, `Strategy` trait
-  - `strategies/`: Strategy implementations (independent module)
-    - `strategies.rs`: BuyLowSellHigh implementation
-    - `executor.rs`: Strategy execution loop
-    - `strategy_manager.rs`: Multi-strategy management
-    - `backtest.rs`: Backtesting framework
-  - `levels/`: Level-based trading (independent module)
-    - `manager.rs`: Level lifecycle management
-    - `executor.rs`: Level execution
-    - `event_loop.rs`: Main event loop
-    - `resolver.rs`: Indicator resolution
-    - `indicator_subscriber.rs`: Indicator value subscription
-    - `risk/`: Risk management submodule
-    - `cancellation/`: Cancellation logic submodule
-  - `reconciliation.rs`: Position reconciliation (shared)
-  - `health.rs`: Health server (shared)
+  - Uses `TradingStateManager` for all state interactions
+
+**Module Structure**:
+- `state/`: State management module
+  - `state.rs`: `TradingState`, `Position`, `Strategy` trait
+  - `manager.rs`: `TradingStateManager` - orchestrates state management
+  - `subscriber.rs`: `ExchangeStateSubscriber` - subscribes to ExchangeStateManager
+  - `reconciler.rs`: `PositionReconciler` - reconciles TradingState with ExchangeStateManager
+- `strategies/`: Strategy implementations (independent module)
+  - `strategies.rs`: BuyLowSellHigh implementation
+  - `executor.rs`: Strategy execution loop (uses `TradingStateManager`)
+  - `strategy_manager.rs`: Multi-strategy management
+  - `backtest.rs`: Backtesting framework
+- `levels/`: Level-based trading (independent module)
+  - `manager.rs`: Level lifecycle management
+  - `executor.rs`: Level execution
+  - `event_loop.rs`: Main event loop (uses `TradingStateManager`)
+  - `resolver.rs`: Indicator resolution
+  - `indicator_subscriber.rs`: Indicator value subscription
+  - `risk/`: Risk management submodule
+  - `cancellation/`: Cancellation logic submodule
+- `health.rs`: Health server (shared)
 - **Independence**: `strategies` and `levels` modules do NOT depend on each other
-- **Common Logic**: Shared components extracted to `state`, `reconciliation`, `health`
+- **Common Logic**: Shared components extracted to `state/` module
 
 ### Indicator Engine
 - ✅ **COMPLETE**: Real-time indicator calculation (SMA, EMA, composite indicators)
 - **Caching Only** (not a state manager)
-- Subscribes to MarketDataStateManager via channels
+- Subscribes to `MarketDataStateManager` via channels
 - Publishes indicator values via channels
 - In-memory caching for fast lookup (< 0.1ms)
+  - Stores historical indicator values (up to 100 per indicator)
+  - Efficient pair-based and name-based lookups
+  - `pair_index` and `name_index` for fast queries
 - Extensible framework for new indicators
 - Performance optimized (SmolStr, efficient data structures)
 - Comprehensive unit tests (39 tests)
+- Methods: `get_value()`, `get_history()`, `get_values_for_pair()`, `get_values_by_name()`, `get_value_by_pair_and_name()`
 
 ### Risk Engine
 - **Caching Only** (not a state manager)
@@ -1080,8 +1289,14 @@ Indicator Engine
    - Market Data Engine, Trading Engine, Indicator Engine all use channels
    - Redis dependency removed from Trading Engine
    - Ultra-low latency (< 1μs) communication
-3. Data handling and persistence (Proposal 05)
-4. MongoDB Persistence and Configuration Storage (Proposal 06) - **After Proposal 05**
+3. ✅ State Management Architecture (Proposal 05) - **COMPLETE**
+   - ExchangeStateManager with WS vs REST reconciliation
+   - MarketDataStateManager with symbol registry
+   - TradingStateManager with channel-based subscription
+   - SymbolRegistry for reliable symbol↔pair conversions
+   - Exchange-level and trading-level reconciliation
+   - All state management logic implemented and documented
+4. MongoDB Persistence and Configuration Storage (Proposal 06)
 5. LiveConfig Service (Proposal 06b) - **After Proposal 06**
 5. Risk system (Proposal 07)
 6. Market data integration (Proposal 08)

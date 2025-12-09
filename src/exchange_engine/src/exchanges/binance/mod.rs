@@ -1,5 +1,6 @@
 pub mod common_types;
 pub mod config;
+pub mod driver;
 pub mod rest;
 pub mod rest_client;
 pub mod sign;

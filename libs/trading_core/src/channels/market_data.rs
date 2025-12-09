@@ -1,16 +1,29 @@
 //! Channel types for market data updates
 //!
 //! Uses broadcast channels for fan-out to multiple consumers (Trading Engine, Indicator Engine, etc.)
-use crate::types::market_data::{LegacyOrderbook, LegacyTrade};
+use crate::types::{
+    common::Pair,
+    market_data::{LegacyOrderbook, LegacyTrade},
+};
 use tokio::sync::broadcast;
 
 /// Market data update message (individual updates, not batches)
 #[derive(Debug, Clone)]
 pub enum MarketDataUpdate {
-    /// Orderbook update
-    Orderbook(LegacyOrderbook),
-    /// Public trade update
-    Trade(LegacyTrade),
+    /// Orderbook update with pair information
+    Orderbook {
+        /// Trading pair
+        pair: Pair,
+        /// Orderbook data
+        orderbook: LegacyOrderbook,
+    },
+    /// Public trade update with pair information
+    Trade {
+        /// Trading pair
+        pair: Pair,
+        /// Trade data
+        trade: LegacyTrade,
+    },
 }
 
 /// Market data update channel sender (broadcast for fan-out)
@@ -47,15 +60,23 @@ mod tests {
         };
 
         // Send orderbook update
-        tx.send(MarketDataUpdate::Orderbook(orderbook.clone()))
-            .unwrap();
+        use crate::types::common::Pair;
+        let pair = Pair::new("BTC", "USDT");
+        tx.send(MarketDataUpdate::Orderbook {
+            pair: pair.clone(),
+            orderbook: orderbook.clone(),
+        })
+        .unwrap();
 
         // Both receivers should get the update
         let received1 = rx1.recv().await.unwrap();
         let received2 = rx2.recv().await.unwrap();
 
         match (received1, received2) {
-            (MarketDataUpdate::Orderbook(ob1), MarketDataUpdate::Orderbook(ob2)) => {
+            (
+                MarketDataUpdate::Orderbook { orderbook: ob1, .. },
+                MarketDataUpdate::Orderbook { orderbook: ob2, .. },
+            ) => {
                 assert_eq!(ob1, orderbook);
                 assert_eq!(ob2, orderbook);
             }
@@ -74,11 +95,17 @@ mod tests {
             is_market_maker: false,
         };
 
-        tx.send(MarketDataUpdate::Trade(trade.clone())).unwrap();
+        use crate::types::common::Pair;
+        let pair = Pair::new("BTC", "USDT");
+        tx.send(MarketDataUpdate::Trade {
+            pair: pair.clone(),
+            trade: trade.clone(),
+        })
+        .unwrap();
 
         let received = rx.recv().await.unwrap();
         match received {
-            MarketDataUpdate::Trade(t) => assert_eq!(t, trade),
+            MarketDataUpdate::Trade { trade: t, .. } => assert_eq!(t, trade),
             _ => panic!("Expected Trade variant"),
         }
     }
@@ -97,16 +124,21 @@ mod tests {
             asks: vec![Decimal::new(51000, 0)],
         };
 
-        tx.send(MarketDataUpdate::Orderbook(orderbook.clone()))
-            .unwrap();
+        use crate::types::common::Pair;
+        let pair = Pair::new("BTC", "USDT");
+        tx.send(MarketDataUpdate::Orderbook {
+            pair: pair.clone(),
+            orderbook: orderbook.clone(),
+        })
+        .unwrap();
 
         // All three receivers should get the update
         let received1 = rx1.recv().await.unwrap();
         let received2 = rx2.recv().await.unwrap();
         let received3 = rx3.recv().await.unwrap();
 
-        assert!(matches!(received1, MarketDataUpdate::Orderbook(_)));
-        assert!(matches!(received2, MarketDataUpdate::Orderbook(_)));
-        assert!(matches!(received3, MarketDataUpdate::Orderbook(_)));
+        assert!(matches!(received1, MarketDataUpdate::Orderbook { .. }));
+        assert!(matches!(received2, MarketDataUpdate::Orderbook { .. }));
+        assert!(matches!(received3, MarketDataUpdate::Orderbook { .. }));
     }
 }

@@ -79,16 +79,25 @@ impl DataHandler {
     }
 
     fn handle_orderbook_event(&self, v: Value) -> Result<ParsedBinanceMessage, EngineError> {
-        let orderbook: BinanceOrderbook =
+        let binance_orderbook: BinanceOrderbook =
             serde_json::from_value(v).map_err(EngineError::JsonError)?;
-        let general_orderbook: Orderbook = orderbook.into();
-        Ok(ParsedBinanceMessage::OrderBook(general_orderbook))
+        let symbol = binance_orderbook.symbol.clone();
+        let general_orderbook: Orderbook = binance_orderbook.into();
+        Ok(ParsedBinanceMessage::OrderBook {
+            symbol,
+            orderbook: general_orderbook,
+        })
     }
 
     fn handle_trade_event(&self, v: Value) -> Result<ParsedBinanceMessage, EngineError> {
-        let trade: BinanceTrade = serde_json::from_value(v).map_err(EngineError::JsonError)?;
-        let general_trade: Trade = trade.into();
-        Ok(ParsedBinanceMessage::Trade(general_trade))
+        let binance_trade: BinanceTrade =
+            serde_json::from_value(v).map_err(EngineError::JsonError)?;
+        let symbol = binance_trade.symbol.clone();
+        let general_trade: Trade = binance_trade.into();
+        Ok(ParsedBinanceMessage::Trade {
+            symbol,
+            trade: general_trade,
+        })
     }
 
     fn handle_event(

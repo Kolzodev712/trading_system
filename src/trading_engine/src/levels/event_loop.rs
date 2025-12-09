@@ -2,8 +2,6 @@
 use super::cancellation::CancellationManager;
 use super::risk::RiskManager;
 use super::{IndicatorSubscriber, LevelExecutor, LevelManager};
-use crate::reconciliation::PositionReconciler;
-use crate::state::TradingState;
 use indicator_engine::data::IndicatorValue;
 use smol_str::SmolStr;
 use std::collections::HashMap;
@@ -25,9 +23,10 @@ pub struct LevelBasedEventLoop {
     cancellation_manager: Arc<CancellationManager>,
     indicator_subscriber: Arc<RwLock<IndicatorSubscriber>>,
     trading_client: Arc<RwLock<dyn TradingClient<OrderRequest>>>,
-    trading_state: Arc<RwLock<TradingState>>,
+    trading_state_manager: Arc<crate::state::manager::TradingStateManager>,
     market_data_rx: MarketDataUpdateReceiver,
     symbol: Pair,
+    reconciliation_interval_secs: u64,
 }
 
 impl LevelBasedEventLoop {
@@ -39,9 +38,10 @@ impl LevelBasedEventLoop {
         cancellation_manager: Arc<CancellationManager>,
         indicator_subscriber: Arc<RwLock<IndicatorSubscriber>>,
         trading_client: Arc<RwLock<dyn TradingClient<OrderRequest>>>,
-        trading_state: Arc<RwLock<TradingState>>,
         market_data_rx: MarketDataUpdateReceiver,
         symbol: Pair,
+        trading_state_manager: Arc<crate::state::manager::TradingStateManager>,
+        reconciliation_interval_secs: u64,
     ) -> Self {
         Self {
             level_manager,
@@ -50,55 +50,56 @@ impl LevelBasedEventLoop {
             cancellation_manager,
             indicator_subscriber,
             trading_client,
-            trading_state,
+            trading_state_manager,
             market_data_rx,
             symbol,
+            reconciliation_interval_secs,
         }
     }
 
     /// Main event loop
     pub async fn run(&self) -> Result<(), EngineError> {
-        // Start periodic reconciliation task
-        let trading_state_for_recon = Arc::clone(&self.trading_state);
-        let trading_client_for_recon = Arc::clone(&self.trading_client);
+        // Start periodic reconciliation using TradingStateManager
+        let trading_state_manager_for_recon = Arc::clone(&self.trading_state_manager);
         let symbol_for_recon = self.symbol.clone();
+        let reconciliation_interval_secs = self.reconciliation_interval_secs;
         tokio::spawn(async move {
-            let mut interval = interval(Duration::from_secs(300)); // Every 5 minutes
+            tracing::info!(
+                "Starting periodic trading-level reconciliation (interval: {} seconds)",
+                reconciliation_interval_secs
+            );
+            let mut interval = interval(Duration::from_secs(reconciliation_interval_secs));
             loop {
                 interval.tick().await;
 
-                let mut state = trading_state_for_recon.write().await;
+                tracing::info!(
+                    "Running periodic trading-level reconciliation for {}",
+                    symbol_for_recon
+                );
 
-                // Create a new reconciler for this task to avoid lifetime issues
-                let task_reconciler =
-                    PositionReconciler::new(Arc::clone(&trading_client_for_recon));
-                match task_reconciler
-                    .reconcile(&mut state, &symbol_for_recon, None)
+                // Reconcile using TradingStateManager
+                match trading_state_manager_for_recon
+                    .reconcile(&symbol_for_recon, None)
                     .await
                 {
                     Ok(result) => {
                         if result.reconciled {
-                            tracing::debug!(
-                                "Position reconciled for {symbol}: internal={internal_qty}, exchange={exchange_qty}, discrepancy={discrepancy}",
+                            tracing::info!(
+                                "Trading-level reconciliation completed for {symbol}: internal={internal_qty}, exchange={exchange_qty}, discrepancy={discrepancy}",
                                 symbol = result.symbol,
                                 internal_qty = result.internal_quantity,
                                 exchange_qty = result.exchange_quantity,
                                 discrepancy = result.discrepancy
                             );
+                        } else {
+                            tracing::info!(
+                                "Trading-level reconciliation for {symbol}: no discrepancies found",
+                                symbol = result.symbol
+                            );
                         }
                     }
                     Err(e) => {
-                        // Check if it's a connection error - these are expected during reconnection
-                        let error_msg = format!("{e}");
-                        if error_msg.contains("Channel Closed")
-                            || error_msg.contains("Connection Closed")
-                        {
-                            tracing::debug!(
-                                "Position reconciliation skipped - WebSocket reconnecting. Will retry on next interval."
-                            );
-                        } else {
-                            tracing::warn!("Position reconciliation failed: {e}");
-                        }
+                        tracing::error!("Trading-level reconciliation error: {e}");
                     }
                 }
             }
@@ -119,12 +120,12 @@ impl LevelBasedEventLoop {
                 // Handle market data updates from channel
                 update = market_data_rx.recv() => {
                     match update {
-                        Ok(MarketDataUpdate::Orderbook(orderbook)) => {
+                        Ok(MarketDataUpdate::Orderbook { orderbook, .. }) => {
                             if let Err(e) = self.handle_orderbook(&orderbook, &subscriber_cache).await {
                                 tracing::error!("Error handling orderbook: {}", e);
                             }
                         }
-                        Ok(MarketDataUpdate::Trade(_)) => {
+                        Ok(MarketDataUpdate::Trade { .. }) => {
                             // Ignore trades for now
                             tracing::debug!("Received trade update (ignored)");
                         }
@@ -192,9 +193,10 @@ impl LevelBasedEventLoop {
                 None => continue,
             };
             // Get trading state
+            let trading_state = self.trading_state_manager.get_state();
             let state = {
-                let trading_state = self.trading_state.read().await;
-                trading_state.clone()
+                let state_guard = trading_state.read().await;
+                state_guard.clone()
             };
 
             // Resolve level
@@ -246,11 +248,9 @@ impl LevelBasedEventLoop {
                         }
                     }
 
-                    // Update trading state
-                    {
-                        let mut state = self.trading_state.write().await;
-                        state.add_order(order);
-                    }
+                    // Add order to TradingStateManager (tracks orders we placed)
+                    // Add order to TradingStateManager (single source of truth)
+                    self.trading_state_manager.add_order(order).await;
                 }
                 Err(e) => {
                     tracing::warn!("Failed to post level {}: {}", level.config.id, e);
@@ -271,9 +271,10 @@ impl LevelBasedEventLoop {
             client.fetch_balance().await?
         };
 
+        let trading_state = self.trading_state_manager.get_state();
         let state = {
-            let trading_state = self.trading_state.read().await;
-            trading_state.clone()
+            let state_guard = trading_state.read().await;
+            state_guard.clone()
         };
 
         let cancellation_actions = self
@@ -363,21 +364,8 @@ impl LevelBasedEventLoop {
                         .handle_order_filled(&level_id, &order.order_id)
                         .await?;
 
-                    // Update trading state
-                    let mut state = self.trading_state.write().await;
-                    state.update_order_status(
-                        &order.order_id,
-                        order.status.clone(),
-                        Some(order.filled_amount),
-                    );
-
-                    // Update position
-                    let pair = self.symbol.clone();
-                    let qty_change = match order.side {
-                        trading_core::types::common::Side::Buy => order.filled_amount,
-                        trading_core::types::common::Side::Sell => -order.filled_amount,
-                    };
-                    state.update_position(pair, qty_change, order.price);
+                    // TradingStateManager automatically handles order updates via ExchangeStateManager
+                    // No manual update needed
                 }
                 trading_core::types::common::OrderStatus::Canceled
                 | trading_core::types::common::OrderStatus::Rejected
@@ -386,18 +374,14 @@ impl LevelBasedEventLoop {
                         .handle_order_cancelled(&level_id, &order.order_id)
                         .await?;
 
-                    // Update trading state
-                    let mut state = self.trading_state.write().await;
-                    state.remove_order(&order.order_id);
+                    // Remove order from TradingStateManager
+                    self.trading_state_manager
+                        .remove_order(&order.order_id)
+                        .await;
                 }
                 _ => {
-                    // Just update status
-                    let mut state = self.trading_state.write().await;
-                    state.update_order_status(
-                        &order.order_id,
-                        order.status.clone(),
-                        Some(order.filled_amount),
-                    );
+                    // TradingStateManager automatically handles order updates via ExchangeStateManager
+                    // No manual update needed
                 }
             }
         }

@@ -8,8 +8,9 @@ edition = "2021"
 [dependencies]
 trading_core = { path = "../../libs/trading_core" }
 indicator_engine = { path = "../indicator_engine" }
-# Note: Remove direct dependencies on exchange_engine and market_data_engine
-# They communicate via channels now
+exchange_engine = { path = "../exchange_engine" }
+# Note: Trading Engine communicates with Exchange Engine via channels,
+# but needs exchange_engine dependency for type references (ExchangeStateManager)
 
 # Logging
 tracing = { workspace = true }

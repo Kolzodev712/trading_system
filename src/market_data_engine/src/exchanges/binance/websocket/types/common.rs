@@ -59,8 +59,14 @@ pub enum BinanceWsEventType {
 #[derive(Debug, PartialEq, Eq, Deserialize, Serialize, Clone)]
 pub enum ParsedBinanceMessage {
     InitialResponse(InitialResponse),
-    OrderBook(Orderbook),
-    Trade(Trade),
+    OrderBook {
+        symbol: SmolStr,
+        orderbook: Orderbook,
+    },
+    Trade {
+        symbol: SmolStr,
+        trade: Trade,
+    },
     Raw(
         #[serde(
             serialize_with = "serialize_smol_str",
@@ -74,8 +80,8 @@ impl ToSmolStr for ParsedBinanceMessage {
     fn to_smolstr(&self) -> SmolStr {
         match self {
             ParsedBinanceMessage::InitialResponse(_) => SmolStr::new("InitialResponse"),
-            ParsedBinanceMessage::OrderBook(_) => SmolStr::new("OrderBook"),
-            ParsedBinanceMessage::Trade(_) => SmolStr::new("Trade"),
+            ParsedBinanceMessage::OrderBook { .. } => SmolStr::new("OrderBook"),
+            ParsedBinanceMessage::Trade { .. } => SmolStr::new("Trade"),
             ParsedBinanceMessage::Raw(smol_str) => smol_str.clone(),
         }
     }

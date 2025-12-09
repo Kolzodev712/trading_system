@@ -24,6 +24,10 @@ pub struct BotConfig {
     /// Feature flags
     #[serde(default)]
     pub features: FeatureFlags,
+
+    /// Reconciliation configuration
+    #[serde(default)]
+    pub reconciliation: ReconciliationConfig,
 }
 
 /// System-wide settings
@@ -103,6 +107,42 @@ pub struct FeatureFlags {
     /// Enable reconciliation
     #[serde(default = "default_true")]
     pub enable_reconciliation: bool,
+}
+
+/// Reconciliation configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReconciliationConfig {
+    /// Exchange-level reconciliation interval in milliseconds (WS vs REST)
+    /// Default: 180000 milliseconds (3 minutes)
+    #[serde(default = "default_exchange_reconciliation_interval_ms")]
+    pub exchange_level_interval_ms: u64,
+
+    /// Trading-level reconciliation interval in milliseconds (TradingState vs ExchangeStateManager)
+    /// Default: 180000 milliseconds (3 minutes)
+    #[serde(default = "default_trading_reconciliation_interval_ms")]
+    pub trading_level_interval_ms: u64,
+
+    /// Whether reconciliation is enabled
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+}
+
+fn default_exchange_reconciliation_interval_ms() -> u64 {
+    180_000 // 3 minutes in milliseconds
+}
+
+fn default_trading_reconciliation_interval_ms() -> u64 {
+    180_000 // 3 minutes in milliseconds
+}
+
+impl Default for ReconciliationConfig {
+    fn default() -> Self {
+        Self {
+            exchange_level_interval_ms: default_exchange_reconciliation_interval_ms(),
+            trading_level_interval_ms: default_trading_reconciliation_interval_ms(),
+            enabled: default_true(),
+        }
+    }
 }
 
 fn default_true() -> bool {

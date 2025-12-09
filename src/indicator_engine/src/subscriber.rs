@@ -44,7 +44,11 @@ impl MarketDataSubscriber {
 
     async fn handle_update(&self, update: MarketDataUpdate) -> Result<(), SubscriberError> {
         match update {
-            MarketDataUpdate::Orderbook(orderbook) => {
+            MarketDataUpdate::Orderbook { pair, orderbook } => {
+                // Convert pair to string for calculator
+                let pair_smol = pair.convert_to_smolstr();
+                let pair_str = pair_smol.as_str();
+
                 // LegacyOrderbook doesn't have best_bid_price/best_ask_price methods
                 // We need to extract prices from the bids/asks vectors
                 let bid_price = orderbook
@@ -76,20 +80,20 @@ impl MarketDataSubscriber {
                 let price_point =
                     PricePoint::from_orderbook(bid_price, ask_price, total_volume, timestamp);
 
-                // For LegacyOrderbook, we don't have pair info, so we'll need to handle this differently
-                // For now, we'll skip pair-specific updates or use a default
-                // TODO: Update to use StructuredOrderbook which has pair info
+                // Update calculator with pair information
                 self.calculator
-                    .update("default", price_point) // Using "default" as placeholder
+                    .update(pair_str, price_point)
                     .map_err(SubscriberError::CalculatorError)?;
             }
-            MarketDataUpdate::Trade(trade) => {
+            MarketDataUpdate::Trade { pair, trade } => {
+                // Convert pair to string for calculator
+                let pair_smol = pair.convert_to_smolstr();
+                let pair_str = pair_smol.as_str();
                 let price_point = PricePoint::from_trade(trade.price, trade.quantity, trade.time);
 
-                // For LegacyTrade, we don't have pair info
-                // TODO: Update to use StructuredPublicTrade which has pair info
+                // Update calculator with pair information
                 self.calculator
-                    .update("default", price_point) // Using "default" as placeholder
+                    .update(pair_str, price_point)
                     .map_err(SubscriberError::CalculatorError)?;
             }
         }

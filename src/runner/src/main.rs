@@ -1,4 +1,5 @@
-use exchange_engine::exchanges::binance::{config::BinanceConfig, ws_client::BinanceClient};
+use exchange_engine::exchanges::binance::config::BinanceConfig;
+use exchange_engine::{config::ExchangeEngineConfig, run};
 use indicator_engine::indicators::{IndicatorConfig, PriceSource};
 use indicator_engine::IndicatorService;
 use market_data_engine::{
@@ -10,11 +11,8 @@ use runner::shutdown::ShutdownManager;
 use runner::{level_runner, strategy_runner, SharedServices};
 use smol_str::SmolStr;
 use std::sync::Arc;
-use tokio::sync::RwLock;
 use tracing::{error, info, warn};
-use trading_core::{
-    channels::indicator_update_channel, traits::TradingClient, types::common::Pair,
-};
+use trading_core::{channels::indicator_update_channel, types::common::Pair};
 
 mod shutdown;
 
@@ -189,55 +187,64 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     info!("Indicator Service initialized (awaiting channel integration in Proposal 04)");
 
-    // 2. Create Trading Client
-    info!("Creating Trading Client...");
-    let mut binance_client = BinanceClient::new(binance_config.clone(), 1024);
+    // 2. Create Exchange Engine (exchange-agnostic runner)
+    info!("Starting Exchange Engine...");
 
-    // Set up execution report channel
-    let (exec_report_tx, exec_report_rx) = tokio::sync::mpsc::channel(100);
-    binance_client
-        .set_execution_report_channel(exec_report_tx)
-        .await;
+    // Create exchange engine config
+    let exchange_engine_config = ExchangeEngineConfig {
+        exchange: trading_core::types::common::Exchange::Binance,
+        exchange_config: exchange_engine::config::ExchangeConfig::Binance(binance_config.clone()),
+    };
 
-    // Clone client for connection check before moving it
-    let binance_client_for_check = binance_client.clone();
-    let trading_client: Arc<
-        RwLock<dyn TradingClient<trading_core::types::exchange::OrderRequest>>,
-    > = Arc::new(RwLock::new(binance_client.clone()));
+    // Start exchange engine with shutdown signal
+    let shutdown_rx_exchange = shutdown_manager.subscribe();
+    let reconciliation_enabled =
+        bot_config.features.enable_reconciliation && bot_config.reconciliation.enabled;
+    let exchange_reconciliation_interval_ms = bot_config.reconciliation.exchange_level_interval_ms;
+    let exchange_reconciliation_interval_secs = exchange_reconciliation_interval_ms / 1000;
+    let (exchange_state_manager, exchange_update_rx, trading_client) = run::run(
+        exchange_engine_config,
+        shutdown_rx_exchange,
+        exchange_reconciliation_interval_secs,
+        reconciliation_enabled,
+    )
+    .await?;
 
-    let mut shutdown_rx_ws = shutdown_manager.subscribe();
-    let trading_ws_handle = tokio::spawn(async move {
+    // Create TradingStateManager (subscribes to ExchangeStateManager)
+    info!("Creating Trading State Manager...");
+    let trading_state_manager = Arc::new(trading_engine::state::manager::TradingStateManager::new(
+        exchange_update_rx.resubscribe(),
+        exchange_state_manager.clone(),
+    ));
+
+    // Start TradingStateManager subscriber in background
+    let trading_state_manager_for_subscriber = trading_state_manager.clone();
+    let mut shutdown_rx_trading_state = shutdown_manager.subscribe();
+    let _trading_state_subscriber_handle = tokio::spawn(async move {
         tokio::select! {
-            result = binance_client.stream() => {
+            result = trading_state_manager_for_subscriber.start_subscriber() => {
                 if let Err(e) = result {
-                    error!("Trading WebSocket error: {e}");
+                    error!("TradingStateManager subscriber error: {e}");
                 }
             }
-            _ = shutdown_rx_ws.recv() => {
-                info!("Trading WebSocket shutting down");
+            _ = shutdown_rx_trading_state.recv() => {
+                info!("TradingStateManager subscriber shutting down");
             }
         }
     });
 
-    // Wait for trading client to be ready (poll connection session)
-    info!("Waiting for trading client connection...");
-    let connection_timeout = tokio::time::Duration::from_secs(30);
-    let start = std::time::Instant::now();
-    let mut connected = false;
+    // Note: Execution reports are published via ExchangeStateManager's exchange_update channel
+    // Strategies should subscribe to ExchangeUpdate::Order from exchange_update_rx
+    // We create a resubscribe for strategies to use
+    let exec_report_rx = exchange_update_rx.resubscribe();
 
-    while start.elapsed() < connection_timeout {
-        // Check if BinanceClient has a connection session
-        if let Some(_session) = binance_client_for_check.get_connection_session().await {
-            info!("Trading client connected successfully");
-            connected = true;
-            break;
-        }
-        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-    }
+    // Exchange engine is ready:
+    // - Bootstrap reconciliation succeeded (REST API confirmed working)
+    // - WebSocket connection is handled by exchange-specific driver in background
+    // - State manager is ready to receive updates
 
-    if !connected {
-        return Err("Trading client failed to connect within 30 seconds".into());
-    }
+    // Create a dummy trading_ws_handle since the driver manages its own task
+    let trading_ws_handle = tokio::spawn(async {});
 
     // Route based on mode
     let services = SharedServices {
@@ -248,6 +255,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         market_data_handle,
         trading_ws_handle,
         indicator_handle,
+        trading_state_manager,
     };
 
     match args.mode.as_str() {

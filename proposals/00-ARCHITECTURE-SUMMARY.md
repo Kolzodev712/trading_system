@@ -972,6 +972,7 @@ run.rs (exchange-agnostic)
 - ✅ **Shared Services**: `SharedServices` struct encapsulates common services
   - Trading client, execution report channel, shutdown manager
   - Market data handle, trading WebSocket handle, indicator handle
+  - Indicator receiver (`indicator_rx`) for shared indicator channel
 - ✅ **Execution Report Handler**: Shared handler function eliminates duplication
   - Common logic for receiving and processing execution reports
   - Mode-specific callbacks for strategy vs levels handling
@@ -984,6 +985,16 @@ run.rs (exchange-agnostic)
   - Passes `ChannelConfig` to `exchange_engine::run()` and `MarketDataDriver::new()`
   - All channel creations use values from `ChannelConfig`
   - Exchange-agnostic design supports multiple exchanges
+- ✅ **Exchange-Agnostic Initialization**: All initialization functions handle exchange config internally
+  - `initialize_market_data_engine()`: Extracts exchange config from `BotConfig` internally
+  - `initialize_exchange_engine()`: Extracts exchange config from `BotConfig` internally
+  - `initialize_indicator_service()`: Extracts pair from `BotConfig` internally
+  - `collect_configured_pairs()`: Takes `BotConfig` instead of exchange-specific pair
+  - Scalable: Adding new exchanges only requires adding branches in initialization functions
+- ✅ **Shared Indicator Channel**: Single channel for indicator updates
+  - Channel created in `main.rs` before service initialization
+  - Sender passed to indicator service, receiver passed to runners via `SharedServices`
+  - Prevents channel closure errors by ensuring receiver stays alive
 - Orchestrates all services
 - Creates channel pairs and wires services together
 - Exposes gRPC server for TUI CLI (future)
@@ -1194,6 +1205,10 @@ Indicator Engine
   - Trading Engine subscribes, caches values
   - TUI receives via gRPC aggregation
   - **Pros**: Single source, efficient fan-out
+  - **Architecture**: Channel created in `main.rs`, sender passed to indicator service, receiver passed to runners via `SharedServices`
+  - **Implementation**: Prevents channel closure by ensuring receiver stays alive throughout application lifetime
+  - **Architecture**: Channel created in `main.rs`, sender passed to indicator service, receiver passed to runners via `SharedServices`
+  - **Implementation**: Prevents channel closure by ensuring receiver stays alive throughout application lifetime
 
 ### Data Requirements Summary
 
@@ -1499,6 +1514,25 @@ Indicator Engine
   - `main.rs` is clean, just routes to appropriate runner
   - Removed redundant `runner/src/health.rs` wrapper
 - **Dependencies**: Added `rust_decimal_macros` for cleaner decimal literals
+
+### Runner Refactoring & Exchange-Agnostic Design (✅ Complete)
+- **Exchange Config Handling**: Exchange-agnostic initialization functions
+  - Removed `extract_binance_config()` from `main.rs` (no longer needed)
+  - Created `extract_bot_pair()` helper in `lib.rs` for exchange-agnostic pair extraction
+  - All initialization functions (`initialize_market_data_engine()`, `initialize_exchange_engine()`, `initialize_indicator_service()`) now handle exchange-specific config extraction internally
+  - Functions take only `BotConfig` instead of exchange-specific configs
+  - Scalable design: Adding new exchanges only requires adding branches in initialization functions, not new extraction functions in `main.rs`
+- **Indicator Channel Architecture**: Fixed channel closure issue with shared channel
+  - Indicator channel created once in `main.rs` before service initialization
+  - Channel sender passed to `initialize_indicator_service()` for publishing
+  - Channel receiver added to `SharedServices` for use by runners
+  - `level_runner()` now uses `services.indicator_rx` instead of creating separate channel
+  - Prevents "channel closed" errors by ensuring receiver stays alive
+- **Code Organization**: Improved initialization structure
+  - All service initialization logic moved to helper functions in `lib.rs`
+  - `main.rs` is now cleaner and focuses on orchestration
+  - Better separation of concerns: initialization logic separated from main flow
+  - Helper functions: `collect_configured_pairs()`, `initialize_mongodb()`, `initialize_asset_service()`, `fetch_asset_data()`, `initialize_market_data_engine()`, `initialize_indicator_service()`, `initialize_exchange_engine()`, etc.
 
 ### Configuration Architecture (✅ Complete)
 - **Separated Configs**: Trading-specific configs separated from general bot config

@@ -4,7 +4,7 @@ use std::primitive::str;
 use trading_core::{
     types::{
         common::Pair,
-        market_data::{LegacyOrderbook as Orderbook, LegacyTrade as Trade},
+        market_data::{StructuredOrderbook, StructuredPublicTrade},
     },
     utils::{
         deserialize_option_smol_str, deserialize_smol_str, deserialize_vec_smol_str,
@@ -60,12 +60,10 @@ pub enum BinanceWsEventType {
 pub enum ParsedBinanceMessage {
     InitialResponse(InitialResponse),
     OrderBook {
-        symbol: SmolStr,
-        orderbook: Orderbook,
+        orderbook: StructuredOrderbook,
     },
     Trade {
-        symbol: SmolStr,
-        trade: Trade,
+        trade: StructuredPublicTrade,
     },
     Raw(
         #[serde(

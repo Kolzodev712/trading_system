@@ -7,7 +7,7 @@ use tracing::{debug, warn};
 use trading_core::{
     channels::market_data::{MarketDataUpdate, MarketDataUpdateSender},
     error::EngineError,
-    types::market_data::{LegacyOrderbook as Orderbook, LegacyTrade as Trade},
+    types::market_data::{StructuredOrderbook, StructuredPublicTrade},
 };
 
 /// Publisher for market data state updates via broadcast channels
@@ -29,19 +29,16 @@ impl MarketDataStatePublisher {
     /// Publish an orderbook update via broadcast channel
     ///
     /// # Arguments
-    /// * `pair` - Trading pair
-    /// * `orderbook` - Orderbook data
+    /// * `orderbook` - Orderbook data (already contains pair)
     ///
     /// # Errors
     /// Returns an error if the channel is closed (all receivers dropped)
     pub async fn publish_orderbook(
         &self,
-        pair: &trading_core::types::common::Pair,
-        orderbook: &Orderbook,
+        orderbook: &StructuredOrderbook,
     ) -> Result<(), EngineError> {
         self.market_data_tx
             .send(MarketDataUpdate::Orderbook {
-                pair: pair.clone(),
                 orderbook: orderbook.clone(),
             })
             .map_err(|e| {
@@ -54,26 +51,20 @@ impl MarketDataStatePublisher {
                 ))
             })?;
 
-        debug!("Published orderbook update for pair: {}", pair);
+        debug!("Published orderbook update for pair: {}", orderbook.pair);
         Ok(())
     }
 
     /// Publish a trade update via broadcast channel
     ///
     /// # Arguments
-    /// * `pair` - Trading pair
-    /// * `trade` - Trade data
+    /// * `trade` - Trade data (already contains pair)
     ///
     /// # Errors
     /// Returns an error if the channel is closed (all receivers dropped)
-    pub async fn publish_trade(
-        &self,
-        pair: &trading_core::types::common::Pair,
-        trade: &Trade,
-    ) -> Result<(), EngineError> {
+    pub async fn publish_trade(&self, trade: &StructuredPublicTrade) -> Result<(), EngineError> {
         self.market_data_tx
             .send(MarketDataUpdate::Trade {
-                pair: pair.clone(),
                 trade: trade.clone(),
             })
             .map_err(|e| {
@@ -84,7 +75,7 @@ impl MarketDataStatePublisher {
                 EngineError::CustomError(anyhow::anyhow!("Failed to publish trade: channel closed"))
             })?;
 
-        debug!("Published trade update for pair: {}", pair);
+        debug!("Published trade update for pair: {}", trade.pair);
         Ok(())
     }
 }
@@ -97,19 +88,25 @@ mod tests {
     use tokio::time::timeout;
     use trading_core::channels::market_data::market_data_update_channel;
 
-    fn create_test_orderbook() -> Orderbook {
-        Orderbook {
-            bids: vec![Decimal::new(50000, 0), Decimal::new(1, 0)],
-            asks: vec![Decimal::new(51000, 0), Decimal::new(1, 0)],
+    fn create_test_orderbook() -> StructuredOrderbook {
+        use trading_core::types::common::Pair;
+        StructuredOrderbook {
+            pair: Pair::new("BTC", "USDT"),
+            bids: vec![(Decimal::new(50000, 0), Decimal::new(1, 0))],
+            asks: vec![(Decimal::new(51000, 0), Decimal::new(1, 0))],
+            timestamp: 1234567890,
         }
     }
 
-    fn create_test_trade() -> Trade {
-        Trade {
+    fn create_test_trade() -> StructuredPublicTrade {
+        use trading_core::types::common::Pair;
+        StructuredPublicTrade {
+            pair: Pair::new("BTC", "USDT"),
             price: Decimal::new(123456, 2),
             quantity: Decimal::new(5, 1),
-            time: 123456789,
+            timestamp: 123456789,
             is_market_maker: true,
+            trade_id: None,
         }
     }
 
@@ -134,7 +131,6 @@ mod tests {
         match update {
             MarketDataUpdate::Orderbook {
                 orderbook: published_orderbook,
-                ..
             } => {
                 assert_eq!(published_orderbook, orderbook);
             }
@@ -160,7 +156,6 @@ mod tests {
         match update {
             MarketDataUpdate::Trade {
                 trade: published_trade,
-                ..
             } => {
                 assert_eq!(published_trade, trade);
             }

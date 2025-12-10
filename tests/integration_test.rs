@@ -281,7 +281,7 @@ mod integration {
     /// Test strategy decision making with orderbook
     #[tokio::test]
     async fn test_strategy_orderbook_decision() {
-        use trading_core::types::market_data::Orderbook;
+        use trading_core::types::market_data::StructuredOrderbook;
         use trading_engine::strategies::BuyLowSellHigh;
 
         let bot_config = BotConfig::load_from_file("config/bot.json").unwrap();
@@ -306,6 +306,7 @@ mod integration {
             channels.shutdown_capacity,
         )));
 
+        let symbol_clone = symbol.clone();
         let mut strategy = BuyLowSellHigh::new(
             trading_client,
             symbol,
@@ -322,9 +323,17 @@ mod integration {
 
         // Build price history by processing orderbooks
         let avg_price = rust_decimal::Decimal::new(50000, 0);
-        let history_orderbook = Orderbook {
-            bids: vec![avg_price - rust_decimal::Decimal::new(1, 0)],
-            asks: vec![avg_price + rust_decimal::Decimal::new(1, 0)],
+        let history_orderbook = StructuredOrderbook {
+            pair: symbol_clone.clone(),
+            bids: vec![(
+                avg_price - rust_decimal::Decimal::new(1, 0),
+                rust_decimal::Decimal::new(1, 0),
+            )],
+            asks: vec![(
+                avg_price + rust_decimal::Decimal::new(1, 0),
+                rust_decimal::Decimal::new(1, 0),
+            )],
+            timestamp: 1234567890,
         };
         for _ in 0..25 {
             let state = strategy.get_state().clone();
@@ -335,9 +344,17 @@ mod integration {
         // Using 3% to ensure we're well above the threshold
         let buy_price =
             avg_price * rust_decimal::Decimal::new(97, 0) / rust_decimal::Decimal::new(100, 0);
-        let orderbook = Orderbook {
-            bids: vec![buy_price - rust_decimal::Decimal::new(1, 0)],
-            asks: vec![buy_price + rust_decimal::Decimal::new(1, 0)],
+        let orderbook = StructuredOrderbook {
+            pair: symbol_clone.clone(),
+            bids: vec![(
+                buy_price - rust_decimal::Decimal::new(1, 0),
+                rust_decimal::Decimal::new(1, 0),
+            )],
+            asks: vec![(
+                buy_price + rust_decimal::Decimal::new(1, 0),
+                rust_decimal::Decimal::new(1, 0),
+            )],
+            timestamp: 1234567890,
         };
 
         let state = strategy.get_state().clone();
@@ -359,7 +376,7 @@ mod integration {
     /// Test strategy stop-loss logic
     #[tokio::test]
     async fn test_strategy_stop_loss() {
-        use trading_core::types::market_data::Orderbook;
+        use trading_core::types::market_data::StructuredOrderbook;
         use trading_engine::{state::Strategy, strategies::BuyLowSellHigh};
 
         let bot_config = BotConfig::load_from_file("config/bot.json").unwrap();
@@ -400,9 +417,17 @@ mod integration {
 
         // Build price history by processing orderbooks
         let entry_price = rust_decimal::Decimal::new(50000, 0);
-        let history_orderbook = Orderbook {
-            bids: vec![entry_price - rust_decimal::Decimal::new(1, 0)],
-            asks: vec![entry_price + rust_decimal::Decimal::new(1, 0)],
+        let history_orderbook = StructuredOrderbook {
+            pair: symbol.clone(),
+            bids: vec![(
+                entry_price - rust_decimal::Decimal::new(1, 0),
+                rust_decimal::Decimal::new(1, 0),
+            )],
+            asks: vec![(
+                entry_price + rust_decimal::Decimal::new(1, 0),
+                rust_decimal::Decimal::new(1, 0),
+            )],
+            timestamp: 1234567890,
         };
         for _ in 0..25 {
             let state = strategy.get_state().clone();
@@ -419,9 +444,17 @@ mod integration {
         // Create orderbook with price 6% below entry (should trigger stop-loss)
         let current_price =
             entry_price * rust_decimal::Decimal::new(94, 0) / rust_decimal::Decimal::new(100, 0);
-        let orderbook = Orderbook {
-            bids: vec![current_price - rust_decimal::Decimal::new(1, 0)],
-            asks: vec![current_price + rust_decimal::Decimal::new(1, 0)],
+        let orderbook = StructuredOrderbook {
+            pair: symbol.clone(),
+            bids: vec![(
+                current_price - rust_decimal::Decimal::new(1, 0),
+                rust_decimal::Decimal::new(1, 0),
+            )],
+            asks: vec![(
+                current_price + rust_decimal::Decimal::new(1, 0),
+                rust_decimal::Decimal::new(1, 0),
+            )],
+            timestamp: 1234567890,
         };
 
         let state = strategy.get_state().clone();
@@ -440,7 +473,7 @@ mod integration {
     /// Test strategy take-profit logic
     #[tokio::test]
     async fn test_strategy_take_profit() {
-        use trading_core::types::market_data::Orderbook;
+        use trading_core::types::market_data::StructuredOrderbook;
         use trading_engine::{state::Strategy, strategies::BuyLowSellHigh};
 
         let bot_config = BotConfig::load_from_file("config/bot.json").unwrap();
@@ -481,9 +514,17 @@ mod integration {
 
         // Build price history by processing orderbooks
         let entry_price = rust_decimal::Decimal::new(50000, 0);
-        let history_orderbook = Orderbook {
-            bids: vec![entry_price - rust_decimal::Decimal::new(1, 0)],
-            asks: vec![entry_price + rust_decimal::Decimal::new(1, 0)],
+        let history_orderbook = StructuredOrderbook {
+            pair: symbol.clone(),
+            bids: vec![(
+                entry_price - rust_decimal::Decimal::new(1, 0),
+                rust_decimal::Decimal::new(1, 0),
+            )],
+            asks: vec![(
+                entry_price + rust_decimal::Decimal::new(1, 0),
+                rust_decimal::Decimal::new(1, 0),
+            )],
+            timestamp: 1234567890,
         };
         for _ in 0..25 {
             let state = strategy.get_state().clone();
@@ -500,9 +541,17 @@ mod integration {
         // Create orderbook with price 11% above entry (should trigger take-profit)
         let current_price =
             entry_price * rust_decimal::Decimal::new(111, 0) / rust_decimal::Decimal::new(100, 0);
-        let orderbook = Orderbook {
-            bids: vec![current_price - rust_decimal::Decimal::new(1, 0)],
-            asks: vec![current_price + rust_decimal::Decimal::new(1, 0)],
+        let orderbook = StructuredOrderbook {
+            pair: symbol.clone(),
+            bids: vec![(
+                current_price - rust_decimal::Decimal::new(1, 0),
+                rust_decimal::Decimal::new(1, 0),
+            )],
+            asks: vec![(
+                current_price + rust_decimal::Decimal::new(1, 0),
+                rust_decimal::Decimal::new(1, 0),
+            )],
+            timestamp: 1234567890,
         };
 
         let state = strategy.get_state().clone();
@@ -589,7 +638,7 @@ mod integration {
     /// Test max position limit
     #[tokio::test]
     async fn test_max_position_limit() {
-        use trading_core::types::market_data::Orderbook;
+        use trading_core::types::market_data::StructuredOrderbook;
         use trading_engine::{state::Strategy, strategies::BuyLowSellHigh};
 
         let bot_config = BotConfig::load_from_file("config/bot.json").unwrap();
@@ -630,9 +679,17 @@ mod integration {
 
         // Build price history by processing orderbooks
         let avg_price = rust_decimal::Decimal::new(50000, 0);
-        let history_orderbook = Orderbook {
-            bids: vec![avg_price - rust_decimal::Decimal::new(1, 0)],
-            asks: vec![avg_price + rust_decimal::Decimal::new(1, 0)],
+        let history_orderbook = StructuredOrderbook {
+            pair: symbol.clone(),
+            bids: vec![(
+                avg_price - rust_decimal::Decimal::new(1, 0),
+                rust_decimal::Decimal::new(1, 0),
+            )],
+            asks: vec![(
+                avg_price + rust_decimal::Decimal::new(1, 0),
+                rust_decimal::Decimal::new(1, 0),
+            )],
+            timestamp: 1234567890,
         };
         for _ in 0..25 {
             let state = strategy.get_state().clone();
@@ -649,9 +706,17 @@ mod integration {
         // Create orderbook that would trigger buy
         let buy_price =
             avg_price * rust_decimal::Decimal::new(98, 0) / rust_decimal::Decimal::new(100, 0);
-        let orderbook = Orderbook {
-            bids: vec![buy_price - rust_decimal::Decimal::new(1, 0)],
-            asks: vec![buy_price + rust_decimal::Decimal::new(1, 0)],
+        let orderbook = StructuredOrderbook {
+            pair: symbol.clone(),
+            bids: vec![(
+                buy_price - rust_decimal::Decimal::new(1, 0),
+                rust_decimal::Decimal::new(1, 0),
+            )],
+            asks: vec![(
+                buy_price + rust_decimal::Decimal::new(1, 0),
+                rust_decimal::Decimal::new(1, 0),
+            )],
+            timestamp: 1234567890,
         };
 
         let state = strategy.get_state().clone();
@@ -668,7 +733,7 @@ mod integration {
         use trading_core::types::{
             common::{OrderId, OrderStatus, Symbol},
             exchange::Order,
-            market_data::Orderbook,
+            market_data::StructuredOrderbook,
         };
         use trading_engine::{state::Strategy, strategies::BuyLowSellHigh};
 
@@ -694,6 +759,7 @@ mod integration {
             channels.shutdown_capacity,
         )));
 
+        let symbol_clone = symbol.clone();
         let mut strategy = BuyLowSellHigh::new(
             trading_client,
             symbol,
@@ -710,9 +776,17 @@ mod integration {
 
         // Build price history by processing orderbooks
         let avg_price = rust_decimal::Decimal::new(50000, 0);
-        let history_orderbook = Orderbook {
-            bids: vec![avg_price - rust_decimal::Decimal::new(1, 0)],
-            asks: vec![avg_price + rust_decimal::Decimal::new(1, 0)],
+        let history_orderbook = StructuredOrderbook {
+            pair: symbol_clone.clone(),
+            bids: vec![(
+                avg_price - rust_decimal::Decimal::new(1, 0),
+                rust_decimal::Decimal::new(1, 0),
+            )],
+            asks: vec![(
+                avg_price + rust_decimal::Decimal::new(1, 0),
+                rust_decimal::Decimal::new(1, 0),
+            )],
+            timestamp: 1234567890,
         };
         for _ in 0..25 {
             let state = strategy.get_state().clone();
@@ -738,9 +812,17 @@ mod integration {
         // Create orderbook that would trigger buy
         let buy_price =
             avg_price * rust_decimal::Decimal::new(98, 0) / rust_decimal::Decimal::new(100, 0);
-        let orderbook = Orderbook {
-            bids: vec![buy_price - rust_decimal::Decimal::new(1, 0)],
-            asks: vec![buy_price + rust_decimal::Decimal::new(1, 0)],
+        let orderbook = StructuredOrderbook {
+            pair: symbol_clone.clone(),
+            bids: vec![(
+                buy_price - rust_decimal::Decimal::new(1, 0),
+                rust_decimal::Decimal::new(1, 0),
+            )],
+            asks: vec![(
+                buy_price + rust_decimal::Decimal::new(1, 0),
+                rust_decimal::Decimal::new(1, 0),
+            )],
+            timestamp: 1234567890,
         };
 
         let state = strategy.get_state().clone();
@@ -754,7 +836,7 @@ mod integration {
     /// Test price history building
     #[tokio::test]
     async fn test_price_history_building() {
-        use trading_core::types::market_data::Orderbook;
+        use trading_core::types::market_data::StructuredOrderbook;
         use trading_engine::{state::Strategy, strategies::BuyLowSellHigh};
 
         let bot_config = BotConfig::load_from_file("config/bot.json").unwrap();
@@ -779,6 +861,7 @@ mod integration {
             channels.shutdown_capacity,
         )));
 
+        let symbol_clone = symbol.clone();
         let mut strategy = BuyLowSellHigh::new(
             trading_client,
             symbol,
@@ -794,9 +877,17 @@ mod integration {
         );
 
         let price = rust_decimal::Decimal::new(50000, 0);
-        let orderbook = Orderbook {
-            bids: vec![price - rust_decimal::Decimal::new(1, 0)],
-            asks: vec![price + rust_decimal::Decimal::new(1, 0)],
+        let orderbook = StructuredOrderbook {
+            pair: symbol_clone.clone(),
+            bids: vec![(
+                price - rust_decimal::Decimal::new(1, 0),
+                rust_decimal::Decimal::new(1, 0),
+            )],
+            asks: vec![(
+                price + rust_decimal::Decimal::new(1, 0),
+                rust_decimal::Decimal::new(1, 0),
+            )],
+            timestamp: 1234567890,
         };
 
         // Process 10 orderbooks (below minimum)

@@ -83,12 +83,7 @@ impl BuyLowSellHigh {
     }
 
     fn get_mid_price(&self, orderbook: &Orderbook) -> Option<Decimal> {
-        if orderbook.bids.is_empty() || orderbook.asks.is_empty() {
-            return None;
-        }
-        let best_bid = orderbook.bids[0];
-        let best_ask = orderbook.asks[0];
-        Some((best_bid + best_ask) / Decimal::from(2))
+        orderbook.mid_price()
     }
 
     /// Get the last known price from price history (for reconciliation)
@@ -184,11 +179,7 @@ impl Strategy for BuyLowSellHigh {
                             warn!(
                             "Stop-loss triggered: loss={loss_percent:.2}%, threshold={stop_loss}%"
                         );
-                            let sell_price = if !orderbook.bids.is_empty() {
-                                orderbook.bids[0]
-                            } else {
-                                mid_price
-                            };
+                            let sell_price = orderbook.best_bid_price().unwrap_or(mid_price);
                             return Ok(Some(OrderRequest {
                                 symbol: Symbol::from(self.symbol.convert_to_smolstr()),
                                 side: Side::Sell,
@@ -209,11 +200,7 @@ impl Strategy for BuyLowSellHigh {
                             * Decimal::from(100);
                         if profit_percent >= take_profit {
                             info!("Take-profit triggered: profit={profit_percent:.2}%, threshold={take_profit}%");
-                            let sell_price = if !orderbook.bids.is_empty() {
-                                orderbook.bids[0]
-                            } else {
-                                mid_price
-                            };
+                            let sell_price = orderbook.best_bid_price().unwrap_or(mid_price);
                             return Ok(Some(OrderRequest {
                                 symbol: Symbol::from(self.symbol.convert_to_smolstr()),
                                 side: Side::Sell,
@@ -263,11 +250,7 @@ impl Strategy for BuyLowSellHigh {
                 );
 
                 // Use best ask as buy price (market order would be better, but limit is safer)
-                let buy_price = if !orderbook.asks.is_empty() {
-                    orderbook.asks[0]
-                } else {
-                    mid_price
-                };
+                let buy_price = orderbook.best_ask_price().unwrap_or(mid_price);
 
                 let order_req = OrderRequest {
                     symbol: Symbol::from(self.symbol.convert_to_smolstr()),
@@ -306,11 +289,7 @@ impl Strategy for BuyLowSellHigh {
             );
 
             // Use best bid as sell price
-            let sell_price = if !orderbook.bids.is_empty() {
-                orderbook.bids[0]
-            } else {
-                mid_price
-            };
+            let sell_price = orderbook.best_bid_price().unwrap_or(mid_price);
 
             let order_req = OrderRequest {
                 symbol: Symbol::from(self.symbol.convert_to_smolstr()),

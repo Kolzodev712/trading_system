@@ -45,33 +45,10 @@ impl StructuredOrderbook {
     }
 }
 
-// Legacy compatibility types - matching old core_logic::data::public_data format
-/// Legacy Orderbook (old format - flat Vec<Decimal> for bids/asks)
-/// This is kept for backward compatibility during migration
-#[derive(Debug, Deserialize, Serialize, Clone, Eq, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct LegacyOrderbook {
-    pub bids: Vec<Decimal>,
-    pub asks: Vec<Decimal>,
-}
-
-/// Legacy Trade (old format)
-/// This is kept for backward compatibility during migration  
-#[derive(Debug, Deserialize, Serialize, Clone, Eq, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct LegacyTrade {
-    pub price: Decimal,
-    pub quantity: Decimal,
-    pub time: u64,
-    pub is_market_maker: bool,
-}
-
-// Re-export for backward compatibility - old code uses these names
-pub use LegacyOrderbook as Orderbook;
-pub use LegacyTrade as Trade;
-
-// Also export PublicTrade as alias for StructuredPublicTrade for compatibility
+// Re-export for convenience
+pub use StructuredOrderbook as Orderbook;
 pub use StructuredPublicTrade as PublicTrade;
+pub use StructuredPublicTrade as Trade;
 
 /// New PublicTrade format (with pair)
 /// This is the new format for the refactored system

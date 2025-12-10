@@ -6,7 +6,7 @@
 use std::collections::HashMap;
 use trading_core::types::{
     common::Pair,
-    market_data::{LegacyOrderbook as Orderbook, LegacyTrade as Trade},
+    market_data::{StructuredOrderbook, StructuredPublicTrade},
 };
 
 /// In-memory state for market data
@@ -16,13 +16,10 @@ use trading_core::types::{
 #[derive(Debug, Clone)]
 pub struct MarketDataState {
     /// Orderbooks by pair (latest orderbook per pair)
-    orderbooks: HashMap<Pair, Orderbook>,
-
-    /// Latest orderbook timestamp by pair
-    orderbook_timestamps: HashMap<Pair, u64>,
+    orderbooks: HashMap<Pair, StructuredOrderbook>,
 
     /// Recent public trades by pair (last N per pair)
-    public_trades: HashMap<Pair, Vec<Trade>>,
+    public_trades: HashMap<Pair, Vec<StructuredPublicTrade>>,
 
     /// Last update timestamp
     last_update: u64,
@@ -33,26 +30,22 @@ impl MarketDataState {
     pub fn new() -> Self {
         Self {
             orderbooks: HashMap::new(),
-            orderbook_timestamps: HashMap::new(),
             public_trades: HashMap::new(),
             last_update: 0,
         }
     }
 
     /// Update orderbook for a pair
-    pub fn update_orderbook(&mut self, pair: Pair, orderbook: Orderbook) {
-        let timestamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as u64;
+    pub fn update_orderbook(&mut self, pair: Pair, orderbook: StructuredOrderbook) {
+        // Use timestamp from orderbook if available, otherwise use current time
+        let timestamp = orderbook.timestamp;
 
         self.orderbooks.insert(pair.clone(), orderbook);
-        self.orderbook_timestamps.insert(pair, timestamp);
         self.last_update = timestamp;
     }
 
     /// Add a public trade for a pair
-    pub fn add_public_trade(&mut self, pair: Pair, trade: Trade) {
+    pub fn add_public_trade(&mut self, pair: Pair, trade: StructuredPublicTrade) {
         let trades = self.public_trades.entry(pair).or_insert_with(Vec::new);
         trades.push(trade);
 
@@ -61,6 +54,7 @@ impl MarketDataState {
             trades.remove(0);
         }
 
+        // Use timestamp from trade if available, otherwise use current time
         self.last_update = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
@@ -68,17 +62,17 @@ impl MarketDataState {
     }
 
     /// Get orderbook for a pair
-    pub fn get_orderbook(&self, pair: &Pair) -> Option<&Orderbook> {
+    pub fn get_orderbook(&self, pair: &Pair) -> Option<&StructuredOrderbook> {
         self.orderbooks.get(pair)
     }
 
     /// Get orderbook timestamp for a pair
     pub fn get_orderbook_timestamp(&self, pair: &Pair) -> Option<u64> {
-        self.orderbook_timestamps.get(pair).copied()
+        self.orderbooks.get(pair).map(|ob| ob.timestamp)
     }
 
     /// Get recent public trades for a pair
-    pub fn get_public_trades(&self, pair: &Pair) -> Vec<&Trade> {
+    pub fn get_public_trades(&self, pair: &Pair) -> Vec<&StructuredPublicTrade> {
         self.public_trades
             .get(pair)
             .map(|trades| trades.iter().collect())
@@ -107,19 +101,23 @@ mod tests {
     use super::*;
     use rust_decimal::Decimal;
 
-    fn create_test_orderbook() -> Orderbook {
-        Orderbook {
-            bids: vec![Decimal::new(100, 0), Decimal::new(1, 0)],
-            asks: vec![Decimal::new(101, 0), Decimal::new(1, 0)],
+    fn create_test_orderbook() -> StructuredOrderbook {
+        StructuredOrderbook {
+            pair: Pair::new("BTC", "USDT"),
+            bids: vec![(Decimal::new(100, 0), Decimal::new(1, 0))],
+            asks: vec![(Decimal::new(101, 0), Decimal::new(1, 0))],
+            timestamp: 1000,
         }
     }
 
-    fn create_test_trade() -> Trade {
-        Trade {
+    fn create_test_trade() -> StructuredPublicTrade {
+        StructuredPublicTrade {
+            pair: Pair::new("BTC", "USDT"),
             price: Decimal::new(100, 0),
             quantity: Decimal::new(1, 0),
-            time: 1000,
+            timestamp: 1000,
             is_market_maker: false,
+            trade_id: None,
         }
     }
 
@@ -163,11 +161,13 @@ mod tests {
 
         // Add more than 100 trades
         for i in 0..150 {
-            let trade = Trade {
+            let trade = StructuredPublicTrade {
+                pair: pair.clone(),
                 price: Decimal::new(i as i64, 0),
                 quantity: Decimal::new(1, 0),
-                time: i as u64,
+                timestamp: i as u64,
                 is_market_maker: false,
+                trade_id: None,
             };
             state.add_public_trade(pair.clone(), trade);
         }

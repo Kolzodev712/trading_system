@@ -1,28 +1,21 @@
 //! Channel types for market data updates
 //!
 //! Uses broadcast channels for fan-out to multiple consumers (Trading Engine, Indicator Engine, etc.)
-use crate::types::{
-    common::Pair,
-    market_data::{LegacyOrderbook, LegacyTrade},
-};
+use crate::types::market_data::{StructuredOrderbook, StructuredPublicTrade};
 use tokio::sync::broadcast;
 
 /// Market data update message (individual updates, not batches)
 #[derive(Debug, Clone)]
 pub enum MarketDataUpdate {
-    /// Orderbook update with pair information
+    /// Orderbook update (already contains pair information)
     Orderbook {
-        /// Trading pair
-        pair: Pair,
-        /// Orderbook data
-        orderbook: LegacyOrderbook,
+        /// Orderbook data with pair
+        orderbook: StructuredOrderbook,
     },
-    /// Public trade update with pair information
+    /// Public trade update (already contains pair information)
     Trade {
-        /// Trading pair
-        pair: Pair,
-        /// Trade data
-        trade: LegacyTrade,
+        /// Trade data with pair
+        trade: StructuredPublicTrade,
     },
 }
 
@@ -54,16 +47,17 @@ mod tests {
         // Create second receiver to test fan-out
         let mut rx2 = tx.subscribe();
 
-        let orderbook = LegacyOrderbook {
-            bids: vec![Decimal::new(50000, 0), Decimal::new(1, 0)],
-            asks: vec![Decimal::new(51000, 0), Decimal::new(1, 0)],
+        use crate::types::common::Pair;
+        let pair = Pair::new("BTC", "USDT");
+        let orderbook = StructuredOrderbook {
+            pair: pair.clone(),
+            bids: vec![(Decimal::new(50000, 0), Decimal::new(1, 0))],
+            asks: vec![(Decimal::new(51000, 0), Decimal::new(1, 0))],
+            timestamp: 1234567890,
         };
 
         // Send orderbook update
-        use crate::types::common::Pair;
-        let pair = Pair::new("BTC", "USDT");
         tx.send(MarketDataUpdate::Orderbook {
-            pair: pair.clone(),
             orderbook: orderbook.clone(),
         })
         .unwrap();
@@ -74,8 +68,8 @@ mod tests {
 
         match (received1, received2) {
             (
-                MarketDataUpdate::Orderbook { orderbook: ob1, .. },
-                MarketDataUpdate::Orderbook { orderbook: ob2, .. },
+                MarketDataUpdate::Orderbook { orderbook: ob1 },
+                MarketDataUpdate::Orderbook { orderbook: ob2 },
             ) => {
                 assert_eq!(ob1, orderbook);
                 assert_eq!(ob2, orderbook);
@@ -88,24 +82,25 @@ mod tests {
     async fn test_market_data_channel_trade() {
         let (tx, mut rx) = market_data_update_channel(100);
 
-        let trade = LegacyTrade {
-            price: Decimal::new(50500, 0),
-            quantity: Decimal::new(1, 0),
-            time: 1234567890,
-            is_market_maker: false,
-        };
-
         use crate::types::common::Pair;
         let pair = Pair::new("BTC", "USDT");
-        tx.send(MarketDataUpdate::Trade {
+        let trade = StructuredPublicTrade {
             pair: pair.clone(),
+            price: Decimal::new(50500, 0),
+            quantity: Decimal::new(1, 0),
+            timestamp: 1234567890,
+            is_market_maker: false,
+            trade_id: None,
+        };
+
+        tx.send(MarketDataUpdate::Trade {
             trade: trade.clone(),
         })
         .unwrap();
 
         let received = rx.recv().await.unwrap();
         match received {
-            MarketDataUpdate::Trade { trade: t, .. } => assert_eq!(t, trade),
+            MarketDataUpdate::Trade { trade: t } => assert_eq!(t, trade),
             _ => panic!("Expected Trade variant"),
         }
     }
@@ -119,15 +114,16 @@ mod tests {
         let mut rx2 = tx.subscribe();
         let mut rx3 = tx.subscribe();
 
-        let orderbook = LegacyOrderbook {
-            bids: vec![Decimal::new(50000, 0)],
-            asks: vec![Decimal::new(51000, 0)],
-        };
-
         use crate::types::common::Pair;
         let pair = Pair::new("BTC", "USDT");
-        tx.send(MarketDataUpdate::Orderbook {
+        let orderbook = StructuredOrderbook {
             pair: pair.clone(),
+            bids: vec![(Decimal::new(50000, 0), Decimal::new(1, 0))],
+            asks: vec![(Decimal::new(51000, 0), Decimal::new(1, 0))],
+            timestamp: 1234567890,
+        };
+
+        tx.send(MarketDataUpdate::Orderbook {
             orderbook: orderbook.clone(),
         })
         .unwrap();

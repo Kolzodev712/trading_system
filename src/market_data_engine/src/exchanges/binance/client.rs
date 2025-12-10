@@ -15,7 +15,7 @@ use trading_core::{
     traits::MarketDataClient,
     types::{
         common::{DataType, Pair},
-        market_data::{LegacyOrderbook as Orderbook, LegacyTrade as PublicTrade},
+        market_data::{StructuredOrderbook, StructuredPublicTrade},
     },
     Exchange,
 };
@@ -114,12 +114,16 @@ impl BinanceClient {
     async fn handle_message(&self, message: ParsedBinanceMessage) -> Result<(), EngineError> {
         if let Some(handler) = &self.message_handler {
             match message {
-                ParsedBinanceMessage::OrderBook { symbol, orderbook } => {
+                ParsedBinanceMessage::OrderBook { orderbook } => {
+                    // Extract symbol from pair for backward compatibility with handler interface
+                    let symbol = orderbook.pair.convert_to_smolstr();
                     handler
                         .handle_orderbook_with_symbol(&symbol, orderbook)
                         .await?
                 }
-                ParsedBinanceMessage::Trade { symbol, trade } => {
+                ParsedBinanceMessage::Trade { trade } => {
+                    // Extract symbol from pair for backward compatibility with handler interface
+                    let symbol = trade.pair.convert_to_smolstr();
                     handler.handle_trade_with_symbol(&symbol, trade).await?
                 }
                 _ => {
@@ -169,11 +173,11 @@ impl MarketDataClient for BinanceClient {
         self.start_stream(DataType::Trade).await
     }
 
-    async fn orderbook_snapshot(&self, _pair: Pair) -> Result<Orderbook, EngineError> {
+    async fn orderbook_snapshot(&self, _pair: Pair) -> Result<StructuredOrderbook, EngineError> {
         unimplemented!()
     }
 
-    async fn trade_snapshot(&self, _pair: Pair) -> Result<PublicTrade, EngineError> {
+    async fn trade_snapshot(&self, _pair: Pair) -> Result<StructuredPublicTrade, EngineError> {
         unimplemented!()
     }
 }

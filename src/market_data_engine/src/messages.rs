@@ -5,7 +5,7 @@ use tracing::debug;
 use trading_core::{
     channels::market_data::{MarketDataUpdate, MarketDataUpdateSender},
     error::EngineError,
-    types::market_data::{LegacyOrderbook as Orderbook, LegacyTrade as Trade},
+    types::market_data::{StructuredOrderbook, StructuredPublicTrade},
 };
 
 use crate::state::manager::MarketDataStateManager;
@@ -13,26 +13,26 @@ use crate::state::manager::MarketDataStateManager;
 /// Trait that defines how messages (orderbooks, trades) should be processed.
 #[async_trait]
 pub trait WSMessageHandler: Send + Sync + Debug {
-    async fn handle_orderbook(&self, orderbook: Orderbook) -> Result<(), EngineError>;
-    async fn handle_trade(&self, trade: Trade) -> Result<(), EngineError>;
+    async fn handle_orderbook(&self, orderbook: StructuredOrderbook) -> Result<(), EngineError>;
+    async fn handle_trade(&self, trade: StructuredPublicTrade) -> Result<(), EngineError>;
 
-    /// Handle orderbook with symbol (for state manager that needs symbol↔pair conversion)
+    /// Handle orderbook with symbol (for backward compatibility - extracts symbol from pair)
     async fn handle_orderbook_with_symbol(
         &self,
         _symbol: &str,
-        orderbook: Orderbook,
+        orderbook: StructuredOrderbook,
     ) -> Result<(), EngineError> {
-        // Default implementation calls handle_orderbook for backward compatibility
+        // Default implementation calls handle_orderbook
         self.handle_orderbook(orderbook).await
     }
 
-    /// Handle trade with symbol (for state manager that needs symbol↔pair conversion)
+    /// Handle trade with symbol (for backward compatibility - extracts symbol from pair)
     async fn handle_trade_with_symbol(
         &self,
         _symbol: &str,
-        trade: Trade,
+        trade: StructuredPublicTrade,
     ) -> Result<(), EngineError> {
-        // Default implementation calls handle_trade for backward compatibility
+        // Default implementation calls handle_trade
         self.handle_trade(trade).await
     }
 }
@@ -55,29 +55,28 @@ impl StateManagerMessageHandler {
 
 #[async_trait]
 impl WSMessageHandler for StateManagerMessageHandler {
-    async fn handle_orderbook(&self, _orderbook: Orderbook) -> Result<(), EngineError> {
-        // Fallback: if no symbol provided, we can't update state
-        // This shouldn't happen with the new message format
-        Err(EngineError::CustomError(anyhow::anyhow!(
-            "handle_orderbook called without symbol - use handle_orderbook_with_symbol"
-        )))
+    async fn handle_orderbook(&self, orderbook: StructuredOrderbook) -> Result<(), EngineError> {
+        // Extract symbol from pair for validation
+        let symbol = orderbook.pair.convert_to_smolstr();
+        let symbol: trading_core::types::common::Symbol = symbol.into();
+        self.state_manager
+            .update_orderbook(&symbol, orderbook)
+            .await
     }
 
-    async fn handle_trade(&self, _trade: Trade) -> Result<(), EngineError> {
-        // Fallback: if no symbol provided, we can't update state
-        // This shouldn't happen with the new message format
-        Err(EngineError::CustomError(anyhow::anyhow!(
-            "handle_trade called without symbol - use handle_trade_with_symbol"
-        )))
+    async fn handle_trade(&self, trade: StructuredPublicTrade) -> Result<(), EngineError> {
+        // Extract symbol from pair for validation
+        let symbol = trade.pair.convert_to_smolstr();
+        let symbol: trading_core::types::common::Symbol = symbol.into();
+        self.state_manager.add_public_trade(&symbol, trade).await
     }
 
     async fn handle_orderbook_with_symbol(
         &self,
         symbol: &str,
-        orderbook: Orderbook,
+        orderbook: StructuredOrderbook,
     ) -> Result<(), EngineError> {
-        use trading_core::types::common::Symbol;
-        let symbol: Symbol = symbol.into();
+        let symbol: trading_core::types::common::Symbol = symbol.into();
         self.state_manager
             .update_orderbook(&symbol, orderbook)
             .await
@@ -86,10 +85,9 @@ impl WSMessageHandler for StateManagerMessageHandler {
     async fn handle_trade_with_symbol(
         &self,
         symbol: &str,
-        trade: Trade,
+        trade: StructuredPublicTrade,
     ) -> Result<(), EngineError> {
-        use trading_core::types::common::Symbol;
-        let symbol: Symbol = symbol.into();
+        let symbol: trading_core::types::common::Symbol = symbol.into();
         self.state_manager.add_public_trade(&symbol, trade).await
     }
 }
@@ -110,17 +108,10 @@ impl ChannelMessageHandler {
 
 #[async_trait]
 impl WSMessageHandler for ChannelMessageHandler {
-    async fn handle_orderbook(&self, orderbook: Orderbook) -> Result<(), EngineError> {
-        // ChannelMessageHandler is legacy - it doesn't have pair info
-        // This should not be used in production (StateManagerMessageHandler is used instead)
-        // For tests, we use a placeholder pair
-        use trading_core::types::common::Pair;
-        let placeholder_pair = Pair::new("BTC", "USDT");
+    async fn handle_orderbook(&self, orderbook: StructuredOrderbook) -> Result<(), EngineError> {
+        // ChannelMessageHandler is legacy - structured orderbook already has pair
         self.market_data_tx
-            .send(MarketDataUpdate::Orderbook {
-                pair: placeholder_pair,
-                orderbook,
-            })
+            .send(MarketDataUpdate::Orderbook { orderbook })
             .map_err(|e| {
                 EngineError::CustomError(anyhow::anyhow!(
                     "Failed to send orderbook to channel: {error}",
@@ -132,17 +123,10 @@ impl WSMessageHandler for ChannelMessageHandler {
         Ok(())
     }
 
-    async fn handle_trade(&self, trade: Trade) -> Result<(), EngineError> {
-        // ChannelMessageHandler is legacy - it doesn't have pair info
-        // This should not be used in production (StateManagerMessageHandler is used instead)
-        // For tests, we use a placeholder pair
-        use trading_core::types::common::Pair;
-        let placeholder_pair = Pair::new("BTC", "USDT");
+    async fn handle_trade(&self, trade: StructuredPublicTrade) -> Result<(), EngineError> {
+        // ChannelMessageHandler is legacy - structured trade already has pair
         self.market_data_tx
-            .send(MarketDataUpdate::Trade {
-                pair: placeholder_pair,
-                trade,
-            })
+            .send(MarketDataUpdate::Trade { trade })
             .map_err(|e| {
                 EngineError::CustomError(anyhow::anyhow!(
                     "Failed to send trade to channel: {error}",
@@ -178,7 +162,7 @@ impl RedisMessageHandler {
 #[cfg(feature = "redis")]
 #[async_trait]
 impl WSMessageHandler for RedisMessageHandler {
-    async fn handle_orderbook(&self, orderbook: Orderbook) -> Result<(), EngineError> {
+    async fn handle_orderbook(&self, orderbook: StructuredOrderbook) -> Result<(), EngineError> {
         let message = RedisMessage::OrderbookMessage(orderbook);
         self.redis_client
             .publish(ORDERBOOK_CHANNEL, message)
@@ -188,7 +172,7 @@ impl WSMessageHandler for RedisMessageHandler {
         Ok(())
     }
 
-    async fn handle_trade(&self, trade: Trade) -> Result<(), EngineError> {
+    async fn handle_trade(&self, trade: StructuredPublicTrade) -> Result<(), EngineError> {
         let message = RedisMessage::TradeMessage(trade);
         self.redis_client.publish(TRADE_CHANNEL, message).await?;
 
@@ -203,7 +187,7 @@ mod tests {
     use rust_decimal::Decimal;
     use trading_core::{
         channels::market_data::{market_data_update_channel, MarketDataUpdate},
-        types::market_data::{LegacyOrderbook as Orderbook, LegacyTrade as Trade},
+        types::market_data::{StructuredOrderbook, StructuredPublicTrade},
     };
 
     #[tokio::test]
@@ -211,16 +195,19 @@ mod tests {
         let (tx, mut rx) = market_data_update_channel(100);
         let handler = ChannelMessageHandler::new(tx);
 
-        let orderbook = Orderbook {
-            bids: vec![Decimal::new(50000, 0), Decimal::new(1, 0)],
-            asks: vec![Decimal::new(51000, 0), Decimal::new(1, 0)],
+        use trading_core::types::common::Pair;
+        let orderbook = StructuredOrderbook {
+            pair: Pair::new("BTC", "USDT"),
+            bids: vec![(Decimal::new(50000, 0), Decimal::new(1, 0))],
+            asks: vec![(Decimal::new(51000, 0), Decimal::new(1, 0))],
+            timestamp: 1234567890,
         };
 
         handler.handle_orderbook(orderbook.clone()).await.unwrap();
 
         let received = rx.recv().await.unwrap();
         match received {
-            MarketDataUpdate::Orderbook { orderbook: ob, .. } => assert_eq!(ob, orderbook),
+            MarketDataUpdate::Orderbook { orderbook: ob } => assert_eq!(ob, orderbook),
             _ => panic!("Expected Orderbook variant"),
         }
     }
@@ -230,18 +217,21 @@ mod tests {
         let (tx, mut rx) = market_data_update_channel(100);
         let handler = ChannelMessageHandler::new(tx);
 
-        let trade = Trade {
+        use trading_core::types::common::Pair;
+        let trade = StructuredPublicTrade {
+            pair: Pair::new("BTC", "USDT"),
             price: Decimal::new(123456, 2),
             quantity: Decimal::new(5, 1),
-            time: 123456789,
+            timestamp: 123456789,
             is_market_maker: true,
+            trade_id: None,
         };
 
         handler.handle_trade(trade.clone()).await.unwrap();
 
         let received = rx.recv().await.unwrap();
         match received {
-            MarketDataUpdate::Trade { trade: t, .. } => assert_eq!(t, trade),
+            MarketDataUpdate::Trade { trade: t } => assert_eq!(t, trade),
             _ => panic!("Expected Trade variant"),
         }
     }
@@ -255,9 +245,12 @@ mod tests {
         let mut rx1 = tx.subscribe();
         let mut rx2 = tx.subscribe();
 
-        let orderbook = Orderbook {
-            bids: vec![Decimal::new(50000, 0)],
-            asks: vec![Decimal::new(51000, 0)],
+        use trading_core::types::common::Pair;
+        let orderbook = StructuredOrderbook {
+            pair: Pair::new("BTC", "USDT"),
+            bids: vec![(Decimal::new(50000, 0), Decimal::new(1, 0))],
+            asks: vec![(Decimal::new(51000, 0), Decimal::new(1, 0))],
+            timestamp: 1234567890,
         };
 
         handler.handle_orderbook(orderbook.clone()).await.unwrap();
@@ -282,9 +275,12 @@ mod tests {
         let state_manager = Arc::new(MarketDataStateManager::new(tx, symbol_registry));
         let handler = StateManagerMessageHandler::new(state_manager.clone());
 
-        let orderbook = Orderbook {
-            bids: vec![Decimal::new(50000, 0), Decimal::new(1, 0)],
-            asks: vec![Decimal::new(51000, 0), Decimal::new(1, 0)],
+        use trading_core::types::common::Pair;
+        let orderbook = StructuredOrderbook {
+            pair: pair.clone(),
+            bids: vec![(Decimal::new(50000, 0), Decimal::new(1, 0))],
+            asks: vec![(Decimal::new(51000, 0), Decimal::new(1, 0))],
+            timestamp: 1234567890,
         };
 
         handler

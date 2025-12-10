@@ -44,38 +44,24 @@ impl MarketDataSubscriber {
 
     async fn handle_update(&self, update: MarketDataUpdate) -> Result<(), SubscriberError> {
         match update {
-            MarketDataUpdate::Orderbook { pair, orderbook } => {
+            MarketDataUpdate::Orderbook { orderbook } => {
                 // Convert pair to string for calculator
-                let pair_smol = pair.convert_to_smolstr();
+                let pair_smol = orderbook.pair.convert_to_smolstr();
                 let pair_str = pair_smol.as_str();
 
-                // LegacyOrderbook doesn't have best_bid_price/best_ask_price methods
-                // We need to extract prices from the bids/asks vectors
+                // Use StructuredOrderbook methods
                 let bid_price = orderbook
-                    .bids
-                    .get(0)
-                    .copied()
+                    .best_bid_price()
                     .ok_or_else(|| SubscriberError::MissingPrice(SmolStr::new("bid")))?;
                 let ask_price = orderbook
-                    .asks
-                    .get(0)
-                    .copied()
+                    .best_ask_price()
                     .ok_or_else(|| SubscriberError::MissingPrice(SmolStr::new("ask")))?;
 
-                // Calculate total volume
-                let total_volume: rust_decimal::Decimal = orderbook
-                    .bids
-                    .iter()
-                    .skip(1)
-                    .step_by(2)
-                    .chain(orderbook.asks.iter().skip(1).step_by(2))
-                    .sum();
+                // Calculate total volume from structured orderbook
+                let total_volume = orderbook.total_volume();
 
-                // Use current timestamp since LegacyOrderbook doesn't have timestamp field
-                let timestamp = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_millis() as u64;
+                // Use timestamp from orderbook
+                let timestamp = orderbook.timestamp;
 
                 let price_point =
                     PricePoint::from_orderbook(bid_price, ask_price, total_volume, timestamp);
@@ -85,11 +71,12 @@ impl MarketDataSubscriber {
                     .update(pair_str, price_point)
                     .map_err(SubscriberError::CalculatorError)?;
             }
-            MarketDataUpdate::Trade { pair, trade } => {
+            MarketDataUpdate::Trade { trade } => {
                 // Convert pair to string for calculator
-                let pair_smol = pair.convert_to_smolstr();
+                let pair_smol = trade.pair.convert_to_smolstr();
                 let pair_str = pair_smol.as_str();
-                let price_point = PricePoint::from_trade(trade.price, trade.quantity, trade.time);
+                let price_point =
+                    PricePoint::from_trade(trade.price, trade.quantity, trade.timestamp);
 
                 // Update calculator with pair information
                 self.calculator

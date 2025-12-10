@@ -60,7 +60,7 @@ impl IndicatorResolver {
                         "Orderbook required for BestBid price"
                     ))
                 })?;
-                let best_bid = orderbook.bids.first().copied().ok_or_else(|| {
+                let best_bid = orderbook.best_bid_price().ok_or_else(|| {
                     EngineError::CustomError(anyhow::anyhow!("No best bid price in orderbook"))
                 })?;
                 Ok(best_bid - offset)
@@ -72,7 +72,7 @@ impl IndicatorResolver {
                         "Orderbook required for BestAsk price"
                     ))
                 })?;
-                let best_ask = orderbook.asks.first().copied().ok_or_else(|| {
+                let best_ask = orderbook.best_ask_price().ok_or_else(|| {
                     EngineError::CustomError(anyhow::anyhow!("No best ask price in orderbook"))
                 })?;
                 Ok(best_ask + offset)
@@ -82,14 +82,11 @@ impl IndicatorResolver {
                 let orderbook = orderbook.ok_or_else(|| {
                     EngineError::CustomError(anyhow::anyhow!("Orderbook required for MidPrice"))
                 })?;
-                if orderbook.bids.is_empty() || orderbook.asks.is_empty() {
-                    return Err(EngineError::CustomError(anyhow::anyhow!(
+                let mid_price = orderbook.mid_price().ok_or_else(|| {
+                    EngineError::CustomError(anyhow::anyhow!(
                         "Cannot calculate mid price from orderbook: missing bids or asks"
-                    )));
-                }
-                let best_bid = orderbook.bids[0];
-                let best_ask = orderbook.asks[0];
-                let mid_price = (best_bid + best_ask) / Decimal::from(2);
+                    ))
+                })?;
                 Ok(mid_price * (Decimal::ONE + offset_percent / Decimal::from(100)))
             }
         }

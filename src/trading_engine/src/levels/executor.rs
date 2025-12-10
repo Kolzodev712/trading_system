@@ -36,13 +36,11 @@ impl LevelExecutor {
     ) -> Result<ResolvedLevel, EngineError> {
         // Get current price for quantity calculations
         let current_price = if let Some(ob) = orderbook {
-            if !ob.bids.is_empty() && !ob.asks.is_empty() {
-                (ob.bids[0] + ob.asks[0]) / rust_decimal::Decimal::from(2)
-            } else {
-                return Err(EngineError::CustomError(anyhow::anyhow!(
+            ob.mid_price().ok_or_else(|| {
+                EngineError::CustomError(anyhow::anyhow!(
                     "Cannot determine current price from orderbook"
-                )));
-            }
+                ))
+            })?
         } else {
             return Err(EngineError::CustomError(anyhow::anyhow!(
                 "Orderbook required for level resolution"

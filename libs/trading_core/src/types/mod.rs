@@ -17,7 +17,4 @@ pub use exchange::{
 };
 
 // Re-export market_data types
-pub use market_data::{
-    LegacyOrderbook as Orderbook, LegacyTrade as Trade, PublicTrade, StructuredOrderbook,
-    StructuredPublicTrade,
-};
+pub use market_data::{Orderbook, PublicTrade, StructuredOrderbook, StructuredPublicTrade, Trade};

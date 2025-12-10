@@ -14,7 +14,7 @@ use trading_core::error::EngineError;
 use trading_core::traits::TradingClient;
 use trading_core::types::common::Pair;
 use trading_core::types::exchange::{Order, OrderRequest};
-use trading_core::types::market_data::LegacyOrderbook as Orderbook;
+use trading_core::types::market_data::StructuredOrderbook;
 
 /// Level-based event loop
 pub struct LevelBasedEventLoop {
@@ -124,10 +124,9 @@ impl LevelBasedEventLoop {
                 // Handle market data updates from channel
                 update = market_data_rx.recv() => {
                     match update {
-                        Ok(MarketDataUpdate::Orderbook { orderbook, .. }) => {
+                        Ok(MarketDataUpdate::Orderbook { orderbook }) => {
                             // Update last seen price for periodic risk checks
-                            if !orderbook.bids.is_empty() && !orderbook.asks.is_empty() {
-                                let price = (orderbook.bids[0] + orderbook.asks[0]) / Decimal::from(2);
+                            if let Some(price) = orderbook.mid_price() {
                                 *self.last_price.write().await = Some(price);
                             }
 
@@ -165,7 +164,7 @@ impl LevelBasedEventLoop {
 
     async fn handle_orderbook(
         &self,
-        orderbook: &Orderbook,
+        orderbook: &StructuredOrderbook,
         indicator_cache: &Arc<RwLock<HashMap<SmolStr, IndicatorValue>>>,
     ) -> Result<(), EngineError> {
         // Get indicators from cache
@@ -216,12 +215,8 @@ impl LevelBasedEventLoop {
                 .await?;
 
             // Perform risk checks
-            // Get current price from orderbook (LegacyOrderbook has bids/asks as Vec<Decimal>)
-            let current_price = if !orderbook.bids.is_empty() && !orderbook.asks.is_empty() {
-                Some((orderbook.bids[0] + orderbook.asks[0]) / Decimal::from(2))
-            } else {
-                None
-            };
+            // Get current price from orderbook
+            let current_price = orderbook.mid_price();
             let current_prices = current_price.map(|price| {
                 let mut map = HashMap::new();
                 map.insert(self.symbol.clone(), price);
@@ -274,12 +269,7 @@ impl LevelBasedEventLoop {
                     self.trading_state_manager.add_order(order.clone()).await;
 
                     // Post-trade risk check
-                    let current_price = if !orderbook.bids.is_empty() && !orderbook.asks.is_empty()
-                    {
-                        Some((orderbook.bids[0] + orderbook.asks[0]) / Decimal::from(2))
-                    } else {
-                        None
-                    };
+                    let current_price = orderbook.mid_price();
                     if let Some(price) = current_price {
                         let mut current_prices = HashMap::new();
                         current_prices.insert(self.symbol.clone(), price);

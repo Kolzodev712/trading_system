@@ -10,7 +10,7 @@ use trading_core::{
     channels::market_data::MarketDataUpdateSender,
     error::EngineError,
     registry::symbol::SymbolRegistry,
-    types::market_data::{LegacyOrderbook as Orderbook, LegacyTrade as Trade},
+    types::market_data::{StructuredOrderbook, StructuredPublicTrade},
 };
 
 use super::{publisher::MarketDataStatePublisher, state::MarketDataState};
@@ -57,76 +57,87 @@ impl MarketDataStateManager {
     /// Update orderbook and publish
     ///
     /// # Arguments
-    /// * `symbol` - Symbol from exchange (e.g., "BTCUSDT")
-    /// * `orderbook` - Orderbook update from WebSocket
+    /// * `symbol` - Symbol from exchange (e.g., "BTCUSDT") - used for validation only
+    /// * `orderbook` - Orderbook update from WebSocket (already contains pair)
     ///
     /// # Errors
-    /// Returns an error if publishing fails or symbol is not found in registry
+    /// Returns an error if publishing fails or symbol doesn't match orderbook pair
     pub async fn update_orderbook(
         &self,
         symbol: &trading_core::types::common::Symbol,
-        orderbook: Orderbook,
+        orderbook: StructuredOrderbook,
     ) -> Result<(), EngineError> {
-        // Convert symbol to pair using registry
-        let pair = self
-            .symbol_registry
-            .get_pair(symbol)
-            .ok_or_else(|| {
-                EngineError::CustomError(anyhow::anyhow!("Symbol {} not found in registry", symbol))
-            })?
-            .clone();
+        // Validate that symbol matches orderbook pair
+        let expected_pair = self.symbol_registry.get_pair(symbol).ok_or_else(|| {
+            EngineError::CustomError(anyhow::anyhow!("Symbol {} not found in registry", symbol))
+        })?;
+
+        if orderbook.pair != *expected_pair {
+            return Err(EngineError::CustomError(anyhow::anyhow!(
+                "Symbol {} does not match orderbook pair {}",
+                symbol,
+                orderbook.pair
+            )));
+        }
 
         // 1. Update in-memory state
         {
             let mut state = self.state.write().await;
-            state.update_orderbook(pair.clone(), orderbook.clone());
+            state.update_orderbook(orderbook.pair.clone(), orderbook.clone());
         }
 
         // 2. Publish via broadcast channel
-        if let Err(e) = self.publisher.publish_orderbook(&pair, &orderbook).await {
+        if let Err(e) = self.publisher.publish_orderbook(&orderbook).await {
             error!("Failed to publish orderbook update: {}", e);
             return Err(e);
         }
 
-        debug!("Updated and published orderbook for pair: {}", pair);
+        debug!(
+            "Updated and published orderbook for pair: {}",
+            orderbook.pair
+        );
         Ok(())
     }
 
     /// Add public trade and publish
     ///
     /// # Arguments
-    /// * `symbol` - Symbol from exchange (e.g., "BTCUSDT")
-    /// * `trade` - Trade update from WebSocket
+    /// * `symbol` - Symbol from exchange (e.g., "BTCUSDT") - used for validation only
+    /// * `trade` - Trade update from WebSocket (already contains pair)
     ///
     /// # Errors
-    /// Returns an error if publishing fails or symbol is not found in registry
+    /// Returns an error if publishing fails or symbol doesn't match trade pair
     pub async fn add_public_trade(
         &self,
         symbol: &trading_core::types::common::Symbol,
-        trade: Trade,
+        trade: StructuredPublicTrade,
     ) -> Result<(), EngineError> {
-        // Convert symbol to pair using registry
-        let pair = self
-            .symbol_registry
-            .get_pair(symbol)
-            .ok_or_else(|| {
-                EngineError::CustomError(anyhow::anyhow!("Symbol {} not found in registry", symbol))
-            })?
-            .clone();
+        // Validate that symbol matches trade pair
+        let expected_pair = self.symbol_registry.get_pair(symbol).ok_or_else(|| {
+            EngineError::CustomError(anyhow::anyhow!("Symbol {} not found in registry", symbol))
+        })?;
+
+        if trade.pair != *expected_pair {
+            return Err(EngineError::CustomError(anyhow::anyhow!(
+                "Symbol {} does not match trade pair {}",
+                symbol,
+                trade.pair
+            )));
+        }
 
         // 1. Add to in-memory state
         {
             let mut state = self.state.write().await;
-            state.add_public_trade(pair.clone(), trade.clone());
+            state.add_public_trade(trade.pair.clone(), trade.clone());
         }
 
         // 2. Publish via broadcast channel
-        if let Err(e) = self.publisher.publish_trade(&pair, &trade).await {
+        if let Err(e) = self.publisher.publish_trade(&trade).await {
             error!("Failed to publish trade update: {}", e);
             return Err(e);
         }
 
-        debug!("Added and published trade for pair: {}", pair);
+        debug!("Added and published trade for pair: {}", trade.pair);
         Ok(())
     }
 

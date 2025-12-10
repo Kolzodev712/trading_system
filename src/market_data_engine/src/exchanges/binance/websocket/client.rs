@@ -18,7 +18,7 @@ use trading_core::{
     error::EngineError,
     types::{
         common::DataType,
-        market_data::{LegacyOrderbook as Orderbook, LegacyTrade as Trade},
+        market_data::{StructuredOrderbook, StructuredPublicTrade},
     },
     utils::generate_custom_uuid,
     websocket::client::{MessageHandler, SubscriptionHandler, WebSocketClient},
@@ -81,22 +81,18 @@ impl DataHandler {
     fn handle_orderbook_event(&self, v: Value) -> Result<ParsedBinanceMessage, EngineError> {
         let binance_orderbook: BinanceOrderbook =
             serde_json::from_value(v).map_err(EngineError::JsonError)?;
-        let symbol = binance_orderbook.symbol.clone();
-        let general_orderbook: Orderbook = binance_orderbook.into();
+        let structured_orderbook: StructuredOrderbook = binance_orderbook.into();
         Ok(ParsedBinanceMessage::OrderBook {
-            symbol,
-            orderbook: general_orderbook,
+            orderbook: structured_orderbook,
         })
     }
 
     fn handle_trade_event(&self, v: Value) -> Result<ParsedBinanceMessage, EngineError> {
         let binance_trade: BinanceTrade =
             serde_json::from_value(v).map_err(EngineError::JsonError)?;
-        let symbol = binance_trade.symbol.clone();
-        let general_trade: Trade = binance_trade.into();
+        let structured_trade: StructuredPublicTrade = binance_trade.into();
         Ok(ParsedBinanceMessage::Trade {
-            symbol,
-            trade: general_trade,
+            trade: structured_trade,
         })
     }
 

@@ -1,7 +1,7 @@
 //! Redis client for pub/sub (kept for backward compatibility during migration)
 //! Note: This will be replaced by channels in Proposal 04
 use crate::error::EngineError;
-use crate::types::market_data::{LegacyOrderbook as Orderbook, LegacyTrade as Trade};
+use crate::types::market_data::{StructuredOrderbook, StructuredPublicTrade};
 use redis::{AsyncCommands, Client};
 use serde::{Deserialize, Serialize};
 use tokio_stream::StreamExt;
@@ -12,8 +12,8 @@ pub const TRADE_CHANNEL: &str = "trade";
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub enum RedisMessage {
-    OrderbookMessage(Orderbook),
-    TradeMessage(Trade),
+    OrderbookMessage(StructuredOrderbook),
+    TradeMessage(StructuredPublicTrade),
 }
 
 #[derive(Debug, Clone)]

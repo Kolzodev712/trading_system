@@ -2,7 +2,7 @@ use crate::state::Strategy;
 use rust_decimal::Decimal;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use trading_core::{error::EngineError, types::market_data::LegacyOrderbook as Orderbook};
+use trading_core::{error::EngineError, types::market_data::StructuredOrderbook};
 
 /// Simple backtesting framework
 pub struct BacktestEngine<S: Strategy> {
@@ -36,7 +36,10 @@ impl<S: Strategy> BacktestEngine<S> {
     }
 
     /// Run backtest on a series of orderbooks
-    pub async fn run(&mut self, orderbooks: Vec<Orderbook>) -> Result<BacktestResult, EngineError> {
+    pub async fn run(
+        &mut self,
+        orderbooks: Vec<StructuredOrderbook>,
+    ) -> Result<BacktestResult, EngineError> {
         for orderbook in orderbooks {
             let state = {
                 let strat = self.strategy.read().await;
@@ -50,10 +53,9 @@ impl<S: Strategy> BacktestEngine<S> {
 
             if let Some(req) = order_request {
                 // Simulate order execution at mid price
-                let mid_price = if !orderbook.bids.is_empty() && !orderbook.asks.is_empty() {
-                    (orderbook.bids[0] + orderbook.asks[0]) / Decimal::from(2)
-                } else {
-                    continue;
+                let mid_price = match orderbook.mid_price() {
+                    Some(price) => price,
+                    None => continue,
                 };
 
                 let cost = mid_price * req.amount;

@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use smol_str::SmolStr;
 use std::primitive::str;
 use trading_core::{
-    types::market_data::LegacyOrderbook as Orderbook,
+    types::{common::Pair, market_data::StructuredOrderbook},
     utils::{deserialize_smol_str, serialize_smol_str},
 };
 
@@ -39,19 +39,53 @@ pub struct PriceLevel {
     pub quantity: Decimal,
 }
 
-impl From<BinanceOrderbook> for Orderbook {
+impl From<BinanceOrderbook> for StructuredOrderbook {
     fn from(orderbook: BinanceOrderbook) -> Self {
-        let bids = orderbook
+        // Convert symbol to Pair - simple parsing for common Binance symbols
+        // For "BTCUSDT", we split at common quote currencies
+        let symbol_str = orderbook.symbol.as_str();
+        let pair = if symbol_str.ends_with("USDT") {
+            let base = &symbol_str[..symbol_str.len() - 4];
+            Pair::new(base, "USDT")
+        } else if symbol_str.ends_with("BTC") {
+            let base = &symbol_str[..symbol_str.len() - 3];
+            Pair::new(base, "BTC")
+        } else if symbol_str.ends_with("ETH") {
+            let base = &symbol_str[..symbol_str.len() - 3];
+            Pair::new(base, "ETH")
+        } else if symbol_str.ends_with("BNB") {
+            let base = &symbol_str[..symbol_str.len() - 3];
+            Pair::new(base, "BNB")
+        } else {
+            // Fallback: assume last 4 chars are quote, rest is base
+            if symbol_str.len() >= 4 {
+                let base = &symbol_str[..symbol_str.len() - 4];
+                let quote = &symbol_str[symbol_str.len() - 4..];
+                Pair::new(base, quote)
+            } else {
+                // Last resort: use UNKNOWN
+                Pair::new("UNKNOWN", "UNKNOWN")
+            }
+        };
+
+        // Convert PriceLevel to (price, quantity) tuples
+        let bids: Vec<(rust_decimal::Decimal, rust_decimal::Decimal)> = orderbook
             .bids
             .into_iter()
-            .map(|level| level.price)
+            .map(|level| (level.price, level.quantity))
             .collect();
-        let asks = orderbook
+        let asks: Vec<(rust_decimal::Decimal, rust_decimal::Decimal)> = orderbook
             .asks
             .into_iter()
-            .map(|level| level.price)
+            .map(|level| (level.price, level.quantity))
             .collect();
-        Orderbook { bids, asks }
+
+        StructuredOrderbook {
+            pair,
+            bids,
+            asks,
+            timestamp: orderbook.event_time,
+        }
     }
 }
 

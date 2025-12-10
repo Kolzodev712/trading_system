@@ -15,8 +15,8 @@ use trading_core::types::exchange::OrderRequest;
 use trading_engine::health::HealthServer as TradingHealthServer;
 use trading_engine::levels::{
     CancellationManager, IndicatorSubscriber, LevelBasedEventLoop, LevelExecutor, LevelManager,
-    RiskManager,
 };
+use trading_engine::risk::RiskManager;
 use trading_engine::state::Strategy;
 use trading_engine::strategies::{BuyLowSellHigh, StrategyExecutor};
 
@@ -283,19 +283,35 @@ pub async fn level_runner(
 
     info!("Loaded {} levels", level_manager.get_all_levels().len());
 
+    // Extract symbol from first level (needed for symbol registry)
+    let symbol = {
+        let level_manager_guard = level_manager.get_all_levels();
+        level_manager_guard
+            .first()
+            .map(|l| l.config.symbol.clone())
+            .ok_or("No levels configured")?
+    };
+
+    // Create symbol registry for risk manager
+    let symbol_registry = Arc::new(trading_core::registry::symbol::SymbolRegistry::from_pairs(
+        vec![symbol.clone()],
+    ));
+
     // Create level executor
     let level_executor = Arc::new(LevelExecutor::new(services.trading_client.clone()));
 
-    // Create risk manager
-    let risk_manager = Arc::new(RiskManager::new(risk_limits));
+    // Create risk manager with symbol registry
+    let risk_manager = Arc::new(RiskManager::new(risk_limits, symbol_registry.clone()));
 
     // Wrap level_manager in Arc<RwLock<>> for sharing with LiveConfig and event loop
     let level_manager = Arc::new(RwLock::new(level_manager));
 
     // Wrap risk_manager in Arc<RwLock<>> for LiveConfig service
     let risk_limits_for_live_config = risk_manager.get_limits().clone();
-    let risk_manager_for_live_config =
-        Arc::new(RwLock::new(RiskManager::new(risk_limits_for_live_config)));
+    let risk_manager_for_live_config = Arc::new(RwLock::new(RiskManager::new(
+        risk_limits_for_live_config,
+        symbol_registry.clone(),
+    )));
 
     // Create LiveConfig service for runtime configuration updates
     let audit_log_file = format!(
@@ -363,16 +379,6 @@ pub async fn level_runner(
             }
         }
     });
-
-    // Extract symbol from first level (assuming all levels use same symbol for now)
-    let symbol = {
-        let level_manager_guard = level_manager.read().await;
-        level_manager_guard
-            .get_all_levels()
-            .first()
-            .map(|l| l.config.symbol.clone())
-            .ok_or("No levels configured")?
-    };
 
     // Create level-based event loop
     let trading_reconciliation_interval_secs =

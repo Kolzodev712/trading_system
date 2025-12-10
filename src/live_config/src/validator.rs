@@ -6,7 +6,8 @@ use rust_decimal::Decimal;
 use smol_str::SmolStr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use trading_engine::levels::{LevelManager, RiskManager};
+use trading_engine::levels::LevelManager;
+use trading_engine::risk::RiskManager;
 
 pub struct ConfigValidator {
     level_manager: Arc<RwLock<LevelManager>>,

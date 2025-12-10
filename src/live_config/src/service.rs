@@ -4,7 +4,8 @@ use crate::types::*;
 use crate::updater::{ConfigUpdater, LevelUpdater, RiskUpdater};
 use crate::validator::ConfigValidator;
 use std::sync::Arc;
-use trading_engine::levels::{LevelManager, RiskManager};
+use trading_engine::levels::LevelManager;
+use trading_engine::risk::RiskManager;
 
 pub struct LiveConfigService {
     validator: Arc<ConfigValidator>,

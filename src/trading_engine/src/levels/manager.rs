@@ -62,7 +62,7 @@ impl LevelManager {
     pub async fn load_from_config_with_risk_limits(
         &mut self,
         path: &Path,
-    ) -> Result<super::risk::RiskLimits, EngineError> {
+    ) -> Result<crate::risk::RiskLimits, EngineError> {
         let content = fs::read_to_string(path).await.map_err(|e| {
             EngineError::CustomError(anyhow::anyhow!("Failed to read config file: {}", e))
         })?;
@@ -71,7 +71,7 @@ impl LevelManager {
         struct LevelsConfigFile {
             levels: Vec<LevelConfig>,
             #[serde(default)]
-            risk_limits: super::risk::RiskLimits,
+            risk_limits: crate::risk::RiskLimits,
         }
 
         let config: LevelsConfigFile = serde_json::from_str(&content).map_err(|e| {
@@ -275,7 +275,7 @@ impl LevelManager {
     /// Save all levels and risk limits to MongoDB
     pub async fn save_all_levels(
         &self,
-        risk_limits: &super::risk::RiskLimits,
+        risk_limits: &crate::risk::RiskLimits,
     ) -> Result<(), EngineError> {
         if let Some(persistence) = &self.persistence {
             let levels: Vec<LevelConfig> = self.levels.values().map(|l| l.config.clone()).collect();
@@ -295,7 +295,7 @@ impl LevelManager {
     /// Load levels from MongoDB (if available)
     pub async fn load_from_mongo(
         &mut self,
-    ) -> Result<Option<super::risk::RiskLimits>, EngineError> {
+    ) -> Result<Option<crate::risk::RiskLimits>, EngineError> {
         if let Some(persistence) = &self.persistence {
             if let Some(bot_config) = persistence.load_levels().await.map_err(|e| {
                 EngineError::CustomError(anyhow::anyhow!(
@@ -334,7 +334,7 @@ impl LevelManager {
                 );
 
                 // Convert risk limits
-                let risk_limits = super::risk::RiskLimits {
+                let risk_limits = crate::risk::RiskLimits {
                     total_max_position: bot_config.risk_limits.total_max_position,
                     max_total_orders: bot_config.risk_limits.max_total_orders,
                     daily_loss_limit_all_pairs: bot_config.risk_limits.daily_loss_limit_all_pairs,

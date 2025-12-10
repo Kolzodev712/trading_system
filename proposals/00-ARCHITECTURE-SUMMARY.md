@@ -42,6 +42,18 @@ This document provides a comprehensive overview of the entire trading system arc
 - **Multi-Exchange Support**: Design supports multiple exchanges without exchange-specific naming
 - **Default Values**: Sensible defaults for all channels (market data: 1000, WebSocket: 1024, etc.)
 
+### ✅ Risk System (Proposal 07) - COMPLETE
+- **Comprehensive Risk Management**: Top-level risk system in `trading_engine::risk` (applies to both levels and strategies)
+- **Pre-Trade Checks**: Circuit breaker, daily loss limits, balance, position limits, order count - all checked before every order
+- **Post-Trade Checks**: Integrated after order execution to monitor for limit breaches
+- **Periodic Checks**: Background monitoring every second to catch issues even when no trades occur
+- **Circuit Breaker**: Three-state system (Closed/Open/HalfOpen) with automatic recovery after timeout (5 minutes default)
+- **Daily P&L Tracking**: Automatic tracking with midnight reset, per-pair and global limits
+- **Risk Metrics**: Real-time calculation of unrealized P&L, realized P&L, daily P&L, exposure, position size
+- **SymbolRegistry Integration**: Uses SymbolRegistry for proper symbol-to-pair conversion in balance checks
+- **Risk Limits**: Configurable limits for position size, order count, daily loss (global and per-pair)
+- **Integration**: Fully integrated into level-based event loop with price tracking for periodic checks
+
 ## Prerequisites & Infrastructure Requirements
 
 To run the trading system in production, the following infrastructure and services must be set up and running:
@@ -1396,7 +1408,16 @@ Indicator Engine
    - Audit logging for all configuration changes
    - Service orchestrator coordinating validation, updates, and persistence
    - Runner integration with background API handler
-6. Risk system (Proposal 07)
+6. ✅ Risk System (Proposal 07) - **COMPLETE**
+   - Comprehensive risk management at trading_engine level (applies to both levels and strategies)
+   - Pre-trade, post-trade, and periodic risk checks fully integrated
+   - Circuit breaker with Closed/Open/HalfOpen states and automatic recovery
+   - Daily P&L tracking with automatic midnight reset
+   - Risk metrics: unrealized P&L, realized P&L, daily P&L, exposure, position size
+   - Risk limits: position size limits, order count limits, daily loss limits (global and per-pair)
+   - Balance checks before every order
+   - SymbolRegistry integration for symbol-to-pair conversion
+   - All checks integrated into level-based event loop
 7. Market data integration (Proposal 08)
 
 ### Phase 3: User Interface & Quality

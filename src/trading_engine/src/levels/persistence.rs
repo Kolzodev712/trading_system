@@ -2,7 +2,7 @@
 use crate::levels::config::{
     LevelConfig, LevelRiskConfig, LifecycleConfig, OrderTypeConfig, PriceConfig, QuantityConfig,
 };
-use crate::levels::risk::RiskLimits;
+use crate::risk::RiskLimits;
 use mongodb::bson::doc;
 use smol_str::SmolStr;
 use trading_core::error::EngineError;

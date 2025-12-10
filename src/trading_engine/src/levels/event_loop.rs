@@ -1,8 +1,9 @@
 //! Level-based event loop - orchestrates level execution with risk checks and cancellation logic
 use super::cancellation::CancellationManager;
-use super::risk::RiskManager;
 use super::{IndicatorSubscriber, LevelExecutor, LevelManager};
+use crate::risk::RiskManager;
 use indicator_engine::data::IndicatorValue;
+use rust_decimal::Decimal;
 use smol_str::SmolStr;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -27,6 +28,8 @@ pub struct LevelBasedEventLoop {
     market_data_rx: MarketDataUpdateReceiver,
     symbol: Pair,
     reconciliation_interval_secs: u64,
+    /// Last seen price for periodic risk checks
+    last_price: Arc<RwLock<Option<Decimal>>>,
 }
 
 impl LevelBasedEventLoop {
@@ -54,6 +57,7 @@ impl LevelBasedEventLoop {
             market_data_rx,
             symbol,
             reconciliation_interval_secs,
+            last_price: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -121,6 +125,12 @@ impl LevelBasedEventLoop {
                 update = market_data_rx.recv() => {
                     match update {
                         Ok(MarketDataUpdate::Orderbook { orderbook, .. }) => {
+                            // Update last seen price for periodic risk checks
+                            if !orderbook.bids.is_empty() && !orderbook.asks.is_empty() {
+                                let price = (orderbook.bids[0] + orderbook.asks[0]) / Decimal::from(2);
+                                *self.last_price.write().await = Some(price);
+                            }
+
                             if let Err(e) = self.handle_orderbook(&orderbook, &subscriber_cache).await {
                                 tracing::error!("Error handling orderbook: {}", e);
                             }
@@ -206,9 +216,20 @@ impl LevelBasedEventLoop {
                 .await?;
 
             // Perform risk checks
+            // Get current price from orderbook (LegacyOrderbook has bids/asks as Vec<Decimal>)
+            let current_price = if !orderbook.bids.is_empty() && !orderbook.asks.is_empty() {
+                Some((orderbook.bids[0] + orderbook.asks[0]) / Decimal::from(2))
+            } else {
+                None
+            };
+            let current_prices = current_price.map(|price| {
+                let mut map = HashMap::new();
+                map.insert(self.symbol.clone(), price);
+                map
+            });
             let risk_result = self
                 .risk_manager
-                .check_level(&resolved, &state, &balances)
+                .check_level(&resolved, &state, &balances, current_prices.as_ref())
                 .await;
 
             if !risk_result.allowed {
@@ -250,7 +271,45 @@ impl LevelBasedEventLoop {
 
                     // Add order to TradingStateManager (tracks orders we placed)
                     // Add order to TradingStateManager (single source of truth)
-                    self.trading_state_manager.add_order(order).await;
+                    self.trading_state_manager.add_order(order.clone()).await;
+
+                    // Post-trade risk check
+                    let current_price = if !orderbook.bids.is_empty() && !orderbook.asks.is_empty()
+                    {
+                        Some((orderbook.bids[0] + orderbook.asks[0]) / Decimal::from(2))
+                    } else {
+                        None
+                    };
+                    if let Some(price) = current_price {
+                        let mut current_prices = HashMap::new();
+                        current_prices.insert(self.symbol.clone(), price);
+
+                        // Get fresh trading state after order was added
+                        let trading_state = self.trading_state_manager.get_state();
+                        let state_after_trade = {
+                            let state_guard = trading_state.read().await;
+                            state_guard.clone()
+                        };
+
+                        let post_trade_result = self
+                            .risk_manager
+                            .check_post_trade(&state_after_trade, &current_prices)
+                            .await;
+
+                        if !post_trade_result.allowed {
+                            tracing::warn!(
+                                "Post-trade risk check failed for order {}: {}",
+                                order.order_id.as_str(),
+                                post_trade_result
+                                    .reason
+                                    .as_ref()
+                                    .map(|r| r.as_str())
+                                    .unwrap_or("unknown")
+                            );
+                            // Note: Order is already placed, but we log the warning
+                            // In the future, we could cancel the order or trigger circuit breaker
+                        }
+                    }
                 }
                 Err(e) => {
                     tracing::warn!("Failed to post level {}: {}", level.config.id, e);
@@ -299,6 +358,35 @@ impl LevelBasedEventLoop {
 
         // Handle level reposting
         self.handle_reposting().await?;
+
+        // Periodic risk check
+        if let Some(price) = *self.last_price.read().await {
+            let mut current_prices = HashMap::new();
+            current_prices.insert(self.symbol.clone(), price);
+
+            let trading_state = self.trading_state_manager.get_state();
+            let state = {
+                let state_guard = trading_state.read().await;
+                state_guard.clone()
+            };
+
+            let periodic_result = self
+                .risk_manager
+                .check_periodic(&state, &current_prices)
+                .await;
+
+            if !periodic_result.allowed {
+                tracing::warn!(
+                    "Periodic risk check failed: {}",
+                    periodic_result
+                        .reason
+                        .as_ref()
+                        .map(|r| r.as_str())
+                        .unwrap_or("unknown")
+                );
+                // Circuit breaker will block future trades
+            }
+        }
 
         Ok(())
     }

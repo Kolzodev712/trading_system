@@ -3,7 +3,7 @@ use crate::types::RiskLimitType;
 use rust_decimal::Decimal;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use trading_engine::levels::RiskManager;
+use trading_engine::risk::RiskManager;
 
 pub struct RiskUpdater {
     pub(crate) risk_manager: Arc<RwLock<RiskManager>>,
@@ -66,7 +66,7 @@ impl RiskUpdater {
     }
 
     /// Get current risk limits (for persistence)
-    pub async fn get_limits(&self) -> trading_engine::levels::risk::RiskLimits {
+    pub async fn get_limits(&self) -> trading_engine::risk::RiskLimits {
         let risk_manager = self.risk_manager.read().await;
         risk_manager.get_limits().clone()
     }

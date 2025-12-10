@@ -58,6 +58,9 @@ rust_decimal = { workspace = true }
 rust_decimal_macros = { workspace = true }
 base64 = { workspace = true }
 
+# MongoDB (for persistence)
+mongodb = { workspace = true }
+
 # Testing
 tokio-test = { workspace = true }
 

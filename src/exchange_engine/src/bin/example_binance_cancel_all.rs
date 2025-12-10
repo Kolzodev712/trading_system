@@ -29,7 +29,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .init();
 
     let binance_config = load_binance_config("config/binance_config.json")?;
-    let binance_client = Arc::new(RwLock::new(BinanceClient::new(binance_config, 100)));
+    // Use default channel config for examples
+    let channels = trading_core::config::ChannelConfig::default();
+    let binance_client = Arc::new(RwLock::new(BinanceClient::new(
+        binance_config,
+        channels.websocket_inbound_capacity,
+        channels.websocket_ping_capacity,
+        channels.websocket_outbound_rpc_capacity,
+        channels.shutdown_capacity,
+    )));
 
     // 1) clone a lightweight handle for the WS loop, _then_ drop the lock
     let mut stream_handle = {

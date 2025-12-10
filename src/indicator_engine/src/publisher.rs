@@ -33,7 +33,7 @@ impl IndicatorPublisher {
 
             // Get all cached values
             let cache = self.calculator.cache();
-            let cache_guard = cache.read().unwrap();
+            let cache_guard = cache.read();
             let values: Vec<IndicatorValue> = cache_guard.values().cloned().collect();
             drop(cache_guard);
 

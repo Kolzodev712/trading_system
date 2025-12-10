@@ -32,7 +32,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 1) build the shared client
     let cfg = load_binance_config("config/binance_config.json")?;
-    let binance_client = Arc::new(RwLock::new(BinanceClient::new(cfg, 100)));
+    // Use default channel config for examples
+    let channels = trading_core::config::ChannelConfig::default();
+    let binance_client = Arc::new(RwLock::new(BinanceClient::new(
+        cfg,
+        channels.websocket_inbound_capacity,
+        channels.websocket_ping_capacity,
+        channels.websocket_outbound_rpc_capacity,
+        channels.shutdown_capacity,
+    )));
 
     // 2) clone a snapshot for streaming, _then_ drop the lock and run
     let mut stream_client = {

@@ -10,8 +10,8 @@ pub struct ShutdownManager {
 }
 
 impl ShutdownManager {
-    pub fn new() -> Self {
-        let (tx, _) = broadcast::channel(1);
+    pub fn new(capacity: usize) -> Self {
+        let (tx, _) = broadcast::channel(capacity);
         Self {
             shutdown_tx: Arc::new(tx),
         }
@@ -38,6 +38,6 @@ impl ShutdownManager {
 
 impl Default for ShutdownManager {
     fn default() -> Self {
-        Self::new()
+        Self::new(1) // Default capacity of 1
     }
 }

@@ -52,11 +52,21 @@ pub struct BinanceClient {
     rest_client: BinanceHttpClient,
     /// Exchange state manager (optional - for state management and publishing)
     state_manager: Arc<tokio::sync::Mutex<Option<Arc<ExchangeStateManager>>>>,
+    /// Channel capacities for internal communication
+    inbound_capacity: usize,
+    ping_capacity: usize,
+    outbound_rpc_capacity: usize,
 }
 
 impl BinanceClient {
-    pub fn new(config: BinanceConfig, _buffer_size: usize) -> Self {
-        let (shutdown_tx, _) = broadcast::channel(1);
+    pub fn new(
+        config: BinanceConfig,
+        inbound_capacity: usize,
+        ping_capacity: usize,
+        outbound_rpc_capacity: usize,
+        shutdown_capacity: usize,
+    ) -> Self {
+        let (shutdown_tx, _) = broadcast::channel(shutdown_capacity);
 
         let signer =
             BinanceWsAuthenticator::new(config.ws.api_key.clone(), config.ws.secret_key.clone());
@@ -75,6 +85,9 @@ impl BinanceClient {
             shutdown_tx,
             rest_client,
             state_manager: Arc::new(tokio::sync::Mutex::new(None)),
+            inbound_capacity,
+            ping_capacity,
+            outbound_rpc_capacity,
         }
     }
 
@@ -95,8 +108,8 @@ impl BinanceClient {
         let mut backoff_iter = 0u32;
 
         loop {
-            let (inbound_tx, inbound_rx) = mpsc::channel::<BinanceInbound>(1024);
-            let (ping_tx, ping_rx) = mpsc::channel::<Vec<u8>>(16);
+            let (inbound_tx, inbound_rx) = mpsc::channel::<BinanceInbound>(self.inbound_capacity);
+            let (ping_tx, ping_rx) = mpsc::channel::<Vec<u8>>(self.ping_capacity);
 
             match self
                 .connect_and_start_stream(inbound_tx, ping_tx, ping_rx)
@@ -135,7 +148,8 @@ impl BinanceClient {
         self.ws_client.subscribe_to_user_stream(&mut ws).await?;
         debug!("Subscription complete, splitting stream into reader/writer tasks...");
 
-        let (outbound_tx, outbound_rx) = mpsc::channel::<BinanceRpcRequest>(1024);
+        let (outbound_tx, outbound_rx) =
+            mpsc::channel::<BinanceRpcRequest>(self.outbound_rpc_capacity);
         *self.outbound_rpc_tx.lock().await = Some(outbound_tx.clone());
 
         let session = self

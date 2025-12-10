@@ -33,21 +33,31 @@ This document provides a comprehensive overview of the entire trading system arc
 - **Redis Optional**: Redis dependency removed from Trading Engine, optional in Runner (behind feature flag for future Web UI)
 - **Performance**: Eliminated Redis serialization overhead, direct memory access via channels
 
+### ✅ Channel Configuration Centralization (COMPLETE)
+- **ChannelConfig**: Centralized buffer size configuration in `trading_core::config::ChannelConfig`
+- **Exchange-Agnostic**: Generic channel names (e.g., `websocket_inbound_capacity` not `binance_inbound_capacity`)
+- **Centralized Management**: All channel buffer sizes defined in one place, configurable via `bot.json`
+- **Architecture**: Only drivers and `run.rs` know about `ChannelConfig`; underlying clients receive primitive values
+- **No Circular Dependencies**: `ChannelConfig` lives in `trading_core` (shared library), preventing dependency cycles
+- **Multi-Exchange Support**: Design supports multiple exchanges without exchange-specific naming
+- **Default Values**: Sensible defaults for all channels (market data: 1000, WebSocket: 1024, etc.)
+
 ## Prerequisites & Infrastructure Requirements
 
 To run the trading system in production, the following infrastructure and services must be set up and running:
 
 ### Required Services
 
-#### 1. MongoDB Instance
-- **Purpose**: Configuration persistence (levels, risk limits)
-- **Version**: MongoDB 5.0+ (or compatible)
-- **Connection**: Connection string required in configuration
+#### 1. MongoDB Instance (Optional - Configuration Persistence)
+- **Purpose**: Configuration persistence (levels, risk limits, indicators, strategies)
+- **Version**: MongoDB 3.0+ (or compatible)
+- **Connection**: Connection string configured in `bot.json` (defaults to disabled)
 - **Collections**: 
-  - `trading_config` - Level configurations
-  - `risk_limits` - Risk management limits
-  - `bot_config` - Per-bot configuration (e.g., `binance_bot`)
-- **Persistence**: Initially disabled (lazy initialization), can be enabled via config
+  - `bot_configs` - Bot configurations with levels and risk limits
+  - `indicators` - Indicator definitions (simple and composite)
+  - `strategies` - Strategy configurations
+- **Persistence**: Can be enabled/disabled via `bot.json` (`mongo.enabled`)
+- **Fallback**: System falls back to file-based config if MongoDB unavailable
 - **Backup**: Recommended for production (config backup only, not state)
 - **Example Connection**: `mongodb://localhost:27017/trading_system`
 
@@ -332,6 +342,7 @@ cargo run --release --bin trading-cli -- --endpoint http://localhost:50051
    - **Broadcast channel** for fan-out to multiple consumers
    - Direct memory communication
    - Each consumer tracks its own lag
+   - Buffer size configured via `ChannelConfig.exchange_update_capacity`
 
 2. **Market Data Engine → Trading System & Indicator Engine**
    - Orderbook updates
@@ -340,6 +351,7 @@ cargo run --release --bin trading-cli -- --endpoint http://localhost:50051
    - **Broadcast channel** for fan-out to multiple consumers
    - Direct memory communication
    - Each consumer tracks its own lag
+   - Buffer size configured via `ChannelConfig.market_data_capacity`
 
 3. **Indicator Engine → Trading System** (in-process, same workspace)
    - ✅ **COMPLETE**: Real-time indicator values (SMA, EMA, composite)
@@ -347,6 +359,14 @@ cargo run --release --bin trading-cli -- --endpoint http://localhost:50051
    - **Broadcast channel** for fan-out
    - Cached in trading system (< 0.1ms lookup)
    - Uses channels (not gRPC)
+   - Buffer size configured via `ChannelConfig.indicator_update_capacity`
+
+**Channel Configuration**:
+- ✅ **COMPLETE**: All channel buffer sizes centralized in `ChannelConfig` (`trading_core::config::ChannelConfig`)
+- Exchange-agnostic naming (e.g., `websocket_inbound_capacity` not `binance_inbound_capacity`)
+- Configurable via `bot.json` with sensible defaults
+- Only drivers and `run.rs` know about `ChannelConfig`; underlying clients receive primitive values
+- Prevents circular dependencies (config in `trading_core`, not `runner`)
 
 **Benefits**:
 - Ultra-low latency (< 1μs vs 0.5-2ms for gRPC)
@@ -354,6 +374,7 @@ cargo run --release --bin trading-cli -- --endpoint http://localhost:50051
 - Direct memory access
 - Simple and efficient
 - Perfect for monolith architecture
+- Centralized configuration for easy tuning
 
 ### gRPC (External Services Only)
 
@@ -926,9 +947,14 @@ run.rs (exchange-agnostic)
   - Common logic for receiving and processing execution reports
   - Mode-specific callbacks for strategy vs levels handling
 - ✅ **Configuration Separation**:
-  - `config/bot.json`: General bot config (system, exchange, server, redis, features)
+  - `config/bot.json`: General bot config (system, exchange, server, redis, features, channels)
   - `config/strategies.json`: Strategy-specific config
   - `config/levels.json`: Levels-specific config
+- ✅ **Channel Configuration**: Centralized channel buffer sizes
+  - Loads `ChannelConfig` from `bot.json`
+  - Passes `ChannelConfig` to `exchange_engine::run()` and `MarketDataDriver::new()`
+  - All channel creations use values from `ChannelConfig`
+  - Exchange-agnostic design supports multiple exchanges
 - Orchestrates all services
 - Creates channel pairs and wires services together
 - Exposes gRPC server for TUI CLI (future)
@@ -1210,6 +1236,61 @@ Indicator Engine
 
 ## Configuration
 
+### Channel Configuration (✅ Complete)
+
+**Location**: `libs/trading_core/src/config.rs` - `ChannelConfig` struct
+
+**Purpose**: Centralizes buffer sizes for all internal communication channels in an exchange-agnostic way.
+
+**Structure**:
+- **Market Data Channel**: Broadcast channel for orderbooks and trades (default: 1000)
+- **Exchange Update Channel**: Broadcast channel for orders, balances, positions, trades (default: 1000)
+- **Indicator Update Channel**: Broadcast channel for indicator value updates (default: 1000)
+- **WebSocket Channels**: Exchange-agnostic WebSocket buffer sizes
+  - Inbound channel capacity (default: 1024)
+  - Ping channel capacity (default: 16)
+  - Outbound RPC channel capacity (default: 1024)
+- **LiveConfig Request Channel**: mpsc channel for configuration update requests (default: 100)
+- **Shutdown Channel**: Broadcast channel for shutdown signals (default: 1)
+- **Market Data Engine Buffer**: Internal buffer for exchange-specific market data clients (default: 1000)
+
+**Key Design Principles**:
+- **Exchange-Agnostic**: All channel names are generic (e.g., `websocket_inbound_capacity` not `binance_inbound_capacity`)
+- **Centralized**: All buffer sizes defined in one place (`ChannelConfig`)
+- **Configurable**: Can be customized via `bot.json` configuration file
+- **Default Values**: Sensible defaults for all channels
+- **No Circular Dependencies**: `ChannelConfig` lives in `trading_core` (shared library), not in `runner`
+
+**Usage**:
+- `runner` loads `ChannelConfig` from `bot.json` and passes it to services
+- `exchange_engine::run()` accepts `ChannelConfig` and extracts values for exchange-specific clients
+- `BinanceDriver` receives `ChannelConfig` and extracts WebSocket capacities
+- `MarketDataDriver` receives `ChannelConfig` and extracts market data buffer size
+- Underlying clients (e.g., `BinanceClient`) receive primitive `usize` values (not the config struct)
+
+**Configuration Example**:
+```json
+{
+  "channels": {
+    "market_data_capacity": 1000,
+    "exchange_update_capacity": 1000,
+    "indicator_update_capacity": 1000,
+    "websocket_inbound_capacity": 1024,
+    "websocket_ping_capacity": 16,
+    "websocket_outbound_rpc_capacity": 1024,
+    "live_config_request_capacity": 100,
+    "shutdown_capacity": 1,
+    "market_data_engine_buffer": 1000
+  }
+}
+```
+
+**Architecture**:
+- Only `run.rs` (exchange engine) and drivers know about `ChannelConfig`
+- Underlying clients remain agnostic and receive primitive values
+- Prevents circular dependencies (config in `trading_core`, not `runner`)
+- Supports multiple exchanges without exchange-specific naming
+
 ### Communication Configuration
 
 ```json
@@ -1234,6 +1315,8 @@ Indicator Engine
   }
 }
 ```
+
+**Note**: The above `communication.channels` section is legacy. Channel buffer sizes are now configured via the `channels` section in `bot.json` (see Channel Configuration above).
 
 ### Performance Configuration
 
@@ -1296,10 +1379,25 @@ Indicator Engine
    - SymbolRegistry for reliable symbol↔pair conversions
    - Exchange-level and trading-level reconciliation
    - All state management logic implemented and documented
-4. MongoDB Persistence and Configuration Storage (Proposal 06)
-5. LiveConfig Service (Proposal 06b) - **After Proposal 06**
-5. Risk system (Proposal 07)
-6. Market data integration (Proposal 08)
+4. ✅ MongoDB Persistence and Configuration Storage (Proposal 06) - **COMPLETE**
+   - MongoDB client wrapper with connection management
+   - Document models for all configurations (levels, indicators, strategies, risk limits)
+   - Full CRUD persistence modules (LevelPersistence, IndicatorPersistence, StrategyPersistence)
+   - Bidirectional conversion between documents and configs
+   - Integration into LevelManager, IndicatorService, and Strategy persistence
+   - Runner integration with MongoDB client initialization
+   - Graceful fallback to file-based config if MongoDB unavailable
+5. ✅ LiveConfig Service (Proposal 06b) - **COMPLETE**
+   - Channel-based API for runtime configuration updates (no HTTP dependencies)
+   - Type definitions for level fields, config paths, and update requests
+   - Validation layer for all configuration changes
+   - Update logic for levels, risk limits, and bot configuration
+   - Integration with existing MongoDB persistence modules
+   - Audit logging for all configuration changes
+   - Service orchestrator coordinating validation, updates, and persistence
+   - Runner integration with background API handler
+6. Risk system (Proposal 07)
+7. Market data integration (Proposal 08)
 
 ### Phase 3: User Interface & Quality
 1. TUI CLI and Monitoring (Proposal 09)

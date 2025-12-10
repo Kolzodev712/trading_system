@@ -464,6 +464,12 @@ service TradingCliService {
     // System health
     rpc GetSystemHealth(GetSystemHealthRequest) returns (GetSystemHealthResponse);
     rpc GetProtocolHealth(GetProtocolHealthRequest) returns (GetProtocolHealthResponse);
+    
+    // LiveConfig - Runtime configuration updates
+    rpc UpdateLevelValue(UpdateLevelValueRequest) returns (UpdateResponse);
+    rpc UpdateRiskLimit(UpdateRiskLimitRequest) returns (UpdateResponse);
+    rpc UpdateBotConfig(UpdateBotConfigRequest) returns (UpdateResponse);
+    rpc StreamConfigUpdates(StreamConfigUpdatesRequest) returns (stream ConfigUpdateNotification);
 }
 
 message MonitoringDataUpdate {
@@ -547,6 +553,7 @@ message CompositeIndicatorInfo {
 - Risk Metrics
 - **Indicators** (Simple and Composite)
 - **Available Indicators** (Indicator Library Window)
+- **Live Config** (Runtime Configuration Updates Window)
 - Multi-View (Split Screen)
 
 ### System Monitoring
@@ -714,6 +721,104 @@ golden_cross_btcusdt | *Golden Cross | BTCUSDT | 50.30 | 2 deps | EMA50-EMA200
 - **Functions**: `min(SMA20, EMA12)`, `abs(RSI - 50)`
 - **Conditionals**: `if(EMA50 > EMA200, 1, 0)`
 
+## Live Config Window
+
+**Purpose**: Runtime configuration updates without restart. Allows modifying level values, risk limits, and bot configuration while the trading system is running.
+
+**Layout**:
+```
+┌─────────────────────────────────────────────────────────┐
+│ Live Config Updates                    [Connected ✓]     │
+├─────────────────────────────────────────────────────────┤
+│                                                           │
+│ Update Type: [●] Level  [ ] Risk Limit  [ ] Bot Config  │
+│                                                           │
+│ ┌─ Level Update ──────────────────────────────────────┐ │
+│ │ Level ID: [level_1________________]                 │ │
+│ │                                                       │ │
+│ │ Field: [Enabled ▼]                                   │ │
+│ │ Value: [true ▼]                                      │ │
+│ │                                                       │ │
+│ │ Available Fields:                                    │ │
+│ │ • Price (Decimal)                                     │ │
+│ │ • Quantity (Decimal)                                 │ │
+│ │ • Enabled (Boolean)                                  │ │
+│ │ • RiskLimit (Decimal)                                │ │
+│ │ • MaxPositionSize (Decimal)                          │ │
+│ │ • RepostOnFill (Boolean)                             │ │
+│ │ • RepostOnCancel (Boolean)                           │ │
+│ │                                                       │ │
+│ │ [Validate] [Apply Update] [Cancel]                   │ │
+│ └─────────────────────────────────────────────────────┘ │
+│                                                           │
+│ ┌─ Update History ────────────────────────────────────┐ │
+│ │ 2024-01-15 14:23:45 │ level_1 │ Enabled │ true  │ ✓ │ │
+│ │ 2024-01-15 14:20:12 │ level_2 │ Price   │ 45230 │ ✓ │ │
+│ │ 2024-01-15 14:18:33 │ risk   │ MaxPos  │ 10000 │ ✓ │ │
+│ └─────────────────────────────────────────────────────┘ │
+│                                                           │
+│ Status: [Ready]  Last Update: 2024-01-15 14:23:45        │
+└─────────────────────────────────────────────────────────┘
+```
+
+**Features**:
+- **Update Types**: Switch between Level, Risk Limit, and Bot Config updates
+- **Level Updates**:
+  - Select level by ID (dropdown or autocomplete)
+  - Select field to update (dropdown with available fields)
+  - Enter new value (type-specific input: decimal, boolean, string)
+  - Field validation before applying
+- **Risk Limit Updates**:
+  - Select limit type (TotalMaxPosition, MaxTotalOrders, DailyLossLimitAllPairs)
+  - Enter new value (decimal)
+  - Validation against current positions/orders
+- **Bot Config Updates**:
+  - Enter config path (dot-separated, e.g., "reconciliation.exchange_level_interval_ms")
+  - Enter new value (type-specific input)
+  - Path validation
+- **Update History**: Shows recent updates with timestamp, target, field, value, and status
+- **Real-time Status**: Connection status, last update time, validation results
+- **Validation Feedback**: Shows validation errors before applying
+- **Audit Trail**: All updates logged to audit log file
+
+**Connection to LiveConfig Service**:
+- **Channel-based Communication**: LiveConfig service uses channel-based API internally (no HTTP dependencies)
+- **gRPC Integration**: TUI connects via gRPC to the runner's gRPC server, which forwards requests to LiveConfig service
+- **Client Integration**: The runner maintains a `LiveConfigClient` instance that communicates with the LiveConfig service via channels
+- **Streaming Updates**: Receives real-time updates when configuration changes occur via the `StreamConfigUpdates` gRPC stream
+- **Error Handling**: Displays validation errors and update failures
+- **Connection Status**: Shows connection status to LiveConfig service
+
+**Implementation Details**:
+
+1. **Update Flow**:
+   ```
+   User Input (TUI) → gRPC Request → Runner gRPC Server → 
+   LiveConfig Service (Channel API) → Validation → Update → 
+   Persist → Response → gRPC Response → TUI Update
+   ```
+
+2. **Streaming Updates**:
+   - Subscribe to `StreamConfigUpdates` gRPC stream from runner
+   - Display updates in history panel
+   - Update status indicators in real-time
+
+3. **Error Handling**:
+   - Display validation errors inline
+   - Show connection errors
+   - Handle timeout scenarios
+   - Show persistence errors
+
+**Navigation**:
+- Access from main menu: `L` key or "Live Config" option
+- Keyboard shortcuts:
+  - `Tab`: Switch between update types
+  - `Enter`: Apply update
+  - `Esc`: Cancel/Back
+  - `V`: Validate current input
+  - `H`: Show update history
+  - `R`: Refresh status
+
 ## Integration in Runner
 
 ### Runner Main (`runner/src/main.rs`)
@@ -776,6 +881,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 - [ ] System health monitoring functional
 - [ ] Performance: < 2s update latency
 - [ ] All TUI screens render correctly
+- [ ] LiveConfig window connects to LiveConfig service via gRPC (runner forwards to channel-based API)
+- [ ] LiveConfig window displays update history and real-time status
+- [ ] LiveConfig updates are validated before applying
+- [ ] LiveConfig updates are persisted to MongoDB (if enabled)
+- [ ] LiveConfig streaming updates work via gRPC stream
 
 ## Notes
 

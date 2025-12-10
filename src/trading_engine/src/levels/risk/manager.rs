@@ -17,6 +17,16 @@ impl RiskManager {
         Self { limits }
     }
 
+    /// Get current risk limits
+    pub fn get_limits(&self) -> &RiskLimits {
+        &self.limits
+    }
+
+    /// Update risk limits
+    pub fn update_limits(&mut self, limits: RiskLimits) {
+        self.limits = limits;
+    }
+
     /// Perform all risk checks before posting a level
     pub async fn check_level(
         &self,

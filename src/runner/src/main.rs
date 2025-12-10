@@ -60,8 +60,45 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     info!("Starting Trading System");
 
+    // Initialize MongoDB client if enabled
+    let mongo_client = if bot_config.mongo.enabled {
+        info!(
+            "Initializing MongoDB client: {} / {}",
+            bot_config.mongo.connection_string, bot_config.mongo.database
+        );
+        match trading_core::persistence::mongo::MongoClient::new(
+            &bot_config.mongo.connection_string,
+            &bot_config.mongo.database,
+        )
+        .await
+        {
+            Ok(client) => {
+                if let Err(e) = client.test_connection().await {
+                    warn!(
+                        "MongoDB connection test failed: {}. Persistence will be disabled.",
+                        e
+                    );
+                    None
+                } else {
+                    info!("MongoDB client initialized successfully");
+                    Some(Arc::new(client))
+                }
+            }
+            Err(e) => {
+                warn!(
+                    "Failed to initialize MongoDB client: {}. Persistence will be disabled.",
+                    e
+                );
+                None
+            }
+        }
+    } else {
+        info!("MongoDB persistence is disabled");
+        None
+    };
+
     // Create shutdown manager
-    let shutdown_manager = ShutdownManager::new();
+    let shutdown_manager = ShutdownManager::new(bot_config.channels.shutdown_capacity);
 
     // Set up Ctrl-C handler
     let shutdown_manager_clone = shutdown_manager.clone();
@@ -106,14 +143,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let exchange_enum = bot_config.exchange.exchange.clone();
     // Create market data channel
     let (market_data_tx, market_data_rx) =
-        trading_core::channels::market_data::market_data_update_channel(1000);
+        trading_core::channels::market_data::market_data_update_channel(
+            bot_config.channels.market_data_capacity,
+        );
 
     let market_data_config = MarketDataConfig {
         redis_url: None, // Channels are used for internal communication
         exchange: exchange_enum,
         exchange_config: MDExchangeConfig::Binance(market_data_binance_config),
     };
-    let mut market_data_driver = MarketDataDriver::new(market_data_config, market_data_tx)?;
+    let mut market_data_driver = MarketDataDriver::new(
+        market_data_config,
+        market_data_tx,
+        bot_config.channels.clone(),
+    )?;
 
     let mut shutdown_rx_md = shutdown_manager.subscribe();
     let market_data_handle = tokio::spawn(async move {
@@ -136,14 +179,31 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("Initializing Indicator Service...");
     // Create a separate receiver for the indicator service (fan-out from same channel)
     let indicator_market_data_rx = market_data_rx.resubscribe();
-    let (indicator_tx, _indicator_rx) = indicator_update_channel(1000);
+    let (indicator_tx, _indicator_rx) =
+        indicator_update_channel(bot_config.channels.indicator_update_capacity);
 
-    let mut indicator_service = IndicatorService::new();
+    // Initialize Indicator Service with persistence if enabled
+    let mut indicator_service = if let Some(client) = &mongo_client {
+        let persistence = Arc::new(indicator_engine::persistence::IndicatorPersistence::new(
+            client.as_ref().clone(),
+        ));
+        IndicatorService::new().with_persistence(persistence)
+    } else {
+        IndicatorService::new()
+    };
+
     indicator_service.initialize(
         indicator_market_data_rx,
         indicator_tx,
         1, // Publish every 1 second
     );
+
+    // Load indicators from MongoDB if enabled
+    if mongo_client.is_some() {
+        if let Err(e) = indicator_service.load_from_mongo().await {
+            warn!("Failed to load indicators from MongoDB: {e}");
+        }
+    }
 
     // Register default indicators (can be configured later)
     let pair_str = symbol.convert_to_smolstr();
@@ -154,7 +214,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         period: 20,
         source: PriceSource::Close,
     };
-    if let Err(e) = indicator_service.register_indicator(sma_config) {
+    if let Err(e) = indicator_service.register_indicator(sma_config).await {
         warn!("Failed to register SMA indicator: {e}");
     }
 
@@ -165,7 +225,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         period: 12,
         source: PriceSource::Close,
     };
-    if let Err(e) = indicator_service.register_indicator(ema_config) {
+    if let Err(e) = indicator_service.register_indicator(ema_config).await {
         warn!("Failed to register EMA indicator: {e}");
     }
 
@@ -207,6 +267,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         shutdown_rx_exchange,
         exchange_reconciliation_interval_secs,
         reconciliation_enabled,
+        bot_config.channels.clone(),
     )
     .await?;
 
@@ -260,10 +321,44 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     match args.mode.as_str() {
         "strategies" => {
-            strategy_runner(bot_config.clone(), args.strategies_config, services).await?;
+            // Initialize MongoDB persistence for strategies if enabled
+            let strategy_persistence = if let Some(client) = &mongo_client {
+                Some(Arc::new(
+                    trading_engine::strategies::persistence::StrategyPersistence::new(
+                        client.as_ref().clone(),
+                        bot_config.mongo.bot_id.clone(),
+                    ),
+                ))
+            } else {
+                None
+            };
+            strategy_runner(
+                bot_config.clone(),
+                args.strategies_config,
+                services,
+                strategy_persistence,
+            )
+            .await?;
         }
         "levels" => {
-            level_runner(bot_config.clone(), args.levels_config, services).await?;
+            // Initialize MongoDB persistence for levels if enabled
+            let level_persistence = if let Some(client) = &mongo_client {
+                Some(Arc::new(
+                    trading_engine::levels::persistence::LevelPersistence::new(
+                        client.as_ref().clone(),
+                        bot_config.mongo.bot_id.clone(),
+                    ),
+                ))
+            } else {
+                None
+            };
+            level_runner(
+                bot_config.clone(),
+                args.levels_config,
+                services,
+                level_persistence,
+            )
+            .await?;
         }
         _ => {
             return Err(

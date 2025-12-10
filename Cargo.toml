@@ -13,6 +13,7 @@ members = [
     "src/market_data_engine",
     "src/indicator_engine", 
     "src/runner",
+    "src/live_config",
 ]
 
 [workspace.dependencies]
@@ -53,6 +54,7 @@ ed25519-dalek = "2.1.1"
 
 # Storage
 redis = { version = "0.27.6", features = ["tokio-comp"] }
+mongodb = "3.0.0"
 
 # HTTP Server
 axum = "0.7"
@@ -67,6 +69,7 @@ rust_decimal = {version = "1.35.0", features = ["serde"]}
 rust_decimal_macros = "1.35.0"
 base64 = "0.22.1"
 rand = "0.9.1"
+parking_lot = "0.12"
 
 # Testing
 tokio-test = "0.4"

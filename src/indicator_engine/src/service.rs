@@ -1,5 +1,6 @@
 use crate::calculator::IndicatorCalculator;
 use crate::indicators::traits::IndicatorConfig;
+use crate::persistence::IndicatorPersistence;
 use crate::publisher::IndicatorPublisher;
 use crate::subscriber::MarketDataSubscriber;
 use std::sync::Arc;
@@ -11,6 +12,7 @@ pub struct IndicatorService {
     calculator: Arc<IndicatorCalculator>,
     subscriber: Option<MarketDataSubscriber>,
     publisher: Option<IndicatorPublisher>,
+    persistence: Option<Arc<IndicatorPersistence>>,
 }
 
 impl IndicatorService {
@@ -19,7 +21,14 @@ impl IndicatorService {
             calculator: Arc::new(IndicatorCalculator::new()),
             subscriber: None,
             publisher: None,
+            persistence: None,
         }
+    }
+
+    /// Set persistence for indicator service
+    pub fn with_persistence(mut self, persistence: Arc<IndicatorPersistence>) -> Self {
+        self.persistence = Some(persistence);
+        self
     }
 
     /// Initialize the service with channels
@@ -42,11 +51,41 @@ impl IndicatorService {
     }
 
     /// Register an indicator
-    pub fn register_indicator(
+    pub async fn register_indicator(
         &self,
         config: IndicatorConfig,
     ) -> Result<(), crate::indicators::traits::IndicatorError> {
-        self.calculator.register_indicator(config)
+        self.calculator.register_indicator(config.clone())?;
+
+        // Persist to MongoDB if enabled
+        if let Some(persistence) = &self.persistence {
+            if let Err(e) = persistence.save_simple_indicator(&config).await {
+                tracing::warn!("Failed to persist indicator to MongoDB: {}", e);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Load all indicators from MongoDB
+    pub async fn load_from_mongo(&self) -> Result<(), ServiceError> {
+        if let Some(persistence) = &self.persistence {
+            match persistence.load_all_indicators().await {
+                Ok(indicators) => {
+                    let count = indicators.len();
+                    for config in indicators {
+                        if let Err(e) = self.calculator.register_indicator(config) {
+                            tracing::warn!("Failed to register indicator from MongoDB: {}", e);
+                        }
+                    }
+                    tracing::info!("Loaded {} indicators from MongoDB", count);
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to load indicators from MongoDB: {}", e);
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Get indicator value (latest)

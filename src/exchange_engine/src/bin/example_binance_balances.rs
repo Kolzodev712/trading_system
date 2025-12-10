@@ -26,9 +26,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .init();
 
     let binance_config = load_binance_config("config/binance_config.json")?;
+    // Use default channel config for examples
+    let channels = trading_core::config::ChannelConfig::default();
     let binance_client = Arc::new(RwLock::new(BinanceClient::new(
         binance_config.clone(),
-        1024,
+        channels.websocket_inbound_capacity,
+        channels.websocket_ping_capacity,
+        channels.websocket_outbound_rpc_capacity,
+        channels.shutdown_capacity,
     )));
 
     // 1) Spawn the WS loop:

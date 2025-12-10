@@ -1,8 +1,10 @@
 pub mod authenticator;
 pub mod channels;
 pub mod circuit_breaker;
+pub mod config;
 pub mod error;
 pub mod grpc;
+pub mod persistence;
 pub mod redis;
 pub mod registry;
 pub mod rest;

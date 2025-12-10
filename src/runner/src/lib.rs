@@ -3,6 +3,7 @@ pub mod shutdown;
 
 use crate::config::{BotConfig, StrategiesConfig};
 use crate::shutdown::ShutdownManager;
+use live_config::{LiveConfigClient, LiveConfigService};
 use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -75,13 +76,19 @@ pub async fn strategy_runner(
     bot_config: BotConfig,
     strategies_config_path: String,
     services: SharedServices,
+    _strategy_persistence: Option<
+        Arc<trading_engine::strategies::persistence::StrategyPersistence>,
+    >,
 ) -> Result<(), Box<dyn std::error::Error>> {
     info!("=== Running in STRATEGIES mode ===");
 
     let strategies_config = StrategiesConfig::load_from_file(&strategies_config_path)?;
     strategies_config.validate()?;
 
-    info!("Creating {} Strategy...", strategies_config.strategy_type);
+    info!(
+        "Creating {} Strategy...",
+        strategies_config.strategy_type.as_str()
+    );
     let strategy = Arc::new(RwLock::new(BuyLowSellHigh::new(
         services.trading_client.clone(),
         strategies_config.symbol.clone(),
@@ -163,7 +170,7 @@ pub async fn strategy_runner(
     });
 
     info!("All systems ready! Starting strategy execution...");
-    info!("Strategy: {}", strategies_config.strategy_type);
+    info!("Strategy: {}", strategies_config.strategy_type.as_str());
     info!("Position size: {}", strategies_config.position_size);
     info!("Max position: {}", strategies_config.max_position);
     info!("Symbol: {}", strategies_config.symbol);
@@ -210,7 +217,6 @@ pub async fn strategy_runner(
         }
         _ = async {
             let _ = services.market_data_handle.await;
-            let _ = services.trading_ws_handle.await;
             let _ = health_handle.await;
             let _ = executor_handle.await;
             let _ = services.indicator_handle.await;
@@ -227,19 +233,53 @@ pub async fn level_runner(
     bot_config: BotConfig,
     levels_config_path: String,
     services: SharedServices,
+    level_persistence: Option<Arc<trading_engine::levels::persistence::LevelPersistence>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     info!("=== Running in LEVELS mode ===");
 
-    // Load levels configuration
-    info!(
-        "Loading levels configuration from {}...",
-        levels_config_path
-    );
-    let mut level_manager = LevelManager::new();
-    let risk_limits = level_manager
-        .load_from_config_with_risk_limits(Path::new(&levels_config_path))
-        .await
-        .map_err(|e| format!("Failed to load levels config: {e}"))?;
+    // Initialize level manager with persistence if enabled
+    let mut level_manager = if let Some(ref persistence) = level_persistence {
+        LevelManager::new().with_persistence(Arc::clone(persistence))
+    } else {
+        LevelManager::new()
+    };
+
+    // Try to load from MongoDB first (if enabled)
+    let risk_limits = if level_persistence.is_some() {
+        if let Ok(Some(mongo_risk_limits)) = level_manager.load_from_mongo().await {
+            info!("Loaded levels configuration from MongoDB");
+            mongo_risk_limits
+        } else {
+            // Fall back to file if MongoDB load fails
+            info!(
+                "Loading levels configuration from {}...",
+                levels_config_path
+            );
+            level_manager
+                .load_from_config_with_risk_limits(Path::new(&levels_config_path))
+                .await
+                .map_err(|e| format!("Failed to load levels config: {e}"))?
+        }
+    } else {
+        // Load from file
+        info!(
+            "Loading levels configuration from {}...",
+            levels_config_path
+        );
+        level_manager
+            .load_from_config_with_risk_limits(Path::new(&levels_config_path))
+            .await
+            .map_err(|e| format!("Failed to load levels config: {e}"))?
+    };
+
+    // Save to MongoDB if enabled (after loading from file or MongoDB)
+    if let Some(_) = level_persistence {
+        if let Err(e) = level_manager.save_all_levels(&risk_limits).await {
+            warn!("Failed to save levels to MongoDB: {}", e);
+        } else {
+            info!("Saved levels configuration to MongoDB");
+        }
+    }
 
     info!("Loaded {} levels", level_manager.get_all_levels().len());
 
@@ -249,12 +289,58 @@ pub async fn level_runner(
     // Create risk manager
     let risk_manager = Arc::new(RiskManager::new(risk_limits));
 
+    // Wrap level_manager in Arc<RwLock<>> for sharing with LiveConfig and event loop
+    let level_manager = Arc::new(RwLock::new(level_manager));
+
+    // Wrap risk_manager in Arc<RwLock<>> for LiveConfig service
+    let risk_limits_for_live_config = risk_manager.get_limits().clone();
+    let risk_manager_for_live_config =
+        Arc::new(RwLock::new(RiskManager::new(risk_limits_for_live_config)));
+
+    // Create LiveConfig service for runtime configuration updates
+    let audit_log_file = format!(
+        "logs/live_config_audit_{}.jsonl",
+        chrono::Utc::now().timestamp()
+    );
+
+    let live_config_service = LiveConfigService::new(
+        level_manager.clone(),
+        risk_manager_for_live_config.clone(),
+        level_persistence.clone(),
+        audit_log_file,
+    );
+
+    let (live_config_client, live_config_api) = LiveConfigClient::new(
+        live_config_service,
+        bot_config.channels.live_config_request_capacity,
+    );
+
+    // Spawn LiveConfig API handler
+    let mut shutdown_rx_live_config = services.shutdown_manager.subscribe();
+    let live_config_handle = tokio::spawn(async move {
+        tokio::select! {
+            _ = live_config_api.run() => {
+                info!("LiveConfig API handler completed");
+            }
+            _ = shutdown_rx_live_config.recv() => {
+                info!("LiveConfig API handler shutting down");
+            }
+        }
+    });
+
+    info!("LiveConfig service initialized and running");
+
+    // Store client for potential future use (e.g., CLI commands, admin interface)
+    // For now, it's created but not exposed - can be added to SharedServices if needed
+    let _live_config_client = live_config_client;
+
     // Create cancellation manager (empty conditions for now - can be configured later)
     let cancellation_manager = Arc::new(CancellationManager::new(Vec::new()));
 
     // Create indicator subscriber
     // NOTE: For now, create a new channel. In the future, this should come from SharedServices
-    let (_indicator_tx, indicator_rx) = indicator_update_channel(1000);
+    let (_indicator_tx, indicator_rx) =
+        indicator_update_channel(bot_config.channels.indicator_update_capacity);
     let indicator_subscriber = Arc::new(RwLock::new(IndicatorSubscriber::new(indicator_rx)));
 
     // Start indicator subscriber task
@@ -279,17 +365,20 @@ pub async fn level_runner(
     });
 
     // Extract symbol from first level (assuming all levels use same symbol for now)
-    let symbol = level_manager
-        .get_all_levels()
-        .first()
-        .map(|l| l.config.symbol.clone())
-        .ok_or("No levels configured")?;
+    let symbol = {
+        let level_manager_guard = level_manager.read().await;
+        level_manager_guard
+            .get_all_levels()
+            .first()
+            .map(|l| l.config.symbol.clone())
+            .ok_or("No levels configured")?
+    };
 
     // Create level-based event loop
     let trading_reconciliation_interval_secs =
         bot_config.reconciliation.trading_level_interval_ms / 1000;
     let event_loop = LevelBasedEventLoop::new(
-        Arc::new(RwLock::new(level_manager)),
+        level_manager.clone(),
         level_executor,
         risk_manager,
         cancellation_manager,
@@ -370,6 +459,7 @@ pub async fn level_runner(
             let _ = event_loop_handle.await;
             let _ = subscriber_handle.await;
             let _ = services.indicator_handle.await;
+            let _ = live_config_handle.await;
         } => {
             info!("All components shut down successfully");
         }

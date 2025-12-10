@@ -5,6 +5,7 @@ use crate::{
 };
 use std::sync::Arc;
 use tracing::error;
+use trading_core::config::ChannelConfig;
 use trading_core::{
     channels::market_data::MarketDataUpdateSender, error::EngineError,
     registry::symbol::SymbolRegistry, traits::MarketDataClient, types::common::Pair,
@@ -27,11 +28,13 @@ impl MarketDataDriver {
     /// # Arguments
     /// * `config` - Market data configuration
     /// * `market_data_tx` - Channel sender for publishing market data updates
+    /// * `channels` - Channel configuration for buffer sizes
     ///
     /// The driver creates its own symbol registry from the config's pair information.
     pub fn new(
         config: MarketDataConfig,
         market_data_tx: MarketDataUpdateSender,
+        channels: ChannelConfig,
     ) -> Result<Self, EngineError> {
         // Extract pair from config and create symbol registry
         let pair = match &config.exchange_config {
@@ -49,7 +52,8 @@ impl MarketDataDriver {
         ));
 
         // Create exchange client with state manager handler
-        let exchange_client = Self::create_exchange_client(&config, state_manager.clone())?;
+        let exchange_client =
+            Self::create_exchange_client(&config, state_manager.clone(), &channels)?;
 
         Ok(Self {
             exchange_client,
@@ -65,13 +69,14 @@ impl MarketDataDriver {
     fn create_exchange_client(
         config: &MarketDataConfig,
         state_manager: Arc<MarketDataStateManager>,
+        channels: &ChannelConfig,
     ) -> Result<Box<dyn MarketDataClient>, EngineError> {
         match &config.exchange_config {
             ExchangeConfig::Binance(binance_config) => {
                 let message_handler = Box::new(StateManagerMessageHandler::new(state_manager));
                 Ok(Box::new(BinanceClient::new(
                     binance_config.clone(),
-                    100,
+                    channels.market_data_engine_buffer,
                     Some(message_handler),
                 )))
             } // _ => Err(EngineError::UnsupportedExchange), => add this when more exchanges are supported

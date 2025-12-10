@@ -9,6 +9,7 @@ use async_trait::async_trait;
 use std::sync::Arc;
 use tokio::sync::broadcast;
 use tracing::{debug, error, info};
+use trading_core::config::ChannelConfig;
 use trading_core::traits::ExchangeDriver;
 use trading_core::{error::EngineError, traits::TradingClient, types::exchange::OrderRequest};
 
@@ -31,6 +32,7 @@ impl BinanceDriver {
     /// * `config` - Binance configuration
     /// * `state_manager` - Pre-configured state manager (created in run.rs)
     /// * `trading_client` - Trading client (same one used in state manager)
+    /// * `channels` - Channel configuration for buffer sizes
     ///
     /// # Returns
     /// The driver instance
@@ -38,8 +40,15 @@ impl BinanceDriver {
         config: super::config::BinanceConfig,
         state_manager: Arc<ExchangeStateManager>,
         trading_client: Arc<tokio::sync::RwLock<dyn TradingClient<OrderRequest>>>,
+        channels: ChannelConfig,
     ) -> Result<Self, EngineError> {
-        let client = BinanceClient::new(config, 1024);
+        let client = BinanceClient::new(
+            config,
+            channels.websocket_inbound_capacity,
+            channels.websocket_ping_capacity,
+            channels.websocket_outbound_rpc_capacity,
+            channels.shutdown_capacity,
+        );
 
         Ok(Self {
             client,

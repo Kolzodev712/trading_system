@@ -3,6 +3,7 @@ use super::{Level, LevelConfig, LevelState};
 use smol_str::SmolStr;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use tokio::fs;
 use trading_core::error::EngineError;
 use trading_core::types::common::OrderId;
@@ -11,6 +12,7 @@ use trading_core::types::common::OrderId;
 pub struct LevelManager {
     levels: HashMap<SmolStr, Level>,
     config_path: Option<PathBuf>,
+    persistence: Option<Arc<super::persistence::LevelPersistence>>,
 }
 
 impl LevelManager {
@@ -19,7 +21,17 @@ impl LevelManager {
         Self {
             levels: HashMap::new(),
             config_path: None,
+            persistence: None,
         }
+    }
+
+    /// Set persistence for level manager
+    pub fn with_persistence(
+        mut self,
+        persistence: Arc<super::persistence::LevelPersistence>,
+    ) -> Self {
+        self.persistence = Some(persistence);
+        self
     }
 
     /// Load levels from configuration file
@@ -76,7 +88,7 @@ impl LevelManager {
     }
 
     /// Add a new level
-    pub fn add_level(&mut self, config: LevelConfig) -> Result<(), EngineError> {
+    pub async fn add_level(&mut self, config: LevelConfig) -> Result<(), EngineError> {
         if self.levels.contains_key(&config.id) {
             return Err(EngineError::CustomError(anyhow::anyhow!(
                 "Level with ID {} already exists",
@@ -84,15 +96,31 @@ impl LevelManager {
             )));
         }
 
-        let level = Level::new(config);
+        let level = Level::new(config.clone());
         self.levels.insert(level.config.id.clone(), level);
+
+        // Persist to MongoDB if enabled
+        if let Some(persistence) = &self.persistence {
+            if let Err(e) = persistence.update_level(&config).await {
+                tracing::warn!("Failed to persist level to MongoDB: {}", e);
+            }
+        }
+
         Ok(())
     }
 
     /// Remove a level
-    pub fn remove_level(&mut self, level_id: &SmolStr) -> Result<(), EngineError> {
+    pub async fn remove_level(&mut self, level_id: &SmolStr) -> Result<(), EngineError> {
         if let Some(mut level) = self.levels.remove(level_id) {
             level.state = LevelState::Removed;
+
+            // Persist deletion to MongoDB if enabled
+            if let Some(persistence) = &self.persistence {
+                if let Err(e) = persistence.delete_level(level_id.as_str()).await {
+                    tracing::warn!("Failed to persist level deletion to MongoDB: {}", e);
+                }
+            }
+
             Ok(())
         } else {
             Err(EngineError::CustomError(anyhow::anyhow!(
@@ -103,12 +131,20 @@ impl LevelManager {
     }
 
     /// Enable a level
-    pub fn enable_level(&mut self, level_id: &SmolStr) -> Result<(), EngineError> {
+    pub async fn enable_level(&mut self, level_id: &SmolStr) -> Result<(), EngineError> {
         if let Some(level) = self.levels.get_mut(level_id) {
             level.config.enabled = true;
             if matches!(level.state, LevelState::Paused) {
                 level.state = LevelState::Created;
             }
+
+            // Persist to MongoDB if enabled
+            if let Some(persistence) = &self.persistence {
+                if let Err(e) = persistence.update_level(&level.config).await {
+                    tracing::warn!("Failed to persist level update to MongoDB: {}", e);
+                }
+            }
+
             Ok(())
         } else {
             Err(EngineError::CustomError(anyhow::anyhow!(
@@ -119,10 +155,18 @@ impl LevelManager {
     }
 
     /// Disable/pause a level
-    pub fn disable_level(&mut self, level_id: &SmolStr) -> Result<(), EngineError> {
+    pub async fn disable_level(&mut self, level_id: &SmolStr) -> Result<(), EngineError> {
         if let Some(level) = self.levels.get_mut(level_id) {
             level.config.enabled = false;
             level.state = LevelState::Paused;
+
+            // Persist to MongoDB if enabled
+            if let Some(persistence) = &self.persistence {
+                if let Err(e) = persistence.update_level(&level.config).await {
+                    tracing::warn!("Failed to persist level update to MongoDB: {}", e);
+                }
+            }
+
             Ok(())
         } else {
             Err(EngineError::CustomError(anyhow::anyhow!(
@@ -226,6 +270,85 @@ impl LevelManager {
             LevelState::Cancelled => Ok(level.config.lifecycle.auto_repost_on_cancel),
             _ => Ok(false),
         }
+    }
+
+    /// Save all levels and risk limits to MongoDB
+    pub async fn save_all_levels(
+        &self,
+        risk_limits: &super::risk::RiskLimits,
+    ) -> Result<(), EngineError> {
+        if let Some(persistence) = &self.persistence {
+            let levels: Vec<LevelConfig> = self.levels.values().map(|l| l.config.clone()).collect();
+            persistence
+                .save_levels(&levels, risk_limits)
+                .await
+                .map_err(|e| {
+                    EngineError::CustomError(anyhow::anyhow!(
+                        "Failed to save levels to MongoDB: {}",
+                        e
+                    ))
+                })?;
+        }
+        Ok(())
+    }
+
+    /// Load levels from MongoDB (if available)
+    pub async fn load_from_mongo(
+        &mut self,
+    ) -> Result<Option<super::risk::RiskLimits>, EngineError> {
+        if let Some(persistence) = &self.persistence {
+            if let Some(bot_config) = persistence.load_levels().await.map_err(|e| {
+                EngineError::CustomError(anyhow::anyhow!(
+                    "Failed to load levels from MongoDB: {}",
+                    e
+                ))
+            })? {
+                // Convert document levels to LevelConfig and add them
+                let mut loaded_count = 0;
+                let mut error_count = 0;
+
+                for level_doc in &bot_config.levels {
+                    match persistence.document_to_level_config(level_doc) {
+                        Ok(level_config) => {
+                            // Create level and add to manager
+                            let level = Level::new(level_config.clone());
+                            self.levels.insert(level.config.id.clone(), level);
+                            loaded_count += 1;
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                "Failed to convert level document {} to LevelConfig: {}",
+                                level_doc.id,
+                                e
+                            );
+                            error_count += 1;
+                        }
+                    }
+                }
+
+                tracing::info!(
+                    "Loaded {} levels from MongoDB ({} successful, {} errors)",
+                    bot_config.levels.len(),
+                    loaded_count,
+                    error_count
+                );
+
+                // Convert risk limits
+                let risk_limits = super::risk::RiskLimits {
+                    total_max_position: bot_config.risk_limits.total_max_position,
+                    max_total_orders: bot_config.risk_limits.max_total_orders,
+                    daily_loss_limit_all_pairs: bot_config.risk_limits.daily_loss_limit_all_pairs,
+                    daily_loss_limit_per_pair: bot_config
+                        .risk_limits
+                        .daily_loss_limit_per_pair
+                        .into_iter()
+                        .map(|(k, v)| (SmolStr::new(&k), v))
+                        .collect(),
+                };
+                return Ok(Some(risk_limits));
+            }
+        }
+        Ok(None)
     }
 }
 

@@ -1,0 +1,35 @@
+[package]
+name = "live_config"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+trading_core = { path = "../../libs/trading_core" }
+trading_engine = { path = "../trading_engine" }
+indicator_engine = { path = "../indicator_engine" }
+
+# Logging
+tracing = { workspace = true }
+
+# SerDe
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Async
+tokio = { workspace = true }
+async-trait = { workspace = true }
+
+# Errors
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+
+# Utils
+smol_str = { workspace = true }
+rust_decimal = { workspace = true }
+chrono = { workspace = true }
+
+# Channels for async communication (no HTTP dependencies)
+
+# Testing
+tokio-test = { workspace = true }
+

@@ -1,9 +1,10 @@
 use crate::data::{IndicatorValue, PricePoint};
 use crate::indicators::traits::{Indicator, IndicatorConfig, IndicatorError};
 use crate::indicators::{ExponentialMovingAverage, SimpleMovingAverage};
+use parking_lot::RwLock;
 use smol_str::SmolStr;
 use std::collections::{HashMap, VecDeque};
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
 /// Maximum number of historical values to store per indicator
 const MAX_HISTORY_SIZE: usize = 100;
@@ -59,7 +60,7 @@ impl IndicatorCalculator {
 
     /// Register a new indicator
     pub fn register_indicator(&self, config: IndicatorConfig) -> Result<(), IndicatorError> {
-        let mut indicators = self.indicators.write().unwrap();
+        let mut indicators = self.indicators.write();
 
         let indicator: Box<dyn Indicator + Send + Sync> = match config.name.as_str() {
             "SMA" => Box::new(SimpleMovingAverage::new(config.clone())?),
@@ -76,14 +77,14 @@ impl IndicatorCalculator {
 
         // Update indices
         {
-            let mut pair_index = self.pair_index.write().unwrap();
+            let mut pair_index = self.pair_index.write();
             pair_index
                 .entry(config.pair.clone())
                 .or_insert_with(Vec::new)
                 .push(config.id.clone());
         }
         {
-            let mut name_index = self.name_index.write().unwrap();
+            let mut name_index = self.name_index.write();
             name_index
                 .entry(config.name.clone())
                 .or_insert_with(Vec::new)
@@ -103,7 +104,7 @@ impl IndicatorCalculator {
         let pair_smol = SmolStr::new(pair);
 
         // Get all indicators for this pair
-        let indicators = self.indicators.read().unwrap();
+        let indicators = self.indicators.read();
         let pair_indicators: Vec<SmolStr> = indicators
             .iter()
             .filter(|(_, ind)| ind.pair() == pair)
@@ -113,7 +114,7 @@ impl IndicatorCalculator {
 
         // Update each indicator
         for indicator_id in pair_indicators {
-            let mut indicators = self.indicators.write().unwrap();
+            let mut indicators = self.indicators.write();
             let indicator = indicators.get_mut(&indicator_id).ok_or_else(|| {
                 IndicatorError::CalculationError(SmolStr::new("Indicator not found"))
             })?;
@@ -133,7 +134,7 @@ impl IndicatorCalculator {
                     };
 
                     // Update cache
-                    let mut cache = self.cache.write().unwrap();
+                    let mut cache = self.cache.write();
                     match cache.get_mut(&indicator_id) {
                         Some(entry) => entry.update(indicator_value.clone()),
                         None => {
@@ -156,7 +157,7 @@ impl IndicatorCalculator {
 
     /// Get cached indicator value (latest)
     pub fn get_value(&self, indicator_id: &str) -> Option<IndicatorValue> {
-        let cache = self.cache.read().unwrap();
+        let cache = self.cache.read();
         cache
             .get(&SmolStr::new(indicator_id))
             .map(|entry| entry.current.clone())
@@ -168,7 +169,7 @@ impl IndicatorCalculator {
     /// * `indicator_id` - Indicator ID
     /// * `limit` - Maximum number of historical values to return (default: all)
     pub fn get_history(&self, indicator_id: &str, limit: Option<usize>) -> Vec<IndicatorValue> {
-        let cache = self.cache.read().unwrap();
+        let cache = self.cache.read();
         if let Some(entry) = cache.get(&SmolStr::new(indicator_id)) {
             let history: Vec<IndicatorValue> = entry.history.iter().cloned().collect();
             if let Some(limit) = limit {
@@ -184,8 +185,8 @@ impl IndicatorCalculator {
     /// Get all cached values for a pair (latest values only)
     pub fn get_values_for_pair(&self, pair: &str) -> Vec<IndicatorValue> {
         let pair_smol = SmolStr::new(pair);
-        let pair_index = self.pair_index.read().unwrap();
-        let cache = self.cache.read().unwrap();
+        let pair_index = self.pair_index.read();
+        let cache = self.cache.read();
 
         if let Some(indicator_ids) = pair_index.get(&pair_smol) {
             indicator_ids
@@ -200,8 +201,8 @@ impl IndicatorCalculator {
     /// Get all cached values for an indicator name (e.g., all "SMA" indicators)
     pub fn get_values_by_name(&self, indicator_name: &str) -> Vec<IndicatorValue> {
         let name_smol = SmolStr::new(indicator_name);
-        let name_index = self.name_index.read().unwrap();
-        let cache = self.cache.read().unwrap();
+        let name_index = self.name_index.read();
+        let cache = self.cache.read();
 
         if let Some(indicator_ids) = name_index.get(&name_smol) {
             indicator_ids
@@ -233,7 +234,7 @@ impl IndicatorCalculator {
 
         // Get indicator config to remove from indices
         let pair_opt = {
-            let indicators = self.indicators.read().unwrap();
+            let indicators = self.indicators.read();
             indicators
                 .get(&id_smol)
                 .map(|ind| (ind.pair().to_string(), ind.name().to_string()))
@@ -241,20 +242,20 @@ impl IndicatorCalculator {
 
         // Remove from indicators
         {
-            let mut indicators = self.indicators.write().unwrap();
+            let mut indicators = self.indicators.write();
             indicators.remove(&id_smol);
         }
 
         // Remove from cache
         {
-            let mut cache = self.cache.write().unwrap();
+            let mut cache = self.cache.write();
             cache.remove(&id_smol);
         }
 
         // Remove from indices
         if let Some((pair, name)) = pair_opt {
             {
-                let mut pair_index = self.pair_index.write().unwrap();
+                let mut pair_index = self.pair_index.write();
                 if let Some(ids) = pair_index.get_mut(&SmolStr::new(&pair)) {
                     ids.retain(|id| id != &id_smol);
                     if ids.is_empty() {
@@ -263,7 +264,7 @@ impl IndicatorCalculator {
                 }
             }
             {
-                let mut name_index = self.name_index.write().unwrap();
+                let mut name_index = self.name_index.write();
                 if let Some(ids) = name_index.get_mut(&SmolStr::new(&name)) {
                     ids.retain(|id| id != &id_smol);
                     if ids.is_empty() {
@@ -275,24 +276,24 @@ impl IndicatorCalculator {
     }
 
     /// Get access to cache for publisher (returns latest values only)
-    pub fn cache(&self) -> Arc<RwLock<HashMap<SmolStr, IndicatorValue>>> {
-        let cache = self.cache.read().unwrap();
+    pub fn cache(&self) -> Arc<parking_lot::RwLock<HashMap<SmolStr, IndicatorValue>>> {
+        let cache = self.cache.read();
         let latest_values: HashMap<SmolStr, IndicatorValue> = cache
             .iter()
             .map(|(id, entry)| (id.clone(), entry.current.clone()))
             .collect();
-        Arc::new(RwLock::new(latest_values))
+        Arc::new(parking_lot::RwLock::new(latest_values))
     }
 
     /// Get all registered indicator IDs
     pub fn get_indicator_ids(&self) -> Vec<SmolStr> {
-        let indicators = self.indicators.read().unwrap();
+        let indicators = self.indicators.read();
         indicators.keys().cloned().collect()
     }
 
     /// Check if an indicator is registered
     pub fn has_indicator(&self, indicator_id: &str) -> bool {
-        let indicators = self.indicators.read().unwrap();
+        let indicators = self.indicators.read();
         indicators.contains_key(&SmolStr::new(indicator_id))
     }
 }

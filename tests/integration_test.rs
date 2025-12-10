@@ -66,9 +66,17 @@ mod integration {
             serde_json::from_value(binance_config_json.clone()).unwrap();
 
         let symbol = Pair::new("BTC", "USDT");
+        // Use default channel config for tests
+        let channels = trading_core::config::ChannelConfig::default();
         let trading_client: Arc<
             RwLock<dyn TradingClient<trading_core::types::exchange::OrderRequest>>,
-        > = Arc::new(RwLock::new(BinanceClient::new(binance_config, 1024)));
+        > = Arc::new(RwLock::new(BinanceClient::new(
+            binance_config,
+            channels.websocket_inbound_capacity,
+            channels.websocket_ping_capacity,
+            channels.websocket_outbound_rpc_capacity,
+            channels.shutdown_capacity,
+        )));
 
         let strategy = BuyLowSellHigh::new(
             trading_client,
@@ -233,9 +241,17 @@ mod integration {
             serde_json::from_value(binance_config_json.clone()).unwrap();
 
         let symbol = Pair::new("BTC", "USDT");
+        // Use default channel config for tests
+        let channels = trading_core::config::ChannelConfig::default();
         let trading_client: Arc<
             RwLock<dyn TradingClient<trading_core::types::exchange::OrderRequest>>,
-        > = Arc::new(RwLock::new(BinanceClient::new(binance_config, 1024)));
+        > = Arc::new(RwLock::new(BinanceClient::new(
+            binance_config,
+            channels.websocket_inbound_capacity,
+            channels.websocket_ping_capacity,
+            channels.websocket_outbound_rpc_capacity,
+            channels.shutdown_capacity,
+        )));
 
         let strategy = Arc::new(RwLock::new(BuyLowSellHigh::new(
             trading_client,
@@ -278,9 +294,17 @@ mod integration {
             serde_json::from_value(binance_config_json.clone()).unwrap();
 
         let symbol = Pair::new("BTC", "USDT");
+        // Use default channel config for tests
+        let channels = trading_core::config::ChannelConfig::default();
         let trading_client: Arc<
             RwLock<dyn TradingClient<trading_core::types::exchange::OrderRequest>>,
-        > = Arc::new(RwLock::new(BinanceClient::new(binance_config, 1024)));
+        > = Arc::new(RwLock::new(BinanceClient::new(
+            binance_config,
+            channels.websocket_inbound_capacity,
+            channels.websocket_ping_capacity,
+            channels.websocket_outbound_rpc_capacity,
+            channels.shutdown_capacity,
+        )));
 
         let mut strategy = BuyLowSellHigh::new(
             trading_client,
@@ -348,9 +372,17 @@ mod integration {
             serde_json::from_value(binance_config_json.clone()).unwrap();
 
         let symbol = Pair::new("BTC", "USDT");
+        // Use default channel config for tests
+        let channels = trading_core::config::ChannelConfig::default();
         let trading_client: Arc<
             RwLock<dyn TradingClient<trading_core::types::exchange::OrderRequest>>,
-        > = Arc::new(RwLock::new(BinanceClient::new(binance_config, 1024)));
+        > = Arc::new(RwLock::new(BinanceClient::new(
+            binance_config,
+            channels.websocket_inbound_capacity,
+            channels.websocket_ping_capacity,
+            channels.websocket_outbound_rpc_capacity,
+            channels.shutdown_capacity,
+        )));
 
         let mut strategy = BuyLowSellHigh::new(
             trading_client,
@@ -421,9 +453,17 @@ mod integration {
             serde_json::from_value(binance_config_json.clone()).unwrap();
 
         let symbol = Pair::new("BTC", "USDT");
+        // Use default channel config for tests
+        let channels = trading_core::config::ChannelConfig::default();
         let trading_client: Arc<
             RwLock<dyn TradingClient<trading_core::types::exchange::OrderRequest>>,
-        > = Arc::new(RwLock::new(BinanceClient::new(binance_config, 1024)));
+        > = Arc::new(RwLock::new(BinanceClient::new(
+            binance_config,
+            channels.websocket_inbound_capacity,
+            channels.websocket_ping_capacity,
+            channels.websocket_outbound_rpc_capacity,
+            channels.shutdown_capacity,
+        )));
 
         let mut strategy = BuyLowSellHigh::new(
             trading_client,
@@ -562,9 +602,17 @@ mod integration {
             serde_json::from_value(binance_config_json.clone()).unwrap();
 
         let symbol = Pair::new("BTC", "USDT");
+        // Use default channel config for tests
+        let channels = trading_core::config::ChannelConfig::default();
         let trading_client: Arc<
             RwLock<dyn TradingClient<trading_core::types::exchange::OrderRequest>>,
-        > = Arc::new(RwLock::new(BinanceClient::new(binance_config, 1024)));
+        > = Arc::new(RwLock::new(BinanceClient::new(
+            binance_config,
+            channels.websocket_inbound_capacity,
+            channels.websocket_ping_capacity,
+            channels.websocket_outbound_rpc_capacity,
+            channels.shutdown_capacity,
+        )));
 
         let mut strategy = BuyLowSellHigh::new(
             trading_client,
@@ -634,9 +682,17 @@ mod integration {
             serde_json::from_value(binance_config_json.clone()).unwrap();
 
         let symbol = Pair::new("BTC", "USDT");
+        // Use default channel config for tests
+        let channels = trading_core::config::ChannelConfig::default();
         let trading_client: Arc<
             RwLock<dyn TradingClient<trading_core::types::exchange::OrderRequest>>,
-        > = Arc::new(RwLock::new(BinanceClient::new(binance_config, 1024)));
+        > = Arc::new(RwLock::new(BinanceClient::new(
+            binance_config,
+            channels.websocket_inbound_capacity,
+            channels.websocket_ping_capacity,
+            channels.websocket_outbound_rpc_capacity,
+            channels.shutdown_capacity,
+        )));
 
         let mut strategy = BuyLowSellHigh::new(
             trading_client,
@@ -711,9 +767,17 @@ mod integration {
             serde_json::from_value(binance_config_json.clone()).unwrap();
 
         let symbol = Pair::new("BTC", "USDT");
+        // Use default channel config for tests
+        let channels = trading_core::config::ChannelConfig::default();
         let trading_client: Arc<
             RwLock<dyn TradingClient<trading_core::types::exchange::OrderRequest>>,
-        > = Arc::new(RwLock::new(BinanceClient::new(binance_config, 1024)));
+        > = Arc::new(RwLock::new(BinanceClient::new(
+            binance_config,
+            channels.websocket_inbound_capacity,
+            channels.websocket_ping_capacity,
+            channels.websocket_outbound_rpc_capacity,
+            channels.shutdown_capacity,
+        )));
 
         let mut strategy = BuyLowSellHigh::new(
             trading_client,

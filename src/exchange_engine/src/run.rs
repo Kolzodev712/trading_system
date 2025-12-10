@@ -11,6 +11,7 @@ use crate::config::{ExchangeConfig, ExchangeEngineConfig};
 use crate::state::manager::ExchangeStateManager;
 use std::sync::Arc;
 use tokio::sync::broadcast;
+use trading_core::config::ChannelConfig;
 use trading_core::traits::ExchangeDriver;
 use trading_core::{
     channels::exchange::exchange_update_channel,
@@ -36,6 +37,7 @@ use trading_core::{
 /// * `shutdown_rx` - Receiver for shutdown signals
 /// * `reconciliation_interval_secs` - Interval for periodic reconciliation REST calls (0 = disabled)
 /// * `reconciliation_enabled` - Whether reconciliation is enabled
+/// * `channels` - Channel configuration for buffer sizes
 ///
 /// # Returns
 /// Tuple of (state_manager, exchange_update_rx, trading_client) for external use
@@ -44,6 +46,7 @@ pub async fn run(
     shutdown_rx: broadcast::Receiver<()>,
     reconciliation_interval_secs: u64,
     reconciliation_enabled: bool,
+    channels: ChannelConfig,
 ) -> Result<
     (
         Arc<ExchangeStateManager>,
@@ -53,7 +56,8 @@ pub async fn run(
     EngineError,
 > {
     // 1. Establish channels to send data to other services
-    let (exchange_update_tx, exchange_update_rx) = exchange_update_channel(1000);
+    let (exchange_update_tx, exchange_update_rx) =
+        exchange_update_channel(channels.exchange_update_capacity);
 
     // Extract primary pair from config for symbol registry
     let primary_pair = get_primary_pair_from_config(&config)?;
@@ -65,7 +69,10 @@ pub async fn run(
         ExchangeConfig::Binance(binance_config) => {
             let client = crate::exchanges::binance::ws_client::BinanceClient::new(
                 binance_config.clone(),
-                1024,
+                channels.websocket_inbound_capacity,
+                channels.websocket_ping_capacity,
+                channels.websocket_outbound_rpc_capacity,
+                channels.shutdown_capacity,
             );
             let trading_client: Arc<tokio::sync::RwLock<dyn TradingClient<OrderRequest>>> =
                 Arc::new(tokio::sync::RwLock::new(client.clone()));
@@ -99,6 +106,7 @@ pub async fn run(
             binance_config_for_driver,
             state_manager.clone(),
             trading_client.clone(),
+            channels.clone(),
         )?,
     };
 

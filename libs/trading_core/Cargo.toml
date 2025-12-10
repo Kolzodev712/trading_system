@@ -44,3 +44,6 @@ tracing = "0.1.40"
 # Redis (for backward compatibility during migration)
 redis = { version = "0.27.6", features = ["tokio-comp"] }
 
+# MongoDB (for configuration persistence)
+mongodb = { workspace = true }
+

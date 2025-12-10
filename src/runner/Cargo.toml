@@ -9,6 +9,7 @@ trading_engine = { path = "../trading_engine" }
 exchange_engine = { path = "../exchange_engine" }
 market_data_engine = { path = "../market_data_engine" }
 indicator_engine = { path = "../indicator_engine" }
+live_config = { path = "../live_config" }
 
 # Logging
 tracing = { workspace = true }

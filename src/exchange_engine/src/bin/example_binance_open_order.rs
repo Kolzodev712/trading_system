@@ -36,7 +36,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let cfg = load_binance_config("config/binance_config.json")?;
     let cfg_for_rest = cfg.clone();
-    let binance_client = Arc::new(RwLock::new(BinanceClient::new(cfg, 100)));
+    // Use default channel config for examples
+    let channels = trading_core::config::ChannelConfig::default();
+    let binance_client = Arc::new(RwLock::new(BinanceClient::new(
+        cfg,
+        channels.websocket_inbound_capacity,
+        channels.websocket_ping_capacity,
+        channels.websocket_outbound_rpc_capacity,
+        channels.shutdown_capacity,
+    )));
 
     // -- spawn the WS loop on a *clone* of the client, not on the locked instance --
     let mut ws_client_clone = {

@@ -1,5 +1,6 @@
 pub mod backtest;
 pub mod executor;
+pub mod persistence;
 pub mod strategies;
 pub mod strategy_manager;
 

@@ -28,6 +28,14 @@ pub struct BotConfig {
     /// Reconciliation configuration
     #[serde(default)]
     pub reconciliation: ReconciliationConfig,
+
+    /// MongoDB configuration (optional, for configuration persistence)
+    #[serde(default)]
+    pub mongo: MongoConfig,
+
+    /// Channel configuration (buffer sizes for internal communication)
+    #[serde(default)]
+    pub channels: ChannelConfig,
 }
 
 /// System-wide settings
@@ -149,11 +157,69 @@ fn default_true() -> bool {
     true
 }
 
+/// MongoDB configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MongoConfig {
+    /// MongoDB connection string (e.g., "mongodb://localhost:27017")
+    #[serde(default = "default_mongo_connection_string")]
+    pub connection_string: String,
+
+    /// MongoDB database name
+    #[serde(default = "default_mongo_database")]
+    pub database: String,
+
+    /// Whether MongoDB persistence is enabled
+    #[serde(default = "default_false")]
+    pub enabled: bool,
+
+    /// Bot ID for this instance (used as collection identifier)
+    #[serde(
+        default = "default_bot_id",
+        serialize_with = "trading_core::utils::serialize_smol_str",
+        deserialize_with = "trading_core::utils::deserialize_smol_str"
+    )]
+    pub bot_id: smol_str::SmolStr,
+}
+
+fn default_mongo_connection_string() -> String {
+    "mongodb://localhost:27017".to_string()
+}
+
+fn default_mongo_database() -> String {
+    "trading_system".to_string()
+}
+
+fn default_false() -> bool {
+    false
+}
+
+fn default_bot_id() -> smol_str::SmolStr {
+    smol_str::SmolStr::new("binance_bot")
+}
+
+impl Default for MongoConfig {
+    fn default() -> Self {
+        Self {
+            connection_string: default_mongo_connection_string(),
+            database: default_mongo_database(),
+            enabled: default_false(),
+            bot_id: default_bot_id(),
+        }
+    }
+}
+
+// Re-export ChannelConfig from trading_core for convenience
+pub use trading_core::config::ChannelConfig;
+
 /// Strategy-specific configuration - trading parameters for strategies mode
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StrategiesConfig {
     /// Strategy type: "BuyLowSellHigh", "MeanReversion", etc.
-    pub strategy_type: String,
+    #[serde(
+        serialize_with = "trading_core::utils::serialize_smol_str",
+        deserialize_with = "trading_core::utils::deserialize_smol_str"
+    )]
+    pub strategy_type: smol_str::SmolStr,
 
     /// Trading pair for this strategy
     pub symbol: Pair,

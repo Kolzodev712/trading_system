@@ -56,9 +56,7 @@ impl StateReconciler {
         info!("Starting bootstrap reconciliation (exchange-level: WS vs REST)");
 
         // Fetch balances, orders, trades from REST
-        info!("Fetching balances from REST API for bootstrap reconciliation");
         let balances = self.trading_client.read().await.fetch_balance().await?;
-        info!("Fetched {} balances from REST API", balances.len());
 
         // Note: fetch_open_orders and fetch_trades may not be implemented yet
         // For now, we'll just return the counts we fetched
@@ -70,21 +68,16 @@ impl StateReconciler {
         };
 
         info!(
-            "Bootstrap reconciliation completed: {} balances fetched, {} orders fetched, {} trades fetched, {} discrepancies found",
+            "Bootstrap reconciliation completed: {} balances, {} orders, {} trades fetched{}",
             result.balances_fetched,
             result.orders_fetched,
             result.trades_fetched,
-            result.discrepancies.len()
+            if result.has_discrepancies() {
+                format!(", {} discrepancies resolved", result.discrepancies.len())
+            } else {
+                ", no discrepancies".to_string()
+            }
         );
-
-        if result.has_discrepancies() {
-            info!(
-                "Bootstrap reconciliation found {} discrepancies - state has been updated to match REST (REST is authoritative)",
-                result.discrepancies.len()
-            );
-        } else {
-            info!("Bootstrap reconciliation completed successfully - no discrepancies found");
-        }
 
         Ok(result)
     }
@@ -108,7 +101,7 @@ impl StateReconciler {
                 return;
             }
 
-            info!(
+            tracing::debug!(
                 "Starting periodic exchange-level reconciliation (interval: {} seconds)",
                 reconciliation_interval_secs
             );
@@ -116,7 +109,7 @@ impl StateReconciler {
             loop {
                 interval.tick().await;
 
-                info!("Running periodic exchange-level reconciliation (WS vs REST)");
+                tracing::debug!("Running periodic exchange-level reconciliation (WS vs REST)");
 
                 // Fetch from REST and compare with WebSocket state
                 match Self::reconcile_state(&trading_client, &configured_pairs, &exchange_state)
@@ -124,7 +117,7 @@ impl StateReconciler {
                 {
                     Ok(result) => {
                         if result.has_discrepancies() {
-                            info!(
+                            tracing::debug!(
                                 "Exchange-level reconciliation found {} discrepancies: {} balances, {} orders, {} trades",
                                 result.discrepancies.len(),
                                 result.balances_fetched,
@@ -132,8 +125,8 @@ impl StateReconciler {
                                 result.trades_fetched
                             );
                         } else {
-                            info!(
-                                "Exchange-level reconciliation completed successfully: {} balances, {} orders, {} trades, no discrepancies",
+                            tracing::debug!(
+                                "Exchange-level reconciliation completed: {} balances, {} orders, {} trades, no discrepancies",
                                 result.balances_fetched,
                                 result.orders_fetched,
                                 result.trades_fetched
@@ -157,13 +150,13 @@ impl StateReconciler {
         let mut result = ReconciliationResult::default();
 
         // Reconcile balances
-        info!("Fetching balances from REST API for reconciliation");
+        tracing::debug!("Fetching balances from REST API for reconciliation");
         let rest_balances = trading_client.read().await.fetch_balance().await?;
         let ws_state = exchange_state.read().await;
         let ws_balances: Vec<Balance> = ws_state.get_balances().into_iter().cloned().collect();
         drop(ws_state);
 
-        info!(
+        tracing::debug!(
             "Comparing {} REST balances with {} WebSocket balances",
             rest_balances.len(),
             ws_balances.len()
@@ -173,7 +166,7 @@ impl StateReconciler {
         result.balances_fetched = rest_balances.len();
 
         if !balance_discrepancies.is_empty() {
-            info!(
+            tracing::debug!(
                 "Found {} balance discrepancies, updating WebSocket state to match REST (REST is authoritative)",
                 balance_discrepancies.len()
             );

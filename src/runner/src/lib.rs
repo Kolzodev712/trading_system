@@ -411,8 +411,8 @@ pub async fn level_runner(
         }
     });
 
-    info!("All systems ready! Starting level-based trading...");
-    info!("Symbol: {}", symbol);
+    info!("=== All systems ready! ===");
+    info!("Starting level-based trading for symbol: {}", symbol);
 
     // Run event loop
     let mut shutdown_rx_event_loop = services.shutdown_manager.subscribe();

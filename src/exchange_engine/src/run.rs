@@ -93,11 +93,30 @@ pub async fn run(
     //    - Perform initial bootstrap reconciliation (REST calls to initialize state)
     let configured_pairs = vec![primary_pair.clone()];
 
-    //    - Start periodic reconciliation at specified interval (REST calls)
+    // Perform bootstrap reconciliation
+    let bootstrap_result = state_manager.bootstrap_reconcile(&configured_pairs).await?;
     tracing::info!(
-        "Starting periodic exchange-level reconciliation (interval: {} seconds)",
-        reconciliation_interval_secs
+        "Bootstrap reconciliation: {} balances, {} orders, {} trades fetched{}",
+        bootstrap_result.balances_fetched,
+        bootstrap_result.orders_fetched,
+        bootstrap_result.trades_fetched,
+        if bootstrap_result.has_discrepancies() {
+            format!(
+                ", {} discrepancies resolved",
+                bootstrap_result.discrepancies.len()
+            )
+        } else {
+            ", no discrepancies".to_string()
+        }
     );
+
+    //    - Start periodic reconciliation at specified interval (REST calls)
+    if reconciliation_enabled && reconciliation_interval_secs > 0 {
+        tracing::debug!(
+            "Starting periodic exchange-level reconciliation (interval: {} seconds)",
+            reconciliation_interval_secs
+        );
+    }
     state_manager.start_reconciliation(configured_pairs);
 
     // 5. Power up the exchange-specific integration (driver handles protocol/communication)

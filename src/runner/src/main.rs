@@ -12,7 +12,10 @@ use runner::{level_runner, strategy_runner, SharedServices};
 use smol_str::SmolStr;
 use std::sync::Arc;
 use tracing::{error, info, warn};
-use trading_core::{channels::indicator_update_channel, types::common::Pair};
+use trading_core::{
+    channels::indicator_update_channel, persistence::mongo::client::MongoClient,
+    types::common::Pair,
+};
 
 mod shutdown;
 
@@ -58,42 +61,42 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .finish(),
     );
 
-    info!("Starting Trading System");
+    info!("=== Starting Trading System ===");
+    info!("Mode: {}", args.mode);
+    info!("Exchange: {:?}", bot_config.exchange.exchange);
+    info!(
+        "MongoDB persistence: {}",
+        if bot_config.mongo.enabled {
+            format!(
+                "enabled ({}/{})",
+                bot_config.mongo.connection_string, bot_config.mongo.database
+            )
+        } else {
+            "disabled".to_string()
+        }
+    );
 
     // Initialize MongoDB client if enabled
-    let mongo_client = if bot_config.mongo.enabled {
-        info!(
-            "Initializing MongoDB client: {} / {}",
-            bot_config.mongo.connection_string, bot_config.mongo.database
-        );
-        match trading_core::persistence::mongo::MongoClient::new(
-            &bot_config.mongo.connection_string,
-            &bot_config.mongo.database,
+    let mongo_client: Option<Arc<MongoClient>> = if bot_config.mongo.enabled {
+        match MongoClient::new(
+            bot_config.mongo.connection_string.as_str(),
+            bot_config.mongo.database.as_str(),
         )
         .await
         {
             Ok(client) => {
-                if let Err(e) = client.test_connection().await {
-                    warn!(
-                        "MongoDB connection test failed: {}. Persistence will be disabled.",
-                        e
-                    );
-                    None
-                } else {
-                    info!("MongoDB client initialized successfully");
-                    Some(Arc::new(client))
-                }
+                info!(
+                    "MongoDB: Connected to {}/{}",
+                    bot_config.mongo.connection_string, bot_config.mongo.database
+                );
+                Some(Arc::new(client))
             }
             Err(e) => {
-                warn!(
-                    "Failed to initialize MongoDB client: {}. Persistence will be disabled.",
-                    e
-                );
+                error!("MongoDB: Connection failed: {e}");
                 None
             }
         }
     } else {
-        info!("MongoDB persistence is disabled");
         None
     };
 
@@ -125,7 +128,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let symbol: Pair = binance_config.symbol.clone().into();
 
     // 1. Start Market Data Engine
-    info!("Starting Market Data Engine...");
+    info!(
+        "Starting Market Data Engine (exchange: {:?}, symbol: {})...",
+        bot_config.exchange.exchange, symbol
+    );
     // Convert exchange_engine BinanceConfig to market_data_engine BinanceConfig
     // The market_data_engine version has a different structure
     use market_data_engine::exchanges::binance::config::BinanceConfig as MDBinanceConfig;
@@ -174,9 +180,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Wait for market data to start publishing
     tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+    info!(
+        "Market Data Engine: WebSocket subscribed to orderbook stream for {}",
+        symbol
+    );
 
     // 1.5. Initialize Indicator Service
-    info!("Initializing Indicator Service...");
+    info!(
+        "Initializing Indicator Service (MongoDB persistence: {})...",
+        if mongo_client.is_some() {
+            "enabled"
+        } else {
+            "disabled"
+        }
+    );
     // Create a separate receiver for the indicator service (fan-out from same channel)
     let indicator_market_data_rx = market_data_rx.resubscribe();
     let (indicator_tx, _indicator_rx) =
@@ -248,8 +265,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("Indicator Service initialized (awaiting channel integration in Proposal 04)");
 
     // 2. Create Exchange Engine (exchange-agnostic runner)
-    info!("Starting Exchange Engine...");
-
     // Create exchange engine config
     let exchange_engine_config = ExchangeEngineConfig {
         exchange: trading_core::types::common::Exchange::Binance,
@@ -262,6 +277,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         bot_config.features.enable_reconciliation && bot_config.reconciliation.enabled;
     let exchange_reconciliation_interval_ms = bot_config.reconciliation.exchange_level_interval_ms;
     let exchange_reconciliation_interval_secs = exchange_reconciliation_interval_ms / 1000;
+
+    info!(
+        "Starting Exchange Engine (exchange: {:?}, reconciliation: {})...",
+        bot_config.exchange.exchange,
+        if reconciliation_enabled {
+            format!(
+                "enabled (interval: {}s)",
+                exchange_reconciliation_interval_secs
+            )
+        } else {
+            "disabled".to_string()
+        }
+    );
     let (exchange_state_manager, exchange_update_rx, trading_client) = run::run(
         exchange_engine_config,
         shutdown_rx_exchange,
@@ -277,6 +305,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         exchange_update_rx.resubscribe(),
         exchange_state_manager.clone(),
     ));
+
+    info!("Exchange Engine: Bootstrap reconciliation completed");
 
     // Start TradingStateManager subscriber in background
     let trading_state_manager_for_subscriber = trading_state_manager.clone();

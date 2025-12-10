@@ -8,7 +8,7 @@ use crate::state::TradingState;
 use exchange_engine::state::manager::ExchangeStateManager;
 use rust_decimal::Decimal;
 use std::sync::Arc;
-use tracing::{info, warn};
+use tracing::warn;
 use trading_core::{error::EngineError, types::common::Pair};
 
 /// Reconciles TradingState with ExchangeStateManager (not with exchange directly)
@@ -47,7 +47,7 @@ impl PositionReconciler {
         pair: &Pair,
         _current_price: Option<Decimal>,
     ) -> Result<ReconciliationResult, EngineError> {
-        info!("Starting trading-level reconciliation for {}", pair);
+        tracing::debug!("Starting trading-level reconciliation for {}", pair);
 
         let exchange_state_arc = self.exchange_state_manager.get_state();
         let exchange_state = exchange_state_arc.read().await;
@@ -69,7 +69,7 @@ impl PositionReconciler {
 
         let mut reconciled = false;
 
-        info!(
+        tracing::debug!(
             "Trading-level reconciliation for {}: TradingState={}, ExchangeStateManager={}, discrepancy={}",
             pair, trading_position_qty, exchange_balance, discrepancy
         );
@@ -86,12 +86,13 @@ impl PositionReconciler {
                 Decimal::ZERO, // Price will be updated on trades
             );
             reconciled = true;
-            info!(
+            tracing::debug!(
                 "TradingState position reconciled for {}: updated to {}",
-                pair, exchange_balance
+                pair,
+                exchange_balance
             );
         } else {
-            info!(
+            tracing::debug!(
                 "TradingState position for {} is consistent with ExchangeStateManager",
                 pair
             );
@@ -102,7 +103,7 @@ impl PositionReconciler {
         let exchange_order_ids: std::collections::HashSet<&trading_core::types::common::OrderId> =
             exchange_orders.iter().map(|o| &o.order_id).collect();
 
-        info!(
+        tracing::debug!(
             "Trading-level reconciliation for {}: TradingState has {} active orders, ExchangeStateManager has {} orders",
             pair,
             trading_state.active_orders.len(),
@@ -125,12 +126,12 @@ impl PositionReconciler {
         }
 
         if reconciled {
-            info!(
+            tracing::debug!(
                 "Trading-level reconciliation for {} completed: state updated",
                 pair
             );
         } else {
-            info!(
+            tracing::debug!(
                 "Trading-level reconciliation for {} completed: no discrepancies found",
                 pair
             );

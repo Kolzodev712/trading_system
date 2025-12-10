@@ -38,6 +38,8 @@ pub struct StrategyExecutor<S: Strategy + 'static> {
     config_step_size: Decimal,
     config_tick_size: Decimal,
     config_min_notional: Decimal,
+    /// Trading control - checks if trading is enabled (optional, for TUI control)
+    trading_enabled: Option<Arc<tokio::sync::RwLock<bool>>>,
 }
 
 impl<S: Strategy> StrategyExecutor<S> {
@@ -70,7 +72,14 @@ impl<S: Strategy> StrategyExecutor<S> {
             config_step_size,
             config_tick_size,
             config_min_notional,
+            trading_enabled: None,
         }
+    }
+
+    /// Set trading enabled flag (for TUI control)
+    pub fn with_trading_control(mut self, trading_enabled: Arc<tokio::sync::RwLock<bool>>) -> Self {
+        self.trading_enabled = Some(trading_enabled);
+        self
     }
 
     pub fn with_order_timeout(mut self, timeout_secs: u64) -> Self {
@@ -379,6 +388,14 @@ impl<S: Strategy> StrategyExecutor<S> {
                                 amount = req.amount
                             );
                             continue;
+                        }
+
+                        // Check if trading is enabled
+                        if let Some(ref trading_enabled) = self.trading_enabled {
+                            if !*trading_enabled.read().await {
+                                debug!("Trading is disabled, skipping order placement");
+                                continue;
+                            }
                         }
 
                         // Place the order with retry logic

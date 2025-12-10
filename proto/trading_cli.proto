@@ -1,0 +1,294 @@
+syntax = "proto3";
+
+package trading_cli;
+
+// Trading CLI Service - Main service for TUI communication
+service TradingCliService {
+    // Trading Control
+    rpc SetTradingEnabled(SetTradingEnabledRequest) returns (SetTradingEnabledResponse);
+    rpc GetTradingStatus(GetTradingStatusRequest) returns (GetTradingStatusResponse);
+    
+    // Level Management (Phase 3)
+    rpc GetLevels(GetLevelsRequest) returns (GetLevelsResponse);
+    rpc GetLevel(GetLevelRequest) returns (GetLevelResponse);
+    rpc CreateLevel(CreateLevelRequest) returns (CreateLevelResponse);
+    rpc UpdateLevel(UpdateLevelRequest) returns (UpdateLevelResponse);
+    rpc DeleteLevel(DeleteLevelRequest) returns (DeleteLevelResponse);
+    rpc ToggleLevel(ToggleLevelRequest) returns (ToggleLevelResponse);
+    
+    // Monitoring Data (Phase 2)
+    rpc GetMonitoringData(GetMonitoringDataRequest) returns (GetMonitoringDataResponse);
+    rpc StreamMonitoringData(StreamMonitoringDataRequest) returns (stream MonitoringDataUpdate);
+    
+    // System Health (Phase 4)
+    rpc GetSystemHealth(GetSystemHealthRequest) returns (GetSystemHealthResponse);
+    rpc GetProtocolHealth(GetProtocolHealthRequest) returns (GetProtocolHealthResponse);
+    
+    // Live Config (Phase 5)
+    rpc ReplaceConfig(ReplaceConfigRequest) returns (ReplaceConfigResponse);
+    rpc ValidateConfig(ValidateConfigRequest) returns (ValidateConfigResponse);
+    rpc PreviewConfigChanges(PreviewConfigChangesRequest) returns (PreviewConfigChangesResponse);
+}
+
+// Trading Control Messages
+message SetTradingEnabledRequest {
+    bool enabled = 1;
+}
+
+message SetTradingEnabledResponse {
+    bool success = 1;
+    string message = 2;
+    repeated string cancelled_orders = 3; // Order IDs that were cancelled
+}
+
+message GetTradingStatusRequest {}
+
+message GetTradingStatusResponse {
+    bool enabled = 1;
+}
+
+// Level Management Messages (Phase 3 - placeholders for now)
+message GetLevelsRequest {}
+
+message GetLevelsResponse {
+    repeated Level levels = 1;
+}
+
+message GetLevelRequest {
+    string level_id = 1;
+}
+
+message GetLevelResponse {
+    Level level = 1;
+}
+
+message CreateLevelRequest {
+    LevelConfig config = 1;
+}
+
+message CreateLevelResponse {
+    string level_id = 1;
+}
+
+message UpdateLevelRequest {
+    string level_id = 1;
+    LevelConfig config = 2;
+}
+
+message UpdateLevelResponse {
+    bool success = 1;
+}
+
+message DeleteLevelRequest {
+    string level_id = 1;
+}
+
+message DeleteLevelResponse {
+    bool success = 1;
+}
+
+message ToggleLevelRequest {
+    string level_id = 1;
+    bool enabled = 2;
+}
+
+message ToggleLevelResponse {
+    bool success = 1;
+}
+
+// Level Data Structures
+message Level {
+    string id = 1;
+    string status = 2;
+    bool enabled = 3;
+    LevelConfig config = 4;
+    repeated string active_orders = 5;
+    int32 filled_count = 6;
+}
+
+message LevelConfig {
+    string id = 1;
+    Symbol symbol = 2;
+    string side = 3;
+    string order_type = 4;
+    string price = 5; // Decimal as string
+    string quantity = 6; // Decimal as string
+    bool enabled = 7;
+    string risk_limit = 8; // Decimal as string
+    string max_position_size = 9; // Decimal as string
+    bool repost_on_fill = 10;
+    bool repost_on_cancel = 11;
+}
+
+message Symbol {
+    string base = 1;
+    string quote = 2;
+}
+
+// Monitoring Data Messages (Phase 2 - placeholders for now)
+message GetMonitoringDataRequest {}
+
+message GetMonitoringDataResponse {
+    MonitoringData data = 1;
+}
+
+message StreamMonitoringDataRequest {}
+
+message MonitoringDataUpdate {
+    MonitoringData data = 1;
+    int64 timestamp = 2;
+}
+
+message MonitoringData {
+    repeated Order orders = 1;
+    repeated Balance balances = 2;
+    repeated Trade trades = 3;
+    repeated Position positions = 4;
+    repeated IndicatorValue indicators = 5;
+    AggregatedData aggregated = 6;
+}
+
+message Order {
+    string order_id = 1;
+    string symbol = 2;
+    string side = 3;
+    string order_type = 4;
+    string price = 5;
+    string quantity = 6;
+    string status = 7;
+    string level_id = 8;
+    int64 timestamp = 9;
+}
+
+message Balance {
+    string asset = 1;
+    string free = 2;
+    string used = 3;
+    string locked = 4;
+    string total = 5;
+}
+
+message Trade {
+    string trade_id = 1;
+    string order_id = 2;
+    string symbol = 3;
+    string side = 4;
+    string price = 5;
+    string quantity = 6;
+    int64 timestamp = 7;
+}
+
+message Position {
+    string symbol = 1;
+    string quantity = 2;
+    string avg_price = 3;
+}
+
+message IndicatorValue {
+    string indicator_id = 1;
+    string indicator_name = 2;
+    string pair = 3;
+    string value = 4;
+    int64 timestamp = 5;
+    int32 period = 6;
+    bool is_composite = 7;
+}
+
+message AggregatedData {
+    OverallStatistics overall = 1;
+    map<string, PairStatistics> per_pair = 2;
+    map<string, LevelStatistics> per_level = 3;
+}
+
+message OverallStatistics {
+    int32 total_orders = 1;
+    int32 total_positions = 2;
+    string total_position_value = 3;
+    string total_pnl = 4;
+    string total_balance = 5;
+    int32 active_pairs = 6;
+    int32 active_levels = 7;
+}
+
+message PairStatistics {
+    string pair = 1;
+    int32 order_count = 2;
+    string pnl = 3;
+    int32 trade_count = 4;
+}
+
+message LevelStatistics {
+    string level_id = 1;
+    int32 order_count = 2;
+    int32 filled_count_today = 3;
+    string filled_quantity_today = 4;
+    string pnl = 5;
+    int64 last_fill_at = 6;
+}
+
+// System Health Messages (Phase 4 - placeholders for now)
+message GetSystemHealthRequest {}
+
+message GetSystemHealthResponse {
+    SystemHealth health = 1;
+}
+
+message GetProtocolHealthRequest {}
+
+message GetProtocolHealthResponse {
+    ProtocolHealth health = 1;
+}
+
+message SystemHealth {
+    bool trading_engine = 1;
+    bool market_data = 2;
+    bool exchange_engine = 3;
+    bool level_manager = 4;
+    bool risk_system = 5;
+    int64 uptime_secs = 6;
+}
+
+message ProtocolHealth {
+    bool exchange_protocol = 1;
+    bool market_data_protocol = 2;
+    bool reconciliation = 3;
+    bool risk_system = 4;
+    string last_error = 5;
+}
+
+// Live Config Messages (Phase 5 - placeholders for now)
+message ReplaceConfigRequest {
+    string config_json = 1;
+    string mode = 2; // "levels" or "strategies"
+}
+
+message ReplaceConfigResponse {
+    bool success = 1;
+    string message = 2;
+    repeated string cancelled_orders = 3;
+}
+
+message ValidateConfigRequest {
+    string config_json = 1;
+    string mode = 2;
+}
+
+message ValidateConfigResponse {
+    bool valid = 1;
+    repeated string errors = 2;
+    repeated string warnings = 3;
+}
+
+message PreviewConfigChangesRequest {
+    string config_json = 1;
+    string mode = 2;
+}
+
+message PreviewConfigChangesResponse {
+    int32 current_levels = 1;
+    int32 new_levels = 2;
+    int32 levels_to_remove = 3;
+    int32 levels_to_add = 4;
+    repeated string levels_with_active_orders = 5;
+}
+

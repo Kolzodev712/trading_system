@@ -24,6 +24,8 @@ pub struct LevelExecutor {
     config_step_size: rust_decimal::Decimal,
     config_tick_size: rust_decimal::Decimal,
     config_min_notional: rust_decimal::Decimal,
+    /// Trading control - checks if trading is enabled (optional, for TUI control)
+    trading_enabled: Option<Arc<tokio::sync::RwLock<bool>>>,
 }
 
 impl LevelExecutor {
@@ -52,7 +54,14 @@ impl LevelExecutor {
             config_step_size,
             config_tick_size,
             config_min_notional,
+            trading_enabled: None,
         }
+    }
+
+    /// Set trading enabled flag (for TUI control)
+    pub fn with_trading_control(mut self, trading_enabled: Arc<tokio::sync::RwLock<bool>>) -> Self {
+        self.trading_enabled = Some(trading_enabled);
+        self
     }
 
     /// Resolve a level to an OrderRequest
@@ -151,6 +160,15 @@ impl LevelExecutor {
         orderbook: Option<&Orderbook>,
         balances: &[trading_core::types::exchange::Balance],
     ) -> Result<Order, EngineError> {
+        // Check if trading is enabled
+        if let Some(ref trading_enabled) = self.trading_enabled {
+            if !*trading_enabled.read().await {
+                return Err(EngineError::CustomError(anyhow::anyhow!(
+                    "Trading is disabled"
+                )));
+            }
+        }
+
         let resolved = self
             .resolve_level(level, indicators, orderbook, balances)
             .await?;

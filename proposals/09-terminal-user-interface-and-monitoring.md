@@ -528,40 +528,490 @@ message CompositeIndicatorInfo {
 // ... other message types
 ```
 
-## TUI Screens
+## TUI Menu Designs
 
-### Main Menu
-- Level Setup & Configuration
-- Trading Monitoring
-- System Monitoring
+This section contains detailed ASCII art designs for all TUI screens. These designs serve as the specification for implementation.
 
-### Level Setup
-- View All Levels
-- Create New Level
-- Edit Level
-- Enable/Disable Level
-- Delete Level
-- Import/Export Config
+### 1. Main Menu
 
-### Trading Monitoring
-- Dashboard (Overview)
-- Orderbooks (with color coding)
-- Balances
-- Open Orders
-- Trades
-- Positions
-- Risk Metrics
-- **Indicators** (Simple and Composite)
-- **Available Indicators** (Indicator Library Window)
-- **Live Config** (Runtime Configuration Updates Window)
-- Multi-View (Split Screen)
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                    Trading System Control                                │
+│                                                                          │
+│  ┌──────────────────────────────────────────────────────────────────┐  │
+│  │  Trading Status: [● ENABLED]  [○ DISABLED]                       │  │
+│  │  Press [T] to toggle trading on/off                               │  │
+│  └──────────────────────────────────────────────────────────────────┘  │
+│                                                                          │
+│  ┌──────────────────────────────────────────────────────────────────┐  │
+│  │  Navigation:                                                      │  │
+│  │                                                                   │  │
+│  │  [1] Trading Monitor                                             │  │
+│  │      View orderbooks, indicators, orders, balances, trades,      │  │
+│  │      and manage levels                                           │  │
+│  │                                                                   │  │
+│  │  [2] System Monitor                                              │  │
+│  │      View connectivity status, channel health, and system info   │  │
+│  │                                                                   │  │
+│  │  [3] Live Config                                                 │  │
+│  │      Replace entire config (levels.json or strategies.json)      │  │
+│  │      without restart                                             │  │
+│  │                                                                   │  │
+│  │  [Q] Quit Application                                            │  │
+│  └──────────────────────────────────────────────────────────────────┘  │
+│                                                                          │
+│  Mode: [Levels]  Exchange: [Binance]  Uptime: [2h 15m 32s]            │
+└─────────────────────────────────────────────────────────────────────────┘
+```
 
-### System Monitoring
-- System Health
-- Protocol Health
-- Connection Status
-- Performance Metrics
-- Logs
+**Keyboard Shortcuts:**
+- `1` - Open Trading Monitor
+- `2` - Open System Monitor
+- `3` - Open Live Config
+- `T` - Toggle trading enabled/disabled (cancels all orders when disabling)
+- `Q` - Quit application
+
+---
+
+### 2. Trading Monitor (Main Screen)
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│ Trading Monitor                                    [ESC] Back to Menu   │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│  ┌─ Orderbook (BTC/USDT) ───────────────────────────────────────────┐ │
+│  │  Best Bid: 45,230.50  │  Best Ask: 45,231.00  │  Spread: 0.50    │ │
+│  │  Mid Price: 45,230.75  │  Last Update: 14:23:45                    │ │
+│  │                                                                    │ │
+│  │  Bids:                    │  Asks:                                 │ │
+│  │  45,230.50  (0.5)         │  45,231.00  (0.3)                     │ │
+│  │  45,230.00  (1.2)         │  45,231.50  (0.8)                     │ │
+│  │  45,229.50  (2.1)         │  45,232.00  (1.5)                     │ │
+│  │  ...                      │  ...                                  │ │
+│  └────────────────────────────────────────────────────────────────────┘ │
+│                                                                          │
+│  ┌─ Indicators ─────────────────────────────────────────────────────┐ │
+│  │  ID              │ Name      │ Value      │ Period │ Status      │ │
+│  ├──────────────────┼───────────┼────────────┼────────┼─────────────┤ │
+│  │ sma_20_btcusdt   │ SMA       │ 45,180.25  │ 20     │ ✓ Active    │ │
+│  │ ema_12_btcusdt   │ EMA       │ 45,195.50  │ 12     │ ✓ Active    │ │
+│  │ ema_50_btcusdt   │ EMA       │ 44,950.00  │ 50     │ ✓ Active    │ │
+│  │ *golden_cross    │ Golden X  │ 245.50     │ -      │ ✓ Active    │ │
+│  │ *macd_btcusdt    │ MACD      │ 125.30     │ -      │ ✓ Active    │ │
+│  └────────────────────────────────────────────────────────────────────┘ │
+│                                                                          │
+│  ┌─ Open Orders ────────────────────────────────────────────────────┐ │
+│  │  Order ID    │ Side │ Price      │ Quantity │ Status    │ Level  │ │
+│  ├──────────────┼──────┼────────────┼──────────┼───────────┼────────┤ │
+│  │ #12345678    │ BUY  │ 45,000.00  │ 0.001    │ NEW       │ L1     │ │
+│  │ #12345679    │ SELL │ 45,500.00  │ 0.001    │ PARTIAL   │ L2     │ │
+│  │ #12345680    │ BUY  │ 44,800.00  │ 0.002    │ FILLED    │ L3     │ │
+│  └────────────────────────────────────────────────────────────────────┘ │
+│                                                                          │
+│  ┌─ Balances ────────────────────────────────────────────────────────┐ │
+│  │  Asset │ Free      │ Used      │ Locked    │ Total                 │ │
+│  ├────────┼───────────┼───────────┼───────────┼──────────────────────┤ │
+│  │ BTC    │ 0.500000  │ 0.000000  │ 0.001000  │ 0.501000             │ │
+│  │ USDT   │ 1,250.50  │ 45.00     │ 0.00      │ 1,295.50             │ │
+│  └────────────────────────────────────────────────────────────────────┘ │
+│                                                                          │
+│  ┌─ Recent Trades ────────────────────────────────────────────────────┐ │
+│  │  Time      │ Order ID │ Side │ Price      │ Quantity │ Status    │ │
+│  ├────────────┼──────────┼──────┼────────────┼──────────┼───────────┤ │
+│  │ 14:23:45   │ #12345680│ BUY  │ 44,800.00  │ 0.002    │ FILLED    │ │
+│  │ 14:20:12   │ #12345675│ SELL │ 45,600.00  │ 0.001    │ FILLED    │ │
+│  │ 14:18:33   │ #12345670│ BUY  │ 44,750.00  │ 0.001    │ FILLED    │ │
+│  └────────────────────────────────────────────────────────────────────┘ │
+│                                                                          │
+│  ┌─ Levels ───────────────────────────────────────────────────────────┐ │
+│  │  Level ID │ Status  │ Price      │ Quantity │ Orders │ [L] Manage│ │
+│  ├───────────┼─────────┼────────────┼──────────┼────────┼───────────┤ │
+│  │ level_1   │ ACTIVE  │ 45,000.00  │ 0.001    │ 1      │           │ │
+│  │ level_2   │ ACTIVE  │ 45,500.00  │ 0.001    │ 1      │           │ │
+│  │ level_3   │ PAUSED  │ 44,800.00  │ 0.002    │ 0      │           │ │
+│  │ level_4   │ ACTIVE  │ 46,000.00  │ 0.001    │ 0      │           │ │
+│  │                                                                    │ │
+│  │  Press [L] to open Level Management                                │ │
+│  └────────────────────────────────────────────────────────────────────┘ │
+│                                                                          │
+│  [R] Refresh  [L] Level Management  [ESC] Back                          │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+**Keyboard Shortcuts:**
+- `L` - Open Level Management
+- `R` - Refresh data
+- `ESC` - Back to Main Menu
+
+---
+
+### 3. Level Management (Accessed from Trading Monitor)
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│ Level Management                              [ESC] Back to Trading Monitor│
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│  ┌─ All Levels ──────────────────────────────────────────────────────┐ │
+│  │  ID      │ Status  │ Enabled │ Price      │ Quantity │ Orders │ Filled│ │
+│  ├──────────┼─────────┼─────────┼────────────┼──────────┼────────┼───────┤ │
+│  │ level_1  │ POSTED  │ ✓       │ 45,000.00  │ 0.001    │ 1      │ 0     │ │
+│  │ level_2  │ POSTED  │ ✓       │ 45,500.00  │ 0.001    │ 1      │ 0     │ │
+│  │ level_3  │ CREATED │ ✗       │ 44,800.00  │ 0.002    │ 0      │ 0     │ │
+│  │ level_4  │ POSTED  │ ✓       │ 46,000.00  │ 0.001    │ 0      │ 0     │ │
+│  │ level_5  │ FILLED  │ ✓       │ 44,500.00  │ 0.001    │ 0      │ 1     │ │
+│  └────────────────────────────────────────────────────────────────────┘ │
+│                                                                          │
+│  ┌─ Actions ────────────────────────────────────────────────────────┐ │
+│  │                                                                     │ │
+│  │  [V] View Level Details    - View full configuration of a level   │ │
+│  │  [C] Create New Level      - Create a new level                    │ │
+│  │  [E] Edit Level            - Edit existing level configuration     │ │
+│  │  [T] Toggle Level          - Enable/disable a level                │ │
+│  │  [D] Delete Level          - Delete a level (cancels orders)        │ │
+│  │  [R] Refresh              - Refresh level list                    │ │
+│  │                                                                     │ │
+│  └────────────────────────────────────────────────────────────────────┘ │
+│                                                                          │
+│  Selected Level: [level_1]                                              │
+│  [ESC] Back                                                              │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+**Keyboard Shortcuts:**
+- `V` - View level details
+- `C` - Create new level
+- `E` - Edit level
+- `T` - Toggle level enabled/disabled
+- `D` - Delete level
+- `R` - Refresh
+- `ESC` - Back to Trading Monitor
+
+---
+
+### 4. View Level Details
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│ Level Details: level_1                          [ESC] Back             │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│  ┌─ Basic Information ───────────────────────────────────────────────┐ │
+│  │  ID: level_1                                                       │ │
+│  │  Status: POSTED                                                    │ │
+│  │  Enabled: ✓                                                        │ │
+│  │  Created: 2024-01-15 10:30:00                                      │ │
+│  │  Last Updated: 2024-01-15 14:20:00                                 │ │
+│  └────────────────────────────────────────────────────────────────────┘ │
+│                                                                          │
+│  ┌─ Configuration ───────────────────────────────────────────────────┐ │
+│  │  Symbol: BTC/USDT                                                  │ │
+│  │  Side: BUY                                                         │ │
+│  │  Order Type: LIMIT                                                 │ │
+│  │  Price: 45,000.00 (or indicator: sma_20_btcusdt * 0.99)           │ │
+│  │  Quantity: 0.001 (or indicator: balance_percent * 0.1)            │ │
+│  │  Risk Limit: 100.00                                                │ │
+│  │  Max Position Size: 0.01                                           │ │
+│  │  Repost On Fill: ✓                                                │ │
+│  │  Repost On Cancel: ✓                                              │ │
+│  └────────────────────────────────────────────────────────────────────┘ │
+│                                                                          │
+│  ┌─ Statistics ───────────────────────────────────────────────────────┐ │
+│  │  Total Orders: 1                                                   │ │
+│  │  Filled Orders: 0                                                   │ │
+│  │  Cancelled Orders: 0                                               │ │
+│  │  Total Filled Quantity: 0.000                                      │ │
+│  │  Last Fill Time: -                                                 │ │
+│  └────────────────────────────────────────────────────────────────────┘ │
+│                                                                          │
+│  ┌─ Active Orders ────────────────────────────────────────────────────┐ │
+│  │  Order ID    │ Side │ Price      │ Quantity │ Status               │ │
+│  ├──────────────┼──────┼────────────┼──────────┼──────────────────────┤ │
+│  │ #12345678    │ BUY  │ 45,000.00  │ 0.001    │ NEW                   │ │
+│  └────────────────────────────────────────────────────────────────────┘ │
+│                                                                          │
+│  [E] Edit  [T] Toggle  [D] Delete  [ESC] Back                            │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+### 5. Create/Edit Level
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│ Create New Level                                    [ESC] Cancel        │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│  ┌─ Level Configuration ─────────────────────────────────────────────┐ │
+│  │                                                                     │ │
+│  │  Level ID:        [level_6________________________]                │ │
+│  │  Symbol:          [BTC/USDT]  (Select from configured pairs)       │ │
+│  │  Side:            [BUY ▼]     (BUY/SELL)                           │ │
+│  │  Order Type:      [LIMIT ▼]   (LIMIT/MARKET)                       │ │
+│  │                                                                     │ │
+│  │  Price:            [45000.00]   (Decimal or indicator expression)   │ │
+│  │                    Examples: "45000", "sma_20_btcusdt * 0.99"       │ │
+│  │                                                                     │ │
+│  │  Quantity:        [0.001]      (Decimal or indicator expression)    │ │
+│  │                    Examples: "0.001", "balance_percent * 0.1"       │ │
+│  │                                                                     │ │
+│  │  Risk Limit:       [100.00]     (Max loss for this level)          │ │
+│  │  Max Position:     [0.01]       (Max position size)                 │ │
+│  │                                                                     │ │
+│  │  Repost On Fill:   [✓]          (Repost when order fills)          │ │
+│  │  Repost On Cancel: [✓]          (Repost when order cancels)         │ │
+│  │  Enabled:          [✓]          (Start level immediately)            │ │
+│  │                                                                     │ │
+│  └────────────────────────────────────────────────────────────────────┘ │
+│                                                                          │
+│  ┌─ Validation ────────────────────────────────────────────────────────┐ │
+│  │  ✓ Level ID is unique                                               │ │
+│  │  ✓ Symbol is valid                                                  │ │
+│  │  ✓ Price is valid                                                   │ │
+│  │  ✓ Quantity is valid                                                │ │
+│  └────────────────────────────────────────────────────────────────────┘ │
+│                                                                          │
+│  [S] Save  [ESC] Cancel                                                 │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+**Note:** Edit Level screen is identical but pre-filled with existing values.
+
+---
+
+### 6. System Monitor
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│ System Monitor                                    [ESC] Back to Menu    │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│  ┌─ Connectivity Status ──────────────────────────────────────────────┐ │
+│  │  Exchange (Binance):     [✓ Connected]  Last Check: 14:23:45      │ │
+│  │  WebSocket (User Data):  [✓ Connected]  Last Update: 14:23:44    │ │
+│  │  WebSocket (Market):     [✓ Connected]  Last Update: 14:23:44    │ │
+│  │  MongoDB:                [✓ Connected]  Last Check: 14:23:40    │ │
+│  │  gRPC Server:            [✓ Listening]  Port: 50051              │ │
+│  └────────────────────────────────────────────────────────────────────┘ │
+│                                                                          │
+│  ┌─ Channel Health ──────────────────────────────────────────────────┐ │
+│  │  Channel              │ Status │ Lag Count │ Buffer Usage         │ │
+│  ├───────────────────────┼────────┼───────────┼──────────────────────┤ │
+│  │  Market Data          │ ✓ OK   │ 0         │ 45/1000 (4.5%)      │ │
+│  │  Exchange Updates     │ ✓ OK   │ 0         │ 12/1000 (1.2%)      │ │
+│  │  Indicator Updates    │ ✓ OK   │ 0         │ 8/1000 (0.8%)       │ │
+│  │  Shutdown             │ ✓ OK   │ 0         │ 0/1 (0%)            │ │
+│  └────────────────────────────────────────────────────────────────────┘ │
+│                                                                          │
+│  ┌─ Service Status ───────────────────────────────────────────────────┐ │
+│  │  Service              │ Status │ Uptime    │ Last Activity        │ │
+│  ├───────────────────────┼────────┼───────────┼──────────────────────┤ │
+│  │  Trading Engine       │ ✓ Running │ 2h 15m │ 14:23:44            │ │
+│  │  Market Data Engine   │ ✓ Running │ 2h 15m │ 14:23:44            │ │
+│  │  Exchange Engine      │ ✓ Running │ 2h 15m │ 14:23:44            │ │
+│  │  Indicator Service    │ ✓ Running │ 2h 15m │ 14:23:44            │ │
+│  │  Asset Service        │ ✓ Running │ 2h 15m │ 14:23:00            │ │
+│  │  Level Manager        │ ✓ Running │ 2h 15m │ 14:23:44            │ │
+│  │  Risk Manager         │ ✓ Running │ 2h 15m │ 14:23:44            │ │
+│  └────────────────────────────────────────────────────────────────────┘ │
+│                                                                          │
+│  ┌─ Performance Metrics ──────────────────────────────────────────────┐ │
+│  │  System Uptime:        2 hours 15 minutes 32 seconds                 │ │
+│  │  CPU Usage:            5.2%                                          │ │
+│  │  Memory Usage:         125 MB / 512 MB (24.4%)                       │ │
+│  │  Active Connections:   3 (2 WebSocket, 1 gRPC)                      │ │
+│  │  Total Orders Placed:  15                                            │ │
+│  │  Total Trades:         8                                             │ │
+│  └────────────────────────────────────────────────────────────────────┘ │
+│                                                                          │
+│  ┌─ Protocol Health ──────────────────────────────────────────────────┐ │
+│  │  Exchange Protocol:    [✓ Healthy]  Last Error: None                │ │
+│  │  Market Data Protocol: [✓ Healthy]  Last Error: None                │ │
+│  │  Reconciliation:       [✓ OK]      Last Run: 14:20:00 (3m ago)     │ │
+│  │  Risk System:          [✓ OK]      Circuit Breaker: Closed          │ │
+│  └────────────────────────────────────────────────────────────────────┘ │
+│                                                                          │
+│  [R] Refresh  [ESC] Back                                                 │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+**Keyboard Shortcuts:**
+- `R` - Refresh all data
+- `ESC` - Back to Main Menu
+
+---
+
+### 7. Live Config
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│ Live Config                                        [ESC] Back to Menu    │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│  ┌─ Current Configuration ───────────────────────────────────────────┐ │
+│  │  Mode: [Levels]                                                      │ │
+│  │  Config File: config/levels.json                                     │ │
+│  │  Last Modified: 2024-01-15 10:30:00                                  │ │
+│  │  Status: [✓ Loaded]                                                  │ │
+│  └────────────────────────────────────────────────────────────────────┘ │
+│                                                                          │
+│  ┌─ Paste New Configuration ─────────────────────────────────────────┐ │
+│  │                                                                     │ │
+│  │  {                                                                  │ │
+│  │    "levels": [                                                      │ │
+│  │      {                                                              │ │
+│  │        "id": "level_1",                                            │ │
+│  │        "symbol": { "base": "BTC", "quote": "USDT" },               │ │
+│  │        "side": "Buy",                                              │ │
+│  │        "order_type": "Limit",                                      │ │
+│  │        "price": "45000.00",                                        │ │
+│  │        "quantity": "0.001",                                         │ │
+│  │        "enabled": true,                                            │ │
+│  │        "risk_limit": "100.00",                                     │ │
+│  │        "max_position_size": "0.01",                                │ │
+│  │        "repost_on_fill": true,                                     │ │
+│  │        "repost_on_cancel": true                                    │ │
+│  │      },                                                             │ │
+│  │      ...                                                            │ │
+│  │    ],                                                               │ │
+│  │    "risk_limits": {                                                │ │
+│  │      "max_total_position": "10000.00",                              │ │
+│  │      "max_total_orders": 50,                                       │ │
+│  │      "daily_loss_limit_all_pairs": "500.00"                        │ │
+│  │    }                                                                │ │
+│  │  }                                                                  │ │
+│  │                                                                     │ │
+│  └────────────────────────────────────────────────────────────────────┘ │
+│                                                                          │
+│  ┌─ Validation Status ────────────────────────────────────────────────┐ │
+│  │  ✓ JSON is valid                                                    │ │
+│  │  ✓ Contains "levels" array                                         │ │
+│  │  ✓ All level IDs are unique                                         │ │
+│  │  ✓ All level configurations are valid                                │ │
+│  │  ✓ Risk limits are valid                                            │ │
+│  │  ⚠ 3 levels will be removed (have active orders - will be cancelled)│ │
+│  │  ✓ 5 new levels will be added                                       │ │
+│  └────────────────────────────────────────────────────────────────────┘ │
+│                                                                          │
+│  ┌─ Update Preview ───────────────────────────────────────────────────┐ │
+│  │  Current Levels: 8                                                  │ │
+│  │  New Levels: 5                                                       │ │
+│  │  Levels to Remove: 3 (with active orders)                          │ │
+│  │  Levels to Add: 5                                                   │ │
+│  │  Risk Limits: Will be updated                                       │ │
+│  └────────────────────────────────────────────────────────────────────┘ │
+│                                                                          │
+│  ┌─ Actions ──────────────────────────────────────────────────────────┐ │
+│  │  [V] Validate JSON        - Validate JSON structure and content    │ │
+│  │  [P] Preview Changes       - Show what will change                 │ │
+│  │  [A] Apply Configuration   - Replace config and update state        │ │
+│  │  [B] Backup Current        - Backup current config before applying  │ │
+│  │  [R] Reset                 - Clear paste area                       │ │
+│  └────────────────────────────────────────────────────────────────────┘ │
+│                                                                          │
+│  Status: [Ready]  Last Action: None                                      │
+│  [ESC] Back                                                              │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+**Keyboard Shortcuts:**
+- `V` - Validate JSON
+- `P` - Preview changes
+- `A` - Apply configuration (with confirmation)
+- `B` - Backup current config
+- `R` - Reset/clear paste area
+- `ESC` - Back to Main Menu
+
+---
+
+### 8. Trading Disabled Warning (When Toggling Off)
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│ Trading Disabled                                                        │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│  ⚠ Trading has been DISABLED                                            │
+│                                                                          │
+│  The following actions have been performed:                              │
+│                                                                          │
+│  ✓ All new order placements are blocked                                 │
+│  ✓ All active orders have been cancelled                                │
+│  ✓ Level execution is paused                                           │
+│  ✓ Strategy execution is paused                                          │
+│                                                                          │
+│  Active orders cancelled: 3                                              │
+│  - Order #12345678 (level_1)                                            │
+│  - Order #12345679 (level_2)                                            │
+│  - Order #12345680 (level_3)                                            │
+│                                                                          │
+│  You can re-enable trading by pressing [T] in the main menu.            │
+│                                                                          │
+│  [OK]                                                                   │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+### 9. Trading Enabled Confirmation (When Toggling On)
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│ Trading Enabled                                                         │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│  ✓ Trading has been ENABLED                                             │
+│                                                                          │
+│  The following actions have been performed:                              │
+│                                                                          │
+│  ✓ New order placements are allowed                                     │
+│  ✓ Level execution is active                                           │
+│  ✓ Strategy execution is active                                         │
+│                                                                          │
+│  Active levels: 5                                                       │
+│  Paused levels: 2                                                       │
+│                                                                          │
+│  Trading is now active. Orders will be placed according to your        │
+│  level and strategy configurations.                                      │
+│                                                                          │
+│  [OK]                                                                   │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+### Design Notes
+
+1. **Color Coding:**
+   - Green (✓): Success/Active/Connected
+   - Red (✗/❌): Error/Disabled/Disconnected
+   - Yellow (⚠): Warning
+   - Blue: Information
+   - White: Normal text
+
+2. **Status Indicators:**
+   - `✓` = Active/Enabled/Connected/OK
+   - `✗` = Inactive/Disabled/Disconnected
+   - `⚠` = Warning
+   - `❌` = Error
+
+3. **Keyboard Navigation:**
+   - All menus support `ESC` to go back
+   - Number keys (1-9) for menu items
+   - Letter keys for actions (context-dependent)
+   - Tab for field navigation in forms
+
+4. **Real-time Updates:**
+   - Trading Monitor updates every 2 seconds (configurable)
+   - System Monitor updates every 5 seconds
+   - Status indicators update immediately on state changes
+
+5. **Responsive Design:**
+   - All screens adapt to terminal size
+   - Minimum terminal size: 80x24
+   - Recommended: 120x40 or larger
 
 ## Indicator Display in TUI
 
@@ -887,6 +1337,216 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 - [ ] LiveConfig updates are persisted to MongoDB (if enabled)
 - [ ] LiveConfig streaming updates work via gRPC stream
 
+## Implementation Phases
+
+### Phase 1: Core Infrastructure and Basic TUI
+**Goal:** Get the foundation working with basic navigation
+
+**Tasks:**
+1. gRPC server setup in `runner`
+   - Create `runner/src/grpc/` module structure
+   - Proto definitions (`trading_cli.proto`)
+   - Code generation setup (tonic, prost)
+   - Basic server lifecycle
+
+2. TradingControl service
+   - `TradingControl` struct with enable/disable flag
+   - Integration with `LevelExecutor` and `StrategyExecutor`
+   - **Cancel all orders when disabling**
+   - gRPC endpoint: `SetTradingEnabled(bool)`
+
+3. Basic TUI structure (`cli/` crate)
+   - Create new `cli/` crate
+   - Setup `ratatui` framework
+   - Basic app structure and navigation
+   - Main Menu screen (static, no data yet)
+
+4. gRPC client in TUI
+   - Client connection setup
+   - Basic error handling
+   - Connection status display
+
+**Deliverables:**
+- Main Menu renders and navigates
+- Trading enable/disable works (blocks orders, cancels active)
+- gRPC connection established
+- Basic TUI framework ready
+
+---
+
+### Phase 2: Trading Monitor and Data Aggregation
+**Goal:** Display real-time trading data
+
+**Tasks:**
+1. Monitoring data aggregation (`trading_engine/src/monitoring/`)
+   - `Aggregator` for statistics (overall, per-pair, per-level)
+   - `DataBuilder` for complete monitoring data
+   - Subscribe to channels (exchange, market data, indicators)
+
+2. gRPC streaming for monitoring
+   - `StreamMonitoringData` RPC implementation
+   - Periodic updates (every 2 seconds)
+   - Efficient data serialization
+
+3. Trading Monitor screen
+   - Orderbook display
+   - Indicators table
+   - Open orders table
+   - Balances display
+   - Recent trades
+   - Levels list (read-only initially)
+
+4. Real-time updates
+   - Auto-refresh every 2 seconds
+   - Handle connection errors gracefully
+
+**Deliverables:**
+- Trading Monitor displays all data
+- Real-time updates working
+- Data flows from channels → aggregation → gRPC → TUI
+
+---
+
+### Phase 3: Level Management (Full CRUD)
+**Goal:** Complete level management from TUI
+
+**Tasks:**
+1. Level management gRPC endpoints
+   - `GetLevels`, `GetLevel` (view details)
+   - `CreateLevel`, `UpdateLevel`, `DeleteLevel`
+   - `ToggleLevel` (enable/disable)
+
+2. Level Management screen
+   - List all levels with status
+   - View level details
+   - Create new level form
+   - Edit level form
+   - Delete confirmation
+
+3. Integration with LevelManager
+   - All operations go through `LevelManager`
+   - Persistence to MongoDB (if enabled)
+   - Validation and error handling
+
+4. Navigation flow
+   - Access from Trading Monitor (press `L`)
+   - Return to Trading Monitor
+
+**Deliverables:**
+- Full CRUD operations work
+- Level Management screen complete
+- Changes persist correctly
+
+---
+
+### Phase 4: System Monitor
+**Goal:** Display system health and connectivity
+
+**Tasks:**
+1. Health tracking infrastructure
+   - Channel health monitoring (lag detection)
+   - Service status tracking
+   - Connectivity checks (exchange, MongoDB)
+   - Performance metrics collection
+
+2. System health gRPC endpoints
+   - `GetSystemHealth`
+   - `GetProtocolHealth`
+   - Health data aggregation
+
+3. System Monitor screen
+   - Connectivity status
+   - Channel health table
+   - Service status table
+   - Performance metrics
+   - Protocol health
+
+4. Real-time updates
+   - Auto-refresh every 5 seconds
+   - Status indicators update immediately
+
+**Deliverables:**
+- System Monitor displays all health data
+- Real-time status updates
+- Channel lag detection working
+
+---
+
+### Phase 5: Live Config
+**Goal:** Replace entire config without restart
+
+**Tasks:**
+1. Full config replacement in LiveConfigService
+   - `ReplaceFullConfig` method
+   - Parse and validate JSON
+   - Cancel orders for removed levels
+   - Update LevelManager/StrategyManager
+   - Backup old config
+   - Persist to MongoDB (if enabled)
+   - Rollback mechanism
+
+2. Live Config gRPC endpoints
+   - `ReplaceConfig` RPC
+   - Validation endpoint
+   - Preview changes endpoint
+
+3. Live Config screen
+   - Config file display (current mode)
+   - Paste area for new config
+   - Validation status
+   - Preview changes
+   - Apply confirmation dialog
+
+4. Error handling and recovery
+   - Validation errors displayed
+   - Rollback on failure
+   - Backup/restore functionality
+
+**Deliverables:**
+- Full config replacement works
+- Validation and preview working
+- Safe rollback on errors
+
+---
+
+### Phase 6: Polish and Enhancements
+**Goal:** Improve UX and add finishing touches
+
+**Tasks:**
+1. Color coding and styling
+   - Green/red/yellow for status
+   - Color-coded indicators
+   - Better visual hierarchy
+
+2. Error handling improvements
+   - User-friendly error messages
+   - Error overlays/dialogs
+   - Connection retry logic
+
+3. Performance optimizations
+   - Efficient rendering (only update changed sections)
+   - Frame rate limiting
+   - Debouncing rapid updates
+
+4. Additional features
+   - Keyboard shortcuts help
+   - Loading indicators
+   - Success/warning dialogs
+   - Terminal resize handling
+
+5. Testing and bug fixes
+   - Test all flows
+   - Handle edge cases
+   - Performance testing
+
+**Deliverables:**
+- Polished UI with colors
+- Robust error handling
+- Smooth performance
+- Production-ready TUI
+
+---
+
 ## Notes
 
 - **TUI IS the monitoring interface** - no separate monitoring service
@@ -895,4 +1555,5 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 - **External communication via gRPC** - required for external process
 - **Data aggregation in Trading Engine** - prepares monitoring data
 - **Streaming for real-time updates** - efficient binary protocol
+- **Trading Control** - When disabled, all orders are cancelled immediately
 

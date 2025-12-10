@@ -78,10 +78,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("Market Data Engine: WebSocket subscribed to orderbook stream");
 
     // Create indicator update channel (shared between service and runners)
-    let (indicator_tx, indicator_rx) =
-        trading_core::channels::indicators::indicator_update_channel(
-            bot_config.channels.indicator_update_capacity,
-        );
+    let (indicator_tx, indicator_rx) = trading_core::channels::indicators::indicator_update_channel(
+        bot_config.channels.indicator_update_capacity,
+    );
 
     // Initialize Indicator Service
     let indicator_handle = initialize_indicator_service(
@@ -118,6 +117,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         indicator_handle,
         trading_state_manager,
         asset_service: Some(asset_service),
+        trading_control: None, // Created in runner functions
     };
 
     // Route to appropriate runner

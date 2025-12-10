@@ -1,4 +1,5 @@
 pub mod config;
+pub mod grpc;
 pub mod shutdown;
 
 use asset_engine::{AssetService, BinancePublicClient};
@@ -9,6 +10,8 @@ use market_data_engine::{
 };
 
 use crate::config::{BotConfig, StrategiesConfig};
+use crate::grpc::server::TradingGrpcServer;
+use crate::grpc::trading_control::TradingControl;
 use crate::shutdown::ShutdownManager;
 use live_config::{LiveConfigClient, LiveConfigService};
 use std::collections::HashSet;
@@ -80,6 +83,7 @@ pub struct SharedServices {
     pub indicator_handle: JoinHandle<()>,
     pub trading_state_manager: Arc<trading_engine::state::manager::TradingStateManager>,
     pub asset_service: Option<Arc<AssetService>>,
+    pub trading_control: Option<Arc<grpc::trading_control::TradingControl>>,
 }
 
 /// Run strategies mode
@@ -130,6 +134,28 @@ pub async fn strategy_runner(
 
     let trading_reconciliation_interval_secs =
         bot_config.reconciliation.trading_level_interval_ms / 1000;
+
+    // Create TradingControl for enable/disable trading
+    let trading_control = Arc::new(crate::grpc::trading_control::TradingControl::new(
+        services.trading_client.clone(),
+        services.trading_state_manager.clone(),
+    ));
+
+    // Create a dummy LevelManager for gRPC server (not used in strategies mode, but required by server)
+    let dummy_level_manager = Arc::new(RwLock::new(LevelManager::new()));
+
+    // Start gRPC server for CLI
+    let grpc_addr: std::net::SocketAddr = "[::1]:50051"
+        .parse()
+        .map_err(|e| format!("Failed to parse gRPC address: {}", e))?;
+    let grpc_server = TradingGrpcServer::new(
+        dummy_level_manager.clone(),
+        services.trading_state_manager.clone(),
+        services.trading_client.clone(),
+    );
+    let grpc_handle = grpc_server.start(grpc_addr).await?;
+    info!("gRPC server started on {}", grpc_addr);
+
     let executor = StrategyExecutor::new(
         strategy.clone(),
         services.trading_client.clone(),
@@ -143,7 +169,8 @@ pub async fn strategy_runner(
         step_size,
         tick_size,
         min_notional,
-    );
+    )
+    .with_trading_control(trading_control.enabled_flag());
 
     // Set up execution report handler
     let strategy_for_reports = Arc::clone(&strategy);
@@ -233,6 +260,7 @@ pub async fn strategy_runner(
             let _ = health_handle.await;
             let _ = executor_handle.await;
             let _ = services.indicator_handle.await;
+            let _ = grpc_handle.await;
         } => {
             info!("All components shut down successfully");
         }
@@ -317,21 +345,42 @@ pub async fn level_runner(
     let config_tick_size = rust_decimal::Decimal::new(1, 2); // 0.01
     let config_min_notional = rust_decimal::Decimal::new(5, 0); // 5.0
 
-    let level_executor = Arc::new(LevelExecutor::new(
+    // Create TradingControl for enable/disable trading
+    let trading_control = Arc::new(TradingControl::new(
         services.trading_client.clone(),
-        services.asset_service.clone(),
-        bot_config.exchange.exchange.clone(),
-        config_min_order_size,
-        config_step_size,
-        config_tick_size,
-        config_min_notional,
+        services.trading_state_manager.clone(),
     ));
+
+    let level_executor = Arc::new(
+        LevelExecutor::new(
+            services.trading_client.clone(),
+            services.asset_service.clone(),
+            bot_config.exchange.exchange.clone(),
+            config_min_order_size,
+            config_step_size,
+            config_tick_size,
+            config_min_notional,
+        )
+        .with_trading_control(trading_control.enabled_flag()),
+    );
 
     // Create risk manager with symbol registry
     let risk_manager = Arc::new(RiskManager::new(risk_limits, symbol_registry.clone()));
 
     // Wrap level_manager in Arc<RwLock<>> for sharing with LiveConfig and event loop
     let level_manager = Arc::new(RwLock::new(level_manager));
+
+    // Start gRPC server for CLI
+    let grpc_addr: std::net::SocketAddr = "[::1]:50051"
+        .parse()
+        .map_err(|e| format!("Failed to parse gRPC address: {}", e))?;
+    let grpc_server = TradingGrpcServer::new(
+        level_manager.clone(),
+        services.trading_state_manager.clone(),
+        services.trading_client.clone(),
+    );
+    let grpc_handle = grpc_server.start(grpc_addr).await?;
+    info!("gRPC server started on {}", grpc_addr);
 
     // Wrap risk_manager in Arc<RwLock<>> for LiveConfig service
     let risk_limits_for_live_config = risk_manager.get_limits().clone();
@@ -381,7 +430,8 @@ pub async fn level_runner(
     let cancellation_manager = Arc::new(CancellationManager::new(Vec::new()));
 
     // Create indicator subscriber using the shared indicator receiver
-    let indicator_subscriber = Arc::new(RwLock::new(IndicatorSubscriber::new(services.indicator_rx)));
+    let indicator_subscriber =
+        Arc::new(RwLock::new(IndicatorSubscriber::new(services.indicator_rx)));
 
     // Start indicator subscriber task
     let subscriber_for_task = Arc::clone(&indicator_subscriber);
@@ -490,6 +540,7 @@ pub async fn level_runner(
             let _ = subscriber_handle.await;
             let _ = services.indicator_handle.await;
             let _ = live_config_handle.await;
+            let _ = grpc_handle.await;
         } => {
             info!("All components shut down successfully");
         }

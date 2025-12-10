@@ -116,12 +116,7 @@ mod tests {
         let publisher = MarketDataStatePublisher::new(tx);
         let orderbook = create_test_orderbook();
 
-        use trading_core::types::common::Pair;
-        let pair = Pair::new("BTC", "USDT");
-        publisher
-            .publish_orderbook(&pair, &orderbook)
-            .await
-            .unwrap();
+        publisher.publish_orderbook(&orderbook).await.unwrap();
 
         let update = timeout(Duration::from_millis(100), rx.recv())
             .await
@@ -144,9 +139,7 @@ mod tests {
         let publisher = MarketDataStatePublisher::new(tx);
         let trade = create_test_trade();
 
-        use trading_core::types::common::Pair;
-        let pair = Pair::new("BTC", "USDT");
-        publisher.publish_trade(&pair, &trade).await.unwrap();
+        publisher.publish_trade(&trade).await.unwrap();
 
         let update = timeout(Duration::from_millis(100), rx.recv())
             .await

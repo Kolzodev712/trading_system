@@ -1,0 +1,33 @@
+[package]
+name = "asset_engine"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+trading_core = { path = "../../libs/trading_core" }
+
+# Logging
+tracing = { workspace = true }
+
+# SerDe
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_with = { workspace = true }
+
+# Async
+tokio = { workspace = true }
+async-trait = { workspace = true }
+
+# HTTP
+reqwest = { workspace = true }
+url = { workspace = true }
+
+# Errors
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+
+# Utils
+smol_str = { workspace = true }
+chrono = { workspace = true }
+rust_decimal = { workspace = true }
+

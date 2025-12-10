@@ -11,8 +11,6 @@
 use exchange_engine::exchanges::binance::{
     common_types::{BinanceOrderType, BinanceSide, BinanceSymbol, BinanceTimeInForce},
     config::BinanceConfig,
-    rest::client::BinanceHttpClient,
-    rest_client::BinanceRestClient,
     websocket::types::rpc::open_order::BinanceWsOrderReqParams,
     ws_client::BinanceClient,
 };
@@ -35,7 +33,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .init();
 
     let cfg = load_binance_config("config/binance_config.json")?;
-    let cfg_for_rest = cfg.clone();
     // Use default channel config for examples
     let channels = trading_core::config::ChannelConfig::default();
     let binance_client = Arc::new(RwLock::new(BinanceClient::new(
@@ -72,24 +69,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     }
 
-    // -- Fetch current market price to use a valid price --
-    let rest_client =
-        BinanceRestClient::new(BinanceHttpClient::new(cfg_for_rest.clone()), cfg_for_rest);
-
-    let orderbook = match rest_client.fetch_orderbook().await {
-        Ok(ob) => ob,
-        Err(e) => {
-            error!("Failed to fetch orderbook: {e}");
-            return Err(format!("Failed to fetch orderbook: {e}").into());
-        }
-    };
-
-    // Use best bid price (slightly below for buy order) or fallback to 60000
-    let market_price = orderbook
-        .bids
-        .first()
-        .map(|bid| bid[0])
-        .unwrap_or(Decimal::new(6000000, 2)); // 60,000 USDT fallback
+    // -- Get current market price --
+    // Note: In production, market prices should come from the Market Data Engine via WebSocket.
+    // For this example, we'll use a hardcoded price. The WebSocket stream provides orderbook
+    // snapshots automatically, so REST orderbook fetching is not needed.
+    let market_price = Decimal::new(6000000, 2); // 60,000 USDT (example price)
 
     // Use 1% below market price for buy order to ensure it's valid
     // Round to 2 decimal places for BTC/USDT price filter

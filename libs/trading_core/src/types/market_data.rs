@@ -177,15 +177,17 @@ mod tests {
     }
 
     #[test]
-    fn test_legacy_orderbook_serialization() {
-        let orderbook = LegacyOrderbook {
+    fn test_structured_orderbook_serialization() {
+        use crate::types::common::Pair;
+        let pair = Pair::new("BTC", "USDT");
+        let orderbook = StructuredOrderbook {
+            pair,
             bids: vec![
-                Decimal::new(90000, 0),
-                Decimal::new(1, 0),
-                Decimal::new(89900, 0),
-                Decimal::new(2, 0),
+                (Decimal::new(90000, 0), Decimal::new(1, 0)),
+                (Decimal::new(89900, 0), Decimal::new(2, 0)),
             ],
-            asks: vec![Decimal::new(91000, 0), Decimal::new(1, 0)],
+            asks: vec![(Decimal::new(91000, 0), Decimal::new(1, 0))],
+            timestamp: 1734819696263,
         };
 
         let serialized = serde_json::to_string(&orderbook).unwrap();
@@ -194,12 +196,16 @@ mod tests {
     }
 
     #[test]
-    fn test_legacy_trade_serialization() {
-        let trade = LegacyTrade {
+    fn test_structured_trade_serialization() {
+        use crate::types::common::Pair;
+        let pair = Pair::new("BTC", "USDT");
+        let trade = StructuredPublicTrade {
+            pair,
             price: Decimal::new(90000, 0),
             quantity: Decimal::new(10, 2),
-            time: 1734819696263,
+            timestamp: 1734819696263,
             is_market_maker: false,
+            trade_id: None,
         };
 
         let serialized = serde_json::to_string(&trade).unwrap();

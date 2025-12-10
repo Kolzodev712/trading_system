@@ -1,5 +1,7 @@
 //! Level executor - executes levels by resolving indicator values and placing orders
+use super::order_validation::{get_trading_rules, validate_order};
 use super::{IndicatorResolver, Level, ResolvedLevel};
+use asset_engine::AssetService;
 use indicator_engine::data::IndicatorValue;
 use smol_str::SmolStr;
 use std::collections::HashMap;
@@ -7,7 +9,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use trading_core::error::EngineError;
 use trading_core::traits::TradingClient;
-use trading_core::types::common::Symbol;
+use trading_core::types::common::{Exchange, Symbol};
 use trading_core::types::exchange::{Order, OrderRequest};
 use trading_core::types::market_data::Orderbook;
 
@@ -15,14 +17,41 @@ use trading_core::types::market_data::Orderbook;
 pub struct LevelExecutor {
     trading_client: Arc<RwLock<dyn TradingClient<OrderRequest>>>,
     resolver: IndicatorResolver,
+    asset_service: Option<Arc<AssetService>>,
+    exchange: Exchange,
+    /// Config fallback values
+    config_min_order_size: rust_decimal::Decimal,
+    config_step_size: rust_decimal::Decimal,
+    config_tick_size: rust_decimal::Decimal,
+    config_min_notional: rust_decimal::Decimal,
 }
 
 impl LevelExecutor {
     /// Create a new level executor
-    pub fn new(trading_client: Arc<RwLock<dyn TradingClient<OrderRequest>>>) -> Self {
+    pub fn new(
+        trading_client: Arc<RwLock<dyn TradingClient<OrderRequest>>>,
+        asset_service: Option<Arc<AssetService>>,
+        exchange: Exchange,
+        config_min_order_size: rust_decimal::Decimal,
+        config_step_size: rust_decimal::Decimal,
+        config_tick_size: rust_decimal::Decimal,
+        config_min_notional: rust_decimal::Decimal,
+    ) -> Self {
+        let resolver = IndicatorResolver::new(
+            asset_service.clone(),
+            exchange.clone(),
+            config_tick_size,
+            config_step_size,
+        );
         Self {
             trading_client,
-            resolver: IndicatorResolver,
+            resolver,
+            asset_service,
+            exchange,
+            config_min_order_size,
+            config_step_size,
+            config_tick_size,
+            config_min_notional,
         }
     }
 
@@ -67,18 +96,41 @@ impl LevelExecutor {
             }
         };
 
-        // Resolve price
-        let resolved_price =
-            self.resolver
-                .resolve_price(&level.config.price, indicators, orderbook)?;
+        // Resolve price (with rounding to tick size)
+        let resolved_price = self
+            .resolver
+            .resolve_price(
+                &level.config.price,
+                indicators,
+                orderbook,
+                &level.config.symbol,
+            )
+            .await?;
 
-        // Resolve quantity
-        let resolved_quantity = self.resolver.resolve_quantity(
-            &level.config.quantity,
-            indicators,
-            balance,
-            current_price,
-        )?;
+        // Resolve quantity (with rounding to step size)
+        let resolved_quantity = self
+            .resolver
+            .resolve_quantity(
+                &level.config.quantity,
+                indicators,
+                balance,
+                current_price,
+                &level.config.symbol,
+            )
+            .await?;
+
+        // Validate order against trading rules (Asset Engine or config fallback)
+        let rules = get_trading_rules(
+            self.asset_service.as_ref(),
+            self.exchange.clone(),
+            &level.config.symbol,
+            self.config_min_order_size,
+            self.config_step_size,
+            self.config_tick_size,
+            self.config_min_notional,
+        )
+        .await;
+        validate_order(resolved_price, resolved_quantity, &rules)?;
 
         // Convert order type
         let resolved_order_type = level.config.order_type.clone().into();

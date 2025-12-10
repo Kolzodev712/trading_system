@@ -25,9 +25,9 @@ pub struct BinanceTrade {
     pub symbol: SmolStr,
     #[serde(rename = "t")]
     pub trade_id: u64,
-    #[serde(rename = "p")]
+    #[serde(rename = "p", with = "rust_decimal::serde::str")]
     pub price: Decimal,
-    #[serde(rename = "q")]
+    #[serde(rename = "q", with = "rust_decimal::serde::str")]
     pub quantity: Decimal,
     #[serde(rename = "T")]
     pub trade_time: u64,

@@ -42,8 +42,10 @@ pub struct BinanceBalance {
     /// Currency symbol
     pub asset: Symbol,
     /// The free balance that can be used in new orders
+    #[serde(with = "rust_decimal::serde::str")]
     pub free: Decimal,
     /// The locked balance that is bound to open orders
+    #[serde(with = "rust_decimal::serde::str")]
     pub locked: Decimal,
 }
 

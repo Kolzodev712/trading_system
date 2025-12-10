@@ -54,6 +54,18 @@ This document provides a comprehensive overview of the entire trading system arc
 - **Risk Limits**: Configurable limits for position size, order count, daily loss (global and per-pair)
 - **Integration**: Fully integrated into level-based event loop with price tracking for periodic checks
 
+### ✅ Asset Manager Engine (Proposal 08) - COMPLETE
+- **Asset Engine Service**: New service dedicated to fetching public exchange market data via unsigned REST calls
+- **Bootstrap Integration**: Market data fetched at application startup for configured pairs
+- **TTL-Based Caching**: 5-minute default TTL with automatic refresh on stale data
+- **Priority System**: Exchange values (trading rules, limits) take priority over config values, with graceful config fallback
+- **Order Validation**: Prices rounded to tick size, quantities rounded to step size using exchange data
+- **Min/Max Validations**: Order size, price, and notional limits enforced from exchange data when available
+- **Integration Points**: Used in both level resolver (`IndicatorResolver`) and strategy executor for order validation
+- **Binance Implementation**: `BinancePublicClient` for fetching exchange info, trading rules, and exchange limits
+- **Centralized Access**: `AssetService` included in `SharedServices` for easy access across all trading components
+- **Graceful Degradation**: System works with or without Asset Engine data (falls back to config values)
+
 ## Prerequisites & Infrastructure Requirements
 
 To run the trading system in production, the following infrastructure and services must be set up and running:
@@ -942,9 +954,14 @@ run.rs (exchange-agnostic)
 - **Key Principle**: Risk Engine acts as independent checker
 
 ### Asset Engine
+- ✅ **COMPLETE**: Asset Manager Engine (Proposal 08)
 - **Caching Only** (not a state manager)
 - Caches static asset metadata (symbols, trading rules, exchange limits)
 - TTL-based refresh from REST API (public endpoints, no authentication)
+- Fetches market data at bootstrap via `AssetService`
+- Priority system: Exchange values override config values, with config fallback
+- Used in level resolver and strategy executor for order validation and rounding
+- Binance implementation with unsigned REST client
 - No state management (static data)
 
 ### Runner (Application Orchestrator)
@@ -1418,7 +1435,17 @@ Indicator Engine
    - Balance checks before every order
    - SymbolRegistry integration for symbol-to-pair conversion
    - All checks integrated into level-based event loop
-7. Market data integration (Proposal 08)
+7. ✅ Asset Manager Engine (Proposal 08) - **COMPLETE**
+   - Asset Engine service for fetching public exchange market data via unsigned REST calls
+   - Binance implementation with `BinancePublicClient` for exchange info, trading rules, and limits
+   - TTL-based caching (5 minutes default) with automatic refresh on stale data
+   - Bootstrap integration: Market data fetched at application startup
+   - Priority system: Exchange values take priority over config values, with config fallback
+   - Order validation: Prices rounded to tick size, quantities rounded to step size
+   - Min/max validations: Order size, price, and notional limits from exchange data
+   - Integration: Used in both level resolver and strategy executor for order validation
+   - Fallback strategy: System works with or without Asset Engine data (graceful degradation)
+   - Centralized in `SharedServices` for easy access across all trading components
 
 ### Phase 3: User Interface & Quality
 1. TUI CLI and Monitoring (Proposal 09)

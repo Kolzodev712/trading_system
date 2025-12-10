@@ -275,7 +275,6 @@ mod tests {
         let state_manager = Arc::new(MarketDataStateManager::new(tx, symbol_registry));
         let handler = StateManagerMessageHandler::new(state_manager.clone());
 
-        use trading_core::types::common::Pair;
         let orderbook = StructuredOrderbook {
             pair: pair.clone(),
             bids: vec![(Decimal::new(50000, 0), Decimal::new(1, 0))],

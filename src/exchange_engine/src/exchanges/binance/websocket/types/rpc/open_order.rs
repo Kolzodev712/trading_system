@@ -44,7 +44,9 @@ pub struct BinanceWsOrderReqParams {
     #[serde(rename = "type", serialize_with = "serialize_enum_as_display")]
     pub order_type: BinanceOrderType,
     pub time_in_force: BinanceTimeInForce,
+    #[serde(with = "rust_decimal::serde::str")]
     pub price: Decimal,
+    #[serde(with = "rust_decimal::serde::str")]
     pub quantity: Decimal,
     #[serde(flatten, default)]
     pub session: SessionLogonParams,

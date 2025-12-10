@@ -1,3 +1,4 @@
+pub mod asset;
 pub mod common;
 pub mod exchange;
 pub mod market_data;

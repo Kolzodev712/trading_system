@@ -1,13 +1,9 @@
 // End goal here is to implement the `TradingClient` trait on the binance client
-use super::{
-    config::BinanceConfig,
-    rest::{
-        client::BinanceHttpClient,
-        types::{
-            balance::{BinanceAccountInfo, BinanceBalanceRequest},
-            common::BinanceServerTime,
-            orderbook::{BinanceOrderbookSnapshotRequest, BinanceOrderbookSnapshotResponse},
-        },
+use super::rest::{
+    client::BinanceHttpClient,
+    types::{
+        balance::{BinanceAccountInfo, BinanceBalanceRequest},
+        common::BinanceServerTime,
     },
 };
 use trading_core::{
@@ -17,21 +13,16 @@ use trading_core::{
 };
 
 const TIME: &str = "time";
-const ORDERBOOK: &str = "depth";
 const BALANCE: &str = "account";
 
 #[derive(Debug, Clone)]
 pub struct BinanceRestClient {
     http_client: BinanceHttpClient,
-    config: BinanceConfig,
 }
 
 impl BinanceRestClient {
-    pub fn new(http_client: BinanceHttpClient, config: BinanceConfig) -> Self {
-        BinanceRestClient {
-            http_client,
-            config,
-        }
+    pub fn new(http_client: BinanceHttpClient) -> Self {
+        BinanceRestClient { http_client }
     }
 
     pub async fn get_time(&self) -> Result<BinanceServerTime, EngineError> {
@@ -43,31 +34,6 @@ impl BinanceRestClient {
         response.flatten().ok_or_else(|| {
             EngineError::CustomError(anyhow::anyhow!(
                 "Expected BinanceServerTime, but received None"
-            ))
-        })
-    }
-
-    pub async fn fetch_orderbook(&self) -> Result<BinanceOrderbookSnapshotResponse, EngineError> {
-        let params = BinanceOrderbookSnapshotRequest {
-            symbol: self.config.symbol.convert_to_smolstr(),
-            limit: None,
-        };
-
-        let response = self
-            .http_client
-            .call::<BinanceOrderbookSnapshotRequest, Option<BinanceOrderbookSnapshotResponse>>(
-                ORDERBOOK,
-                HttpMethod::GET,
-                Some(params),
-                None,
-                None,
-                false,
-            )
-            .await?;
-
-        response.flatten().ok_or_else(|| {
-            EngineError::CustomError(anyhow::anyhow!(
-                "Expected orderbook snapshot, but received None"
             ))
         })
     }

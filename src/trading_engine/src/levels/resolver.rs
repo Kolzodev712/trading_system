@@ -1,25 +1,51 @@
 //! Indicator resolver - resolves indicator values for level configuration
 use super::config::{PriceConfig, PriceOffsetType, QuantityConfig};
+use super::order_validation::{get_trading_rules, round_price, round_quantity};
+use asset_engine::AssetService;
 use indicator_engine::data::IndicatorValue;
 use rust_decimal::Decimal;
 use smol_str::SmolStr;
 use std::collections::HashMap;
+use std::sync::Arc;
 use trading_core::error::EngineError;
+use trading_core::types::common::Exchange;
 use trading_core::types::market_data::Orderbook;
 
 /// Resolves indicator values for level configuration
-pub struct IndicatorResolver;
+pub struct IndicatorResolver {
+    asset_service: Option<Arc<AssetService>>,
+    exchange: Exchange,
+    /// Config fallback values
+    config_tick_size: Decimal,
+    config_step_size: Decimal,
+}
 
 impl IndicatorResolver {
-    /// Resolve price from PriceConfig
-    pub fn resolve_price(
+    /// Create a new indicator resolver
+    pub fn new(
+        asset_service: Option<Arc<AssetService>>,
+        exchange: Exchange,
+        config_tick_size: Decimal,
+        config_step_size: Decimal,
+    ) -> Self {
+        Self {
+            asset_service,
+            exchange,
+            config_tick_size,
+            config_step_size,
+        }
+    }
+
+    /// Resolve price from PriceConfig and round to tick size
+    pub async fn resolve_price(
         &self,
         config: &PriceConfig,
         indicators: &HashMap<SmolStr, IndicatorValue>,
         orderbook: Option<&Orderbook>,
+        pair: &trading_core::types::common::Pair,
     ) -> Result<Decimal, EngineError> {
-        match config {
-            PriceConfig::Fixed(price) => Ok(*price),
+        let resolved_price = match config {
+            PriceConfig::Fixed(price) => *price,
 
             PriceConfig::Indicator {
                 indicator_name,
@@ -38,7 +64,7 @@ impl IndicatorResolver {
                     })?;
 
                 let base_price = indicator.value;
-                let resolved_price = match offset_type {
+                match offset_type {
                     PriceOffsetType::Absolute => base_price + offset_value,
                     PriceOffsetType::Percent => {
                         base_price * (Decimal::ONE + offset_value / Decimal::from(100))
@@ -49,9 +75,7 @@ impl IndicatorResolver {
                     PriceOffsetType::PercentAbove => {
                         base_price * (Decimal::ONE + offset_value / Decimal::from(100))
                     }
-                };
-
-                Ok(resolved_price)
+                }
             }
 
             PriceConfig::BestBid { offset } => {
@@ -63,7 +87,7 @@ impl IndicatorResolver {
                 let best_bid = orderbook.best_bid_price().ok_or_else(|| {
                     EngineError::CustomError(anyhow::anyhow!("No best bid price in orderbook"))
                 })?;
-                Ok(best_bid - offset)
+                best_bid - offset
             }
 
             PriceConfig::BestAsk { offset } => {
@@ -75,7 +99,7 @@ impl IndicatorResolver {
                 let best_ask = orderbook.best_ask_price().ok_or_else(|| {
                     EngineError::CustomError(anyhow::anyhow!("No best ask price in orderbook"))
                 })?;
-                Ok(best_ask + offset)
+                best_ask + offset
             }
 
             PriceConfig::MidPrice { offset_percent } => {
@@ -87,21 +111,35 @@ impl IndicatorResolver {
                         "Cannot calculate mid price from orderbook: missing bids or asks"
                     ))
                 })?;
-                Ok(mid_price * (Decimal::ONE + offset_percent / Decimal::from(100)))
+                mid_price * (Decimal::ONE + offset_percent / Decimal::from(100))
             }
-        }
+        };
+
+        // Round price to tick size (Asset Engine or config fallback)
+        let rules = get_trading_rules(
+            self.asset_service.as_ref(),
+            self.exchange.clone(),
+            pair,
+            Decimal::ZERO, // min_order_size not needed for price
+            self.config_step_size,
+            self.config_tick_size,
+            Decimal::ZERO, // min_notional not needed for price
+        )
+        .await;
+        Ok(round_price(resolved_price, rules.tick_size))
     }
 
-    /// Resolve quantity from QuantityConfig
-    pub fn resolve_quantity(
+    /// Resolve quantity from QuantityConfig and round to step size
+    pub async fn resolve_quantity(
         &self,
         config: &QuantityConfig,
         indicators: &HashMap<SmolStr, IndicatorValue>,
         balance: Decimal,
         current_price: Decimal,
+        pair: &trading_core::types::common::Pair,
     ) -> Result<Decimal, EngineError> {
-        match config {
-            QuantityConfig::Fixed(qty) => Ok(*qty),
+        let resolved_qty = match config {
+            QuantityConfig::Fixed(qty) => *qty,
 
             QuantityConfig::Indicator {
                 indicator_name,
@@ -130,14 +168,27 @@ impl IndicatorResolver {
                     qty = qty + off;
                 }
 
-                Ok(qty.max(Decimal::ZERO))
+                qty.max(Decimal::ZERO)
             }
 
             QuantityConfig::BalancePercent(percent) => {
-                Ok(balance * percent / Decimal::from(100) / current_price.max(Decimal::ONE))
+                balance * percent / Decimal::from(100) / current_price.max(Decimal::ONE)
             }
 
-            QuantityConfig::Notional(notional) => Ok(notional / current_price.max(Decimal::ONE)),
-        }
+            QuantityConfig::Notional(notional) => notional / current_price.max(Decimal::ONE),
+        };
+
+        // Round quantity to step size (Asset Engine or config fallback)
+        let rules = get_trading_rules(
+            self.asset_service.as_ref(),
+            self.exchange.clone(),
+            pair,
+            Decimal::ZERO, // min_order_size not needed for rounding
+            self.config_step_size,
+            self.config_tick_size,
+            Decimal::ZERO, // min_notional not needed for rounding
+        )
+        .await;
+        Ok(round_quantity(resolved_qty, rules.step_size))
     }
 }

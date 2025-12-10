@@ -69,7 +69,9 @@ pub struct Balances {
         deserialize_with = "deserialize_smol_str"
     )]
     pub asset: SmolStr,
+    #[serde(with = "rust_decimal::serde::str")]
     pub free: Decimal,
+    #[serde(with = "rust_decimal::serde::str")]
     pub locked: Decimal,
 }
 

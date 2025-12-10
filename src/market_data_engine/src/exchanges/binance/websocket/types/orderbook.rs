@@ -35,7 +35,9 @@ pub struct BinanceOrderbook {
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct PriceLevel {
+    #[serde(with = "rust_decimal::serde::str")]
     pub price: Decimal,
+    #[serde(with = "rust_decimal::serde::str")]
     pub quantity: Decimal,
 }
 

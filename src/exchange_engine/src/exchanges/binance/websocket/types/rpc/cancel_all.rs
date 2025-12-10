@@ -99,13 +99,16 @@ pub struct SingleCancelOrder {
     )]
     pub client_order_id: SmolStr,
     pub transact_time: i64,
+    #[serde(with = "rust_decimal::serde::str")]
     pub price: Decimal,
+    #[serde(with = "rust_decimal::serde::str")]
     pub orig_qty: Decimal,
     pub status: BinanceOrderStatus,
     pub time_in_force: BinanceTimeInForce,
     #[serde(rename = "type")]
     pub type_: BinanceOrderType,
     pub side: BinanceSide,
+    #[serde(with = "rust_decimal::serde::str")]
     pub stop_price: Decimal,
 }
 
@@ -166,16 +169,22 @@ pub struct OcoOrderReport {
     )]
     pub client_order_id: SmolStr,
     pub transact_time: i64,
+    #[serde(with = "rust_decimal::serde::str")]
     pub price: Decimal,
+    #[serde(with = "rust_decimal::serde::str")]
     pub orig_qty: Decimal,
+    #[serde(with = "rust_decimal::serde::str")]
     pub executed_qty: Decimal,
+    #[serde(with = "rust_decimal::serde::str")]
     pub orig_quote_order_qty: Decimal,
+    #[serde(with = "rust_decimal::serde::str")]
     pub cummulative_quote_qty: Decimal,
     pub status: BinanceOrderStatus,
     pub time_in_force: BinanceTimeInForce,
     #[serde(rename = "type")]
     pub type_: BinanceOrderType,
     pub side: BinanceSide,
+    #[serde(with = "rust_decimal::serde::str")]
     pub stop_price: Decimal,
 }
 

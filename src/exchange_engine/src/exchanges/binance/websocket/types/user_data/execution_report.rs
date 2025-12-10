@@ -32,13 +32,13 @@ pub struct ExecutionReport {
     pub order_type: BinanceOrderType,
     #[serde(rename = "f")]
     pub time_in_force: BinanceTimeInForce,
-    #[serde(rename = "q")]
+    #[serde(rename = "q", with = "rust_decimal::serde::str")]
     pub quantity: Decimal,
-    #[serde(rename = "p")]
+    #[serde(rename = "p", with = "rust_decimal::serde::str")]
     pub price: Decimal,
     /// Cumulative filled quantity (z field from Binance API)
     /// This represents the total amount filled so far for this order
-    #[serde(rename = "z", default)]
+    #[serde(rename = "z", default, with = "rust_decimal::serde::str_option")]
     pub cumulative_filled_quantity: Option<Decimal>,
     #[serde(rename = "X")]
     pub order_status: BinanceOrderStatus,

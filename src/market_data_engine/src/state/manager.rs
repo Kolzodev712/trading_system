@@ -160,19 +160,25 @@ mod tests {
     use rust_decimal::Decimal;
     use trading_core::channels::market_data::market_data_update_channel;
 
-    fn create_test_orderbook() -> Orderbook {
-        Orderbook {
-            bids: vec![Decimal::new(50000, 0), Decimal::new(1, 0)],
-            asks: vec![Decimal::new(51000, 0), Decimal::new(1, 0)],
+    fn create_test_orderbook() -> StructuredOrderbook {
+        use trading_core::types::common::Pair;
+        StructuredOrderbook {
+            pair: Pair::new("BTC", "USDT"),
+            bids: vec![(Decimal::new(50000, 0), Decimal::new(1, 0))],
+            asks: vec![(Decimal::new(51000, 0), Decimal::new(1, 0))],
+            timestamp: 1234567890,
         }
     }
 
-    fn create_test_trade() -> Trade {
-        Trade {
+    fn create_test_trade() -> StructuredPublicTrade {
+        use trading_core::types::common::Pair;
+        StructuredPublicTrade {
+            pair: Pair::new("BTC", "USDT"),
             price: Decimal::new(123456, 2),
             quantity: Decimal::new(5, 1),
-            time: 123456789,
+            timestamp: 123456789,
             is_market_maker: true,
+            trade_id: None,
         }
     }
 

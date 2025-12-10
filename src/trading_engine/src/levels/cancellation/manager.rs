@@ -112,8 +112,16 @@ impl CancellationManager {
                 }
                 CancellationAction::CancelLevel(level_id) => {
                     if let Some(level) = level_manager.get_level(&level_id) {
-                        let executor =
-                            crate::levels::LevelExecutor::new(Arc::clone(&trading_client));
+                        // For cancellation, we don't need AssetService - use minimal defaults
+                        let executor = crate::levels::LevelExecutor::new(
+                            Arc::clone(&trading_client),
+                            None,                                           // asset_service
+                            trading_core::types::common::Exchange::Binance, // exchange (not used for cancellation)
+                            rust_decimal::Decimal::new(1, 5),               // config_min_order_size
+                            rust_decimal::Decimal::new(1, 5),               // config_step_size
+                            rust_decimal::Decimal::new(1, 2),               // config_tick_size
+                            rust_decimal::Decimal::new(5, 0),               // config_min_notional
+                        );
                         executor.cancel_level_orders(level).await?;
                     }
                 }
@@ -133,8 +141,16 @@ impl CancellationManager {
 
                     for level_id in level_ids {
                         if let Some(level) = level_manager.get_level(&level_id) {
-                            let executor =
-                                crate::levels::LevelExecutor::new(Arc::clone(&trading_client));
+                            // For cancellation, we don't need AssetService - use minimal defaults
+                            let executor = crate::levels::LevelExecutor::new(
+                                Arc::clone(&trading_client),
+                                None,                                           // asset_service
+                                trading_core::types::common::Exchange::Binance, // exchange (not used for cancellation)
+                                rust_decimal::Decimal::new(1, 5), // config_min_order_size
+                                rust_decimal::Decimal::new(1, 5), // config_step_size
+                                rust_decimal::Decimal::new(1, 2), // config_tick_size
+                                rust_decimal::Decimal::new(5, 0), // config_min_notional
+                            );
                             executor.cancel_level_orders(level).await?;
                         }
                     }

@@ -27,7 +27,9 @@ pub struct BinanceCancelOrderByIdResponse {
     )]
     pub symbol: SmolStr,
     pub order_id: u64,
+    #[serde(with = "rust_decimal::serde::str")]
     pub price: Decimal,
+    #[serde(with = "rust_decimal::serde::str")]
     pub orig_qty: Decimal,
     pub status: BinanceOrderStatus,
     pub time_in_force: BinanceTimeInForce,

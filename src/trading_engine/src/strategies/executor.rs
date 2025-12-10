@@ -1,11 +1,12 @@
 use crate::state::Strategy;
+use asset_engine::AssetService;
 use trading_core::{
     channels::market_data::{MarketDataUpdate, MarketDataUpdateReceiver},
     circuit_breaker::{order_circuit_breaker, CircuitBreaker},
     error::EngineError,
     retry::{order_retry_config, retry_with_backoff},
     traits::TradingClient,
-    types::{common::Pair, exchange::Order},
+    types::{common::Exchange, exchange::Order, Pair},
 };
 // ExecutionReport removed - use Order directly from channels
 use rust_decimal::Decimal;
@@ -30,10 +31,13 @@ pub struct StrategyExecutor<S: Strategy + 'static> {
     trading_state_manager: Arc<crate::state::manager::TradingStateManager>,
     order_timeout_secs: u64,
     reconciliation_interval_secs: u64,
-    min_order_size: Decimal,
-    step_size: Decimal,
-    tick_size: Decimal,
-    min_notional: Decimal,
+    asset_service: Option<Arc<AssetService>>,
+    exchange: Exchange,
+    /// Config fallback values
+    config_min_order_size: Decimal,
+    config_step_size: Decimal,
+    config_tick_size: Decimal,
+    config_min_notional: Decimal,
 }
 
 impl<S: Strategy> StrategyExecutor<S> {
@@ -44,10 +48,12 @@ impl<S: Strategy> StrategyExecutor<S> {
         symbol: Pair,
         trading_state_manager: Arc<crate::state::manager::TradingStateManager>,
         reconciliation_interval_secs: u64,
-        min_order_size: Decimal,
-        step_size: Decimal,
-        tick_size: Decimal,
-        min_notional: Decimal,
+        asset_service: Option<Arc<AssetService>>,
+        exchange: Exchange,
+        config_min_order_size: Decimal,
+        config_step_size: Decimal,
+        config_tick_size: Decimal,
+        config_min_notional: Decimal,
     ) -> Self {
         Self {
             strategy,
@@ -58,10 +64,12 @@ impl<S: Strategy> StrategyExecutor<S> {
             trading_state_manager,
             order_timeout_secs: 300, // 5 minutes default timeout for limit orders
             reconciliation_interval_secs,
-            min_order_size,
-            step_size,
-            tick_size,
-            min_notional,
+            asset_service,
+            exchange,
+            config_min_order_size,
+            config_step_size,
+            config_tick_size,
+            config_min_notional,
         }
     }
 
@@ -313,48 +321,60 @@ impl<S: Strategy> StrategyExecutor<S> {
                             }
                         }
 
-                        // Round quantity to step size (required by Binance LOT_SIZE filter)
-                        // Round down to avoid exceeding available balance
-                        let rounded_amount = (req.amount / self.step_size).floor() * self.step_size;
+                        // Get trading rules from Asset Engine (with config fallback)
+                        use crate::levels::order_validation::{
+                            get_trading_rules, round_price, round_quantity, validate_order,
+                        };
+                        let rules = get_trading_rules(
+                            self.asset_service.as_ref(),
+                            self.exchange.clone(),
+                            &self.symbol,
+                            self.config_min_order_size,
+                            self.config_step_size,
+                            self.config_tick_size,
+                            self.config_min_notional,
+                        )
+                        .await;
+
+                        // Round quantity to step size (Asset Engine or config fallback)
+                        let rounded_amount = round_quantity(req.amount, rules.step_size);
                         if rounded_amount != req.amount {
                             debug!(
                                 "Order amount {amount} rounded to step size {step}: {rounded}",
                                 amount = req.amount,
-                                step = self.step_size,
+                                step = rules.step_size,
                                 rounded = rounded_amount
                             );
                             req.amount = rounded_amount;
                         }
 
-                        // Enforce minimum order size from config
-                        if req.amount < self.min_order_size {
+                        // Enforce minimum order size (Asset Engine or config fallback)
+                        if req.amount < rules.min_order_size {
                             debug!(
                                 "Order amount {amount} is below minimum {min}. Skipping order.",
                                 amount = req.amount,
-                                min = self.min_order_size
+                                min = rules.min_order_size
                             );
                             continue;
                         }
 
-                        // Round price to tick size (required by Binance PRICE_FILTER)
-                        let rounded_price = (req.price / self.tick_size).floor() * self.tick_size;
+                        // Round price to tick size (Asset Engine or config fallback)
+                        let rounded_price = round_price(req.price, rules.tick_size);
                         if rounded_price != req.price {
                             debug!(
                                 "Order price {price} rounded to tick size {tick}: {rounded}",
                                 price = req.price,
-                                tick = self.tick_size,
+                                tick = rules.tick_size,
                                 rounded = rounded_price
                             );
                             req.price = rounded_price;
                         }
 
-                        // Check minimum notional value (price * quantity)
-                        let notional = req.price * req.amount;
-                        if notional < self.min_notional {
+                        // Validate order against trading rules (includes min_notional check)
+                        if let Err(e) = validate_order(req.price, req.amount, &rules) {
                             debug!(
-                                "Order notional {notional} is below minimum {min}. Skipping order. (price={price}, amount={amount})",
-                                notional = notional,
-                                min = self.min_notional,
+                                "Order validation failed: {error}. Skipping order. (price={price}, amount={amount})",
+                                error = e,
                                 price = req.price,
                                 amount = req.amount
                             );

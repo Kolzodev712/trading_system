@@ -29,7 +29,9 @@ pub struct BinanceOrderRequest {
     pub order_type: BinanceOrderType,
     #[serde(serialize_with = "serialize_option_enum_as_display")]
     pub time_in_force: Option<BinanceTimeInForce>,
+    #[serde(with = "rust_decimal::serde::str_option")]
     pub quantity: Option<Decimal>,
+    #[serde(with = "rust_decimal::serde::str_option")]
     pub price: Option<Decimal>,
     pub timestamp: Option<u64>,
 }
@@ -118,9 +120,13 @@ pub struct BinanceOrderResponse {
     )]
     pub client_order_id: SmolStr,
     pub transact_time: Option<u64>,
+    #[serde(with = "rust_decimal::serde::str_option")]
     pub price: Option<Decimal>,
+    #[serde(with = "rust_decimal::serde::str_option")]
     pub orig_qty: Option<Decimal>,
+    #[serde(with = "rust_decimal::serde::str_option")]
     pub executed_qty: Option<Decimal>,
+    #[serde(with = "rust_decimal::serde::str_option")]
     pub cummulative_quote_qty: Option<Decimal>,
     pub status: Option<BinanceOrderStatus>,
     pub time_in_force: Option<BinanceTimeInForce>,

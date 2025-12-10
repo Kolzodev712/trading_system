@@ -11,13 +11,7 @@ use std::fmt::Debug;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info};
 use trading_core::{
-    error::EngineError,
-    traits::MarketDataClient,
-    types::{
-        common::{DataType, Pair},
-        market_data::{StructuredOrderbook, StructuredPublicTrade},
-    },
-    Exchange,
+    error::EngineError, traits::MarketDataClient, types::common::DataType, Exchange,
 };
 
 #[derive(Debug)]
@@ -171,13 +165,5 @@ impl MarketDataClient for BinanceClient {
         }
 
         self.start_stream(DataType::Trade).await
-    }
-
-    async fn orderbook_snapshot(&self, _pair: Pair) -> Result<StructuredOrderbook, EngineError> {
-        unimplemented!()
-    }
-
-    async fn trade_snapshot(&self, _pair: Pair) -> Result<StructuredPublicTrade, EngineError> {
-        unimplemented!()
     }
 }

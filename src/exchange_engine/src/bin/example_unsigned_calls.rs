@@ -2,9 +2,10 @@
 //!
 //! This example demonstrates how to:
 //! 1. Use Binance REST client for public endpoints
-//! 2. Fetch orderbook data without authentication
+//! 2. Fetch server time without authentication
 //!
 //! **Note**: This does NOT require API keys (uses public endpoints)
+//! **Note**: Orderbook data should come from Market Data Engine via WebSocket, not REST API
 
 use exchange_engine::exchanges::binance::{
     config::BinanceConfig, rest::client::BinanceHttpClient, rest_client::BinanceRestClient,
@@ -23,16 +24,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = load_binance_config("config/binance_config.json")?;
 
     let client = BinanceHttpClient::new(config.clone());
-    let driver = BinanceRestClient::new(client, config.clone());
+    let driver = BinanceRestClient::new(client);
 
-    match driver.fetch_orderbook().await {
-        Ok(response) => {
-            println!("Orderbook: {:?}", response);
-        }
-        Err(e) => {
-            eprintln!("Failed to get orderbook: {}", e);
-        }
-    }
+    // Note: Orderbook fetching has been removed from exchange engine.
+    // Market data (orderbooks, trades) should come from Market Data Engine via WebSocket.
+    // The WebSocket stream automatically provides orderbook snapshots, so REST fetching is redundant.
 
     match driver.get_time().await {
         Ok(response) => {

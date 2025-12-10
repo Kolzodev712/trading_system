@@ -104,6 +104,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7c02d123df017efcdfbd739ef81735b36c5ba83ec3c59c80a9d7ecc718f92e50"
 
 [[package]]
+name = "asset_engine"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "reqwest",
+ "rust_decimal",
+ "serde",
+ "serde_json",
+ "serde_with",
+ "smol_str",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "trading_core",
+ "url",
+]
+
+[[package]]
 name = "async-stream"
 version = "0.3.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2393,6 +2413,7 @@ name = "runner"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "asset_engine",
  "async-trait",
  "axum 0.7.9",
  "base64 0.22.1",
@@ -3520,6 +3541,7 @@ name = "trading_engine"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "asset_engine",
  "async-trait",
  "axum 0.7.9",
  "base64 0.22.1",

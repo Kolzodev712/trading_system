@@ -42,9 +42,13 @@ pub struct BinanceTradeResponse {
     pub symbol: SmolStr,
     pub id: u64,
     pub order_id: u64,
+    #[serde(with = "rust_decimal::serde::str")]
     pub price: Decimal,
+    #[serde(with = "rust_decimal::serde::str")]
     pub qty: Decimal,
+    #[serde(with = "rust_decimal::serde::str")]
     pub quote_qty: Decimal,
+    #[serde(with = "rust_decimal::serde::str")]
     pub commission: Decimal,
     #[serde(
         serialize_with = "serialize_smol_str",

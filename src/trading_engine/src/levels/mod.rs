@@ -5,6 +5,7 @@ pub mod executor;
 pub mod indicator_subscriber;
 pub mod level;
 pub mod manager;
+pub mod order_validation;
 pub mod persistence;
 pub mod resolver;
 
@@ -15,5 +16,6 @@ pub use executor::*;
 pub use indicator_subscriber::*;
 pub use level::*;
 pub use manager::*;
+pub use order_validation::*;
 pub use persistence::*;
 pub use resolver::*;

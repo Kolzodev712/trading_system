@@ -25,9 +25,9 @@ pub struct Balances {
         deserialize_with = "deserialize_smol_str"
     )]
     pub asset: SmolStr,
-    #[serde(rename = "f")]
+    #[serde(rename = "f", with = "rust_decimal::serde::str")]
     pub free: Decimal,
-    #[serde(rename = "l")]
+    #[serde(rename = "l", with = "rust_decimal::serde::str")]
     pub locked: Decimal,
 }
 
@@ -40,7 +40,7 @@ pub struct BalanceUpdate {
         deserialize_with = "deserialize_smol_str"
     )]
     pub asset: SmolStr,
-    #[serde(rename = "d")]
+    #[serde(rename = "d", with = "rust_decimal::serde::str")]
     pub delta: Decimal,
     #[serde(rename = "T", default)]
     pub clear_time: Option<u64>,

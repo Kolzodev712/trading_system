@@ -1337,45 +1337,75 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 - [ ] LiveConfig updates are persisted to MongoDB (if enabled)
 - [ ] LiveConfig streaming updates work via gRPC stream
 
-## Implementation Phases
+## Implementation Phases and Status
 
-### Phase 1: Core Infrastructure and Basic TUI
-**Goal:** Get the foundation working with basic navigation
+### Implementation Order
 
-**Tasks:**
-1. gRPC server setup in `runner`
-   - Create `runner/src/grpc/` module structure
-   - Proto definitions (`trading_cli.proto`)
-   - Code generation setup (tonic, prost)
-   - Basic server lifecycle
+The phases will be implemented in the following logical order:
 
-2. TradingControl service
-   - `TradingControl` struct with enable/disable flag
-   - Integration with `LevelExecutor` and `StrategyExecutor`
-   - **Cancel all orders when disabling**
-   - gRPC endpoint: `SetTradingEnabled(bool)`
+1. ✅ **Phase 1: Foundation & Trading Control** - COMPLETED
+2. **Phase 2: Trading Monitor Screen** - Next (see what's happening)
+3. **Phase 3: Level Management Screens** - Builds on Phase 2 (manage what you see)
+4. **Phase 4: System Monitor Screen** - Independent (debugging/health)
+5. **Phase 5: Live Config Screen** - Advanced feature (most complex)
+6. **Phase 6: Polish & Enhancements** - Optional (as needed)
 
-3. Basic TUI structure (`cli/` crate)
-   - Create new `cli/` crate
-   - Setup `ratatui` framework
-   - Basic app structure and navigation
-   - Main Menu screen (static, no data yet)
-
-4. gRPC client in TUI
-   - Client connection setup
-   - Basic error handling
-   - Connection status display
-
-**Deliverables:**
-- Main Menu renders and navigates
-- Trading enable/disable works (blocks orders, cancels active)
-- gRPC connection established
-- Basic TUI framework ready
+**Rationale:**
+- Phase 2 provides foundational monitoring - you need to see data before managing it
+- Phase 3 builds on Phase 2 - you manage levels that you see in the monitor
+- Phase 4 can be done independently but is useful for debugging issues
+- Phase 5 is the most complex and should come last
+- Phase 6 is optional polish
 
 ---
 
-### Phase 2: Trading Monitor and Data Aggregation
-**Goal:** Display real-time trading data
+## Implementation Phases (Detailed)
+
+### ✅ Phase 1: Foundation & Trading Control (COMPLETED)
+
+**Status:** ✅ **DONE**
+
+**Goal:** Get the foundation working with basic navigation and trading control
+
+**What was built:**
+
+1. ✅ gRPC server setup in `runner`
+   - Created `runner/src/grpc/` module structure
+   - Proto definitions (`trading_cli.proto`)
+   - Code generation setup (tonic, prost)
+   - Basic server lifecycle and startup
+
+2. ✅ TradingControl service
+   - `TradingControl` struct with enable/disable flag
+   - Integration with `LevelExecutor` and `StrategyExecutor`
+   - **Cancel all orders when disabling** - implemented
+   - gRPC endpoints: `SetTradingEnabled(bool)`, `GetTradingStatus()`
+
+3. ✅ Basic TUI structure (`cli/` crate)
+   - Created new `cli/` crate
+   - Setup `ratatui` framework
+   - Basic app structure and navigation
+   - Main Menu screen with trading status display
+
+4. ✅ gRPC client in TUI
+   - Client connection setup
+   - Basic error handling
+   - Trading status fetching and display
+   - Trading enable/disable functionality
+
+**Deliverables:**
+- ✅ Main Menu renders and navigates
+- ✅ Trading enable/disable works (blocks orders, cancels active)
+- ✅ gRPC connection established
+- ✅ Basic TUI framework ready
+
+---
+
+### 📋 Phase 2: Trading Monitor Screen (NEXT)
+
+**Goal:** Display real-time trading data in a comprehensive monitoring screen
+
+**Complexity:** Medium - Need to aggregate data from multiple sources, streaming requires async event loop integration
 
 **Tasks:**
 1. Monitoring data aggregation (`trading_engine/src/monitoring/`)
@@ -1407,8 +1437,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ---
 
-### Phase 3: Level Management (Full CRUD)
-**Goal:** Complete level management from TUI
+### 📋 Phase 3: Level Management Screens
+
+**Goal:** Complete CRUD operations for levels via TUI
+
+**Complexity:** High - Complex form handling in TUI, validation and error display, integration with LevelManager
 
 **Tasks:**
 1. Level management gRPC endpoints
@@ -1439,8 +1472,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ---
 
-### Phase 4: System Monitor
-**Goal:** Display system health and connectivity
+### 📋 Phase 4: System Monitor Screen
+
+**Goal:** Display system health and connectivity status
+
+**Complexity:** Medium - Need to expose health metrics from existing components, status aggregation
 
 **Tasks:**
 1. Health tracking infrastructure
@@ -1472,8 +1508,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ---
 
-### Phase 5: Live Config
-**Goal:** Replace entire config without restart
+### 📋 Phase 5: Live Config Screen
+
+**Goal:** Replace entire config files (levels.json or strategies.json) at runtime
+
+**Complexity:** High - Complex JSON parsing and validation, hot-reloading logic, error handling and rollback, TUI text editor implementation
 
 **Tasks:**
 1. Full config replacement in LiveConfigService
@@ -1509,8 +1548,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ---
 
-### Phase 6: Polish and Enhancements
+### 📋 Phase 6: Polish & Enhancements (Future/Optional)
+
 **Goal:** Improve UX and add finishing touches
+
+**Complexity:** Low-Medium - Mostly polish work
 
 **Tasks:**
 1. Color coding and styling
@@ -1556,4 +1598,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 - **Data aggregation in Trading Engine** - prepares monitoring data
 - **Streaming for real-time updates** - efficient binary protocol
 - **Trading Control** - When disabled, all orders are cancelled immediately
+- **Phase 2 before Phase 3** - You need to see data (monitor) before managing it (levels)
+- **All phases use gRPC infrastructure from Phase 1** - Foundation is complete
 

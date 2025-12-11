@@ -3,7 +3,7 @@ use crate::client::trading_cli::MonitoringData;
 use crate::client::TradingCliClient;
 use crate::error::CliError;
 use crate::screens::main_menu::MainMenuScreen;
-use crate::screens::trading_monitor::TradingMonitorScreen;
+use crate::screens::trading_monitor::{handle_input_async, TradingMonitorScreen};
 use ratatui::backend::Backend;
 use ratatui::Terminal;
 use std::time::Duration;
@@ -257,7 +257,7 @@ impl App {
                                     }
                                 }
                                 Screen::TradingMonitor => {
-                                    if TradingMonitorScreen::handle_input_async(self, key_code).await.is_ok() {
+                                    if handle_input_async(self, key_code).await.is_ok() {
                                         needs_redraw = true;
                                     }
                                 }
@@ -665,20 +665,19 @@ impl App {
     }
 
     pub async fn open_create_form(&mut self) -> Result<(), CliError> {
-        // Collect available symbols from existing levels
-        let mut available_symbols = Vec::new();
+        // Collect available symbols from existing levels using HashSet for O(1) deduplication
+        use std::collections::HashSet;
+        let mut available_symbols_set = HashSet::new();
         if let Some(levels) = &self.levels {
             for level in levels {
                 if let Some(config) = &level.config {
                     if let Some(symbol) = &config.symbol {
-                        let pair = (symbol.base.clone(), symbol.quote.clone());
-                        if !available_symbols.contains(&pair) {
-                            available_symbols.push(pair);
-                        }
+                        available_symbols_set.insert((symbol.base.clone(), symbol.quote.clone()));
                     }
                 }
             }
         }
+        let available_symbols: Vec<_> = available_symbols_set.into_iter().collect();
 
         self.create_form = Some(CreateFormState {
             level_id: String::new(),

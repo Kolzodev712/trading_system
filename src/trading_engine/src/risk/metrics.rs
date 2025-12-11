@@ -216,3 +216,133 @@ impl Default for RiskMetricsCalculator {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::state::TradingState;
+    use rust_decimal::Decimal;
+    use rust_decimal_macros::dec;
+    use std::collections::HashMap;
+    use trading_core::types::common::Pair;
+
+    #[test]
+    fn test_risk_metrics_default() {
+        let metrics = RiskMetrics::default();
+        assert_eq!(metrics.unrealized_pnl, Decimal::ZERO);
+        assert_eq!(metrics.realized_pnl, Decimal::ZERO);
+        assert_eq!(metrics.total_pnl, Decimal::ZERO);
+        assert_eq!(metrics.daily_pnl, Decimal::ZERO);
+        assert_eq!(metrics.total_exposure, Decimal::ZERO);
+        assert_eq!(metrics.total_position, Decimal::ZERO);
+    }
+
+    #[test]
+    fn test_daily_pnl_tracker_new() {
+        let tracker = DailyPnLTracker::new();
+        assert_eq!(tracker.get_daily_pnl(), Decimal::ZERO);
+        assert!(tracker.get_history().is_empty());
+    }
+
+    #[test]
+    fn test_daily_pnl_tracker_update() {
+        let mut tracker = DailyPnLTracker::new();
+        tracker.update(dec!(100), dec!(50));
+        assert_eq!(tracker.get_daily_pnl(), dec!(150));
+    }
+
+    #[test]
+    fn test_risk_metrics_calculator_new() {
+        let _calc = RiskMetricsCalculator::new();
+        // Should not panic
+        assert!(true);
+    }
+
+    #[test]
+    fn test_calculate_unrealized_pnl() {
+        let calc = RiskMetricsCalculator::new();
+        let mut positions = HashMap::new();
+        let mut prices = HashMap::new();
+
+        let pair = Pair::new("BTC", "USDT");
+        positions.insert(
+            pair.clone(),
+            Position {
+                symbol: pair.clone(),
+                quantity: dec!(1),
+                avg_price: dec!(50000),
+            },
+        );
+        prices.insert(pair.clone(), dec!(51000)); // Price increased by 1000
+
+        let pnl = calc.calculate_unrealized_pnl(&positions, &prices);
+        assert_eq!(pnl, dec!(1000)); // (51000 - 50000) * 1
+    }
+
+    #[test]
+    fn test_calculate_exposure() {
+        let calc = RiskMetricsCalculator::new();
+        let mut positions = HashMap::new();
+        let mut prices = HashMap::new();
+
+        let pair = Pair::new("BTC", "USDT");
+        positions.insert(
+            pair.clone(),
+            Position {
+                symbol: pair.clone(),
+                quantity: dec!(2),
+                avg_price: dec!(50000),
+            },
+        );
+        prices.insert(pair.clone(), dec!(51000));
+
+        let exposure = calc.calculate_exposure(&positions, &prices);
+        assert_eq!(exposure, dec!(102000)); // 2 * 51000
+    }
+
+    #[test]
+    fn test_calculate_total_position() {
+        let calc = RiskMetricsCalculator::new();
+        let mut positions = HashMap::new();
+
+        let pair1 = Pair::new("BTC", "USDT");
+        let pair2 = Pair::new("ETH", "USDT");
+
+        positions.insert(
+            pair1.clone(),
+            Position {
+                symbol: pair1,
+                quantity: dec!(1),
+                avg_price: dec!(50000),
+            },
+        );
+        positions.insert(
+            pair2.clone(),
+            Position {
+                symbol: pair2,
+                quantity: dec!(10),
+                avg_price: dec!(3000),
+            },
+        );
+
+        let total = calc.calculate_total_position(&positions);
+        assert_eq!(total, dec!(11)); // 1 + 10
+    }
+
+    #[test]
+    fn test_calculate_metrics() {
+        let mut calc = RiskMetricsCalculator::new();
+        let trading_state = TradingState::new();
+        let mut prices = HashMap::new();
+
+        let pair = Pair::new("BTC", "USDT");
+        prices.insert(pair, dec!(51000));
+
+        let metrics = calc.calculate(&trading_state, &prices);
+
+        // With no positions, all should be zero
+        assert_eq!(metrics.unrealized_pnl, Decimal::ZERO);
+        assert_eq!(metrics.total_exposure, Decimal::ZERO);
+        assert_eq!(metrics.total_position, Decimal::ZERO);
+    }
+}

@@ -29,8 +29,9 @@ impl CacheEntry {
     }
 
     fn update(&mut self, value: IndicatorValue) {
-        self.current = value.clone();
-        self.history.push_front(value);
+        // Move value into history first, then clone for current
+        self.history.push_front(value.clone());
+        self.current = value;
         // Keep only the last MAX_HISTORY_SIZE values
         if self.history.len() > MAX_HISTORY_SIZE {
             self.history.pop_back();
@@ -60,35 +61,38 @@ impl IndicatorCalculator {
 
     /// Register a new indicator
     pub fn register_indicator(&self, config: IndicatorConfig) -> Result<(), IndicatorError> {
+        // Extract values before moving config
+        let id = config.id.clone();
+        let pair = config.pair.clone();
+        let name = config.name.clone();
+
         let mut indicators = self.indicators.write();
 
-        let indicator: Box<dyn Indicator + Send + Sync> = match config.name.as_str() {
+        let indicator: Box<dyn Indicator + Send + Sync> = match name.as_str() {
             "SMA" => Box::new(SimpleMovingAverage::new(config.clone())?),
             "EMA" => Box::new(ExponentialMovingAverage::new(config.clone())?),
             _ => {
                 return Err(IndicatorError::CalculationError(SmolStr::new(format!(
                     "Unknown indicator: {}",
-                    config.name
+                    name
                 ))))
             }
         };
 
-        indicators.insert(config.id.clone(), indicator);
+        indicators.insert(id.clone(), indicator);
+        drop(indicators);
 
-        // Update indices
+        // Update indices (release indicators lock first)
         {
             let mut pair_index = self.pair_index.write();
             pair_index
-                .entry(config.pair.clone())
+                .entry(pair)
                 .or_insert_with(Vec::new)
-                .push(config.id.clone());
+                .push(id.clone());
         }
         {
             let mut name_index = self.name_index.write();
-            name_index
-                .entry(config.name.clone())
-                .or_insert_with(Vec::new)
-                .push(config.id.clone());
+            name_index.entry(name).or_insert_with(Vec::new).push(id);
         }
 
         Ok(())
@@ -100,89 +104,109 @@ impl IndicatorCalculator {
         pair: &str,
         price_point: PricePoint,
     ) -> Result<Vec<IndicatorValue>, IndicatorError> {
-        let mut updated_values = Vec::new();
         let pair_smol = SmolStr::new(pair);
 
-        // Get all indicators for this pair
-        let indicators = self.indicators.read();
-        let pair_indicators: Vec<SmolStr> = indicators
-            .iter()
-            .filter(|(_, ind)| ind.pair() == pair)
-            .map(|(id, _)| id.clone())
-            .collect();
-        drop(indicators);
+        // Use pair_index to get indicator IDs efficiently (read-only, no filtering needed)
+        let pair_indicators: Vec<SmolStr> = {
+            let pair_index = self.pair_index.read();
+            pair_index
+                .get(&pair_smol)
+                .map(|ids| ids.clone())
+                .unwrap_or_default()
+        };
+
+        if pair_indicators.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut updated_values = Vec::new();
 
         // Update each indicator
         for indicator_id in pair_indicators {
-            let mut indicators = self.indicators.write();
-            let indicator = indicators.get_mut(&indicator_id).ok_or_else(|| {
-                IndicatorError::CalculationError(SmolStr::new("Indicator not found"))
-            })?;
+            // Get indicator info and update (minimize lock time)
+            // PricePoint is Copy, so no clone needed
+            let (is_now_ready, value_opt, name, period) = {
+                let mut indicators = self.indicators.write();
+                let indicator = indicators.get_mut(&indicator_id).ok_or_else(|| {
+                    IndicatorError::CalculationError(SmolStr::new("Indicator not found"))
+                })?;
 
-            let was_ready = indicator.is_ready();
-            indicator.update(price_point)?;
-            let is_now_ready = indicator.is_ready();
+                let was_ready = indicator.is_ready();
+                indicator.update(price_point)?;
+                let is_now_ready = indicator.is_ready();
+                let value_opt = if is_now_ready {
+                    indicator.value()
+                } else {
+                    None
+                };
+                let name = indicator.name().to_string();
+                let period = indicator.period();
+                drop(indicators);
 
-            // Log when indicator becomes ready for the first time
-            if !was_ready && is_now_ready {
-                tracing::info!(
-                    "Indicator {} ({}) is now ready (accumulated {} data points)",
-                    indicator_id,
-                    indicator.name(),
-                    indicator.period()
-                );
-            }
+                // Log when indicator becomes ready for the first time
+                if !was_ready && is_now_ready {
+                    tracing::info!(
+                        "Indicator {} ({}) is now ready (accumulated {} data points)",
+                        indicator_id,
+                        name,
+                        period
+                    );
+                }
+
+                (is_now_ready, value_opt, name, period)
+            };
 
             // If indicator is ready, get its value and cache it
             if is_now_ready {
-                if let Some(value) = indicator.value() {
+                if let Some(value) = value_opt {
                     let indicator_value = IndicatorValue {
                         indicator_id: indicator_id.clone(),
-                        indicator_name: SmolStr::new(indicator.name()),
+                        indicator_name: SmolStr::new(&name),
                         pair: pair_smol.clone(),
                         value,
                         timestamp: price_point.timestamp,
-                        period: indicator.period(),
+                        period,
                         is_composite: false,
                     };
 
-                    // Update cache
-                    let mut cache = self.cache.write();
-                    match cache.get_mut(&indicator_id) {
-                        Some(entry) => {
-                            entry.update(indicator_value.clone());
-                            tracing::debug!(
-                                "Updated cached value for {}: {} = {}",
-                                indicator_id,
-                                indicator.name(),
-                                indicator_value.value
-                            );
-                        }
-                        None => {
-                            cache.insert(
-                                indicator_id.clone(),
-                                CacheEntry::new(indicator_value.clone()),
-                            );
-                            tracing::info!(
-                                "Cached new indicator value for {}: {} = {}",
-                                indicator_id,
-                                indicator.name(),
-                                indicator_value.value
-                            );
+                    // Update cache (clone only once for cache entry)
+                    let indicator_value_for_cache = indicator_value.clone();
+                    {
+                        let mut cache = self.cache.write();
+                        match cache.get_mut(&indicator_id) {
+                            Some(entry) => {
+                                entry.update(indicator_value_for_cache);
+                                tracing::debug!(
+                                    "Updated cached value for {}: {} = {}",
+                                    indicator_id,
+                                    name,
+                                    indicator_value.value
+                                );
+                            }
+                            None => {
+                                cache.insert(
+                                    indicator_id.clone(),
+                                    CacheEntry::new(indicator_value_for_cache),
+                                );
+                                tracing::info!(
+                                    "Cached new indicator value for {}: {} = {}",
+                                    indicator_id,
+                                    name,
+                                    indicator_value.value
+                                );
+                            }
                         }
                     }
-                    drop(cache);
 
                     updated_values.push(indicator_value);
                 } else {
                     tracing::warn!(
                         "Indicator {} ({}) is ready but value() returned None",
                         indicator_id,
-                        indicator.name()
+                        name
                     );
                 }
             }
-            drop(indicators);
         }
 
         Ok(updated_values)
@@ -204,11 +228,10 @@ impl IndicatorCalculator {
     pub fn get_history(&self, indicator_id: &str, limit: Option<usize>) -> Vec<IndicatorValue> {
         let cache = self.cache.read();
         if let Some(entry) = cache.get(&SmolStr::new(indicator_id)) {
-            let history: Vec<IndicatorValue> = entry.history.iter().cloned().collect();
             if let Some(limit) = limit {
-                history.into_iter().take(limit).collect()
+                entry.history.iter().take(limit).cloned().collect()
             } else {
-                history
+                entry.history.iter().cloned().collect()
             }
         } else {
             Vec::new()
@@ -315,6 +338,7 @@ impl IndicatorCalculator {
     }
 
     /// Get access to cache for publisher (returns latest values only)
+    /// Note: This creates a snapshot. For frequent access, consider using get_all_current_values() instead.
     pub fn cache(&self) -> Arc<parking_lot::RwLock<HashMap<SmolStr, IndicatorValue>>> {
         let cache = self.cache.read();
         let latest_values: HashMap<SmolStr, IndicatorValue> = cache

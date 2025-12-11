@@ -73,6 +73,10 @@ prost-types = { workspace = true }
 # Testing
 tokio-test = { workspace = true }
 
+[[bin]]
+name = "test_runner"
+path = "src/bin/test_runner.rs"
+
 [features]
 default = []
 redis = ["dep:redis"]

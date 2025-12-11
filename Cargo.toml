@@ -89,7 +89,13 @@ runner = { path = "src/runner" }
 trading_engine = { path = "src/trading_engine" }
 trading_core = { path = "libs/trading_core" }
 exchange_engine = { path = "src/exchange_engine" }
+market_data_engine = { path = "src/market_data_engine" }
+indicator_engine = { path = "src/indicator_engine" }
+asset_engine = { path = "src/asset_engine" }
+live_config = { path = "src/live_config" }
 rust_decimal = { workspace = true }
+rust_decimal_macros = { workspace = true }
+smol_str = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }
 tokio-test = { workspace = true }

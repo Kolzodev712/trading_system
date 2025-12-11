@@ -167,13 +167,14 @@ impl StateReconciler {
             ws_balances.len()
         );
         let balance_discrepancies = compare_balances(&rest_balances, &ws_balances);
-        result.discrepancies.extend(balance_discrepancies.clone());
+        let discrepancy_count = balance_discrepancies.len();
+        result.discrepancies.extend(balance_discrepancies);
         result.balances_fetched = rest_balances.len();
 
-        if !balance_discrepancies.is_empty() {
+        if discrepancy_count > 0 {
             tracing::debug!(
                 "Found {} balance discrepancies, updating WebSocket state to match REST (REST is authoritative)",
-                balance_discrepancies.len()
+                discrepancy_count
             );
         }
 

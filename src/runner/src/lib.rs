@@ -623,7 +623,7 @@ fn load_pairs_from_levels_config(path: &str) -> Result<Vec<Pair>, Box<dyn std::e
         .filter_map(|level_json| serde_json::from_value(level_json.clone()).ok())
         .collect();
 
-    Ok(levels.iter().map(|level| level.symbol.clone()).collect())
+    Ok(levels.into_iter().map(|level| level.symbol).collect())
 }
 
 /// Load pair from strategies config file

@@ -55,12 +55,21 @@ impl IndicatorService {
         &self,
         config: IndicatorConfig,
     ) -> Result<(), crate::indicators::traits::IndicatorError> {
-        self.calculator.register_indicator(config.clone())?;
+        // Clone config only once for persistence (if needed)
+        let config_for_persistence = if self.persistence.is_some() {
+            Some(config.clone())
+        } else {
+            None
+        };
+
+        self.calculator.register_indicator(config)?;
 
         // Persist to MongoDB if enabled
         if let Some(persistence) = &self.persistence {
-            if let Err(e) = persistence.save_simple_indicator(&config).await {
-                tracing::warn!("Failed to persist indicator to MongoDB: {}", e);
+            if let Some(config_to_save) = config_for_persistence {
+                if let Err(e) = persistence.save_simple_indicator(&config_to_save).await {
+                    tracing::warn!("Failed to persist indicator to MongoDB: {}", e);
+                }
             }
         }
 
@@ -190,4 +199,64 @@ pub enum ServiceError {
 
     #[error("Persistence error: {0}")]
     PersistenceError(String),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::indicators::traits::{IndicatorConfig, PriceSource};
+    use smol_str::SmolStr;
+    use trading_core::channels::indicators::indicator_update_channel;
+    use trading_core::channels::market_data::market_data_update_channel;
+
+    #[tokio::test]
+    async fn test_indicator_service_new() {
+        let service = IndicatorService::new();
+        assert_eq!(service.get_indicator_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_indicator_service_register_indicator() {
+        let service = IndicatorService::new();
+        let config = IndicatorConfig {
+            id: SmolStr::new("test_sma"),
+            name: SmolStr::new("SMA"),
+            pair: SmolStr::new("BTCUSDT"),
+            period: 20,
+            source: PriceSource::Close,
+        };
+
+        let result = service.register_indicator(config).await;
+        assert!(result.is_ok());
+        assert_eq!(service.get_indicator_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_indicator_service_get_value() {
+        let service = IndicatorService::new();
+        let config = IndicatorConfig {
+            id: SmolStr::new("test_sma"),
+            name: SmolStr::new("SMA"),
+            pair: SmolStr::new("BTCUSDT"),
+            period: 20,
+            source: PriceSource::Close,
+        };
+
+        service.register_indicator(config).await.unwrap();
+
+        // Value should be None initially (indicator not ready)
+        let value = service.get_value("test_sma");
+        assert!(value.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_indicator_service_initialize() {
+        let mut service = IndicatorService::new();
+        let (_, market_rx) = market_data_update_channel(10);
+        let (indicator_tx, _indicator_rx) = indicator_update_channel(10);
+
+        service.initialize(market_rx, indicator_tx, 1);
+        // Should not panic
+        assert!(true);
+    }
 }

@@ -403,7 +403,8 @@ impl<S: Strategy> StrategyExecutor<S> {
                         // Place the order with retry logic
                         let retry_config = order_retry_config();
                         let client_clone = Arc::clone(&trading_client);
-                        let req_clone = req.clone();
+                        // Clone req once for retry closure
+                        let req_for_retry = req.clone();
 
                         debug!(
                             "Calling open_order with retry (max_attempts={max_attempts})...",
@@ -419,7 +420,7 @@ impl<S: Strategy> StrategyExecutor<S> {
 
                         let result = retry_with_backoff(&retry_config, || {
                             let client = Arc::clone(&client_clone);
-                            let req = req_clone.clone();
+                            let req = req_for_retry.clone();
                             Box::pin(async move {
                                 debug!("Retry attempt: calling open_order...");
                                 let result = client.write().await.open_order(req).await;
@@ -444,10 +445,10 @@ impl<S: Strategy> StrategyExecutor<S> {
                                 debug!(
                                     "Order failed due to insufficient balance (skipping retries): {error}. Order request: side={side}, symbol={symbol}, price={price}, amount={amount}",
                                     error = e,
-                                    side = req_clone.side,
-                                    symbol = req_clone.symbol,
-                                    price = req_clone.price,
-                                    amount = req_clone.amount
+                                    side = req_for_retry.side,
+                                    symbol = req_for_retry.symbol,
+                                    price = req_for_retry.price,
+                                    amount = req_for_retry.amount
                                 );
                                 continue; // Skip to next message, don't record circuit breaker failure
                             }
@@ -479,10 +480,10 @@ impl<S: Strategy> StrategyExecutor<S> {
                                     "Failed to place order after {max_retries} retries: {error}. Order request: side={side}, symbol={symbol}, price={price}, amount={amount}",
                                     max_retries = retry_config.max_attempts,
                                     error = e,
-                                    side = req_clone.side,
-                                    symbol = req_clone.symbol,
-                                    price = req_clone.price,
-                                    amount = req_clone.amount
+                                    side = req_for_retry.side,
+                                    symbol = req_for_retry.symbol,
+                                    price = req_for_retry.price,
+                                    amount = req_for_retry.amount
                                 );
 
                                 // Record failure in circuit breaker

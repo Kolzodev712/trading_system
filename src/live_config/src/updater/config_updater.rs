@@ -34,3 +34,30 @@ impl ConfigUpdater {
         ))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::{ConfigPath, ConfigValue};
+    use smol_str::SmolStr;
+
+    #[tokio::test]
+    async fn test_config_updater_new() {
+        let _updater = ConfigUpdater::new();
+        // Should not panic
+        assert!(true);
+    }
+
+    #[tokio::test]
+    async fn test_config_updater_update_config_not_implemented() {
+        let updater = ConfigUpdater::new();
+        let path = ConfigPath {
+            path: SmolStr::new("test.path"),
+        };
+        let value = ConfigValue::String(SmolStr::new("test_value"));
+
+        let result = updater.update_config(&path, &value).await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), UpdateError::PathNotFound(_)));
+    }
+}

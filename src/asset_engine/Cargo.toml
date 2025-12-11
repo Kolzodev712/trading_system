@@ -30,4 +30,5 @@ anyhow = { workspace = true }
 smol_str = { workspace = true }
 chrono = { workspace = true }
 rust_decimal = { workspace = true }
+rust_decimal_macros = { workspace = true }
 

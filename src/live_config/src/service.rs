@@ -70,18 +70,19 @@ impl LiveConfigService {
         &self,
         request: LevelUpdateRequest,
     ) -> Result<UpdateResponse, LiveConfigError> {
+        // Extract values for logging before moving
+        let level_id_str = request.level_id.as_str();
+        let field = request.field;
+        let value_for_log = format!("{:?}", request.value);
+
         // 1. Validate the change
         self.validator
-            .validate_level_update(request.level_id.as_str(), &request.field, &request.value)
+            .validate_level_update(level_id_str, &field, &request.value)
             .await?;
 
-        // 2. Update in-memory level configuration
+        // 2. Update in-memory level configuration (move value, no clone needed)
         self.level_updater
-            .update_field(
-                request.level_id.as_str(),
-                request.field,
-                request.value.clone(),
-            )
+            .update_field(level_id_str, field, request.value)
             .await?;
 
         // 3. Persist to MongoDB if persistence is enabled
@@ -103,10 +104,8 @@ impl LiveConfigService {
             change_type: ChangeType::LevelUpdate,
             user: None,
             details: format!(
-                "Updated level {} field {:?} to {:?}",
-                request.level_id.as_str(),
-                request.field,
-                request.value
+                "Updated level {} field {:?} to {}",
+                level_id_str, field, value_for_log
             ),
             success: true,
         })?;
@@ -134,7 +133,7 @@ impl LiveConfigService {
         // 3. Persist to MongoDB if persistence is enabled
         if let Some(persistence) = &self.level_persistence {
             // Get updated risk limits from RiskUpdater and persist them
-            let limits = (*self.risk_updater).get_limits().await;
+            let limits = self.risk_updater.get_limits().await;
             if let Err(e) = persistence.save_risk_limits(&limits).await {
                 tracing::warn!("Failed to persist risk limit update to MongoDB: {}", e);
             }

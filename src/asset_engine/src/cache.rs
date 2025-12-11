@@ -54,8 +54,12 @@ impl AssetDataCache {
 
     /// Update cache
     pub async fn update(&self, exchange: Exchange, data: ExchangeMarketData) {
-        let mut data_guard = self.data.write().await;
-        data_guard.insert(exchange.clone(), data);
+        let data_clone = data.clone();
+        let exchange_clone = exchange.clone();
+        {
+            let mut data_guard = self.data.write().await;
+            data_guard.insert(exchange_clone, data_clone);
+        }
 
         let mut metadata_guard = self.cache_metadata.write().await;
         metadata_guard.insert(exchange, CacheMetadata::new(self.default_ttl));
@@ -68,5 +72,96 @@ impl AssetDataCache {
             .get(exchange)
             .map(|m| m.is_stale())
             .unwrap_or(true)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+    use trading_core::types::asset::ExchangeMarketData;
+
+    fn create_test_market_data() -> ExchangeMarketData {
+        ExchangeMarketData {
+            symbol_info: std::collections::HashMap::new(),
+            trading_rules: std::collections::HashMap::new(),
+            current_prices: std::collections::HashMap::new(),
+            exchange_limits: trading_core::types::asset::ExchangeLimits {
+                rate_limits: vec![],
+                max_position_size: None,
+                max_open_orders: None,
+                other_limits: std::collections::HashMap::new(),
+            },
+            last_updated: 0,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_cache_new() {
+        let cache = AssetDataCache::new(Duration::from_secs(60));
+        assert!(cache.get(&Exchange::Binance).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_cache_update_and_get() {
+        let cache = AssetDataCache::new(Duration::from_secs(60));
+        let exchange = Exchange::Binance;
+        let market_data = create_test_market_data();
+
+        cache.update(exchange.clone(), market_data.clone()).await;
+
+        let retrieved = cache.get(&exchange).await;
+        assert!(retrieved.is_some());
+        assert_eq!(retrieved.unwrap().last_updated, market_data.last_updated);
+    }
+
+    #[tokio::test]
+    async fn test_cache_stale() {
+        let cache = AssetDataCache::new(Duration::from_millis(10));
+        let exchange = Exchange::Binance;
+        let market_data = create_test_market_data();
+
+        cache.update(exchange.clone(), market_data).await;
+
+        // Should not be stale immediately
+        assert!(!cache.is_stale(&exchange).await);
+
+        // Wait for TTL to expire
+        tokio::time::sleep(Duration::from_millis(15)).await;
+
+        // Should be stale now
+        assert!(cache.is_stale(&exchange).await);
+
+        // Get should return None for stale data
+        assert!(cache.get(&exchange).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_cache_multiple_exchanges() {
+        let cache = AssetDataCache::new(Duration::from_secs(60));
+        let binance_data = create_test_market_data();
+        let mut test_data = create_test_market_data();
+        test_data.last_updated = 1;
+
+        // Use Binance twice with different data to test multiple entries
+        cache.update(Exchange::Binance, binance_data.clone()).await;
+
+        // Update with different data
+        cache.update(Exchange::Binance, test_data.clone()).await;
+
+        let retrieved = cache.get(&Exchange::Binance).await;
+
+        assert!(retrieved.is_some());
+        // Should have the latest data
+        assert_eq!(retrieved.unwrap().last_updated, test_data.last_updated);
+    }
+
+    #[tokio::test]
+    async fn test_cache_metadata_is_stale() {
+        let metadata = CacheMetadata::new(Duration::from_millis(10));
+        assert!(!metadata.is_stale());
+
+        tokio::time::sleep(Duration::from_millis(15)).await;
+        assert!(metadata.is_stale());
     }
 }

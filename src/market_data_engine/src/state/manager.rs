@@ -80,22 +80,24 @@ impl MarketDataStateManager {
             )));
         }
 
-        // 1. Update in-memory state
+        // Clone before lock to minimize lock time
+        let pair_for_log = orderbook.pair.clone();
+        let orderbook_for_state = orderbook.clone();
+        let pair_for_state = orderbook_for_state.pair.clone();
+
+        // 1. Update in-memory state (pair is moved, no need to clone again)
         {
             let mut state = self.state.write().await;
-            state.update_orderbook(orderbook.pair.clone(), orderbook.clone());
+            state.update_orderbook(pair_for_state, orderbook_for_state);
         }
 
-        // 2. Publish via broadcast channel
+        // 2. Publish via broadcast channel (use original orderbook)
         if let Err(e) = self.publisher.publish_orderbook(&orderbook).await {
             error!("Failed to publish orderbook update: {}", e);
             return Err(e);
         }
 
-        debug!(
-            "Updated and published orderbook for pair: {}",
-            orderbook.pair
-        );
+        debug!("Updated and published orderbook for pair: {}", pair_for_log);
         Ok(())
     }
 
@@ -125,19 +127,24 @@ impl MarketDataStateManager {
             )));
         }
 
-        // 1. Add to in-memory state
+        // Clone before lock to minimize lock time
+        let pair_for_log = trade.pair.clone();
+        let trade_for_state = trade.clone();
+        let pair_for_state = trade_for_state.pair.clone();
+
+        // 1. Add to in-memory state (pair is moved, no need to clone again)
         {
             let mut state = self.state.write().await;
-            state.add_public_trade(trade.pair.clone(), trade.clone());
+            state.add_public_trade(pair_for_state, trade_for_state);
         }
 
-        // 2. Publish via broadcast channel
+        // 2. Publish via broadcast channel (use original trade)
         if let Err(e) = self.publisher.publish_trade(&trade).await {
             error!("Failed to publish trade update: {}", e);
             return Err(e);
         }
 
-        debug!("Added and published trade for pair: {}", trade.pair);
+        debug!("Added and published trade for pair: {}", pair_for_log);
         Ok(())
     }
 

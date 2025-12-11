@@ -50,8 +50,9 @@ impl LevelManager {
         })?;
 
         for level_config in config.levels {
+            let id = level_config.id.clone();
             let level = Level::new(level_config);
-            self.levels.insert(level.config.id.clone(), level);
+            self.levels.insert(id, level);
         }
 
         self.config_path = Some(path.to_path_buf());
@@ -79,8 +80,9 @@ impl LevelManager {
         })?;
 
         for level_config in config.levels {
+            let id = level_config.id.clone();
             let level = Level::new(level_config);
-            self.levels.insert(level.config.id.clone(), level);
+            self.levels.insert(id, level);
         }
 
         self.config_path = Some(path.to_path_buf());
@@ -96,8 +98,9 @@ impl LevelManager {
             )));
         }
 
+        let id = config.id.clone();
         let level = Level::new(config.clone());
-        self.levels.insert(level.config.id.clone(), level);
+        self.levels.insert(id, level);
 
         // Persist to MongoDB if enabled
         if let Some(persistence) = &self.persistence {
@@ -183,11 +186,13 @@ impl LevelManager {
         config: LevelConfig,
     ) -> Result<(), EngineError> {
         if let Some(level) = self.levels.get_mut(level_id) {
-            level.config = config.clone();
+            // Clone config for persistence before moving
+            let config_for_persistence = config.clone();
+            level.config = config;
 
             // Persist to MongoDB if enabled
             if let Some(persistence) = &self.persistence {
-                if let Err(e) = persistence.update_level(&config).await {
+                if let Err(e) = persistence.update_level(&config_for_persistence).await {
                     tracing::warn!("Failed to persist level update to MongoDB: {}", e);
                 }
             }
@@ -336,8 +341,9 @@ impl LevelManager {
                     match persistence.document_to_level_config(level_doc) {
                         Ok(level_config) => {
                             // Create level and add to manager
-                            let level = Level::new(level_config.clone());
-                            self.levels.insert(level.config.id.clone(), level);
+                            let id = level_config.id.clone();
+                            let level = Level::new(level_config);
+                            self.levels.insert(id, level);
                             loaded_count += 1;
                         }
                         Err(e) => {
@@ -380,5 +386,222 @@ impl LevelManager {
 impl Default for LevelManager {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::levels::config::{
+        LevelRiskConfig, LifecycleConfig, OrderTypeConfig, PriceConfig, QuantityConfig,
+    };
+    use rust_decimal_macros::dec;
+    use smol_str::SmolStr;
+    use trading_core::types::common::{OrderId, Pair, Side};
+
+    fn create_test_level_config(id: &str) -> LevelConfig {
+        LevelConfig {
+            id: SmolStr::new(id),
+            name: None,
+            symbol: Pair::new("BTC", "USDT"),
+            side: Side::Buy,
+            order_type: OrderTypeConfig::Limit,
+            quantity: QuantityConfig::Fixed(dec!(0.001)),
+            price: PriceConfig::Fixed(dec!(50000)),
+            risk: LevelRiskConfig::default(),
+            lifecycle: LifecycleConfig::default(),
+            enabled: true,
+            group: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_level_manager_new() {
+        let manager = LevelManager::new();
+        assert_eq!(manager.get_all_levels().len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_level_manager_add_level() {
+        let mut manager = LevelManager::new();
+        let config = create_test_level_config("test_level");
+
+        let result = manager.add_level(config.clone()).await;
+        assert!(result.is_ok());
+
+        let level = manager.get_level(&SmolStr::new("test_level"));
+        assert!(level.is_some());
+        assert_eq!(level.unwrap().config.id, SmolStr::new("test_level"));
+    }
+
+    #[tokio::test]
+    async fn test_level_manager_add_duplicate_level() {
+        let mut manager = LevelManager::new();
+        let config = create_test_level_config("test_level");
+
+        manager.add_level(config.clone()).await.unwrap();
+        let result = manager.add_level(config).await;
+
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_level_manager_remove_level() {
+        let mut manager = LevelManager::new();
+        let config = create_test_level_config("test_level");
+
+        manager.add_level(config).await.unwrap();
+        let result = manager.remove_level(&SmolStr::new("test_level")).await;
+
+        assert!(result.is_ok());
+        assert!(manager.get_level(&SmolStr::new("test_level")).is_none());
+    }
+
+    #[tokio::test]
+    async fn test_level_manager_remove_nonexistent_level() {
+        let mut manager = LevelManager::new();
+        let result = manager.remove_level(&SmolStr::new("nonexistent")).await;
+
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_level_manager_enable_level() {
+        let mut manager = LevelManager::new();
+        let config = create_test_level_config("test_level");
+
+        manager.add_level(config).await.unwrap();
+
+        // Disable first
+        manager
+            .disable_level(&SmolStr::new("test_level"))
+            .await
+            .unwrap();
+        let level = manager.get_level(&SmolStr::new("test_level")).unwrap();
+        assert!(!level.config.enabled);
+
+        // Then enable
+        manager
+            .enable_level(&SmolStr::new("test_level"))
+            .await
+            .unwrap();
+        let level = manager.get_level(&SmolStr::new("test_level")).unwrap();
+        assert!(level.config.enabled);
+    }
+
+    #[tokio::test]
+    async fn test_level_manager_disable_level() {
+        let mut manager = LevelManager::new();
+        let config = create_test_level_config("test_level");
+
+        manager.add_level(config).await.unwrap();
+        manager
+            .disable_level(&SmolStr::new("test_level"))
+            .await
+            .unwrap();
+
+        let level = manager.get_level(&SmolStr::new("test_level")).unwrap();
+        assert!(!level.config.enabled);
+        assert_eq!(level.state, LevelState::Paused);
+    }
+
+    #[tokio::test]
+    async fn test_level_manager_get_levels_ready_to_post() {
+        let mut manager = LevelManager::new();
+        let config = create_test_level_config("test_level");
+
+        manager.add_level(config).await.unwrap();
+
+        let ready = manager.get_levels_ready_to_post();
+        assert_eq!(ready.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_level_manager_update_level_state() {
+        let mut manager = LevelManager::new();
+        let config = create_test_level_config("test_level");
+
+        manager.add_level(config).await.unwrap();
+        manager
+            .update_level_state(&SmolStr::new("test_level"), LevelState::Posted)
+            .unwrap();
+
+        let level = manager.get_level(&SmolStr::new("test_level")).unwrap();
+        assert_eq!(level.state, LevelState::Posted);
+    }
+
+    #[tokio::test]
+    async fn test_level_manager_handle_order_filled() {
+        let mut manager = LevelManager::new();
+        let config = create_test_level_config("test_level");
+
+        manager.add_level(config).await.unwrap();
+
+        let order_id = OrderId::new("order123".into());
+        manager
+            .handle_order_filled(&SmolStr::new("test_level"), &order_id)
+            .await
+            .unwrap();
+
+        let level = manager.get_level(&SmolStr::new("test_level")).unwrap();
+        assert_eq!(level.state, LevelState::Filled);
+        assert!(level.last_filled_at.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_level_manager_handle_order_cancelled() {
+        let mut manager = LevelManager::new();
+        let config = create_test_level_config("test_level");
+
+        manager.add_level(config).await.unwrap();
+
+        let order_id = OrderId::new("order123".into());
+        manager
+            .handle_order_cancelled(&SmolStr::new("test_level"), &order_id)
+            .await
+            .unwrap();
+
+        let level = manager.get_level(&SmolStr::new("test_level")).unwrap();
+        assert_eq!(level.state, LevelState::Cancelled);
+    }
+
+    #[tokio::test]
+    async fn test_level_manager_should_repost() {
+        let mut manager = LevelManager::new();
+        let mut config = create_test_level_config("test_level");
+        config.lifecycle.auto_repost = true;
+        config.lifecycle.auto_repost_on_cancel = false;
+
+        manager.add_level(config).await.unwrap();
+
+        // Set to filled state
+        manager
+            .update_level_state(&SmolStr::new("test_level"), LevelState::Filled)
+            .unwrap();
+        assert!(manager.should_repost(&SmolStr::new("test_level")).unwrap());
+
+        // Set to cancelled state
+        manager
+            .update_level_state(&SmolStr::new("test_level"), LevelState::Cancelled)
+            .unwrap();
+        assert!(!manager.should_repost(&SmolStr::new("test_level")).unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_level_manager_update_level_config() {
+        let mut manager = LevelManager::new();
+        let config = create_test_level_config("test_level");
+
+        manager.add_level(config.clone()).await.unwrap();
+
+        let mut new_config = config;
+        new_config.enabled = false;
+        manager
+            .update_level_config(&SmolStr::new("test_level"), new_config)
+            .await
+            .unwrap();
+
+        let level = manager.get_level(&SmolStr::new("test_level")).unwrap();
+        assert!(!level.config.enabled);
     }
 }

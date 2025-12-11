@@ -149,3 +149,125 @@ impl CircuitBreaker {
         self.open_reason.read().await.clone()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_circuit_breaker_new() {
+        let cb = CircuitBreaker::new();
+        let state = cb.get_state().await;
+        assert_eq!(state, CircuitBreakerState::Closed);
+    }
+
+    #[tokio::test]
+    async fn test_circuit_breaker_default() {
+        let cb = CircuitBreaker::default();
+        let state = cb.get_state().await;
+        assert_eq!(state, CircuitBreakerState::Closed);
+    }
+
+    #[tokio::test]
+    async fn test_circuit_breaker_open() {
+        let cb = CircuitBreaker::new();
+        cb.open("Test reason").await;
+
+        let state = cb.get_state().await;
+        assert_eq!(state, CircuitBreakerState::Open);
+        assert!(cb.is_open().await);
+
+        let reason = cb.get_open_reason().await;
+        assert!(reason.is_some());
+        assert!(reason.unwrap().as_str().contains("Test reason"));
+    }
+
+    #[tokio::test]
+    async fn test_circuit_breaker_close() {
+        let cb = CircuitBreaker::new();
+        cb.open("Test").await;
+        assert_eq!(cb.get_state().await, CircuitBreakerState::Open);
+
+        cb.close().await;
+        assert_eq!(cb.get_state().await, CircuitBreakerState::Closed);
+        assert!(!cb.is_open().await);
+    }
+
+    #[tokio::test]
+    async fn test_circuit_breaker_record_success() {
+        let cb = CircuitBreaker::new();
+
+        // Record some failures first
+        cb.record_failure().await;
+        cb.record_failure().await;
+
+        // Record success should reset failure count
+        cb.record_success().await;
+
+        // Should still be closed
+        assert_eq!(cb.get_state().await, CircuitBreakerState::Closed);
+    }
+
+    #[tokio::test]
+    async fn test_circuit_breaker_record_failure_opens() {
+        let cb = CircuitBreaker::new();
+
+        // Record max failures
+        for _ in 0..5 {
+            cb.record_failure().await;
+        }
+
+        // Should be open now
+        assert_eq!(cb.get_state().await, CircuitBreakerState::Open);
+    }
+
+    #[tokio::test]
+    async fn test_circuit_breaker_is_allowed_closed() {
+        let cb = CircuitBreaker::new();
+        assert!(cb.is_allowed().await);
+    }
+
+    #[tokio::test]
+    async fn test_circuit_breaker_is_allowed_open() {
+        let cb = CircuitBreaker::new();
+        cb.open("Test").await;
+
+        // Should not be allowed immediately
+        assert!(!cb.is_allowed().await);
+    }
+
+    #[tokio::test]
+    async fn test_circuit_breaker_half_open_recovery() {
+        let cb = CircuitBreaker::new();
+        cb.open("Test").await;
+
+        // Manually set to half-open for testing (normally happens after timeout)
+        {
+            let mut state = cb.state.write().await;
+            *state = CircuitBreakerState::HalfOpen;
+        }
+
+        // Should be allowed in half-open
+        assert!(cb.is_allowed().await);
+
+        // Success should close it
+        cb.record_success().await;
+        assert_eq!(cb.get_state().await, CircuitBreakerState::Closed);
+    }
+
+    #[tokio::test]
+    async fn test_circuit_breaker_half_open_failure_reopens() {
+        let cb = CircuitBreaker::new();
+        cb.open("Test").await;
+
+        // Manually set to half-open
+        {
+            let mut state = cb.state.write().await;
+            *state = CircuitBreakerState::HalfOpen;
+        }
+
+        // Failure should reopen it
+        cb.record_failure().await;
+        assert_eq!(cb.get_state().await, CircuitBreakerState::Open);
+    }
+}

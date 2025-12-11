@@ -82,13 +82,17 @@ impl ExchangeStateManager {
     /// # Errors
     /// Returns an error if publishing fails
     pub async fn update_order(&self, order: Order) -> Result<(), EngineError> {
+        // Clone before lock to minimize lock time
+        let order_for_state = order.clone();
+        let order_id = order.order_id.clone();
+
         // 1. Update in-memory state
         {
             let mut state = self.state.write().await;
-            state.update_order(order.clone());
+            state.update_order(order_for_state);
         }
 
-        // 2. Publish via broadcast channel
+        // 2. Publish via broadcast channel (use original order)
         if let Err(e) = self.publisher.publish_order(&order).await {
             error!("Failed to publish order update: {}", e);
             return Err(e);
@@ -96,7 +100,7 @@ impl ExchangeStateManager {
 
         debug!(
             "Updated and published order: order_id={}",
-            order.order_id.as_str()
+            order_id.as_str()
         );
         Ok(())
     }
@@ -109,19 +113,23 @@ impl ExchangeStateManager {
     /// # Errors
     /// Returns an error if publishing fails
     pub async fn update_balance(&self, balance: Balance) -> Result<(), EngineError> {
+        // Clone before lock to minimize lock time
+        let balance_for_state = balance.clone();
+        let symbol = balance.symbol.clone();
+
         // 1. Update in-memory state
         {
             let mut state = self.state.write().await;
-            state.update_balance(balance.clone());
+            state.update_balance(balance_for_state);
         }
 
-        // 2. Publish via broadcast channel
+        // 2. Publish via broadcast channel (use original balance)
         if let Err(e) = self.publisher.publish_balance(&balance).await {
             error!("Failed to publish balance update: {}", e);
             return Err(e);
         }
 
-        debug!("Updated and published balance: symbol={}", balance.symbol);
+        debug!("Updated and published balance: symbol={}", symbol);
         Ok(())
     }
 
@@ -135,13 +143,17 @@ impl ExchangeStateManager {
     /// # Errors
     /// Returns an error if publishing fails
     pub async fn update_balances(&self, balances: Vec<Balance>) -> Result<(), EngineError> {
+        // Clone before lock to minimize lock time
+        let balances_for_state = balances.clone();
+        let balance_count = balances.len();
+
         // 1. Update in-memory state
         {
             let mut state = self.state.write().await;
-            state.update_balances(balances.clone());
+            state.update_balances(balances_for_state);
         }
 
-        // 2. Publish each balance via broadcast channel
+        // 2. Publish each balance via broadcast channel (use original balances)
         for balance in &balances {
             if let Err(e) = self.publisher.publish_balance(balance).await {
                 warn!(
@@ -152,7 +164,7 @@ impl ExchangeStateManager {
             }
         }
 
-        debug!("Updated and published {} balances", balances.len());
+        debug!("Updated and published {} balances", balance_count);
         Ok(())
     }
 
@@ -164,19 +176,23 @@ impl ExchangeStateManager {
     /// # Errors
     /// Returns an error if publishing fails
     pub async fn add_trade(&self, trade: Trade) -> Result<(), EngineError> {
+        // Clone before lock to minimize lock time
+        let trade_for_state = trade.clone();
+        let trade_id = trade.trade_id.clone();
+
         // 1. Update in-memory state
         {
             let mut state = self.state.write().await;
-            state.add_trade(trade.clone());
+            state.add_trade(trade_for_state);
         }
 
-        // 2. Publish via broadcast channel
+        // 2. Publish via broadcast channel (use original trade)
         if let Err(e) = self.publisher.publish_trade(&trade).await {
             error!("Failed to publish trade update: {}", e);
             return Err(e);
         }
 
-        debug!("Added and published trade: trade_id={}", trade.trade_id);
+        debug!("Added and published trade: trade_id={}", trade_id);
         Ok(())
     }
 

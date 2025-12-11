@@ -40,7 +40,8 @@ impl MarketDataState {
         // Use timestamp from orderbook if available, otherwise use current time
         let timestamp = orderbook.timestamp;
 
-        self.orderbooks.insert(pair.clone(), orderbook);
+        // Pair is moved into the HashMap, no need to clone
+        self.orderbooks.insert(pair, orderbook);
         self.last_update = timestamp;
     }
 

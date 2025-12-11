@@ -22,6 +22,7 @@ thiserror = { workspace = true }
 
 # Utils
 rust_decimal = { workspace = true }
+rust_decimal_macros = { workspace = true }
 smol_str = { workspace = true }
 chrono = { workspace = true }
 anyhow = { workspace = true }

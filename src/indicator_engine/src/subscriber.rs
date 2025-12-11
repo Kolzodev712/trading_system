@@ -45,7 +45,7 @@ impl MarketDataSubscriber {
     async fn handle_update(&self, update: MarketDataUpdate) -> Result<(), SubscriberError> {
         match update {
             MarketDataUpdate::Orderbook { orderbook } => {
-                // Convert pair to string for calculator
+                // Convert pair to string for calculator (only once)
                 let pair_smol = orderbook.pair.convert_to_smolstr();
                 let pair_str = pair_smol.as_str();
 
@@ -81,16 +81,18 @@ impl MarketDataSubscriber {
 
                 // Check if we have indicators registered for this pair (not just cached values)
                 // This is a diagnostic check - indicators may be registered but not ready yet
+                // Only check if we have indicators, avoid expensive get_indicator_ids() call
                 let has_indicators = self.calculator.has_indicators_for_pair(pair_str);
-                let indicator_count = self.calculator.get_indicator_ids().len();
-
-                if !has_indicators && indicator_count > 0 {
-                    // Only warn if indicators exist but none are registered for this pair
-                    tracing::warn!(
-                        "Market data received for {} but no indicators registered for this pair. Total indicators: {}",
-                        pair_str,
-                        indicator_count
-                    );
+                if !has_indicators {
+                    // Only check total count if we don't have indicators for this pair
+                    let indicator_count = self.calculator.get_indicator_ids().len();
+                    if indicator_count > 0 {
+                        tracing::warn!(
+                            "Market data received for {} but no indicators registered for this pair. Total indicators: {}",
+                            pair_str,
+                            indicator_count
+                        );
+                    }
                 }
 
                 // Update calculator with pair information
@@ -113,7 +115,7 @@ impl MarketDataSubscriber {
                 }
             }
             MarketDataUpdate::Trade { trade } => {
-                // Convert pair to string for calculator
+                // Convert pair to string for calculator (only once)
                 let pair_smol = trade.pair.convert_to_smolstr();
                 let pair_str = pair_smol.as_str();
                 let price_point =

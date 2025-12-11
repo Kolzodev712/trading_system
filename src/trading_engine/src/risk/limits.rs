@@ -60,3 +60,44 @@ impl RiskCheckResult {
         self
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_risk_limits_default() {
+        let limits = RiskLimits::default();
+        assert!(limits.total_max_position.is_none());
+        assert!(limits.max_total_orders.is_none());
+        assert!(limits.daily_loss_limit_all_pairs.is_none());
+        assert!(limits.daily_loss_limit_per_pair.is_empty());
+    }
+
+    #[test]
+    fn test_risk_check_result_allowed() {
+        let result = RiskCheckResult::allowed();
+        assert!(result.allowed);
+        assert!(result.reason.is_none());
+        assert!(result.warnings.is_empty());
+    }
+
+    #[test]
+    fn test_risk_check_result_blocked() {
+        let reason = SmolStr::new("Test reason");
+        let result = RiskCheckResult::blocked(reason.clone());
+        assert!(!result.allowed);
+        assert_eq!(result.reason, Some(reason));
+        assert!(result.warnings.is_empty());
+    }
+
+    #[test]
+    fn test_risk_check_result_with_warning() {
+        let result = RiskCheckResult::allowed()
+            .with_warning(SmolStr::new("Warning 1"))
+            .with_warning(SmolStr::new("Warning 2"));
+
+        assert!(result.allowed);
+        assert_eq!(result.warnings.len(), 2);
+    }
+}

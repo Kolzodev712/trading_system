@@ -1,90 +1,453 @@
 # Trading System
 
-A modular, exchange-agnostic trading system built in Rust with support for real-time market data, order execution, and strategy execution.
+**Version**: 0.1  
+**Last Updated**: December 2024  
+**License**: MIT License  
+**Copyright**: © 2024 Trading System Contributors
 
-## Features
+A modular, exchange-agnostic trading system built in Rust with support for real-time market data, order execution, level-based trading, and strategy-based trading.
 
-- **Exchange Integration**: Currently supports Binance (spot trading)
-- **Real-time Market Data**: WebSocket-based orderbook streaming via broadcast channels
-- **Strategy Execution**: BuyLowSellHigh strategy with stop-loss and take-profit
-- **Order Management**: Full order lifecycle tracking with status management
-- **Position Reconciliation**: Automatic position sync with exchange
-- **Circuit Breaker**: Error handling with automatic recovery
-- **Health Monitoring**: REST API for system status and positions
-- **Graceful Shutdown**: Clean shutdown with configurable timeout
+## Table of Contents
 
-## Architecture
+- [Overview](#overview)
+- [System Architecture](#system-architecture)
+- [Services Overview](#services-overview)
+- [Prerequisites & Dependencies](#prerequisites--dependencies)
+- [Installation](#installation)
+- [Configuration](#configuration)
+- [Running the System](#running-the-system)
+- [Testing](#testing)
+- [Maintenance](#maintenance)
+- [Troubleshooting](#troubleshooting)
+- [Architecture Documentation](#architecture-documentation)
 
-The system is organized into several modules:
+## Overview
 
-- **`trading_core`**: Core abstractions, data types, traits, and channel infrastructure
-- **`exchange_engine`**: Exchange-specific implementations (Binance)
-- **`market_data_engine`**: Market data collection and streaming
-- **`trading_engine`**: Strategy execution and order management
-- **`runner`**: Main application orchestrator
+The Trading System is a comprehensive, production-ready trading platform that supports:
 
-### Data Flow
+- **Level-Based Trading**: Predefined trading levels with indicator-based price/quantity resolution
+- **Strategy-Based Trading**: Algorithmic trading strategies (e.g., BuyLowSellHigh)
+- **Real-Time Market Data**: WebSocket-based orderbook and trade streaming
+- **Risk Management**: Comprehensive risk checks, circuit breakers, and daily loss limits
+- **TUI CLI**: Terminal-based interface for monitoring and level management
+- **Exchange Integration**: Currently supports Binance (spot trading), extensible to other exchanges
 
-1. **Market Data Engine** → Connects to Binance WebSocket → Receives orderbook updates → Publishes to broadcast channels
-2. **Strategy Executor** → Subscribes to channels → Receives orderbook updates → Calls strategy logic
-3. **Strategy** → Analyzes orderbook → Generates order requests → Returns to executor
-4. **Strategy Executor** → Places orders via Trading Client → Tracks order status
-5. **Exchange Engine** → Executes orders on Binance → Sends execution reports → Updates strategy state
-6. **Health Server** → Exposes REST API → Provides real-time system status
+### Key Features
 
-### Component Interaction
+- ✅ **Exchange-Agnostic Design**: Easy to add new exchanges
+- ✅ **Ultra-Low Latency**: Channel-based communication (< 1μs)
+- ✅ **State Management**: Full state reconciliation and persistence
+- ✅ **Real-Time Monitoring**: TUI CLI with live data streaming
+- ✅ **Risk Management**: Circuit breakers, position limits, daily loss limits
+- ✅ **Level Management**: Full CRUD operations via TUI or gRPC
+- ✅ **Indicator Engine**: Real-time technical indicators (SMA, EMA, composite)
+- ✅ **Comprehensive Testing**: Unit tests and integration tests
+
+## System Architecture
+
+The system follows a **monolithic architecture** with clear service boundaries. All services run in-process and communicate via ultra-low latency broadcast channels.
+
+### High-Level Architecture
+
+<details>
+<summary><b>📊 Interactive Architecture Diagram</b> (Click to expand)</summary>
+
+> **💡 Tip**: For interactive diagrams with zoom, pan, and filtering, use the [Structurizr architecture diagram](architecture/STRUCTURIZR.md). You can also export it to various formats (Mermaid, PlantUML, PNG, SVG).
+
+#### System Context Diagram
+
+```mermaid
+graph TB
+    Trader[👤 Trader] -->|Uses| TUI[TUI CLI]
+    TUI -->|gRPC| Runner[Runner<br/>gRPC Server]
+    
+    Runner -->|Orchestrates| ExchangeEngine[Exchange Engine]
+    Runner -->|Orchestrates| MarketDataEngine[Market Data Engine]
+    Runner -->|Orchestrates| TradingEngine[Trading Engine]
+    Runner -->|Orchestrates| IndicatorEngine[Indicator Engine]
+    Runner -->|Orchestrates| AssetEngine[Asset Engine]
+    Runner -->|Orchestrates| LiveConfig[Live Config Service]
+    
+    ExchangeEngine -->|WebSocket| Binance[Binance Exchange]
+    ExchangeEngine -->|REST API| Binance
+    MarketDataEngine -->|WebSocket| Binance
+    AssetEngine -->|REST API| Binance
+    TradingEngine -->|Places Orders| Binance
+    
+    Runner -->|Persists Config| MongoDB[(MongoDB)]
+    TradingEngine -->|Persists Levels| MongoDB
+    IndicatorEngine -->|Persists Indicators| MongoDB
+    LiveConfig -->|Persists Updates| MongoDB
+    
+    ExchangeEngine -.->|Broadcast Channel<br/>< 1μs| TradingEngine
+    ExchangeEngine -.->|Broadcast Channel<br/>< 1μs| TradingEngine
+    MarketDataEngine -.->|Broadcast Channel<br/>< 1μs| IndicatorEngine
+    MarketDataEngine -.->|Broadcast Channel<br/>< 1μs| TradingEngine
+    IndicatorEngine -.->|Broadcast Channel<br/>< 1μs| TradingEngine
+    
+    TradingEngine -->|Gets Rules| AssetEngine
+    TradingEngine -->|Checks Risk| TradingEngine
+    
+    classDef stateManager fill:#438dd5,stroke:#08427b,color:#fff
+    classDef cache fill:#85bbf0,stroke:#438dd5,color:#000
+    classDef orchestrator fill:#08427b,stroke:#1168bd,color:#fff
+    classDef external fill:#999,stroke:#666,color:#fff
+    
+    class ExchangeEngine,MarketDataEngine,TradingEngine stateManager
+    class IndicatorEngine,AssetEngine cache
+    class Runner orchestrator
+    class TUI,Binance,MongoDB external
+```
+
+#### Container View (Services)
+
+```mermaid
+graph LR
+    subgraph TradingSystem["🏦 Trading System (Monolith)"]
+        direction TB
+        ExchangeEngine[Exchange Engine<br/>State Manager]
+        MarketDataEngine[Market Data Engine<br/>State Manager]
+        TradingEngine[Trading Engine<br/>State Manager]
+        IndicatorEngine[Indicator Engine<br/>Cache]
+        AssetEngine[Asset Engine<br/>Cache]
+        LiveConfig[Live Config Service]
+        Runner[Runner<br/>Orchestrator]
+    end
+    
+    subgraph External["🌐 External Systems"]
+        TUI[TUI CLI]
+        Binance[Binance Exchange]
+        MongoDB[(MongoDB)]
+    end
+    
+    Runner -->|gRPC| TUI
+    ExchangeEngine -->|WSS/HTTPS| Binance
+    MarketDataEngine -->|WSS| Binance
+    AssetEngine -->|HTTPS| Binance
+    TradingEngine -->|HTTPS| Binance
+    Runner -->|MongoDB Protocol| MongoDB
+    
+    ExchangeEngine -.->|Channel| TradingEngine
+    MarketDataEngine -.->|Channel| IndicatorEngine
+    MarketDataEngine -.->|Channel| TradingEngine
+    IndicatorEngine -.->|Channel| TradingEngine
+    
+    classDef stateManager fill:#438dd5,stroke:#08427b,color:#fff
+    classDef cache fill:#85bbf0,stroke:#438dd5,color:#000
+    classDef orchestrator fill:#08427b,stroke:#1168bd,color:#fff
+    classDef external fill:#999,stroke:#666,color:#fff
+    
+    class ExchangeEngine,MarketDataEngine,TradingEngine stateManager
+    class IndicatorEngine,AssetEngine cache
+    class Runner orchestrator
+    class TUI,Binance,MongoDB external
+```
+
+#### Data Flow Diagram
+
+```mermaid
+sequenceDiagram
+    participant Binance as Binance Exchange
+    participant ExchangeEngine as Exchange Engine
+    participant MarketDataEngine as Market Data Engine
+    participant IndicatorEngine as Indicator Engine
+    participant TradingEngine as Trading Engine
+    participant TUI as TUI CLI
+    participant MongoDB as MongoDB
+    
+    Binance->>ExchangeEngine: WebSocket (Orders, Balances)
+    Binance->>MarketDataEngine: WebSocket (Orderbooks, Trades)
+    
+    ExchangeEngine->>TradingEngine: Broadcast Channel (< 1μs)
+    MarketDataEngine->>IndicatorEngine: Broadcast Channel (< 1μs)
+    MarketDataEngine->>TradingEngine: Broadcast Channel (< 1μs)
+    IndicatorEngine->>TradingEngine: Broadcast Channel (< 1μs)
+    
+    TradingEngine->>Binance: REST API (Place Order)
+    
+    TradingEngine->>MongoDB: Persist Levels
+    IndicatorEngine->>MongoDB: Persist Indicators
+    
+    TradingEngine->>Runner: gRPC (Monitoring Data)
+    Runner->>TUI: gRPC Stream
+```
+
+</details>
+
+#### ASCII Architecture Diagram
 
 ```
-┌─────────────────┐
-│  Binance API    │
-└────────┬────────┘
-         │
-         ├─────────────────┐
-         │                 │
-┌────────▼────────┐  ┌─────▼──────────┐
-│ Market Data     │  │ Exchange       │
-│ Engine          │  │ Engine         │
-│ (WebSocket)     │  │ (WebSocket)    │
-└────────┬────────┘  └─────┬──────────┘
-         │                 │
-         │                 │
-┌────────▼─────────────────▼────────┐
-│         Redis (Message Bus)        │
-└────────┬──────────────────────────┘
-         │
-┌────────▼────────┐
-│ Strategy        │
-│ Executor        │
-└────────┬────────┘
-         │
-┌────────▼────────┐
-│ Strategy        │
-│ (BuyLowSellHigh)│
-└─────────────────┘
+┌─────────────────────────────────────────────────────────┐
+│              Trading System (Monolith)                   │
+│                                                          │
+│  ┌──────────────────┐      ┌──────────────────┐        │
+│  │ Exchange Engine  │      │ Market Data     │        │
+│  │ (State Manager)  │      │ Engine          │        │
+│  │                 │      │ (State Manager) │        │
+│  └────────┬────────┘      └────────┬─────────┘        │
+│           │                         │                  │
+│           │                         │                  │
+│  ┌────────▼────────────────────────▼─────────┐        │
+│  │         Trading Engine                    │        │
+│  │  (State Manager + Execution)             │        │
+│  └────────┬──────────────────────────────────┘        │
+│           │                                             │
+│  ┌────────▼────────┐      ┌──────────────────┐        │
+│  │ Indicator       │      │ Risk Engine      │        │
+│  │ Engine (Cache)  │      │ (Cache)          │        │
+│  └─────────────────┘      └──────────────────┘        │
+│                                                          │
+│  ┌──────────────────┐      ┌──────────────────┐        │
+│  │ Asset Engine     │      │ Live Config      │        │
+│  │ (Cache)          │      │ Service          │        │
+│  └──────────────────┘      └──────────────────┘        │
+│                                                          │
+│  ┌──────────────────────────────────────────┐          │
+│  │         Runner (Orchestrator)            │          │
+│  │  + gRPC Server (for TUI CLI)            │          │
+│  └──────────────────────────────────────────┘          │
+└─────────────────────────────────────────────────────────┘
+           │
+           │ gRPC
+           │
+┌──────────▼──────────┐
+│    TUI CLI           │
+│  (External Process)  │
+└──────────────────────┘
 ```
 
-## Quick Start
+### Communication Patterns
 
-### Prerequisites
+- **In-Process**: Broadcast channels (ultra-low latency, < 1μs)
+- **External**: gRPC (for TUI CLI communication)
+- **Exchange**: WebSocket + REST API (for exchange communication)
 
-1. **Redis** - Must be running and accessible
-   ```bash
-   # Check if Redis is running
-   redis-cli ping
-   # Should return: PONG
-   
-   # If not running, start Redis:
-   # On Linux:
-   sudo systemctl start redis
-   # Or using Docker:
-   docker run -d -p 6379:6379 redis:latest
-   ```
+### View Interactive Diagrams
 
-2. **Binance API Keys** - Configured in `config/trading_system.json`
+For interactive architecture diagrams with zoom, pan, and filtering capabilities:
 
-3. **Rust** - Ensure you have Rust installed (1.70+)
+1. **Structurizr Diagrams**: See [STRUCTURIZR.md](architecture/STRUCTURIZR.md) for instructions on viewing the full Structurizr architecture diagrams
+2. **Export Options**: Export to Mermaid, PlantUML, PNG, SVG formats
+3. **Component Details**: View detailed component-level diagrams for each service
 
-### Building
+For detailed architecture information, see the [Architecture Documentation](#architecture-documentation) section.
+
+## Services Overview
+
+### Core Services
+
+#### 1. Exchange Engine
+**Purpose**: Single point of contact with exchange for account data (balances, orders, trades).
+
+**Key Features**:
+- WebSocket and REST API integration
+- State management with reconciliation
+- Broadcast channel publishing
+- Exchange-agnostic design
+
+**See**: [Exchange Engine Architecture](architecture/01-exchange-engine.md)
+
+#### 2. Market Data Engine
+**Purpose**: Manages public market data (orderbooks, public trades).
+
+**Key Features**:
+- Real-time orderbook streaming
+- Public trade streaming
+- Channel-based publishing
+- Symbol registry integration
+
+**See**: [Market Data Engine Architecture](architecture/02-market-data-engine.md)
+
+#### 3. Trading Engine
+**Purpose**: Core trading logic and execution (levels and strategies).
+
+**Key Features**:
+- Level-based trading with indicator resolution
+- Strategy-based trading
+- State management and reconciliation
+- Risk integration
+
+**See**: [Trading Engine Architecture](architecture/03-trading-engine.md)
+
+#### 4. Indicator Engine
+**Purpose**: Calculates and provides real-time technical indicator values.
+
+**Key Features**:
+- SMA, EMA, composite indicators
+- Real-time calculation
+- In-memory caching (< 0.1ms lookup)
+- Extensible framework
+
+**See**: [Indicator Engine Architecture](architecture/04-indicator-engine.md)
+
+#### 5. Risk Engine
+**Purpose**: Comprehensive risk management for all trading operations.
+
+**Key Features**:
+- Circuit breaker pattern
+- Daily loss limits (global and per-pair)
+- Position and order limits
+- Independent verification capability
+
+**See**: [Risk Engine Architecture](architecture/05-risk-engine.md)
+
+#### 6. Asset Engine
+**Purpose**: Caches static asset metadata (symbols, trading rules, exchange limits).
+
+**Key Features**:
+- TTL-based caching (5 minutes default)
+- Trading rules for order validation
+- Exchange limits
+- Priority system (exchange values override config)
+
+**See**: [Asset Engine Architecture](architecture/06-asset-engine.md)
+
+### Supporting Services
+
+#### 7. Live Config Service
+**Purpose**: Runtime configuration updates without restart.
+
+**Key Features**:
+- Channel-based API (no HTTP dependencies)
+- Validation and audit logging
+- MongoDB persistence
+- Level and risk limit updates
+
+**See**: [Live Config Service Architecture](architecture/07-live-config-service.md)
+
+#### 8. Runner
+**Purpose**: Application orchestrator and gRPC server.
+
+**Key Features**:
+- Service initialization and coordination
+- Dual mode support (strategies/levels)
+- gRPC server for external communication
+- Graceful shutdown management
+
+**See**: [Runner Architecture](architecture/08-runner.md)
+
+#### 9. TUI CLI
+**Purpose**: Terminal user interface for monitoring and level management.
+
+**Key Features**:
+- Real-time monitoring via gRPC streaming
+- Level management (CRUD operations)
+- Trading control (enable/disable)
+- Level editing and creation
+
+**See**: [TUI CLI Architecture](architecture/09-tui-cli.md)
+
+## Prerequisites & Dependencies
+
+### Required Services
+
+#### 1. MongoDB
+**Purpose**: Configuration persistence (levels, risk limits, indicators).
+
+**Version**: MongoDB 3.0+ (or compatible)
+
+**Installation**:
+```bash
+# Using Docker
+docker run -d -p 27017:27017 --name mongodb mongo:latest
+
+# Using systemd (Linux)
+sudo systemctl start mongod
+
+# Using Homebrew (macOS)
+brew services start mongodb-community
+```
+
+**Configuration**: Connection string in `config/bot.json`
+```json
+{
+  "mongo": {
+    "enabled": true,
+    "connection_string": "mongodb://localhost:27017",
+    "database": "trading_system"
+  }
+}
+```
+
+**Collections**:
+- `bot_configs` - Bot configurations with levels and risk limits
+- `indicators` - Indicator definitions
+- `strategies` - Strategy configurations
+
+#### 2. Exchange API Access
+**Exchange**: Binance (spot trading)
+
+**Required**:
+- API Key
+- API Secret
+- Testnet/Production environment selection
+
+**Permissions Needed**:
+- Read account information
+- Place orders
+- Cancel orders
+- View order history
+- View trade history
+
+**Configuration**: API keys in `config/bot.json` (see [Configuration](#configuration))
+
+### Optional Services
+
+#### Redis
+**Status**: Optional (only if Web UI feature is enabled in future)
+
+**Note**: Redis is **not required** for TUI CLI. All internal communication uses broadcast channels.
+
+### System Requirements
+
+#### Hardware
+- **CPU**: 2+ cores recommended
+- **Memory**: 512MB+ RAM (1GB+ recommended)
+- **Network**: Stable internet connection with low latency to exchange
+- **Disk**: Minimal (config files, logs)
+
+#### Software
+- **Rust**: 1.70+ (stable)
+- **Cargo**: Included with Rust
+- **Operating System**: Linux, macOS, or Windows
+- **Terminal**: ANSI-compatible terminal (for TUI CLI)
+
+### Network Requirements
+
+#### Outbound Connections
+- **Binance REST API**: `https://api.binance.com` (production) or `https://testnet.binance.vision` (testnet)
+- **Binance WebSocket**: `wss://stream.binance.com` (production) or `wss://testnet.binance.vision` (testnet)
+- **MongoDB**: Connection to MongoDB instance (if enabled)
+
+#### Inbound Connections
+- **gRPC Server**: Port 50051 (default, configurable)
+- **Health Server**: Port 8080 (default, configurable)
+
+#### Firewall Rules
+- Allow outbound HTTPS (443) to Binance
+- Allow outbound WebSocket (443) to Binance
+- Allow inbound connections to gRPC/HTTP ports (if accessing remotely)
+- Allow connections to MongoDB (if remote)
+
+## Installation
+
+### 1. Clone the Repository
+
+```bash
+git clone <repository-url>
+cd trading_system
+```
+
+### 2. Install Rust
+
+If Rust is not installed:
+
+```bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source $HOME/.cargo/env
+```
+
+### 3. Build the Project
 
 ```bash
 # Build in release mode (optimized)
@@ -94,432 +457,278 @@ cargo build --release
 cargo build
 ```
 
-### Running
+### 4. Check Dependencies
+
+Use the provided script to check and start dependencies:
 
 ```bash
-# Run from project root
-cargo run --release --package runner
+# Check dependencies and ports
+./scripts/check_dependencies.sh
 
-# Or in debug mode
-cargo run --package runner
+# This script will:
+# - Check MongoDB connection
+# - Check Redis (if enabled)
+# - Verify ports are free (gRPC: 50051, Health: 8080)
+# - Auto-start missing dependencies in new terminal windows
 ```
+
+### 5. Configure the System
+
+See [Configuration](#configuration) section for detailed configuration instructions.
 
 ## Configuration
 
-Edit `config/trading_system.json` to adjust:
+### Configuration Files
 
-- **Strategy parameters**: position size, thresholds, stop-loss, take-profit
-- **Log level**: "trace", "debug", "info", "warn", "error"
-- **Server port**: Default 8080
-- **Redis URL**: Default "redis://127.0.0.1/"
-- **Exchange settings**: API keys, symbol, rate limits
+The system uses three main configuration files:
 
-Example configuration:
+1. **`config/bot.json`**: Main bot configuration
+2. **`config/strategies.json`**: Strategy-specific configuration (for strategy mode)
+3. **`config/levels.json`**: Levels-specific configuration (for levels mode)
+
+### Main Configuration (`config/bot.json`)
+
 ```json
 {
   "system": {
-    "log_level": "info",
-    "shutdown_timeout_secs": 30
+    "log_level": "info"
   },
   "exchange": {
     "exchange": "Binance",
     "binance": {
-      "symbol": { "base": "BTC", "quote": "USDT" },
-      "ws": { "apiKey": "...", "secretKey": "..." },
-      "rest": { "apiKey": "...", "secretKey": "..." }
+      "symbol": {
+        "base": "BTC",
+        "quote": "USDT"
+      },
+      "rest": {
+        "api_key": "your_api_key",
+        "secret_key": "your_secret_key"
+      },
+      "ws": {
+        "api_key": "your_api_key",
+        "secret_key": "your_secret_key"
+      }
     }
   },
-  "strategy": {
-    "strategy_type": "BuyLowSellHigh",
-    "position_size": "0.001",
-    "max_position": "0.01",
-    "buy_threshold_percent": "2.0",
-    "sell_threshold_percent": "2.0",
-    "stop_loss_percent": "5.0",
-    "take_profit_percent": "10.0"
+  "mongo": {
+    "enabled": true,
+    "connection_string": "mongodb://localhost:27017",
+    "database": "trading_system"
   },
   "server": {
-    "bind_address": "0.0.0.0",
-    "port": 8080
+    "grpc": {
+      "bind_address": "0.0.0.0",
+      "port": 50051
+    },
+    "health": {
+      "bind_address": "0.0.0.0",
+      "port": 8080
+    }
+  },
+  "channels": {
+    "market_data_capacity": 1000,
+    "exchange_update_capacity": 1000,
+    "indicator_update_capacity": 1000
+  },
+  "reconciliation": {
+    "enabled": true,
+    "exchange_level_interval_ms": 180000,
+    "trading_level_interval_ms": 180000
+  },
+  "risk": {
+    "total_max_position": null,
+    "max_total_orders": null,
+    "daily_loss_limit_all_pairs": null,
+    "daily_loss_limit_per_pair": {}
   }
 }
 ```
 
-## Health Server & Monitoring
+### Levels Configuration (`config/levels.json`)
 
-The system exposes a REST API on port 8080 for monitoring and debugging.
-
-### Endpoints
-
-#### `GET /health`
-Basic health check to verify the system is running.
-
-```bash
-curl http://localhost:8080/health
-```
-
-Response:
 ```json
 {
-  "status": "healthy",
-  "timestamp": "2024-12-05T13:34:11.084623Z"
-}
-```
-
-#### `GET /positions`
-Get all current trading positions.
-
-```bash
-curl http://localhost:8080/positions
-```
-
-Response:
-```json
-{
-  "positions": [
+  "levels": [
     {
-      "symbol": "BTCUSDT",
-      "quantity": "0.001",
-      "avg_price": "45000.00"
-    }
-  ]
-}
-```
-
-#### `GET /state`
-Get overall trading state statistics.
-
-```bash
-curl http://localhost:8080/state
-```
-
-Response:
-```json
-{
-  "active_orders": 2,
-  "pending_orders": 1,
-  "positions_count": 1,
-  "total_position_value": "45.00"
-}
-```
-
-#### `GET /orders`
-Get detailed information about all active orders.
-
-```bash
-curl http://localhost:8080/orders
-```
-
-Response:
-```json
-{
-  "orders": [
-    {
-      "order_id": "12345678",
-      "symbol": "BTCUSDT",
+      "id": "level_1",
+      "name": "BTC Buy Level 1",
+      "symbol": {
+        "base": "BTC",
+        "quote": "USDT"
+      },
       "side": "Buy",
-      "price": "45000.00",
-      "amount": "0.001",
-      "status": "New",
-      "filled_amount": "0.000"
+      "order_type": "Limit",
+      "price": {
+        "type": "Fixed",
+        "value": 50000
+      },
+      "quantity": {
+        "type": "Fixed",
+        "value": 0.001
+      },
+      "risk": {
+        "daily_loss_limit": null,
+        "max_position": null
+      },
+      "lifecycle": {
+        "auto_repost": true,
+        "auto_repost_on_cancel": false
+      },
+      "enabled": true
     }
   ]
 }
 ```
 
-### How to Know if It's Trading
+### Strategies Configuration (`config/strategies.json`)
 
-#### 1. Watch the Console Logs
-
-Look for these messages:
-
-**Strategy Signals**:
-```
-INFO trading_engine::strategies: BUY signal: price=45000.0, avg=45900.0, diff=1.96%
-INFO trading_engine::strategies: SELL signal: price=47000.0, avg=46000.0, diff=2.17%
-```
-
-**Order Placement**:
-```
-INFO trading_engine::executor: Order placed: Order { ... }
-```
-
-**Order Execution**:
-```
-INFO trading_engine::strategies: Order executed: Buy 0.001 BTCUSDT @ 45000.0
+```json
+{
+  "strategies": [
+    {
+      "strategy_type": "BuyLowSellHigh",
+      "parameters": {
+        "position_size": 0.001,
+        "max_position": 0.01,
+        "buy_threshold_percent": 2.0,
+        "sell_threshold_percent": 2.0,
+        "stop_loss_percent": 5.0,
+        "take_profit_percent": 10.0
+      }
+    }
+  ]
+}
 ```
 
-**Risk Management**:
-```
-WARN trading_engine::strategies: Stop-loss triggered: loss=5.2%, threshold=5.0%
-INFO trading_engine::strategies: Take-profit triggered: profit=10.5%, threshold=10.0%
-```
+### Environment Variables (Optional)
 
-#### 2. Check the Health Endpoint
+API keys can be provided via environment variables for security:
 
 ```bash
-# Check current positions
-curl http://localhost:8080/positions
-
-# Check trading state
-curl http://localhost:8080/state
+export BINANCE_API_KEY=your_api_key
+export BINANCE_API_SECRET=your_secret_key
+export MONGODB_URI=mongodb://localhost:27017
 ```
 
-#### 3. Monitor Logs in Real-Time
+## Running the System
+
+### Pre-Flight Checks
+
+Before starting the system, run the dependency check script:
 
 ```bash
-# Filter important messages
-cargo run --package runner 2>&1 | grep -E "BUY|SELL|Order placed|Order executed|Stop-loss|Take-profit"
-
-# Or watch positions
-watch -n 2 'curl -s http://localhost:8080/positions | jq'
+./scripts/check_dependencies.sh
 ```
 
-#### 4. What to Expect
+This script will:
+- Check MongoDB connection
+- Check Redis (if enabled)
+- Verify ports are free (gRPC: 50051, Health: 8080)
+- Auto-start missing dependencies in new terminal windows
 
-**Initial Phase** (First ~20 seconds):
-- "Building price history" messages
-- No trades yet - the strategy is collecting data
+### Running in Levels Mode
 
-**Normal Operation**:
-- Periodic "BUY signal" or "SELL signal" messages
-- "Order placed" when orders are sent to Binance
-- "Order executed" when orders are filled
-- Position updates in the `/positions` endpoint
+**Levels mode** is the default mode and supports level-based trading with indicator resolution.
 
-**No Trading Activity?**
-The strategy might not be trading if:
-- Price hasn't moved enough (needs 2% deviation from average)
-- Max position reached (0.01 BTC as configured)
-- Max active orders reached (2 orders as configured)
-- Still building price history (< 20 data points)
-
-## Strategy: BuyLowSellHigh
-
-The default strategy implements a simple mean reversion approach:
-
-- **Buys** when price drops **2%** below the 20-period moving average
-- **Sells** when price rises **2%** above the moving average (if you have a position)
-- **Stop-loss**: Sells immediately if position loses **5%**
-- **Take-profit**: Sells immediately if position gains **10%**
-
-### Strategy Parameters
-
-- `position_size`: Fixed position size per trade (default: 0.001 BTC)
-- `max_position`: Maximum total position size (default: 0.01 BTC)
-- `buy_threshold_percent`: Buy when price is X% below average (default: 2.0%)
-- `sell_threshold_percent`: Sell when price is X% above average (default: 2.0%)
-- `stop_loss_percent`: Stop loss percentage (default: 5.0%)
-- `take_profit_percent`: Take profit percentage (default: 10.0%)
-- `max_active_orders`: Maximum concurrent orders (default: 2)
-- `price_history_size`: Size of price history buffer (default: 100)
-- `min_price_history`: Minimum price points before trading (default: 20)
-
-## System Features
-
-### Order Status Tracking
-
-The system tracks order lifecycle:
-- **New**: Order placed, waiting for fill
-- **PartiallyFilled**: Order partially executed
-- **Filled**: Order completely executed
-- **Canceled**: Order was cancelled
-- **Rejected**: Order was rejected by exchange
-- **Expired**: Order expired
-
-### Position Reconciliation
-
-The system automatically reconciles positions with the exchange every 5 minutes:
-- Fetches balances from exchange
-- Compares with internal state
-- Updates internal state if discrepancies are found
-- Logs warnings for significant differences
-
-### Circuit Breaker
-
-Automatic error handling:
-- Opens circuit after 5 consecutive failures
-- Blocks new orders when circuit is open
-- Automatically attempts recovery after timeout
-- Prevents cascading failures
-
-### Stale Order Cleanup
-
-Automatically cancels orders that have been pending too long:
-- Default timeout: 5 minutes
-- Prevents orders from getting stuck
-- Updates order status to Expired
-
-### Retry Logic with Exponential Backoff
-
-Order placement uses exponential backoff retry:
-- **Max attempts**: 3 retries
-- **Initial delay**: 500ms
-- **Max delay**: 2000ms
-- **Backoff multiplier**: 2.0x
-
-This ensures transient network errors don't cause order failures.
-
-### Multiple Strategies Support
-
-The system supports running multiple strategies simultaneously via `StrategyManager`:
-- Each strategy receives the same orderbook updates
-- Strategies can trade different pairs or use different logic
-- All strategies share the same trading client
-- Useful for portfolio diversification or strategy comparison
-
-## Testing
-
-### Integration Tests
-
-Run the integration test suite:
+#### 1. Start the Trading System
 
 ```bash
-cargo test --test integration_test
+# Default (levels mode)
+cargo run --release --package runner
+
+# Explicit levels mode
+cargo run --release --package runner -- --mode levels
+
+# With custom levels config
+cargo run --release --package runner -- --mode levels --levels-config config/levels.json
 ```
 
-Or run all integration tests:
+#### 2. Start the TUI CLI (Optional)
+
+In a **separate terminal**, start the TUI CLI:
 
 ```bash
-cargo test integration::
+# Connect to default gRPC endpoint
+cargo run --release --package cli
+
+# Or specify custom endpoint
+cargo run --release --package cli -- http://localhost:50051
 ```
 
-Tests cover:
-- Configuration loading and validation
-- Strategy creation and state management
-- Order status tracking
-- Circuit breaker functionality
-- Position reconciliation logic
-- Stale order detection
-- Health server structure
+#### 3. Using the TUI CLI
 
-**Note**: Integration tests don't require real API keys or external services - they test component interactions in isolation.
+Once the TUI starts, you'll see:
 
-### Unit Tests
+- **Main Menu**: Trading status and navigation
+- **Trading Monitor**: Real-time display of orders, balances, levels, indicators, trades
 
-Run all tests:
+**Navigation**:
+- `↑/↓`: Navigate levels
+- `T`: Toggle level enabled/disabled
+- `L`: View level details
+- `E`: Edit level
+- `C`: Create new level
+- `Tab`: Switch between panels
+- `Esc`: Close popup/form
+- `Q`: Quit
+
+### Running in Strategies Mode
+
+**Strategies mode** supports algorithmic trading strategies.
+
+#### 1. Start the Trading System
 
 ```bash
-cargo test
+# Strategies mode
+cargo run --release --package runner -- --mode strategies
+
+# With custom strategies config
+cargo run --release --package runner -- --mode strategies --strategies-config config/strategies.json
 ```
 
-### Examples
+#### 2. Start the TUI CLI (Optional)
 
-The project includes example binaries that demonstrate **low-level component APIs** for debugging and development:
+Same as levels mode:
 
-**Exchange Engine Examples** (Low-level API usage):
 ```bash
-# Place an order via WebSocket
-cargo run --example example_binance_open_order --package exchange_engine
-
-# Fetch account balances
-cargo run --example example_binance_balances --package exchange_engine
-
-# Cancel an order by ID
-cargo run --example example_binance_cancel_by_id --package exchange_engine
-
-# Cancel all orders for a pair
-cargo run --example example_binance_cancel_all --package exchange_engine
-
-# Test unsigned REST API calls (no auth required)
-cargo run --example example_unsigned_calls --package exchange_engine
+cargo run --release --package cli
 ```
 
-**Note**: 
-- These examples demonstrate **low-level** component APIs for debugging/development
-- For **full system integration**, use the main `runner` application: `cargo run --package runner`
-- The `runner` demonstrates how all components (market data, exchange, trading engine) work together
-- Examples require valid Binance API keys in `config/binance_config.json` and network connectivity
+### Running Test Binary
 
-### Backtesting Framework
+The system includes a test binary for full system testing in no-trade mode:
 
-The system includes a basic backtesting framework for testing strategies on historical data:
+```bash
+# Run in levels mode for 60 seconds with verbose logging
+cargo run --bin test_runner -- --mode levels --duration 60 --verbose
 
-```rust
-use trading_engine::backtest::BacktestEngine;
-use trading_engine::strategies::BuyLowSellHigh;
-
-// Create strategy
-let strategy = Arc::new(RwLock::new(BuyLowSellHigh::new(...)));
-
-// Create backtest engine
-let mut backtest = BacktestEngine::new(strategy, initial_balance);
-
-// Run backtest on historical orderbooks
-let result = backtest.run(historical_orderbooks).await?;
-
-// Analyze results
-println!("Final balance: {}", result.final_balance);
-println!("Total trades: {}", result.trades.len());
-println!("PnL: {}", result.pnl);
+# Run in strategies mode
+cargo run --bin test_runner -- --mode strategies --duration 30
 ```
 
-**Note**: The backtesting framework is basic and doesn't account for:
-- Slippage
-- Order book depth
-- Market impact
-- Realistic order execution delays
+**Use Cases**:
+- Integration testing
+- System validation
+- Debugging without placing real orders
 
-For production backtesting, consider using more sophisticated tools.
+### Command-Line Arguments
 
-## Troubleshooting
+#### Runner Arguments
 
-### Redis Connection Error
+```bash
+cargo run --package runner -- \
+  --mode <strategies|levels> \      # Trading mode (default: levels)
+  --strategies-config <path> \       # Strategies config path (default: config/strategies.json)
+  --levels-config <path>            # Levels config path (default: config/levels.json)
 ```
-Error: Redis connection failed
+
+#### TUI CLI Arguments
+
+```bash
+cargo run --package cli -- <endpoint>  # gRPC endpoint (default: http://localhost:50051)
 ```
-**Solution**: Ensure Redis is running and accessible at the configured URL
 
-### Binance API Error
-```
-Error: Authentication failed
-```
-**Solution**: Check API keys in `config/trading_system.json` are correct
-
-### WebSocket Connection Error
-```
-Error: Trading WebSocket error
-```
-**Solution**: 
-- Check internet connection
-- Verify Binance API keys are valid
-- Check if Binance API is accessible
-
-### Strategy Not Trading
-- Check logs for "Building price history" - strategy needs 20+ price points
-- Verify orderbook data is flowing (check Redis)
-- Check if max position/active orders limits are reached
-
-### Health Server Not Responding
-1. Check if server started: Look for "Health check server listening on..." in logs
-2. Check port: `netstat -tuln | grep 8080`
-3. Check firewall: `sudo ufw status`
-
-### Empty Responses from Health Endpoints
-- System just started (no positions/orders yet)
-- Strategy hasn't placed any orders
-- All orders have been filled/cancelled
-
-## Security Considerations
-
-⚠️ **Important**: The health server currently has **no authentication**. Anyone with network access can view:
-- Your trading positions
-- Order details
-- Trading activity
-
-**Recommendations**:
-1. **Bind to localhost only** if you don't need external access:
-   ```json
-   "bind_address": "127.0.0.1"
-   ```
-
-2. **Use a reverse proxy** (nginx, Caddy) with authentication
-
-3. **Firewall rules** to restrict access
-
-4. **Future enhancement**: Add API key authentication
-
-## Graceful Shutdown
+### Graceful Shutdown
 
 Press `Ctrl+C` to initiate graceful shutdown:
 - All components receive shutdown signal
@@ -527,220 +736,360 @@ Press `Ctrl+C` to initiate graceful shutdown:
 - Connections are closed cleanly
 - Timeout: 30 seconds (configurable in config)
 
-## Redis Usage
+## Testing
 
-The system uses Redis as a message bus for market data:
+### Unit Tests
 
-```bash
-# Start Redis
-redis-server
-
-# View data via redis-cli
-redis-cli
-subscribe orderbooks  # Subscribe to orderbook channel
-subscribe trade        # Subscribe to trade channel
-```
-
-## Example Run
+Run all unit tests:
 
 ```bash
-$ cargo run --release --package runner
+# Run all tests
+cargo test
 
-2024-01-15T10:00:00.123 INFO Starting Trading System
-2024-01-15T10:00:00.456 INFO Starting Market Data Engine...
-2024-01-15T10:00:02.789 INFO Creating Trading Client...
-2024-01-15T10:00:03.012 INFO Trading client ready
-2024-01-15T10:00:03.234 INFO Creating Buy Low Sell High Strategy...
-2024-01-15T10:00:03.456 INFO Creating Strategy Executor...
-2024-01-15T10:00:03.678 INFO Health check server listening on 0.0.0.0:8080
-2024-01-15T10:00:03.890 INFO All systems ready! Starting strategy execution...
-2024-01-15T10:00:04.123 DEBUG Building price history: 5/20
-2024-01-15T10:00:04.456 DEBUG Building price history: 15/20
-2024-01-15T10:00:05.789 INFO BUY signal: price=45000.0, avg=45900.0, diff=1.96%
-2024-01-15T10:00:05.890 INFO Order placed: Order { ... }
-2024-01-15T10:00:06.123 INFO Order executed: Buy 0.001 BTCUSDT @ 45000.0
-...
+# Run tests for specific crate
+cargo test --package trading_engine
+
+# Run with output
+cargo test -- --nocapture
 ```
 
-## Next Steps
+### Integration Tests
 
-1. **Start with small position sizes** (0.001 BTC as configured)
-2. **Monitor the health endpoint** to track positions
-3. **Watch logs** to understand strategy behavior
-4. **Adjust strategy parameters** in config as needed
-5. **Test stop-loss/take-profit** by monitoring positions
-6. **Integrate with monitoring tools** (Prometheus, Grafana)
+The system includes comprehensive integration tests organized in a modular structure:
 
-## Development
+```bash
+# Run all integration tests
+cargo test --test integration
 
-### Adding a New Strategy
+# Run specific integration test module
+cargo test --test integration levels
 
-1. Implement the `Strategy` trait in `src/trading_engine/src/strategies.rs`:
+# Run ignored tests (requires external services)
+cargo test --test integration -- --ignored
+```
 
-```rust
-use trading_engine::strategy::{Strategy, TradingState};
+#### Integration Test Structure
 
-pub struct MyStrategy {
-    state: TradingState,
-    // ... your strategy fields
+Tests are organized in `tests/integration/`:
+
+- **`config.rs`**: Configuration loading and validation
+- **`levels.rs`**: Level management system
+- **`risk.rs`**: Risk management system
+- **`trading_state.rs`**: Trading state management
+- **`circuit_breaker.rs`**: Circuit breaker functionality
+- **`market_data.rs`**: Market data engine
+- **`indicator.rs`**: Indicator engine
+- **`asset.rs`**: Asset engine
+- **`exchange.rs`**: Exchange engine (with `#[ignore]` for external calls)
+- **`live_config.rs`**: Live config service
+- **`level_execution.rs`**: Level execution and resolver
+- **`workflows.rs`**: End-to-end workflows
+- **`risk_metrics.rs`**: Risk metrics calculation
+- **`channels.rs`**: Inter-service channel communication
+
+#### Test Helpers
+
+Common test utilities are in `tests/integration/helpers.rs`:
+- `create_test_level_config()` - Create test level configuration
+- `create_test_risk_manager()` - Create test risk manager
+- `create_test_order()` - Create test order
+- `create_test_balance()` - Create test balance
+- `create_test_exchange_state_manager()` - Create test exchange state manager
+- `create_test_market_data_manager()` - Create test market data manager
+
+#### Ignored Tests
+
+Tests that require external calls (exchange API, network) are marked with `#[ignore]`:
+
+```bash
+# Run ignored tests (requires external services)
+cargo test --test integration -- --ignored
+```
+
+These tests include:
+- Exchange engine trading calls
+- WebSocket connections
+- External API calls
+
+### Test Coverage
+
+The system includes comprehensive test coverage:
+
+- **Unit Tests**: All services have unit tests
+- **Integration Tests**: Modular integration test suite
+- **Test Binary**: Full system testing in no-trade mode
+
+### Running Tests in CI/CD
+
+```bash
+# Run all tests (excluding ignored)
+cargo test --test integration
+
+# Run with coverage (requires cargo-tarpaulin)
+cargo tarpaulin --tests --test integration
+```
+
+## Maintenance
+
+### Logging
+
+The system uses structured logging via `tracing`:
+
+**Log Levels**:
+- `trace`: Very detailed debugging
+- `debug`: Debugging information
+- `info`: General information (default)
+- `warn`: Warning messages
+- `error`: Error messages
+
+**Configuration**: Set log level in `config/bot.json`:
+```json
+{
+  "system": {
+    "log_level": "info"
+  }
+}
+```
+
+**TUI CLI Logging**: TUI CLI logs to `cli_debug.log` (doesn't clutter terminal)
+
+### Monitoring
+
+#### Health Endpoints
+
+The system exposes health endpoints on port 8080 (default):
+
+```bash
+# Health check
+curl http://localhost:8080/health
+
+# Trading state
+curl http://localhost:8080/state
+
+# Positions (if available)
+curl http://localhost:8080/positions
+```
+
+#### gRPC Monitoring
+
+Use the TUI CLI for real-time monitoring:
+- Real-time data streaming
+- Level management
+- Trading control
+
+### Backup and Recovery
+
+#### MongoDB Backup
+
+```bash
+# Backup MongoDB
+mongodump --uri="mongodb://localhost:27017" --db=trading_system --out=/backup/path
+
+# Restore MongoDB
+mongorestore --uri="mongodb://localhost:27017" --db=trading_system /backup/path/trading_system
+```
+
+**Note**: MongoDB stores configuration only, not trading state. State is in-memory.
+
+### Updates and Upgrades
+
+1. **Backup Configuration**: Backup `config/` directory and MongoDB
+2. **Pull Latest Code**: `git pull`
+3. **Rebuild**: `cargo build --release`
+4. **Test**: Run integration tests
+5. **Deploy**: Restart the system
+
+### Performance Tuning
+
+#### Channel Buffer Sizes
+
+Adjust channel buffer sizes in `config/bot.json`:
+
+```json
+{
+  "channels": {
+    "market_data_capacity": 1000,
+    "exchange_update_capacity": 1000,
+    "indicator_update_capacity": 1000
+  }
+}
+```
+
+#### Reconciliation Intervals
+
+Adjust reconciliation intervals:
+
+```json
+{
+  "reconciliation": {
+    "exchange_level_interval_ms": 180000,  # 3 minutes
+    "trading_level_interval_ms": 180000    # 3 minutes
+  }
+}
+```
+
+## Troubleshooting
+
+### Common Issues
+
+#### MongoDB Connection Error
+
+```
+Error: MongoDB connection failed
+```
+
+**Solution**:
+1. Check MongoDB is running: `mongosh --eval "db.adminCommand('ping')"`
+2. Verify connection string in `config/bot.json`
+3. Check firewall rules
+4. Check MongoDB logs
+
+#### gRPC Port Already in Use
+
+```
+Error: Address already in use (os error 98)
+```
+
+**Solution**:
+```bash
+# Kill process using port 50051
+./scripts/kill_grpc_port.sh
+
+# Or change port in config/bot.json
+```
+
+#### Exchange API Error
+
+```
+Error: Authentication failed
+```
+
+**Solution**:
+1. Verify API keys in `config/bot.json`
+2. Check API key permissions
+3. Verify testnet/production environment
+4. Check rate limits
+
+#### WebSocket Connection Error
+
+```
+Error: Trading WebSocket error
+```
+
+**Solution**:
+1. Check internet connection
+2. Verify Binance API is accessible
+3. Check firewall rules
+4. Verify API keys are valid
+
+#### TUI CLI Connection Error
+
+```
+Error: Failed to connect to gRPC server
+```
+
+**Solution**:
+1. Ensure runner is running first
+2. Check gRPC server started (look for "gRPC server started" in logs)
+3. Verify endpoint: `http://localhost:50051`
+4. Check firewall rules
+
+#### No Trading Activity
+
+**Possible Causes**:
+- Levels disabled (check TUI or MongoDB)
+- Risk limits reached
+- No market data (check WebSocket connection)
+- Price conditions not met (for strategies)
+
+**Debugging**:
+1. Check logs for errors
+2. Verify levels are enabled in TUI
+3. Check risk limits in config
+4. Monitor market data flow
+
+### Debug Mode
+
+Run in debug mode for more detailed logging:
+
+```bash
+# Set log level to debug in config/bot.json
+{
+  "system": {
+    "log_level": "debug"
+  }
 }
 
-#[async_trait::async_trait]
-impl Strategy for MyStrategy {
-    async fn on_orderbook(
-        &mut self,
-        orderbook: &Orderbook,
-        state: &TradingState,
-    ) -> Result<Option<OrderRequest>, EngineError> {
-        // Your strategy logic here
-        Ok(None) // or Some(order_request)
-    }
-
-    async fn on_execution_report(
-        &mut self,
-        order: &Order,
-    ) -> Result<(), EngineError> {
-        // Handle order execution
-        Ok(())
-    }
-
-    fn get_state(&self) -> &TradingState { &self.state }
-    fn get_state_mut(&mut self) -> &mut TradingState { &mut self.state }
-}
+# Or run with RUST_LOG
+RUST_LOG=debug cargo run --package runner
 ```
 
-2. Add strategy creation logic in `src/runner/src/main.rs`
-3. Update configuration to support your strategy parameters
+### Getting Help
 
-### Adding a New Exchange
+1. Check logs: Look for error messages
+2. Check health endpoints: Verify system status
+3. Review configuration: Ensure all settings are correct
+4. Check architecture docs: Understand system behavior
 
-1. Implement the `TradingClient` trait in `src/exchange_engine/src/exchanges/`
-2. Implement the `MarketDataClient` trait in `src/market_data_engine/src/exchanges/`
-3. Add exchange-specific configuration types
-4. Update `Exchange` enum in `src/core_logic/src/lib.rs`
-5. Add exchange-specific config parsing in `src/runner/src/main.rs`
+## Architecture Documentation
 
-### Core Traits
+### Visual Architecture Diagrams
 
-The system uses several key traits for abstraction:
+- **[Structurizr Architecture Diagram](architecture/STRUCTURIZR.md)**: Interactive architecture diagrams using Structurizr DSL
+  - System Context view
+  - Container view
+  - Component views for each service
+  - Deployment view
+  - See [STRUCTURIZR.md](architecture/STRUCTURIZR.md) for usage instructions
 
-- **`TradingClient<OrderRequest>`**: Exchange order execution
-  - `open_order()`: Place an order
-  - `cancel_order_by_id()`: Cancel an order
-  - `cancel_all_orders()`: Cancel all orders for a pair
-  - `fetch_balance()`: Get account balances
-  - `test_open_order()`: Test order placement (paper trading)
+### Detailed Architecture Documents
 
-- **`MarketDataClient`**: Market data streaming
-  - `orderbooks()`: Stream orderbook updates
-  - `trades()`: Stream trade updates
+For detailed architecture information, see the [architecture/](architecture/) directory:
 
-- **`Strategy`**: Trading strategy logic
-  - `on_orderbook()`: Called on each orderbook update
-  - `on_execution_report()`: Called when an order is executed
-  - `get_state()` / `get_state_mut()`: Access trading state
+- **[Exchange Engine](architecture/01-exchange-engine.md)**: Exchange integration and state management
+- **[Market Data Engine](architecture/02-market-data-engine.md)**: Market data streaming
+- **[Trading Engine](architecture/03-trading-engine.md)**: Trading logic and execution
+- **[Indicator Engine](architecture/04-indicator-engine.md)**: Technical indicator calculation
+- **[Risk Engine](architecture/05-risk-engine.md)**: Risk management
+- **[Asset Engine](architecture/06-asset-engine.md)**: Asset metadata caching
+- **[Live Config Service](architecture/07-live-config-service.md)**: Runtime configuration updates
+- **[Runner](architecture/08-runner.md)**: Application orchestrator
+- **[TUI CLI](architecture/09-tui-cli.md)**: Terminal user interface
+- **[Architecture README](architecture/README.md)**: Architecture overview and principles
 
-- **`PrivateDataClient`**: Authenticated WebSocket streams
-  - `stream()`: Start authenticated stream
-  - `shutdown()`: Gracefully stop stream
+For complete system architecture, see [proposals/00-ARCHITECTURE-SUMMARY.md](proposals/00-ARCHITECTURE-SUMMARY.md).
 
-## Project Structure
+## Authors
 
-```
-trading_system/
-├── config/
-│   └── trading_system.json    # Main configuration file
-├── src/
-│   ├── core_logic/            # Core abstractions and data types
-│   │   ├── config.rs          # Unified configuration
-│   │   ├── data/              # Data types (Order, Orderbook, etc.)
-│   │   ├── traits.rs          # Core traits (TradingClient, etc.)
-│   │   ├── error.rs           # Error types
-│   │   ├── retry.rs           # Retry logic
-│   │   ├── circuit_breaker.rs # Circuit breaker pattern
-│   │   └── redis.rs           # Redis message bus
-│   ├── exchange_engine/       # Exchange implementations
-│   │   └── exchanges/
-│   │       └── binance/       # Binance implementation
-│   │           ├── ws_client.rs
-│   │           ├── rest_client.rs
-│   │           └── websocket/ # WebSocket types
-│   ├── market_data_engine/    # Market data collection
-│   │   └── exchanges/
-│   │       └── binance/       # Binance market data
-│   ├── trading_engine/        # Strategy execution
-│   │   ├── strategy.rs        # Strategy trait
-│   │   ├── strategies.rs      # Strategy implementations
-│   │   ├── executor.rs        # Strategy executor
-│   │   ├── reconciliation.rs  # Position reconciliation
-│   │   ├── backtest.rs        # Backtesting framework
-│   │   └── strategy_manager.rs # Multiple strategies
-│   └── runner/                # Main application
-│       ├── main.rs            # Application entry point
-│       ├── health.rs          # Health server
-│       └── shutdown.rs        # Graceful shutdown
-├── tests/
-│   └── integration_test.rs    # Integration tests
-└── Cargo.toml                 # Workspace configuration
-```
+**Trading System Contributors** (2024)
 
-## Error Handling
+For a complete list of contributors, see the [LICENSE](LICENSE) file.
 
-The system uses a comprehensive error handling system:
+## License
 
-### Error Types
+This project is licensed under the **MIT License**.
 
-- **`EngineError`**: Main error type with variants for:
-  - WebSocket connection errors
-  - HTTP request errors
-  - Authentication errors
-  - Order errors (not found, already filled, etc.)
-  - Redis errors
-  - Configuration errors
-  - Custom errors
+Copyright © 2024 Trading System Contributors
 
-### Error Recovery
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
 
-- **Retry Logic**: Automatic retry with exponential backoff for transient errors
-- **Circuit Breaker**: Prevents cascading failures by opening circuit after repeated failures
-- **Graceful Degradation**: System continues operating even if some components fail
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
 
-### Error Context
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
 
-All errors include context information:
-- Error messages include relevant parameters
-- Stack traces in debug mode
-- Structured logging for error analysis
-
-## Performance Considerations
-
-- **Async/Await**: All I/O operations are asynchronous
-- **Connection Pooling**: Reuses connections where possible
-- **Efficient Serialization**: Uses `smol_str` for string interning
-- **Minimal Allocations**: Reuses buffers and avoids unnecessary clones
-- **Rate Limiting**: Respects exchange rate limits
-
-## Limitations
-
-- **Single Exchange**: Currently only supports Binance
-- **Spot Trading Only**: No futures or margin trading
-- **No Database**: Positions and orders are in-memory only
-- **Basic Backtesting**: Backtesting framework is simplified
-- **No Authentication**: Health server has no authentication
-- **Limited Error Recovery**: Some errors may require manual intervention
-
-## Future Enhancements
-
-- [ ] Support for multiple exchanges (Coinbase, Kraken, etc.)
-- [ ] Futures and margin trading support
-- [ ] Database persistence for positions and orders
-- [ ] Advanced backtesting with realistic execution simulation
-- [ ] Authentication for health server
-- [ ] Metrics and observability (Prometheus, OpenTelemetry)
-- [ ] WebSocket reconnection with state recovery
-- [ ] Order book depth analysis
-- [ ] Advanced risk management
-- [ ] Portfolio management across multiple pairs
+See the [LICENSE](LICENSE) file for the full license text.
 
 ## Contributing
 
@@ -752,6 +1101,11 @@ All errors include context information:
 6. Run clippy: `cargo clippy`
 7. Submit a pull request
 
-## License
+## Version History
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+- **0.1** (December 2024): Initial release
+  - Level-based trading
+  - Strategy-based trading
+  - TUI CLI
+  - Comprehensive testing
+  - Architecture documentation

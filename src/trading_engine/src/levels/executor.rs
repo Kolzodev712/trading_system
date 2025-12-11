@@ -141,7 +141,7 @@ impl LevelExecutor {
         .await;
         validate_order(resolved_price, resolved_quantity, &rules)?;
 
-        // Convert order type
+        // Convert order type (OrderTypeConfig is Clone but not Copy)
         let resolved_order_type = level.config.order_type.clone().into();
 
         Ok(ResolvedLevel {

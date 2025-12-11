@@ -2,6 +2,7 @@
 use async_trait::async_trait;
 use exchange_engine::state::manager::ExchangeStateManager;
 use indicator_engine::IndicatorService;
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::sync::RwLock;
@@ -74,20 +75,51 @@ impl TradingCliServiceImpl {
                 let exchange_state_arc = self.exchange_state_manager.get_state();
                 let exchange_state = exchange_state_arc.read().await;
 
+                // Build order_id -> level_id mapping from LevelManager
+                let level_manager = self.level_manager.read().await;
+                let mut order_to_level: HashMap<String, (String, String)> = HashMap::new();
+
+                for level in level_manager.get_all_levels() {
+                    let level_id = level.config.id.to_string();
+                    let order_type_str = match level.config.order_type {
+                        trading_engine::levels::config::OrderTypeConfig::Limit => "Limit",
+                        trading_engine::levels::config::OrderTypeConfig::Market => "Market",
+                        trading_engine::levels::config::OrderTypeConfig::PostOnly => "PostOnly",
+                        trading_engine::levels::config::OrderTypeConfig::IoC => "IoC",
+                        trading_engine::levels::config::OrderTypeConfig::FoK => "FoK",
+                    };
+
+                    for order_id in &level.active_orders {
+                        order_to_level.insert(
+                            order_id.as_str().to_string(),
+                            (level_id.clone(), order_type_str.to_string()),
+                        );
+                    }
+                }
+                drop(level_manager); // Release lock before continuing
+
                 // Get open orders (active orders from exchange)
                 let orders: Vec<trading_cli::Order> = exchange_state
                     .get_open_orders()
                     .iter()
-                    .map(|order| trading_cli::Order {
-                        order_id: order.order_id.as_str().to_string(),
-                        symbol: order.symbol.to_string(),
-                        side: format!("{:?}", order.side),
-                        order_type: "LIMIT".to_string(), // TODO: Get actual order type
-                        price: order.price.to_string(),
-                        quantity: order.amount.to_string(),
-                        status: format!("{:?}", order.status),
-                        level_id: String::new(), // TODO: Track level_id for orders
-                        timestamp: order.internal_created_at as i64,
+                    .map(|order| {
+                        let order_id_str = order.order_id.as_str().to_string();
+                        let (level_id, order_type) = order_to_level
+                            .get(&order_id_str)
+                            .cloned()
+                            .unwrap_or_else(|| (String::new(), "Limit".to_string())); // Default to Limit if not found
+
+                        trading_cli::Order {
+                            order_id: order_id_str,
+                            symbol: order.symbol.to_string(),
+                            side: format!("{:?}", order.side),
+                            order_type,
+                            price: order.price.to_string(),
+                            quantity: order.amount.to_string(),
+                            status: format!("{:?}", order.status),
+                            level_id,
+                            timestamp: order.internal_created_at as i64,
+                        }
                     })
                     .collect();
 

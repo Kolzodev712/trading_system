@@ -129,6 +129,8 @@ impl App {
         })?;
 
         let mut needs_redraw = true; // Initial redraw
+        let mut level_refresh_interval = tokio::time::interval(Duration::from_secs(5)); // Refresh levels every 5 seconds
+        level_refresh_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
         loop {
             // Start streaming if we're in Trading Monitor and not already streaming
@@ -136,7 +138,7 @@ impl App {
                 tracing::debug!(
                     "[CLI] Event loop: detected TradingMonitor screen, starting streaming..."
                 );
-                // Refresh levels periodically
+                // Refresh levels immediately when entering
                 if let Err(_) = self.refresh_levels().await {
                     // Ignore errors, will retry next cycle
                 }
@@ -189,7 +191,7 @@ impl App {
                 needs_redraw = false;
             }
 
-            // Use tokio::select! to handle keyboard input and streaming updates
+            // Use tokio::select! to handle keyboard input, streaming updates, and periodic level refresh
             tokio::select! {
                 // Handle keyboard input - use a shorter poll timeout
                 result = tokio::task::spawn_blocking(|| -> Option<crossterm::event::KeyCode> {
@@ -226,6 +228,15 @@ impl App {
                     if let Some(data) = update {
                         self.monitoring_data = Some(data);
                         needs_redraw = true; // Data updated, need redraw
+                    }
+                }
+
+                // Periodic level refresh (only when in Trading Monitor)
+                _ = level_refresh_interval.tick(), if matches!(self.current_screen, Screen::TradingMonitor) => {
+                    if let Err(_) = self.refresh_levels().await {
+                        // Ignore errors, will retry next cycle
+                    } else {
+                        needs_redraw = true; // Levels updated, need redraw
                     }
                 }
 

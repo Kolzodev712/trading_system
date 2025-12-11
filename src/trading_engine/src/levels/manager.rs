@@ -176,6 +176,31 @@ impl LevelManager {
         }
     }
 
+    /// Update level configuration and persist
+    pub async fn update_level_config(
+        &mut self,
+        level_id: &SmolStr,
+        config: LevelConfig,
+    ) -> Result<(), EngineError> {
+        if let Some(level) = self.levels.get_mut(level_id) {
+            level.config = config.clone();
+
+            // Persist to MongoDB if enabled
+            if let Some(persistence) = &self.persistence {
+                if let Err(e) = persistence.update_level(&config).await {
+                    tracing::warn!("Failed to persist level update to MongoDB: {}", e);
+                }
+            }
+
+            Ok(())
+        } else {
+            Err(EngineError::CustomError(anyhow::anyhow!(
+                "Level {} not found",
+                level_id
+            )))
+        }
+    }
+
     /// Get level by ID
     pub fn get_level(&self, level_id: &SmolStr) -> Option<&Level> {
         self.levels.get(level_id)

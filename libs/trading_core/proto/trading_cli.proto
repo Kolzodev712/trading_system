@@ -19,15 +19,6 @@ service TradingCliService {
     // Monitoring Data (Phase 2)
     rpc GetMonitoringData(GetMonitoringDataRequest) returns (GetMonitoringDataResponse);
     rpc StreamMonitoringData(StreamMonitoringDataRequest) returns (stream MonitoringDataUpdate);
-    
-    // System Health (Phase 4)
-    rpc GetSystemHealth(GetSystemHealthRequest) returns (GetSystemHealthResponse);
-    rpc GetProtocolHealth(GetProtocolHealthRequest) returns (GetProtocolHealthResponse);
-    
-    // Live Config (Phase 5)
-    rpc ReplaceConfig(ReplaceConfigRequest) returns (ReplaceConfigResponse);
-    rpc ValidateConfig(ValidateConfigRequest) returns (ValidateConfigResponse);
-    rpc PreviewConfigChanges(PreviewConfigChangesRequest) returns (PreviewConfigChangesResponse);
 }
 
 // Trading Control Messages
@@ -226,69 +217,4 @@ message LevelStatistics {
     int64 last_fill_at = 6;
 }
 
-// System Health Messages (Phase 4 - placeholders for now)
-message GetSystemHealthRequest {}
-
-message GetSystemHealthResponse {
-    SystemHealth health = 1;
-}
-
-message GetProtocolHealthRequest {}
-
-message GetProtocolHealthResponse {
-    ProtocolHealth health = 1;
-}
-
-message SystemHealth {
-    bool trading_engine = 1;
-    bool market_data = 2;
-    bool exchange_engine = 3;
-    bool level_manager = 4;
-    bool risk_system = 5;
-    int64 uptime_secs = 6;
-}
-
-message ProtocolHealth {
-    bool exchange_protocol = 1;
-    bool market_data_protocol = 2;
-    bool reconciliation = 3;
-    bool risk_system = 4;
-    string last_error = 5;
-}
-
-// Live Config Messages (Phase 5 - placeholders for now)
-message ReplaceConfigRequest {
-    string config_json = 1;
-    string mode = 2; // "levels" or "strategies"
-}
-
-message ReplaceConfigResponse {
-    bool success = 1;
-    string message = 2;
-    repeated string cancelled_orders = 3;
-}
-
-message ValidateConfigRequest {
-    string config_json = 1;
-    string mode = 2;
-}
-
-message ValidateConfigResponse {
-    bool valid = 1;
-    repeated string errors = 2;
-    repeated string warnings = 3;
-}
-
-message PreviewConfigChangesRequest {
-    string config_json = 1;
-    string mode = 2;
-}
-
-message PreviewConfigChangesResponse {
-    int32 current_levels = 1;
-    int32 new_levels = 2;
-    int32 levels_to_remove = 3;
-    int32 levels_to_add = 4;
-    repeated string levels_with_active_orders = 5;
-}
 

@@ -11,8 +11,9 @@ pub mod trading_cli {
 
 use trading_cli::trading_cli_service_client::TradingCliServiceClient;
 use trading_cli::{
-    GetLevelRequest, GetLevelsRequest, GetMonitoringDataRequest, GetTradingStatusRequest,
-    SetTradingEnabledRequest, StreamMonitoringDataRequest, ToggleLevelRequest,
+    CreateLevelRequest, GetLevelRequest, GetLevelsRequest, GetMonitoringDataRequest,
+    GetTradingStatusRequest, SetTradingEnabledRequest, StreamMonitoringDataRequest,
+    ToggleLevelRequest, UpdateLevelRequest,
 };
 
 pub struct TradingCliClient {
@@ -118,5 +119,41 @@ impl TradingCliClient {
             .into_inner()
             .level
             .ok_or_else(|| CliError::Custom("Level not found".to_string()))
+    }
+
+    /// Update level configuration
+    pub async fn update_level(
+        &mut self,
+        level_id: &str,
+        config: trading_cli::LevelConfig,
+    ) -> Result<bool, CliError> {
+        let request = tonic::Request::new(UpdateLevelRequest {
+            level_id: level_id.to_string(),
+            config: Some(config),
+        });
+        let response =
+            tokio::time::timeout(Duration::from_secs(5), self.client.update_level(request))
+                .await
+                .map_err(|_| CliError::Custom("gRPC call timed out".to_string()))?
+                .map_err(|e| CliError::Grpc(e))?;
+
+        Ok(response.into_inner().success)
+    }
+
+    /// Create a new level
+    pub async fn create_level(
+        &mut self,
+        config: trading_cli::LevelConfig,
+    ) -> Result<String, CliError> {
+        let request = tonic::Request::new(CreateLevelRequest {
+            config: Some(config),
+        });
+        let response =
+            tokio::time::timeout(Duration::from_secs(5), self.client.create_level(request))
+                .await
+                .map_err(|_| CliError::Custom("gRPC call timed out".to_string()))?
+                .map_err(|e| CliError::Grpc(e))?;
+
+        Ok(response.into_inner().level_id)
     }
 }

@@ -15,6 +15,121 @@ This proposal outlines a comprehensive code review and optimization effort to be
 
 ## Optimization Areas
 
+### 0. Module Size and Responsibility Review
+
+**Purpose**: Identify and split overly large modules that have too many responsibilities or are difficult to maintain.
+
+#### Review Checklist
+
+- [ ] **Module Size Analysis**: Identify modules exceeding recommended size (e.g., > 1000 lines)
+- [ ] **Single Responsibility Principle**: Ensure each module has a single, clear responsibility
+- [ ] **Separation of Concerns**: Split UI rendering, business logic, and data handling
+- [ ] **Code Organization**: Group related functionality into submodules
+- [ ] **Maintainability**: Large modules should be split for better maintainability
+
+#### Example Modules to Review
+
+**High Priority**:
+- `cli/src/screens/trading_monitor.rs` (~1337 lines) - **Needs splitting**
+  - **Responsibilities**: Rendering multiple panels, input handling, form management, popup rendering
+  - **Suggested Split**:
+    - `trading_monitor/mod.rs` - Main screen orchestrator
+    - `trading_monitor/panels.rs` - Individual panel rendering (orders, balances, trades, indicators, levels)
+    - `trading_monitor/forms.rs` - Edit and create form rendering and logic
+    - `trading_monitor/popups.rs` - Level details popup rendering
+    - `trading_monitor/input.rs` - Input handling logic
+- `src/runner/src/grpc/service.rs` (~1035 lines) - **Needs splitting**
+  - **Responsibilities**: gRPC service implementation, data aggregation, level management, monitoring
+  - **Suggested Split**:
+    - `grpc/service/mod.rs` - Main service implementation
+    - `grpc/service/monitoring.rs` - Monitoring data collection and streaming
+    - `grpc/service/levels.rs` - Level management RPC handlers
+    - `grpc/service/trading_control.rs` - Trading control RPC handlers
+    - `grpc/service/converters.rs` - Proto ↔ Internal type conversions
+
+**Medium Priority**:
+- Review other modules > 500 lines for potential splitting
+- Check for modules with multiple responsibilities
+- Identify modules that mix concerns (UI + logic, data + rendering, etc.)
+
+#### Splitting Strategy
+
+1. **Identify Responsibilities**: List all responsibilities of the large module
+2. **Group Related Functionality**: Group related responsibilities together
+3. **Create Submodules**: Split into logical submodules
+4. **Maintain Public API**: Keep public API stable, move implementation to submodules
+5. **Update Imports**: Update all imports to use new module structure
+6. **Test Thoroughly**: Ensure all functionality still works after split
+
+#### Example Refactoring
+
+```rust
+// BEFORE: Single large file (trading_monitor.rs - 1337 lines)
+pub struct TradingMonitorScreen;
+impl TradingMonitorScreen {
+    pub fn render(...) { /* 200+ lines */ }
+    pub fn render_orders(...) { /* 100+ lines */ }
+    pub fn render_balances(...) { /* 100+ lines */ }
+    pub fn render_trades(...) { /* 100+ lines */ }
+    pub fn render_indicators(...) { /* 100+ lines */ }
+    pub fn render_levels(...) { /* 150+ lines */ }
+    pub fn render_edit_form(...) { /* 200+ lines */ }
+    pub fn render_create_form(...) { /* 200+ lines */ }
+    pub fn render_level_details_popup(...) { /* 150+ lines */ }
+    pub fn handle_input_async(...) { /* 200+ lines */ }
+    // ... many more methods
+}
+
+// AFTER: Split into submodules
+// trading_monitor/mod.rs
+pub mod panels;
+pub mod forms;
+pub mod popups;
+pub mod input;
+
+pub struct TradingMonitorScreen;
+impl TradingMonitorScreen {
+    pub fn render(...) {
+        // Orchestrate rendering using submodules
+        panels::render_orders(...);
+        panels::render_balances(...);
+        // ...
+    }
+}
+
+// trading_monitor/panels.rs
+pub fn render_orders(...) { /* ... */ }
+pub fn render_balances(...) { /* ... */ }
+pub fn render_trades(...) { /* ... */ }
+pub fn render_indicators(...) { /* ... */ }
+pub fn render_levels(...) { /* ... */ }
+
+// trading_monitor/forms.rs
+pub fn render_edit_form(...) { /* ... */ }
+pub fn render_create_form(...) { /* ... */ }
+
+// trading_monitor/popups.rs
+pub fn render_level_details_popup(...) { /* ... */ }
+
+// trading_monitor/input.rs
+pub async fn handle_input_async(...) { /* ... */ }
+```
+
+#### Benefits of Module Splitting
+
+- **Maintainability**: Easier to find and modify specific functionality
+- **Testability**: Smaller modules are easier to test in isolation
+- **Clarity**: Clear separation of concerns improves code readability
+- **Collaboration**: Multiple developers can work on different modules without conflicts
+- **Performance**: Smaller modules can improve compile times (incremental compilation)
+
+#### Module Size Guidelines
+
+- **Target Size**: < 500 lines per module (flexible based on complexity)
+- **Warning Threshold**: > 1000 lines - should be reviewed for splitting
+- **Critical Threshold**: > 2000 lines - must be split
+- **Exception**: Generated code (protobuf, etc.) can be larger
+
 ### 1. Data Type Optimization
 
 **Purpose**: Ensure all data types are optimal for their use case.
@@ -361,18 +476,20 @@ async fn process_data(data: Vec<u8>) -> Result<(), Error> {
 
 ### Phase 1: Analysis
 
-1. **Code Review**: Review all services for optimization opportunities
-2. **Profiling**: Profile the system to identify bottlenecks
-3. **Benchmarking**: Create benchmarks for critical operations
-4. **Documentation**: Document current performance characteristics
+1. **Module Size Review**: Identify large modules (> 1000 lines) and analyze responsibilities
+2. **Code Review**: Review all services for optimization opportunities
+3. **Profiling**: Profile the system to identify bottlenecks
+4. **Benchmarking**: Create benchmarks for critical operations
+5. **Documentation**: Document current performance characteristics
 
 ### Phase 2: Optimization
 
-1. **Data Types**: Optimize data types across all services
-2. **Memory**: Reduce allocations and optimize memory usage
-3. **Synchronization**: Optimize lock usage and channel communication
-4. **Collections**: Use appropriate collections for each use case
-5. **Hot Paths**: Optimize critical execution paths
+1. **Module Splitting**: Split large modules into smaller, focused submodules
+2. **Data Types**: Optimize data types across all services
+3. **Memory**: Reduce allocations and optimize memory usage
+4. **Synchronization**: Optimize lock usage and channel communication
+5. **Collections**: Use appropriate collections for each use case
+6. **Hot Paths**: Optimize critical execution paths
 
 ### Phase 3: Validation
 
@@ -383,6 +500,8 @@ async fn process_data(data: Vec<u8>) -> Result<(), Error> {
 
 ## Success Criteria
 
+- [ ] Large modules (> 1000 lines) are identified and split appropriately
+- [ ] Each module has a single, clear responsibility
 - [ ] All data types are optimal for their use case
 - [ ] Memory allocations are minimized
 - [ ] Synchronization primitives are used correctly and efficiently

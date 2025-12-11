@@ -126,12 +126,13 @@ To run the trading system in production, the following infrastructure and servic
 - **Status**: ✅ **COMPLETE** - Fully implemented with SMA, EMA, and composite indicators
 - **Features**: Real-time calculation, caching, extensible framework, performance optimized
 
-#### 6. TUI CLI (Terminal User Interface and Monitoring)
+#### 6. TUI CLI (Terminal User Interface and Monitoring) - ✅ COMPLETE
 - **Purpose**: Terminal-based interface for trading operations and monitoring
 - **Protocol**: gRPC client (connects to Trading System gRPC server in runner)
 - **Dependencies**: 
   - Terminal with color support
   - Keyboard input support
+- **Status**: ✅ **COMPLETE** - Full implementation with real-time monitoring, level management, and trading control
 - **Note**: **Primary interface** - TUI IS the monitoring interface. No separate monitoring service needed.
 
 ### System Requirements
@@ -1000,11 +1001,62 @@ run.rs (exchange-agnostic)
 - Exposes gRPC server for TUI CLI (future)
 - Provides level management, monitoring data, system health endpoints
 
-### TUI CLI (Terminal User Interface and Monitoring)
-- Connects to Trading System via gRPC (external process)
-- Receives monitoring data via gRPC streaming
-- Displays real-time trading data, level management, system health
-- **IS the monitoring interface** - no separate monitoring service needed
+### TUI CLI (Terminal User Interface and Monitoring) - ✅ COMPLETE
+- ✅ **COMPLETE**: Full TUI implementation with `ratatui` framework
+- **Architecture**: External process connecting to Trading System via gRPC
+- **Communication**: gRPC streaming for real-time monitoring data updates
+- **Primary Interface**: TUI IS the monitoring interface - no separate monitoring service needed
+
+**Features Implemented**:
+- ✅ **Main Menu**: Trading status display and navigation
+- ✅ **Trading Monitor Screen**: Real-time display of:
+  - Open orders (with level mapping and order types)
+  - Account balances
+  - Recent trades
+  - Indicator values (real-time from Indicator Engine)
+  - Active levels (with status, enabled state, active orders)
+- ✅ **Level Management**:
+  - Level selection and navigation (↑/↓ keys)
+  - Level toggle (T key) - enable/disable levels with automatic order cancellation
+  - Level details view (L key) - popup overlay with full level information
+  - Level editing (E key) - edit level configuration (price, quantity, risk limits, lifecycle settings)
+  - Level creation (C key) - create new levels with symbol selection from existing levels
+- ✅ **Real-time Updates**: gRPC streaming for live data updates
+- ✅ **gRPC Service**: Complete implementation in `runner` with:
+  - Trading control (enable/disable trading)
+  - Level management (CRUD operations)
+  - Monitoring data aggregation and streaming
+  - Direct access to ExchangeStateManager, IndicatorService, TradingStateManager
+
+**Technical Implementation**:
+- **Framework**: `ratatui` for TUI rendering
+- **gRPC Client**: `tonic` for communication
+- **Protocol**: Protocol Buffers (`.proto` files in `libs/trading_core/proto/`)
+- **State Management**: Local state in CLI, real-time updates via streaming
+- **Error Handling**: Comprehensive error handling with graceful degradation
+- **Logging**: File-based logging to `cli_debug.log` (doesn't clutter terminal)
+
+**gRPC Service Methods**:
+- `SetTradingEnabled` / `GetTradingStatus` - Trading control
+- `GetLevels` / `GetLevel` - Level retrieval
+- `CreateLevel` / `UpdateLevel` / `ToggleLevel` - Level management
+- `GetMonitoringData` / `StreamMonitoringData` - Real-time monitoring
+
+**Data Sources**:
+- All data fetched from existing execution layer (no separate REST calls)
+- Balances, orders, trades from `ExchangeStateManager` (WebSocket updates)
+- Indicator values from `IndicatorService` (direct calculator access)
+- Levels from `LevelManager` (MongoDB persistence)
+- Positions removed from TUI (internal calculation, not exchange data)
+
+**Scripts Added**:
+- ✅ `scripts/check_dependencies.sh` - Pre-flight check for dependencies and ports
+  - Checks MongoDB connection
+  - Checks Redis (if enabled)
+  - Verifies ports are free (gRPC: 50051, Health: 8080)
+  - Auto-starts missing dependencies in new terminal windows
+  - Supports systemd, Docker, and direct execution
+- ✅ `scripts/kill_grpc_port.sh` - Utility to free gRPC port if occupied
 
 ### Level Manager
 - Level lifecycle management
@@ -1463,7 +1515,11 @@ Indicator Engine
    - Centralized in `SharedServices` for easy access across all trading components
 
 ### Phase 3: User Interface & Quality
-1. TUI CLI and Monitoring (Proposal 09)
+1. ✅ **TUI CLI and Monitoring (Proposal 09) - COMPLETE**
+   - Full TUI implementation with real-time monitoring
+   - Level management (CRUD, toggle, edit, create)
+   - gRPC service for external communication
+   - Dependency checking and auto-start scripts
 2. Testing Strategy (Proposal 10) - Comprehensive test coverage
 3. Code Optimization and Performance Review (Proposal 11) - Final optimization pass
 

@@ -39,8 +39,8 @@ impl MainMenuScreen {
         let main_chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(5),  // Trading status
-                Constraint::Length(12), // Navigation menu
+                Constraint::Length(5), // Trading status
+                Constraint::Length(6), // Navigation menu (reduced since fewer items)
             ])
             .split(chunks[1]);
 
@@ -95,29 +95,7 @@ impl MainMenuScreen {
                 ),
                 Span::from("  Trading Monitor"),
             ]),
-            Line::from("   Orders, balances, trades, positions, indicators"),
-            Line::from(""),
-            Line::from(vec![
-                Span::styled(
-                    "2",
-                    Style::default()
-                        .fg(Color::Yellow)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::from("  System Monitor"),
-            ]),
-            Line::from("   Connectivity, health, system info"),
-            Line::from(""),
-            Line::from(vec![
-                Span::styled(
-                    "3",
-                    Style::default()
-                        .fg(Color::Yellow)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::from("  Live Config"),
-            ]),
-            Line::from("   Runtime configuration updates"),
+            Line::from("   Orders, balances, trades, indicators, level management"),
             Line::from(""),
             Line::from(vec![
                 Span::styled(
@@ -157,14 +135,6 @@ impl MainMenuScreen {
             KeyCode::Char('1') => {
                 // Navigate to Trading Monitor and refresh data
                 app.go_to_trading_monitor().await?;
-            }
-            KeyCode::Char('2') => {
-                // TODO: Navigate to System Monitor
-                // app.set_screen(Screen::SystemMonitor);
-            }
-            KeyCode::Char('3') => {
-                // TODO: Navigate to Live Config
-                // app.set_screen(Screen::LiveConfig);
             }
             KeyCode::Char('t') | KeyCode::Char('T') => {
                 // Toggle trading

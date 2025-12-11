@@ -21,6 +21,43 @@ pub struct App {
     selected_level_index: Option<usize>, // Selected level index in levels list
     level_details: Option<crate::client::trading_cli::Level>, // Currently viewed level details
     show_level_details: bool,            // Whether to show level details popup
+    edit_form: Option<EditFormState>,    // Edit form state
+    create_form: Option<CreateFormState>, // Create form state
+}
+
+#[derive(Debug, Clone)]
+pub struct CreateFormState {
+    pub level_id: String,
+    pub symbol_base: String,
+    pub symbol_quote: String,
+    pub side: String,       // "Buy" or "Sell"
+    pub order_type: String, // "Limit", "Market", etc.
+    pub enabled: bool,
+    pub price: String,        // For Fixed price only
+    pub quantity: String,     // For Fixed quantity only
+    pub risk_limit: String,   // Daily loss limit
+    pub max_position: String, // Max position size
+    pub repost_on_fill: bool,
+    pub repost_on_cancel: bool,
+    pub selected_field: usize, // 0=id, 1=base, 2=quote, 3=side, 4=order_type, 5=enabled, 6=price, 7=quantity, 8=risk_limit, 9=max_position, 10=repost_on_fill, 11=repost_on_cancel
+    pub input_buffer: String,  // Current input buffer for text fields
+    pub editing: bool,         // Whether currently editing a text field
+    pub available_symbols: Vec<(String, String)>, // (base, quote) pairs from existing levels
+}
+
+#[derive(Debug, Clone)]
+pub struct EditFormState {
+    pub level_id: String,
+    pub enabled: bool,
+    pub price: String,        // For Fixed price only
+    pub quantity: String,     // For Fixed quantity only
+    pub risk_limit: String,   // Daily loss limit
+    pub max_position: String, // Max position size
+    pub repost_on_fill: bool,
+    pub repost_on_cancel: bool,
+    pub selected_field: usize, // 0=enabled, 1=price, 2=quantity, 3=risk_limit, 4=max_position, 5=repost_on_fill, 6=repost_on_cancel
+    pub input_buffer: String,  // Current input buffer for text fields
+    pub editing: bool,         // Whether currently editing a text field
 }
 
 #[derive(Debug)]
@@ -43,6 +80,8 @@ impl App {
             selected_level_index: None,
             level_details: None,
             show_level_details: false,
+            edit_form: None,
+            create_form: None,
         })
     }
 
@@ -424,6 +463,8 @@ impl App {
         self.streaming_active = false; // Stop streaming when leaving Trading Monitor
         self.show_level_details = false; // Close details popup
         self.level_details = None;
+        self.edit_form = None; // Close edit form
+        self.create_form = None; // Close create form
     }
 
     pub fn show_level_details(&self) -> bool {
@@ -463,6 +504,257 @@ impl App {
                                 }
                             }
                         }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub fn show_edit_form(&self) -> bool {
+        self.edit_form.is_some()
+    }
+
+    pub fn edit_form(&self) -> Option<&EditFormState> {
+        self.edit_form.as_ref()
+    }
+
+    pub fn edit_form_mut(&mut self) -> Option<&mut EditFormState> {
+        self.edit_form.as_mut()
+    }
+
+    pub async fn open_edit_form(&mut self) -> Result<(), CliError> {
+        if let Some(idx) = self.selected_level_index {
+            if let Some(levels) = &self.levels {
+                if let Some(level) = levels.get(idx) {
+                    // Parse price and quantity from strings
+                    let price = if level
+                        .config
+                        .as_ref()
+                        .map(|c| c.price.starts_with("Fixed("))
+                        .unwrap_or(false)
+                    {
+                        level
+                            .config
+                            .as_ref()
+                            .and_then(|c| c.price.strip_prefix("Fixed("))
+                            .and_then(|s| s.strip_suffix(')'))
+                            .unwrap_or("")
+                            .to_string()
+                    } else {
+                        String::new()
+                    };
+
+                    let quantity = if level
+                        .config
+                        .as_ref()
+                        .map(|c| c.quantity.starts_with("Fixed("))
+                        .unwrap_or(false)
+                    {
+                        level
+                            .config
+                            .as_ref()
+                            .and_then(|c| c.quantity.strip_prefix("Fixed("))
+                            .and_then(|s| s.strip_suffix(')'))
+                            .unwrap_or("")
+                            .to_string()
+                    } else {
+                        String::new()
+                    };
+
+                    let config = level.config.as_ref();
+                    self.edit_form = Some(EditFormState {
+                        level_id: level.id.clone(),
+                        enabled: level.enabled,
+                        price,
+                        quantity,
+                        risk_limit: config
+                            .and_then(|c| {
+                                if c.risk_limit.is_empty() {
+                                    None
+                                } else {
+                                    Some(c.risk_limit.clone())
+                                }
+                            })
+                            .unwrap_or_default(),
+                        max_position: config
+                            .and_then(|c| {
+                                if c.max_position_size.is_empty() {
+                                    None
+                                } else {
+                                    Some(c.max_position_size.clone())
+                                }
+                            })
+                            .unwrap_or_default(),
+                        repost_on_fill: config.map(|c| c.repost_on_fill).unwrap_or(true),
+                        repost_on_cancel: config.map(|c| c.repost_on_cancel).unwrap_or(true),
+                        selected_field: 0,
+                        input_buffer: String::new(),
+                        editing: false,
+                    });
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub fn close_edit_form(&mut self) {
+        self.edit_form = None;
+    }
+
+    pub async fn save_edit_form(&mut self) -> Result<(), CliError> {
+        if let Some(form) = &self.edit_form {
+            let config = crate::client::trading_cli::LevelConfig {
+                id: form.level_id.clone(),
+                symbol: None,              // Keep existing
+                side: String::new(),       // Keep existing
+                order_type: String::new(), // Keep existing
+                price: if form.price.is_empty() {
+                    String::new() // Keep existing
+                } else {
+                    format!("Fixed({})", form.price)
+                },
+                quantity: if form.quantity.is_empty() {
+                    String::new() // Keep existing
+                } else {
+                    format!("Fixed({})", form.quantity)
+                },
+                enabled: form.enabled,
+                risk_limit: form.risk_limit.clone(),
+                max_position_size: form.max_position.clone(),
+                repost_on_fill: form.repost_on_fill,
+                repost_on_cancel: form.repost_on_cancel,
+            };
+
+            if let Some(ref mut client) = self.client {
+                match tokio::time::timeout(
+                    Duration::from_secs(5),
+                    client.update_level(&form.level_id, config),
+                )
+                .await
+                {
+                    Ok(Ok(success)) => {
+                        if success {
+                            // Refresh levels to get updated state
+                            self.refresh_levels().await?;
+                            self.close_edit_form();
+                        }
+                    }
+                    Ok(Err(e)) => {
+                        tracing::warn!("Failed to update level: {:?}", e);
+                    }
+                    Err(_) => {
+                        tracing::warn!("Timeout updating level");
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub fn show_create_form(&self) -> bool {
+        self.create_form.is_some()
+    }
+
+    pub fn create_form(&self) -> Option<&CreateFormState> {
+        self.create_form.as_ref()
+    }
+
+    pub fn create_form_mut(&mut self) -> Option<&mut CreateFormState> {
+        self.create_form.as_mut()
+    }
+
+    pub async fn open_create_form(&mut self) -> Result<(), CliError> {
+        // Collect available symbols from existing levels
+        let mut available_symbols = Vec::new();
+        if let Some(levels) = &self.levels {
+            for level in levels {
+                if let Some(config) = &level.config {
+                    if let Some(symbol) = &config.symbol {
+                        let pair = (symbol.base.clone(), symbol.quote.clone());
+                        if !available_symbols.contains(&pair) {
+                            available_symbols.push(pair);
+                        }
+                    }
+                }
+            }
+        }
+
+        self.create_form = Some(CreateFormState {
+            level_id: String::new(),
+            symbol_base: String::new(),
+            symbol_quote: String::new(),
+            side: "Buy".to_string(),
+            order_type: "Limit".to_string(),
+            enabled: true,
+            price: String::new(),
+            quantity: String::new(),
+            risk_limit: String::new(),
+            max_position: String::new(),
+            repost_on_fill: true,
+            repost_on_cancel: true,
+            selected_field: 0,
+            input_buffer: String::new(),
+            editing: false,
+            available_symbols,
+        });
+        Ok(())
+    }
+
+    pub fn close_create_form(&mut self) {
+        self.create_form = None;
+    }
+
+    pub async fn save_create_form(&mut self) -> Result<(), CliError> {
+        if let Some(form) = &self.create_form {
+            // Validate required fields
+            if form.level_id.is_empty() {
+                tracing::warn!("Level ID is required");
+                return Ok(()); // Don't create, just return
+            }
+            if form.symbol_base.is_empty() || form.symbol_quote.is_empty() {
+                tracing::warn!("Symbol base and quote are required");
+                return Ok(()); // Don't create, just return
+            }
+            if form.price.is_empty() || form.quantity.is_empty() {
+                tracing::warn!("Price and quantity are required");
+                return Ok(()); // Don't create, just return
+            }
+
+            let symbol = crate::client::trading_cli::Symbol {
+                base: form.symbol_base.clone(),
+                quote: form.symbol_quote.clone(),
+            };
+
+            let config = crate::client::trading_cli::LevelConfig {
+                id: form.level_id.clone(),
+                symbol: Some(symbol),
+                side: form.side.clone(),
+                order_type: form.order_type.clone(),
+                price: format!("Fixed({})", form.price),
+                quantity: format!("Fixed({})", form.quantity),
+                enabled: form.enabled,
+                risk_limit: form.risk_limit.clone(),
+                max_position_size: form.max_position.clone(),
+                repost_on_fill: form.repost_on_fill,
+                repost_on_cancel: form.repost_on_cancel,
+            };
+
+            if let Some(ref mut client) = self.client {
+                match tokio::time::timeout(Duration::from_secs(5), client.create_level(config))
+                    .await
+                {
+                    Ok(Ok(level_id)) => {
+                        tracing::info!("Created level: {}", level_id);
+                        // Refresh levels to get updated state
+                        self.refresh_levels().await?;
+                        self.close_create_form();
+                    }
+                    Ok(Err(e)) => {
+                        tracing::warn!("Failed to create level: {:?}", e);
+                    }
+                    Err(_) => {
+                        tracing::warn!("Timeout creating level");
                     }
                 }
             }

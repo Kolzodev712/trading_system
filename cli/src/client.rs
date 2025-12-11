@@ -11,8 +11,8 @@ pub mod trading_cli {
 
 use trading_cli::trading_cli_service_client::TradingCliServiceClient;
 use trading_cli::{
-    GetLevelsRequest, GetMonitoringDataRequest, GetTradingStatusRequest, SetTradingEnabledRequest,
-    StreamMonitoringDataRequest,
+    GetLevelRequest, GetLevelsRequest, GetMonitoringDataRequest, GetTradingStatusRequest,
+    SetTradingEnabledRequest, StreamMonitoringDataRequest, ToggleLevelRequest,
 };
 
 pub struct TradingCliClient {
@@ -87,5 +87,36 @@ impl TradingCliClient {
                 .map_err(|e| CliError::Grpc(e))?;
 
         Ok(response.into_inner().levels)
+    }
+
+    /// Toggle level enabled/disabled
+    pub async fn toggle_level(&mut self, level_id: &str, enabled: bool) -> Result<bool, CliError> {
+        let request = tonic::Request::new(ToggleLevelRequest {
+            level_id: level_id.to_string(),
+            enabled,
+        });
+        let response =
+            tokio::time::timeout(Duration::from_secs(5), self.client.toggle_level(request))
+                .await
+                .map_err(|_| CliError::Custom("gRPC call timed out".to_string()))?
+                .map_err(|e| CliError::Grpc(e))?;
+
+        Ok(response.into_inner().success)
+    }
+
+    /// Get single level details
+    pub async fn get_level(&mut self, level_id: &str) -> Result<trading_cli::Level, CliError> {
+        let request = tonic::Request::new(GetLevelRequest {
+            level_id: level_id.to_string(),
+        });
+        let response = tokio::time::timeout(Duration::from_secs(5), self.client.get_level(request))
+            .await
+            .map_err(|_| CliError::Custom("gRPC call timed out".to_string()))?
+            .map_err(|e| CliError::Grpc(e))?;
+
+        response
+            .into_inner()
+            .level
+            .ok_or_else(|| CliError::Custom("Level not found".to_string()))
     }
 }

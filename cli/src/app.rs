@@ -18,6 +18,9 @@ pub struct App {
     monitoring_data: Option<MonitoringData>,
     levels: Option<Vec<crate::client::trading_cli::Level>>,
     streaming_active: bool,
+    selected_level_index: Option<usize>, // Selected level index in levels list
+    level_details: Option<crate::client::trading_cli::Level>, // Currently viewed level details
+    show_level_details: bool,            // Whether to show level details popup
 }
 
 #[derive(Debug)]
@@ -37,6 +40,9 @@ impl App {
             monitoring_data: None,
             levels: None,
             streaming_active: false,
+            selected_level_index: None,
+            level_details: None,
+            show_level_details: false,
         })
     }
 
@@ -314,6 +320,8 @@ impl App {
 
     pub async fn go_to_trading_monitor(&mut self) -> Result<(), CliError> {
         self.current_screen = Screen::TradingMonitor;
+        // Reset selection when entering
+        self.selected_level_index = None;
         // Fetch levels when entering trading monitor
         self.refresh_levels().await?;
         // Don't block - just switch screen, data will come from streaming
@@ -325,7 +333,15 @@ impl App {
         if let Some(ref mut client) = self.client {
             match tokio::time::timeout(Duration::from_secs(2), client.get_levels()).await {
                 Ok(Ok(levels)) => {
+                    let levels_len = levels.len();
                     self.levels = Some(levels);
+                    // Reset selection if it's out of bounds
+                    if let Some(idx) = self.selected_level_index {
+                        if idx >= levels_len {
+                            self.selected_level_index =
+                                if levels_len == 0 { None } else { Some(0) };
+                        }
+                    }
                 }
                 Ok(Err(_)) => {}
                 Err(_) => {}
@@ -334,9 +350,124 @@ impl App {
         Ok(())
     }
 
+    pub fn selected_level_index(&self) -> Option<usize> {
+        self.selected_level_index
+    }
+
+    pub fn select_level_up(&mut self) {
+        if let Some(levels) = &self.levels {
+            if levels.is_empty() {
+                self.selected_level_index = None;
+                return;
+            }
+            self.selected_level_index = Some(
+                self.selected_level_index
+                    .map(|idx| if idx == 0 { levels.len() - 1 } else { idx - 1 })
+                    .unwrap_or(0),
+            );
+        }
+    }
+
+    pub fn select_level_down(&mut self) {
+        if let Some(levels) = &self.levels {
+            if levels.is_empty() {
+                self.selected_level_index = None;
+                return;
+            }
+            let max_idx = levels.len() - 1;
+            self.selected_level_index = Some(
+                self.selected_level_index
+                    .map(|idx| if idx >= max_idx { 0 } else { idx + 1 })
+                    .unwrap_or(0),
+            );
+        }
+    }
+
+    pub async fn toggle_selected_level(&mut self) -> Result<(), CliError> {
+        if let Some(idx) = self.selected_level_index {
+            // Get level_id before making async call
+            let level_id = if let Some(levels) = &self.levels {
+                if let Some(level) = levels.get(idx) {
+                    Some((level.id.clone(), !level.enabled))
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
+            if let Some((level_id, new_enabled)) = level_id {
+                if let Some(ref mut client) = self.client {
+                    match tokio::time::timeout(
+                        Duration::from_secs(2),
+                        client.toggle_level(&level_id, new_enabled),
+                    )
+                    .await
+                    {
+                        Ok(Ok(success)) => {
+                            if success {
+                                // Refresh levels to get updated state
+                                self.refresh_levels().await?;
+                            }
+                        }
+                        Ok(Err(_)) => {}
+                        Err(_) => {}
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub fn go_to_main_menu(&mut self) {
         self.current_screen = Screen::MainMenu;
         self.streaming_active = false; // Stop streaming when leaving Trading Monitor
+        self.show_level_details = false; // Close details popup
+        self.level_details = None;
+    }
+
+    pub fn show_level_details(&self) -> bool {
+        self.show_level_details
+    }
+
+    pub fn level_details(&self) -> Option<&crate::client::trading_cli::Level> {
+        self.level_details.as_ref()
+    }
+
+    pub async fn toggle_level_details(&mut self) -> Result<(), CliError> {
+        if self.show_level_details {
+            // Close details
+            self.show_level_details = false;
+            self.level_details = None;
+        } else {
+            // Show details for selected level
+            if let Some(idx) = self.selected_level_index {
+                if let Some(levels) = &self.levels {
+                    if let Some(level) = levels.get(idx) {
+                        if let Some(ref mut client) = self.client {
+                            match tokio::time::timeout(
+                                Duration::from_secs(2),
+                                client.get_level(&level.id),
+                            )
+                            .await
+                            {
+                                Ok(Ok(details)) => {
+                                    self.level_details = Some(details);
+                                    self.show_level_details = true;
+                                }
+                                Ok(Err(e)) => {
+                                    tracing::warn!("Failed to fetch level details: {:?}", e);
+                                }
+                                Err(_) => {
+                                    tracing::warn!("Timeout fetching level details");
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Start streaming monitoring data updates

@@ -473,9 +473,127 @@ impl TradingCliService for TradingCliServiceImpl {
 
     async fn get_level(
         &self,
-        _request: Request<trading_cli::GetLevelRequest>,
+        request: Request<trading_cli::GetLevelRequest>,
     ) -> Result<Response<trading_cli::GetLevelResponse>, Status> {
-        Err(Status::unimplemented("Not yet implemented"))
+        let req = request.into_inner();
+        let level_id = smol_str::SmolStr::new(&req.level_id);
+
+        let level_manager = self.level_manager.read().await;
+        let level = level_manager
+            .get_level(&level_id)
+            .ok_or_else(|| Status::not_found(format!("Level {} not found", req.level_id)))?;
+
+        // Convert Level to proto Level (same logic as get_levels)
+        let status = match level.state {
+            trading_engine::levels::level::LevelState::Created => "Created",
+            trading_engine::levels::level::LevelState::Posted => "Posted",
+            trading_engine::levels::level::LevelState::Filled => "Filled",
+            trading_engine::levels::level::LevelState::Cancelled => "Cancelled",
+            trading_engine::levels::level::LevelState::Paused => "Paused",
+            trading_engine::levels::level::LevelState::Removed => "Removed",
+        };
+
+        let symbol = trading_cli::Symbol {
+            base: level.config.symbol.base.as_str().to_string(),
+            quote: level.config.symbol.quote.as_str().to_string(),
+        };
+
+        let order_type = match level.config.order_type {
+            trading_engine::levels::config::OrderTypeConfig::Limit => "Limit",
+            trading_engine::levels::config::OrderTypeConfig::Market => "Market",
+            trading_engine::levels::config::OrderTypeConfig::PostOnly => "PostOnly",
+            trading_engine::levels::config::OrderTypeConfig::IoC => "IoC",
+            trading_engine::levels::config::OrderTypeConfig::FoK => "FoK",
+        };
+
+        let side = match level.config.side {
+            trading_core::types::common::Side::Buy => "Buy",
+            trading_core::types::common::Side::Sell => "Sell",
+        };
+
+        // Format price config as string
+        let price_str = match &level.config.price {
+            trading_engine::levels::config::PriceConfig::Fixed(d) => format!("Fixed({})", d),
+            trading_engine::levels::config::PriceConfig::Indicator {
+                indicator_name,
+                offset_type,
+                offset_value,
+            } => format!(
+                "Indicator({}, {:?}, {})",
+                indicator_name, offset_type, offset_value
+            ),
+            trading_engine::levels::config::PriceConfig::BestBid { offset } => {
+                format!("BestBid({})", offset)
+            }
+            trading_engine::levels::config::PriceConfig::BestAsk { offset } => {
+                format!("BestAsk({})", offset)
+            }
+            trading_engine::levels::config::PriceConfig::MidPrice { offset_percent } => {
+                format!("MidPrice({})", offset_percent)
+            }
+        };
+
+        // Format quantity config as string
+        let quantity_str = match &level.config.quantity {
+            trading_engine::levels::config::QuantityConfig::Fixed(d) => format!("Fixed({})", d),
+            trading_engine::levels::config::QuantityConfig::Indicator {
+                indicator_name,
+                multiplier,
+                offset,
+            } => format!(
+                "Indicator({}, mul:{:?}, off:{:?})",
+                indicator_name, multiplier, offset
+            ),
+            trading_engine::levels::config::QuantityConfig::BalancePercent(p) => {
+                format!("BalancePercent({})", p)
+            }
+            trading_engine::levels::config::QuantityConfig::Notional(n) => {
+                format!("Notional({})", n)
+            }
+        };
+
+        let level_config = trading_cli::LevelConfig {
+            id: level.config.id.to_string(),
+            symbol: Some(symbol),
+            side: side.to_string(),
+            order_type: order_type.to_string(),
+            price: price_str,
+            quantity: quantity_str,
+            enabled: level.config.enabled,
+            risk_limit: level
+                .config
+                .risk
+                .daily_loss_limit
+                .map(|d| d.to_string())
+                .unwrap_or_default(),
+            max_position_size: level
+                .config
+                .risk
+                .max_position
+                .map(|d| d.to_string())
+                .unwrap_or_default(),
+            repost_on_fill: level.config.lifecycle.auto_repost,
+            repost_on_cancel: level.config.lifecycle.auto_repost_on_cancel,
+        };
+
+        let active_order_ids: Vec<String> = level
+            .active_orders
+            .iter()
+            .map(|id| id.as_str().to_string())
+            .collect();
+
+        let proto_level = trading_cli::Level {
+            id: level.config.id.to_string(),
+            status: status.to_string(),
+            enabled: level.config.enabled,
+            config: Some(level_config),
+            active_orders: active_order_ids,
+            filled_count: level.repost_count as i32,
+        };
+
+        Ok(Response::new(trading_cli::GetLevelResponse {
+            level: Some(proto_level),
+        }))
     }
 
     async fn create_level(
@@ -501,9 +619,80 @@ impl TradingCliService for TradingCliServiceImpl {
 
     async fn toggle_level(
         &self,
-        _request: Request<trading_cli::ToggleLevelRequest>,
+        request: Request<trading_cli::ToggleLevelRequest>,
     ) -> Result<Response<trading_cli::ToggleLevelResponse>, Status> {
-        Err(Status::unimplemented("Not yet implemented"))
+        let req = request.into_inner();
+        let level_id = smol_str::SmolStr::new(&req.level_id);
+
+        let mut level_manager = self.level_manager.write().await;
+
+        // Get current enabled state and active orders to determine what to do
+        let (current_enabled, active_orders) = level_manager
+            .get_level(&level_id)
+            .map(|l| (l.config.enabled, l.active_orders.clone()))
+            .ok_or_else(|| Status::not_found(format!("Level {} not found", req.level_id)))?;
+
+        // Only toggle if the requested state is different from current
+        if current_enabled != req.enabled {
+            if req.enabled {
+                level_manager
+                    .enable_level(&level_id)
+                    .await
+                    .map_err(|e| Status::internal(format!("Failed to enable level: {}", e)))?;
+            } else {
+                // When disabling, cancel all active orders for this level
+                if !active_orders.is_empty() {
+                    let trading_client = self.trading_client.read().await;
+                    let mut cancelled_count = 0;
+                    let mut failed_count = 0;
+
+                    for order_id in &active_orders {
+                        match trading_client.cancel_order_by_id(order_id.clone()).await {
+                            Ok(_) => {
+                                cancelled_count += 1;
+                                tracing::info!(
+                                    "Cancelled order {} for disabled level {}",
+                                    order_id.as_str(),
+                                    level_id
+                                );
+                            }
+                            Err(e) => {
+                                failed_count += 1;
+                                tracing::warn!(
+                                    "Failed to cancel order {} for level {}: {}",
+                                    order_id.as_str(),
+                                    level_id,
+                                    e
+                                );
+                            }
+                        }
+                    }
+                    drop(trading_client);
+
+                    tracing::info!(
+                        "Level {} disabled: cancelled {} order(s), {} failed",
+                        level_id,
+                        cancelled_count,
+                        failed_count
+                    );
+
+                    // Clear active orders from the level
+                    if let Some(level) = level_manager.get_level_mut(&level_id) {
+                        level.active_orders.clear();
+                    }
+                }
+
+                // Now disable the level
+                level_manager
+                    .disable_level(&level_id)
+                    .await
+                    .map_err(|e| Status::internal(format!("Failed to disable level: {}", e)))?;
+            }
+        }
+
+        Ok(Response::new(trading_cli::ToggleLevelResponse {
+            success: true,
+        }))
     }
 
     async fn get_monitoring_data(

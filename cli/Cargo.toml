@@ -28,7 +28,10 @@ futures-util = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
 
+# Logging
+tracing = { workspace = true }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
 # Utils
 chrono = { workspace = true }
 smol_str = { workspace = true }
-

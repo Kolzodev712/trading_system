@@ -1,8 +1,12 @@
 //! gRPC Server setup and lifecycle management
 use crate::grpc::service::TradingCliServiceImpl;
 use crate::grpc::trading_cli::trading_cli_service_server::TradingCliServiceServer;
+use exchange_engine::state::manager::ExchangeStateManager;
+use indicator_engine::calculator::IndicatorCalculator;
+use indicator_engine::IndicatorService;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use tokio::sync::Mutex;
 use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
 use tonic::transport::Server;
@@ -23,11 +27,19 @@ impl TradingGrpcServer {
         level_manager: Arc<RwLock<LevelManager>>,
         trading_state_manager: Arc<TradingStateManager>,
         trading_client: Arc<RwLock<dyn TradingClient<OrderRequest>>>,
+        exchange_state_manager: Arc<ExchangeStateManager>,
+        indicator_service: Arc<Mutex<IndicatorService>>,
+        indicator_calculator: Arc<IndicatorCalculator>,
+        trading_control: Arc<trading_core::grpc::TradingControl>,
     ) -> Self {
         let service = TradingCliServiceImpl::new(
             level_manager,
-            trading_state_manager.clone(),
-            trading_client.clone(),
+            trading_state_manager,
+            trading_client,
+            exchange_state_manager,
+            indicator_service,
+            indicator_calculator,
+            trading_control,
         );
 
         Self { service }
@@ -41,11 +53,26 @@ impl TradingGrpcServer {
         let service = self.service;
         let trading_cli_service = TradingCliServiceServer::new(service);
         let handle = tokio::spawn(async move {
-            Server::builder()
+            tracing::info!("[gRPC SERVER] Starting server on {}", addr);
+            let result = Server::builder()
                 .add_service(trading_cli_service)
                 .serve(addr)
-                .await
+                .await;
+            match &result {
+                Ok(_) => {
+                    tracing::info!("[gRPC SERVER] Server stopped normally");
+                }
+                Err(e) => {
+                    tracing::error!("[gRPC SERVER] Server error: {}", e);
+                    tracing::error!("[gRPC SERVER] Error details: {:?}", e);
+                }
+            }
+            result
         });
+        tracing::info!(
+            "[gRPC SERVER] Server task spawned, should be listening on {}",
+            addr
+        );
         Ok(handle)
     }
 }

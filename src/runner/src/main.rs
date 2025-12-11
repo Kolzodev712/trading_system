@@ -45,8 +45,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Log startup info
     log_startup_info(&bot_config, &args.mode);
 
-    // Initialize MongoDB if enabled
-    let mongo_client = initialize_mongodb(&bot_config).await;
+    // Initialize MongoDB - REQUIRED for trading system
+    let mongo_client = initialize_mongodb(&bot_config).await?;
 
     // Create shutdown manager and setup Ctrl-C handler
     let shutdown_manager = ShutdownManager::new(bot_config.channels.shutdown_capacity);
@@ -82,10 +82,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         bot_config.channels.indicator_update_capacity,
     );
 
-    // Initialize Indicator Service
-    let indicator_handle = initialize_indicator_service(
+    // Initialize Indicator Service (requires MongoDB)
+    let (indicator_service, indicator_handle, indicator_calculator) = initialize_indicator_service(
         &bot_config,
-        mongo_client.as_ref(),
+        &mongo_client,
         market_data_rx.resubscribe(),
         indicator_tx,
         &shutdown_manager,
@@ -111,11 +111,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         exec_report_rx: exchange_update_rx.resubscribe(),
         market_data_rx: market_data_rx.resubscribe(),
         indicator_rx,
+        indicator_service,
+        indicator_calculator,
         shutdown_manager,
         market_data_handle,
         trading_ws_handle: tokio::spawn(async {}), // Dummy handle
         indicator_handle,
         trading_state_manager,
+        exchange_state_manager,
         asset_service: Some(asset_service),
         trading_control: None, // Created in runner functions
     };
@@ -123,7 +126,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Route to appropriate runner
     match args.mode.as_str() {
         "strategies" => {
-            let strategy_persistence = create_strategy_persistence(&mongo_client, &bot_config);
+            let strategy_persistence =
+                create_strategy_persistence(Some(&mongo_client), &bot_config);
             strategy_runner(
                 bot_config.clone(),
                 args.strategies_config,
@@ -133,7 +137,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .await?;
         }
         "levels" => {
-            let level_persistence = create_level_persistence(&mongo_client, &bot_config);
+            let level_persistence = create_level_persistence(Some(&mongo_client), &bot_config);
             level_runner(
                 bot_config.clone(),
                 args.levels_config,
@@ -210,10 +214,10 @@ fn start_trading_state_subscriber(
 
 /// Create strategy persistence if MongoDB is enabled
 fn create_strategy_persistence(
-    mongo_client: &Option<Arc<MongoClient>>,
+    mongo_client: Option<&Arc<MongoClient>>,
     bot_config: &BotConfig,
 ) -> Option<Arc<trading_engine::strategies::persistence::StrategyPersistence>> {
-    mongo_client.as_ref().map(|client| {
+    mongo_client.map(|client| {
         Arc::new(
             trading_engine::strategies::persistence::StrategyPersistence::new(
                 client.as_ref().clone(),
@@ -225,10 +229,10 @@ fn create_strategy_persistence(
 
 /// Create level persistence if MongoDB is enabled
 fn create_level_persistence(
-    mongo_client: &Option<Arc<MongoClient>>,
+    mongo_client: Option<&Arc<MongoClient>>,
     bot_config: &BotConfig,
 ) -> Option<Arc<trading_engine::levels::persistence::LevelPersistence>> {
-    mongo_client.as_ref().map(|client| {
+    mongo_client.map(|client| {
         Arc::new(trading_engine::levels::persistence::LevelPersistence::new(
             client.as_ref().clone(),
             bot_config.mongo.bot_id.clone(),

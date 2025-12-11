@@ -46,6 +46,7 @@ impl IndicatorPublisher {
                     value: value.value,
                     timestamp: value.timestamp,
                     period: value.period,
+                    is_composite: value.is_composite,
                 };
 
                 if let Err(e) = self.sender.send(update) {

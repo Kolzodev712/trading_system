@@ -119,10 +119,22 @@ impl IndicatorCalculator {
                 IndicatorError::CalculationError(SmolStr::new("Indicator not found"))
             })?;
 
+            let was_ready = indicator.is_ready();
             indicator.update(price_point)?;
+            let is_now_ready = indicator.is_ready();
+
+            // Log when indicator becomes ready for the first time
+            if !was_ready && is_now_ready {
+                tracing::info!(
+                    "Indicator {} ({}) is now ready (accumulated {} data points)",
+                    indicator_id,
+                    indicator.name(),
+                    indicator.period()
+                );
+            }
 
             // If indicator is ready, get its value and cache it
-            if indicator.is_ready() {
+            if is_now_ready {
                 if let Some(value) = indicator.value() {
                     let indicator_value = IndicatorValue {
                         indicator_id: indicator_id.clone(),
@@ -131,22 +143,43 @@ impl IndicatorCalculator {
                         value,
                         timestamp: price_point.timestamp,
                         period: indicator.period(),
+                        is_composite: false,
                     };
 
                     // Update cache
                     let mut cache = self.cache.write();
                     match cache.get_mut(&indicator_id) {
-                        Some(entry) => entry.update(indicator_value.clone()),
+                        Some(entry) => {
+                            entry.update(indicator_value.clone());
+                            tracing::debug!(
+                                "Updated cached value for {}: {} = {}",
+                                indicator_id,
+                                indicator.name(),
+                                indicator_value.value
+                            );
+                        }
                         None => {
                             cache.insert(
                                 indicator_id.clone(),
                                 CacheEntry::new(indicator_value.clone()),
+                            );
+                            tracing::info!(
+                                "Cached new indicator value for {}: {} = {}",
+                                indicator_id,
+                                indicator.name(),
+                                indicator_value.value
                             );
                         }
                     }
                     drop(cache);
 
                     updated_values.push(indicator_value);
+                } else {
+                    tracing::warn!(
+                        "Indicator {} ({}) is ready but value() returned None",
+                        indicator_id,
+                        indicator.name()
+                    );
                 }
             }
             drop(indicators);
@@ -212,6 +245,12 @@ impl IndicatorCalculator {
         } else {
             Vec::new()
         }
+    }
+
+    /// Get all current indicator values (latest per indicator)
+    pub fn get_all_current_values(&self) -> Vec<IndicatorValue> {
+        let cache = self.cache.read();
+        cache.values().map(|entry| entry.current.clone()).collect()
     }
 
     /// Get indicator value by pair and name (e.g., "SMA" for "BTC/USDT")
@@ -295,6 +334,12 @@ impl IndicatorCalculator {
     pub fn has_indicator(&self, indicator_id: &str) -> bool {
         let indicators = self.indicators.read();
         indicators.contains_key(&SmolStr::new(indicator_id))
+    }
+
+    /// Check if any indicators are registered for a pair
+    pub fn has_indicators_for_pair(&self, pair: &str) -> bool {
+        let pair_index = self.pair_index.read();
+        pair_index.contains_key(&SmolStr::new(pair))
     }
 }
 

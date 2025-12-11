@@ -66,7 +66,15 @@ impl MainMenuScreen {
                         .add_modifier(Modifier::BOLD),
                 ),
             ]),
-            Line::from("Press [T] to toggle trading on/off"),
+            Line::from(vec![
+                Span::styled(
+                    "T",
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::from("  Toggle trading"),
+            ]),
         ];
 
         let status_block = Block::default().borders(Borders::ALL).title("Status");
@@ -79,28 +87,46 @@ impl MainMenuScreen {
         let menu_items = vec![
             Line::from(""),
             Line::from(vec![
-                Span::styled("[1] ", Style::default().fg(Color::Yellow)),
-                Span::from("Trading Monitor"),
+                Span::styled(
+                    "1",
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::from("  Trading Monitor"),
             ]),
-            Line::from("     View orderbooks, indicators, orders, balances, trades,"),
-            Line::from("     and manage levels"),
+            Line::from("   Orders, balances, trades, positions, indicators"),
             Line::from(""),
             Line::from(vec![
-                Span::styled("[2] ", Style::default().fg(Color::Yellow)),
-                Span::from("System Monitor"),
+                Span::styled(
+                    "2",
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::from("  System Monitor"),
             ]),
-            Line::from("     View connectivity status, channel health, and system info"),
+            Line::from("   Connectivity, health, system info"),
             Line::from(""),
             Line::from(vec![
-                Span::styled("[3] ", Style::default().fg(Color::Yellow)),
-                Span::from("Live Config"),
+                Span::styled(
+                    "3",
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::from("  Live Config"),
             ]),
-            Line::from("     Replace entire config (levels.json or strategies.json)"),
-            Line::from("     without restart"),
+            Line::from("   Runtime configuration updates"),
             Line::from(""),
             Line::from(vec![
-                Span::styled("[Q] ", Style::default().fg(Color::Yellow)),
-                Span::from("Quit Application"),
+                Span::styled(
+                    "Q",
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::from("  Quit"),
             ]),
         ];
 
@@ -112,14 +138,11 @@ impl MainMenuScreen {
 
         // Footer
         let footer_text = vec![Line::from(vec![
-            Span::styled("Mode: ", Style::default()),
-            Span::from("[Levels]"),
-            Span::from("  "),
-            Span::styled("Exchange: ", Style::default()),
-            Span::from("[Binance]"),
-            Span::from("  "),
-            Span::styled("Uptime: ", Style::default()),
-            Span::from("[0s]"), // TODO: Get actual uptime
+            Span::styled("Mode: ", Style::default().fg(Color::DarkGray)),
+            Span::styled("Levels", Style::default().fg(Color::Cyan)),
+            Span::from("  │  "),
+            Span::styled("Exchange: ", Style::default().fg(Color::DarkGray)),
+            Span::styled("Binance", Style::default().fg(Color::Cyan)),
         ])];
         let footer_paragraph = Paragraph::new(footer_text)
             .alignment(Alignment::Center)
@@ -132,8 +155,8 @@ impl MainMenuScreen {
     pub async fn handle_input_async(app: &mut App, key: KeyCode) -> Result<(), CliError> {
         match key {
             KeyCode::Char('1') => {
-                // TODO: Navigate to Trading Monitor
-                // app.set_screen(Screen::TradingMonitor);
+                // Navigate to Trading Monitor and refresh data
+                app.go_to_trading_monitor().await?;
             }
             KeyCode::Char('2') => {
                 // TODO: Navigate to System Monitor
@@ -146,12 +169,9 @@ impl MainMenuScreen {
             KeyCode::Char('t') | KeyCode::Char('T') => {
                 // Toggle trading
                 let current_status = app.trading_status();
-                let cancelled = app.set_trading_enabled(!current_status).await?;
-                if !cancelled.is_empty() {
-                    // TODO: Show notification about cancelled orders
-                    eprintln!("Cancelled {} orders", cancelled.len());
+                if app.set_trading_enabled(!current_status).await.is_ok() {
+                    let _ = app.refresh_trading_status().await;
                 }
-                // TODO: Show notification about cancelled orders
             }
             KeyCode::Char('q') | KeyCode::Char('Q') => {
                 app.quit();

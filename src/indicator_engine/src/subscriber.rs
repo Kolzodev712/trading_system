@@ -49,13 +49,26 @@ impl MarketDataSubscriber {
                 let pair_smol = orderbook.pair.convert_to_smolstr();
                 let pair_str = pair_smol.as_str();
 
-                // Use StructuredOrderbook methods
-                let bid_price = orderbook
-                    .best_bid_price()
-                    .ok_or_else(|| SubscriberError::MissingPrice(SmolStr::new("bid")))?;
-                let ask_price = orderbook
-                    .best_ask_price()
-                    .ok_or_else(|| SubscriberError::MissingPrice(SmolStr::new("ask")))?;
+                // Check if we have both bid and ask prices
+                // Skip incomplete orderbook updates (transient condition, will be resolved on next update)
+                let (bid_price, ask_price) =
+                    match (orderbook.best_bid_price(), orderbook.best_ask_price()) {
+                        (Some(bid), Some(ask)) => (bid, ask),
+                        (None, _) => {
+                            tracing::debug!(
+                                "Skipping orderbook update for {}: missing bid price",
+                                pair_str
+                            );
+                            return Ok(());
+                        }
+                        (_, None) => {
+                            tracing::debug!(
+                                "Skipping orderbook update for {}: missing ask price",
+                                pair_str
+                            );
+                            return Ok(());
+                        }
+                    };
 
                 // Calculate total volume from structured orderbook
                 let total_volume = orderbook.total_volume();
@@ -66,10 +79,38 @@ impl MarketDataSubscriber {
                 let price_point =
                     PricePoint::from_orderbook(bid_price, ask_price, total_volume, timestamp);
 
+                // Check if we have indicators registered for this pair (not just cached values)
+                // This is a diagnostic check - indicators may be registered but not ready yet
+                let has_indicators = self.calculator.has_indicators_for_pair(pair_str);
+                let indicator_count = self.calculator.get_indicator_ids().len();
+
+                if !has_indicators && indicator_count > 0 {
+                    // Only warn if indicators exist but none are registered for this pair
+                    tracing::warn!(
+                        "Market data received for {} but no indicators registered for this pair. Total indicators: {}",
+                        pair_str,
+                        indicator_count
+                    );
+                }
+
                 // Update calculator with pair information
-                self.calculator
-                    .update(pair_str, price_point)
-                    .map_err(SubscriberError::CalculatorError)?;
+                match self.calculator.update(pair_str, price_point) {
+                    Ok(updated_values) => {
+                        if !updated_values.is_empty() {
+                            tracing::debug!(
+                                "Updated {} indicator(s) for {}: {} values ready",
+                                updated_values.len(),
+                                pair_str,
+                                updated_values.len()
+                            );
+                        }
+                        // Don't log trace for indicators accumulating data - too verbose
+                    }
+                    Err(e) => {
+                        tracing::error!("Error updating indicators for {}: {}", pair_str, e);
+                        return Err(SubscriberError::CalculatorError(e));
+                    }
+                }
             }
             MarketDataUpdate::Trade { trade } => {
                 // Convert pair to string for calculator

@@ -1,9 +1,10 @@
 //! Trading Control Service - Manages trading enable/disable state
+//! This is a general service that can be used by any component that needs to control trading
+
+use crate::traits::TradingClient;
+use crate::types::exchange::OrderRequest;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use trading_core::traits::TradingClient;
-use trading_core::types::exchange::OrderRequest;
-use trading_engine::state::manager::TradingStateManager;
 
 /// Trading Control Service
 /// Manages whether trading is enabled or disabled
@@ -11,19 +12,14 @@ use trading_engine::state::manager::TradingStateManager;
 pub struct TradingControl {
     enabled: Arc<RwLock<bool>>,
     trading_client: Arc<RwLock<dyn TradingClient<OrderRequest>>>,
-    trading_state_manager: Arc<TradingStateManager>,
 }
 
 impl TradingControl {
     /// Create a new TradingControl service
-    pub fn new(
-        trading_client: Arc<RwLock<dyn TradingClient<OrderRequest>>>,
-        trading_state_manager: Arc<TradingStateManager>,
-    ) -> Self {
+    pub fn new(trading_client: Arc<RwLock<dyn TradingClient<OrderRequest>>>) -> Self {
         Self {
             enabled: Arc::new(RwLock::new(true)), // Default to enabled
             trading_client,
-            trading_state_manager,
         }
     }
 
@@ -38,10 +34,11 @@ impl TradingControl {
     }
 
     /// Set trading enabled/disabled
-    /// When disabling, cancels all active orders
+    /// Returns the list of cancelled order IDs if disabling
     pub async fn set_enabled(
         &self,
         enabled: bool,
+        active_order_ids: Vec<crate::types::common::OrderId>,
     ) -> Result<Vec<String>, Box<dyn std::error::Error>> {
         let mut enabled_guard = self.enabled.write().await;
 
@@ -53,7 +50,7 @@ impl TradingControl {
 
         if !enabled {
             // Cancel all active orders
-            let cancelled_orders = self.cancel_all_orders().await?;
+            let cancelled_orders = self.cancel_orders(active_order_ids).await?;
             tracing::info!(
                 "Trading disabled. Cancelled {} active orders",
                 cancelled_orders.len()
@@ -65,14 +62,11 @@ impl TradingControl {
         }
     }
 
-    /// Cancel all active orders
-    async fn cancel_all_orders(&self) -> Result<Vec<String>, Box<dyn std::error::Error>> {
-        let state_arc = self.trading_state_manager.get_state();
-        let state = state_arc.read().await;
-        let active_orders: Vec<_> = state.active_orders.values().collect();
-        let order_ids: Vec<_> = active_orders.iter().map(|o| o.order_id.clone()).collect();
-        drop(state); // Release the lock before awaiting cancel operations
-
+    /// Cancel a list of orders
+    async fn cancel_orders(
+        &self,
+        order_ids: Vec<crate::types::common::OrderId>,
+    ) -> Result<Vec<String>, Box<dyn std::error::Error>> {
         let mut cancelled_order_ids = Vec::new();
         let client = self.trading_client.write().await;
 

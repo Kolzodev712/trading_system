@@ -9,7 +9,7 @@ use trading_core::channels::indicators::IndicatorUpdateSender;
 use trading_core::channels::market_data::MarketDataUpdateReceiver;
 
 pub struct IndicatorService {
-    calculator: Arc<IndicatorCalculator>,
+    pub(crate) calculator: Arc<IndicatorCalculator>,
     subscriber: Option<MarketDataSubscriber>,
     publisher: Option<IndicatorPublisher>,
     persistence: Option<Arc<IndicatorPersistence>>,
@@ -68,24 +68,46 @@ impl IndicatorService {
     }
 
     /// Load all indicators from MongoDB
-    pub async fn load_from_mongo(&self) -> Result<(), ServiceError> {
+    /// Returns the number of indicators successfully loaded
+    pub async fn load_from_mongo(&self) -> Result<usize, ServiceError> {
         if let Some(persistence) = &self.persistence {
             match persistence.load_all_indicators().await {
                 Ok(indicators) => {
-                    let count = indicators.len();
+                    let total_count = indicators.len();
+                    let mut success_count = 0;
                     for config in indicators {
                         if let Err(e) = self.calculator.register_indicator(config) {
                             tracing::warn!("Failed to register indicator from MongoDB: {}", e);
+                        } else {
+                            success_count += 1;
                         }
                     }
-                    tracing::info!("Loaded {} indicators from MongoDB", count);
+                    tracing::info!(
+                        "Loaded {} indicators from MongoDB ({} successful, {} failed)",
+                        total_count,
+                        success_count,
+                        total_count - success_count
+                    );
+                    Ok(success_count)
                 }
                 Err(e) => {
                     tracing::warn!("Failed to load indicators from MongoDB: {}", e);
+                    Err(ServiceError::PersistenceError(format!(
+                        "Failed to load indicators: {}",
+                        e
+                    )))
                 }
             }
+        } else {
+            Err(ServiceError::PersistenceError(
+                "MongoDB persistence not enabled".to_string(),
+            ))
         }
-        Ok(())
+    }
+
+    /// Get the number of registered indicators
+    pub fn get_indicator_count(&self) -> usize {
+        self.calculator.get_indicator_ids().len()
     }
 
     /// Get indicator value (latest)
@@ -128,6 +150,16 @@ impl IndicatorService {
             .get_value_by_pair_and_name(pair, indicator_name)
     }
 
+    /// Get all current indicator values (latest per indicator)
+    pub fn get_all_values(&self) -> Vec<crate::data::IndicatorValue> {
+        self.calculator.get_all_current_values()
+    }
+
+    /// Get a reference to the calculator (for direct access without locking the service)
+    pub fn calculator(&self) -> Arc<crate::calculator::IndicatorCalculator> {
+        self.calculator.clone()
+    }
+
     /// Start the service (run subscriber and publisher)
     pub async fn run(&mut self) -> Result<(), ServiceError> {
         let mut subscriber = self.subscriber.take().ok_or(ServiceError::NotInitialized)?;
@@ -155,4 +187,7 @@ pub enum ServiceError {
 
     #[error("Publisher error: {0}")]
     PublisherError(#[from] crate::publisher::PublisherError),
+
+    #[error("Persistence error: {0}")]
+    PersistenceError(String),
 }

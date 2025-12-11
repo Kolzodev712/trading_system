@@ -393,7 +393,9 @@ impl<S: Strategy> StrategyExecutor<S> {
                         // Check if trading is enabled
                         if let Some(ref trading_enabled) = self.trading_enabled {
                             if !*trading_enabled.read().await {
-                                debug!("Trading is disabled, skipping order placement");
+                                tracing::warn!(
+                                    "Trading is disabled - blocking order placement from strategy"
+                                );
                                 continue;
                             }
                         }

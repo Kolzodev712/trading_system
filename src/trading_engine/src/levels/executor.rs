@@ -163,6 +163,10 @@ impl LevelExecutor {
         // Check if trading is enabled
         if let Some(ref trading_enabled) = self.trading_enabled {
             if !*trading_enabled.read().await {
+                tracing::warn!(
+                    "Trading is disabled - blocking order placement for level {}",
+                    level.config.id
+                );
                 return Err(EngineError::CustomError(anyhow::anyhow!(
                     "Trading is disabled"
                 )));

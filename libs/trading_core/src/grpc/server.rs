@@ -2,23 +2,19 @@
 //! Note: This provides utilities, NOT proto definitions
 //! Each service defines its own proto files
 
-use tonic::transport::Server;
+use std::net::SocketAddr;
 
-/// Helper function to create a server builder
-///
-/// Example:
-/// ```ignore
-/// let server = create_server_builder()
-///     .add_service(MyServiceServer::new(my_service))
-///     .serve(addr)
-///     .await?;
-/// ```
-pub fn create_server_builder() -> Server {
-    Server::builder()
+/// Check if a port is available for binding
+/// Returns Ok(()) if available, Err with message if not
+pub async fn check_port_available(addr: SocketAddr) -> Result<(), String> {
+    match tokio::net::TcpListener::bind(&addr).await {
+        Ok(_) => {
+            tracing::info!("[gRPC] Port {} is available", addr);
+            Ok(())
+        }
+        Err(e) => {
+            tracing::error!("[gRPC] Cannot bind to {}: {}", addr, e);
+            Err(format!("Port {} is already in use: {}", addr, e))
+        }
+    }
 }
-
-// Note: Services should typically use Server::builder() directly:
-// Server::builder()
-//     .add_service(MyServiceServer::new(my_service))
-//     .serve(addr)
-//     .await?;

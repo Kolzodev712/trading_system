@@ -44,9 +44,12 @@ impl StateReconciler {
     /// Perform initial bootstrap reconciliation
     ///
     /// Fetches balances, orders, and trades from REST API to initialize state.
+    /// NOTE: The actual state update is done in ExchangeStateManager::bootstrap_reconcile
+    /// This method just returns the reconciliation result for logging.
     pub async fn bootstrap_reconcile(
         &self,
         _configured_pairs: &[Pair],
+        exchange_state: Arc<RwLock<ExchangeState>>,
     ) -> Result<ReconciliationResult, EngineError> {
         if !self.enabled {
             info!("Bootstrap reconciliation skipped (disabled)");
@@ -55,13 +58,15 @@ impl StateReconciler {
 
         info!("Starting bootstrap reconciliation (exchange-level: WS vs REST)");
 
-        // Fetch balances, orders, trades from REST
-        let balances = self.trading_client.read().await.fetch_balance().await?;
+        // Count balances in state (already updated by ExchangeStateManager::bootstrap_reconcile)
+        let state = exchange_state.read().await;
+        let balance_count = state.get_balances().len();
+        drop(state);
 
         // Note: fetch_open_orders and fetch_trades may not be implemented yet
         // For now, we'll just return the counts we fetched
         let result = ReconciliationResult {
-            balances_fetched: balances.len(),
+            balances_fetched: balance_count,
             orders_fetched: 0,
             trades_fetched: 0,
             discrepancies: Vec::new(),

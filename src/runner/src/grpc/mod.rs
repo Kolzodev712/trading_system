@@ -1,6 +1,5 @@
 pub mod server;
 pub mod service;
-pub mod trading_control;
 
 // Include the generated protobuf code
 #[allow(clippy::all)]

@@ -6,7 +6,7 @@
 
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{debug, error, warn};
+use tracing::{debug, error, info, warn};
 use trading_core::{
     channels::exchange::ExchangeUpdateSender,
     error::EngineError,
@@ -232,7 +232,22 @@ impl ExchangeStateManager {
         &self,
         configured_pairs: &[Pair],
     ) -> Result<super::reconciler::ReconciliationResult, EngineError> {
-        self.reconciler.bootstrap_reconcile(configured_pairs).await
+        // Fetch balances from REST and update ExchangeStateManager
+        let balances = self.trading_client.read().await.fetch_balance().await?;
+
+        {
+            let mut state = self.state.write().await;
+            state.update_balances(balances.clone());
+        }
+        info!(
+            "Bootstrap: Updated ExchangeStateManager with {} balances",
+            balances.len()
+        );
+
+        // Call reconciler for the result (it will log the counts)
+        self.reconciler
+            .bootstrap_reconcile(configured_pairs, self.state.clone())
+            .await
     }
 
     /// Start periodic WS vs REST reconciliation

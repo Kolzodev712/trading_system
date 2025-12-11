@@ -20,6 +20,9 @@ pub struct IndicatorUpdate {
     pub timestamp: u64,
     /// Period/length of the indicator
     pub period: usize,
+
+    /// Whether this indicator is composite (built from multiple inputs)
+    pub is_composite: bool,
 }
 
 /// Indicator update channel sender (broadcast for fan-out)

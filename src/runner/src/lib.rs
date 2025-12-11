@@ -8,10 +8,10 @@ use market_data_engine::{
     config::{ExchangeConfig as MDExchangeConfig, MarketDataConfig},
     driver::{MarketDataDriver, Method},
 };
+use tokio::sync::Mutex;
 
 use crate::config::{BotConfig, StrategiesConfig};
 use crate::grpc::server::TradingGrpcServer;
-use crate::grpc::trading_control::TradingControl;
 use crate::shutdown::ShutdownManager;
 use live_config::{LiveConfigClient, LiveConfigService};
 use std::collections::HashSet;
@@ -20,6 +20,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
 use tracing::{error, info, warn};
+use trading_core::grpc::TradingControl;
 use trading_core::persistence::mongo::client::MongoClient;
 use trading_core::traits::TradingClient;
 use trading_core::types::common::{Exchange, Pair};
@@ -77,13 +78,16 @@ pub struct SharedServices {
     pub exec_report_rx: trading_core::channels::exchange::ExchangeUpdateReceiver,
     pub market_data_rx: trading_core::channels::market_data::MarketDataUpdateReceiver,
     pub indicator_rx: trading_core::channels::indicators::IndicatorUpdateReceiver,
+    pub indicator_service: Arc<Mutex<IndicatorService>>,
+    pub indicator_calculator: Arc<indicator_engine::calculator::IndicatorCalculator>,
     pub shutdown_manager: ShutdownManager,
     pub market_data_handle: JoinHandle<()>,
     pub trading_ws_handle: JoinHandle<()>,
     pub indicator_handle: JoinHandle<()>,
     pub trading_state_manager: Arc<trading_engine::state::manager::TradingStateManager>,
+    pub exchange_state_manager: Arc<exchange_engine::state::manager::ExchangeStateManager>,
     pub asset_service: Option<Arc<AssetService>>,
-    pub trading_control: Option<Arc<grpc::trading_control::TradingControl>>,
+    pub trading_control: Option<Arc<trading_core::grpc::TradingControl>>,
 }
 
 /// Run strategies mode
@@ -136,22 +140,24 @@ pub async fn strategy_runner(
         bot_config.reconciliation.trading_level_interval_ms / 1000;
 
     // Create TradingControl for enable/disable trading
-    let trading_control = Arc::new(crate::grpc::trading_control::TradingControl::new(
-        services.trading_client.clone(),
-        services.trading_state_manager.clone(),
-    ));
+    let trading_control = Arc::new(TradingControl::new(services.trading_client.clone()));
 
     // Create a dummy LevelManager for gRPC server (not used in strategies mode, but required by server)
     let dummy_level_manager = Arc::new(RwLock::new(LevelManager::new()));
 
-    // Start gRPC server for CLI
-    let grpc_addr: std::net::SocketAddr = "[::1]:50051"
+    // Start gRPC server for CLI (use the same TradingControl instance)
+    // Bind to :: (IPv6 wildcard) to accept both IPv4 and IPv6 connections
+    let grpc_addr: std::net::SocketAddr = "[::]:50051"
         .parse()
         .map_err(|e| format!("Failed to parse gRPC address: {}", e))?;
     let grpc_server = TradingGrpcServer::new(
         dummy_level_manager.clone(),
         services.trading_state_manager.clone(),
         services.trading_client.clone(),
+        services.exchange_state_manager.clone(),
+        services.indicator_service.clone(),
+        services.indicator_calculator.clone(),
+        trading_control.clone(), // Pass the same TradingControl instance
     );
     let grpc_handle = grpc_server.start(grpc_addr).await?;
     info!("gRPC server started on {}", grpc_addr);
@@ -346,10 +352,7 @@ pub async fn level_runner(
     let config_min_notional = rust_decimal::Decimal::new(5, 0); // 5.0
 
     // Create TradingControl for enable/disable trading
-    let trading_control = Arc::new(TradingControl::new(
-        services.trading_client.clone(),
-        services.trading_state_manager.clone(),
-    ));
+    let trading_control = Arc::new(TradingControl::new(services.trading_client.clone()));
 
     let level_executor = Arc::new(
         LevelExecutor::new(
@@ -370,14 +373,19 @@ pub async fn level_runner(
     // Wrap level_manager in Arc<RwLock<>> for sharing with LiveConfig and event loop
     let level_manager = Arc::new(RwLock::new(level_manager));
 
-    // Start gRPC server for CLI
-    let grpc_addr: std::net::SocketAddr = "[::1]:50051"
+    // Start gRPC server for CLI (use the same TradingControl instance)
+    // Bind to :: (IPv6 wildcard) to accept both IPv4 and IPv6 connections
+    let grpc_addr: std::net::SocketAddr = "[::]:50051"
         .parse()
         .map_err(|e| format!("Failed to parse gRPC address: {}", e))?;
     let grpc_server = TradingGrpcServer::new(
         level_manager.clone(),
         services.trading_state_manager.clone(),
         services.trading_client.clone(),
+        services.exchange_state_manager.clone(),
+        services.indicator_service.clone(),
+        services.indicator_calculator.clone(),
+        trading_control.clone(), // Pass the same TradingControl instance
     );
     let grpc_handle = grpc_server.start(grpc_addr).await?;
     info!("gRPC server started on {}", grpc_addr);
@@ -625,29 +633,40 @@ fn load_pair_from_strategies_config(path: &str) -> Result<Pair, Box<dyn std::err
 }
 
 /// Initialize MongoDB client if enabled
-pub async fn initialize_mongodb(bot_config: &BotConfig) -> Option<Arc<MongoClient>> {
+/// Initialize MongoDB connection
+///
+/// MongoDB is REQUIRED for the trading system to operate.
+/// This function will fail if MongoDB is not available or connection fails.
+pub async fn initialize_mongodb(
+    bot_config: &BotConfig,
+) -> Result<Arc<MongoClient>, Box<dyn std::error::Error>> {
     if !bot_config.mongo.enabled {
-        return None;
+        return Err("MongoDB is required but is disabled in configuration. Set 'mongo.enabled' to true in config/bot.json".into());
     }
 
-    match MongoClient::new(
+    info!(
+        "Connecting to MongoDB at {}/{}...",
+        bot_config.mongo.connection_string, bot_config.mongo.database
+    );
+
+    let client = MongoClient::new(
         bot_config.mongo.connection_string.as_str(),
         bot_config.mongo.database.as_str(),
     )
     .await
-    {
-        Ok(client) => {
-            info!(
-                "MongoDB: Connected to {}/{}",
-                bot_config.mongo.connection_string, bot_config.mongo.database
-            );
-            Some(Arc::new(client))
-        }
-        Err(e) => {
-            error!("MongoDB: Connection failed: {e}");
-            None
-        }
-    }
+    .map_err(|e| {
+        format!(
+            "MongoDB connection failed: {}. Make sure MongoDB is running and accessible at {}",
+            e, bot_config.mongo.connection_string
+        )
+    })?;
+
+    info!(
+        "MongoDB: Connected to {}/{}",
+        bot_config.mongo.connection_string, bot_config.mongo.database
+    );
+
+    Ok(Arc::new(client))
 }
 
 /// Setup Ctrl-C shutdown handler
@@ -796,46 +815,74 @@ pub fn initialize_market_data_engine(
 }
 
 /// Initialize Indicator Service
-/// Returns both the service handle and the indicator update receiver for use by runners
+/// Returns the service, handle, and calculator reference for use by runners
+/// MongoDB is REQUIRED for indicator persistence
 pub async fn initialize_indicator_service(
     bot_config: &BotConfig,
-    mongo_client: Option<&Arc<MongoClient>>,
+    mongo_client: &Arc<MongoClient>,
     market_data_rx: trading_core::channels::market_data::MarketDataUpdateReceiver,
     indicator_tx: trading_core::channels::indicators::IndicatorUpdateSender,
     shutdown_manager: &ShutdownManager,
-) -> Result<JoinHandle<()>, Box<dyn std::error::Error>> {
+) -> Result<
+    (
+        Arc<Mutex<IndicatorService>>,
+        JoinHandle<()>,
+        Arc<indicator_engine::calculator::IndicatorCalculator>,
+    ),
+    Box<dyn std::error::Error>,
+> {
     let default_pair = extract_bot_pair(bot_config)?;
 
-    info!(
-        "Initializing Indicator Service (MongoDB persistence: {})...",
-        if mongo_client.is_some() {
-            "enabled"
-        } else {
-            "disabled"
-        }
-    );
+    info!("Initializing Indicator Service (MongoDB persistence: enabled)...");
 
     let indicator_market_data_rx = market_data_rx.resubscribe();
 
-    let mut indicator_service = if let Some(client) = mongo_client {
-        let persistence = Arc::new(indicator_engine::persistence::IndicatorPersistence::new(
-            client.as_ref().clone(),
-        ));
-        IndicatorService::new().with_persistence(persistence)
-    } else {
-        IndicatorService::new()
+    // Create indicator service with MongoDB persistence (required)
+    let persistence = Arc::new(indicator_engine::persistence::IndicatorPersistence::new(
+        mongo_client.as_ref().clone(),
+    ));
+    let indicator_service = Arc::new(Mutex::new(
+        IndicatorService::new().with_persistence(persistence),
+    ));
+
+    indicator_service
+        .lock()
+        .await
+        .initialize(indicator_market_data_rx, indicator_tx, 1);
+
+    // Load indicators from MongoDB (required)
+    let loaded_count = match indicator_service.lock().await.load_from_mongo().await {
+        Ok(count) => count,
+        Err(e) => {
+            return Err(format!(
+                "Failed to load indicators from MongoDB: {}. Make sure MongoDB is running and contains indicator configurations.",
+                e
+            ).into());
+        }
     };
 
-    indicator_service.initialize(indicator_market_data_rx, indicator_tx, 1);
-
-    if mongo_client.is_some() {
-        if let Err(e) = indicator_service.load_from_mongo().await {
-            warn!("Failed to load indicators from MongoDB: {e}");
-        }
+    // Verify indicators were loaded from MongoDB
+    if loaded_count == 0 {
+        warn!(
+            "WARNING: No indicators loaded from MongoDB. The database may be empty or indicators haven't been configured yet."
+        );
+        warn!(
+            "To add indicators, use the indicator management API or ensure indicators are configured in MongoDB collection 'indicators'."
+        );
+        warn!(
+            "The system will continue with default indicators (SMA, EMA), but trading may be limited without proper indicator configuration."
+        );
+    } else {
+        info!(
+            "Successfully loaded {} indicator(s) from MongoDB",
+            loaded_count
+        );
     }
 
     // Register default indicators
     let pair_str = default_pair.convert_to_smolstr();
+    info!("Registering default indicators for pair: {}", pair_str);
+
     let sma_config = indicator_engine::indicators::IndicatorConfig {
         id: smol_str::SmolStr::new(format!("sma_20_{}", pair_str)),
         name: smol_str::SmolStr::new("SMA"),
@@ -843,34 +890,75 @@ pub async fn initialize_indicator_service(
         period: 20,
         source: indicator_engine::indicators::PriceSource::Close,
     };
-    if let Err(e) = indicator_service.register_indicator(sma_config).await {
+    if let Err(e) = indicator_service
+        .lock()
+        .await
+        .register_indicator(sma_config.clone())
+        .await
+    {
         warn!("Failed to register SMA indicator: {e}");
+    } else {
+        info!(
+            "Registered SMA indicator: {} for pair: {}",
+            sma_config.id, pair_str
+        );
     }
 
     let ema_config = indicator_engine::indicators::IndicatorConfig {
         id: smol_str::SmolStr::new(format!("ema_12_{}", pair_str)),
         name: smol_str::SmolStr::new("EMA"),
-        pair: pair_str,
+        pair: pair_str.clone(),
         period: 12,
         source: indicator_engine::indicators::PriceSource::Close,
     };
-    if let Err(e) = indicator_service.register_indicator(ema_config).await {
+    if let Err(e) = indicator_service
+        .lock()
+        .await
+        .register_indicator(ema_config.clone())
+        .await
+    {
         warn!("Failed to register EMA indicator: {e}");
+    } else {
+        info!(
+            "Registered EMA indicator: {} for pair: {}",
+            ema_config.id, pair_str
+        );
     }
 
+    // Log total indicator count after registration
+    let total_indicators = indicator_service.lock().await.get_indicator_count();
+    info!(
+        "Total indicators registered: {} (pair: {})",
+        total_indicators, pair_str
+    );
+
+    // Get calculator reference BEFORE spawning the task (which will hold the lock forever)
+    let indicator_calculator = {
+        let service = indicator_service.lock().await;
+        service.calculator()
+    };
+
     let mut shutdown_rx = shutdown_manager.subscribe();
-    Ok(tokio::spawn(async move {
-        tokio::select! {
-            result = indicator_service.run() => {
-                if let Err(e) = result {
-                    error!("Indicator service error: {e}");
+    let indicator_for_task = indicator_service.clone();
+    Ok((
+        indicator_service,
+        tokio::spawn(async move {
+            tokio::select! {
+                result = async {
+                    let mut guard = indicator_for_task.lock().await;
+                    guard.run().await
+                } => {
+                    if let Err(e) = result {
+                        error!("Indicator service error: {e}");
+                    }
+                }
+                _ = shutdown_rx.recv() => {
+                    info!("Indicator service shutting down");
                 }
             }
-            _ = shutdown_rx.recv() => {
-                info!("Indicator service shutting down");
-            }
-        }
-    }))
+        }),
+        indicator_calculator,
+    ))
 }
 
 /// Initialize Exchange Engine

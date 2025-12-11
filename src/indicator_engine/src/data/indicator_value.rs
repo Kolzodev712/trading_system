@@ -21,4 +21,7 @@ pub struct IndicatorValue {
 
     /// Period/length of the indicator
     pub period: usize,
+
+    /// Whether this indicator is a composite (built from multiple inputs)
+    pub is_composite: bool,
 }

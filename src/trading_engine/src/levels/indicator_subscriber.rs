@@ -38,6 +38,7 @@ impl IndicatorSubscriber {
                         value: update.value,
                         timestamp: update.timestamp,
                         period: update.period,
+                        is_composite: update.is_composite,
                     };
 
                     let mut indicators = self.indicators.write().await;

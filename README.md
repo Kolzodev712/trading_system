@@ -457,7 +457,107 @@ cargo build --release
 cargo build
 ```
 
-### 4. Check Dependencies
+### 4. Docker Installation (Alternative)
+
+The system can be run using Docker containers, which simplifies deployment and dependency management.
+
+**📖 For detailed Docker instructions, see [DOCKER.md](architecture/DOCKER.md)**
+
+#### Prerequisites
+- Docker 20.10+ and Docker Compose 2.0+
+
+#### Quick Start with Docker Compose
+
+```bash
+# Start all services (MongoDB + Trading System)
+docker-compose up -d
+
+# View logs
+docker-compose logs -f trading-system
+
+# Stop all services
+docker-compose down
+
+# Stop and remove volumes (clean slate)
+docker-compose down -v
+```
+
+#### Building Docker Images
+
+```bash
+# Build runner image
+docker build -t trading-system:latest -f Dockerfile .
+
+# Build CLI image
+docker build -t trading-system-cli:latest -f Dockerfile.cli .
+```
+
+#### Running with Docker
+
+**Trading System Runner:**
+```bash
+# Run in levels mode (default)
+docker run -d \
+  --name trading-system \
+  -p 50051:50051 \
+  -p 8080:8080 \
+  -v $(pwd)/config:/app/config:ro \
+  --network trading-network \
+  trading-system:latest
+
+# Run in strategies mode
+docker run -d \
+  --name trading-system \
+  -p 50051:50051 \
+  -p 8080:8080 \
+  -v $(pwd)/config:/app/config:ro \
+  trading-system:latest \
+  --mode strategies --strategies-config /app/config/strategies.json
+```
+
+**TUI CLI (Interactive):**
+```bash
+# Run TUI CLI connected to trading system
+docker run -it --rm \
+  --network trading-network \
+  trading-system-cli:latest \
+  http://trading-system:50051
+
+# Or connect to localhost (if runner is on host)
+docker run -it --rm \
+  --network host \
+  trading-system-cli:latest \
+  http://localhost:50051
+```
+
+#### Docker Architecture
+
+**Why Separate Containers?**
+
+1. **Runner Container**: Long-running service with gRPC server
+   - Runs continuously
+   - Handles trading logic
+   - Exposes gRPC (50051) and health (8080) ports
+
+2. **TUI CLI Container**: Interactive terminal interface
+   - Run on-demand when needed
+   - Connects to runner via gRPC
+   - Requires interactive terminal (`-it` flag)
+
+3. **MongoDB Container**: Configuration persistence
+   - Optional but recommended
+   - Managed via docker-compose
+
+**Benefits:**
+- ✅ Isolated dependencies
+- ✅ Consistent environment
+- ✅ Easy deployment
+- ✅ Resource management
+- ✅ Network isolation
+
+**Note**: The TUI CLI is typically run manually when needed, not as a long-running service. Use `docker-compose` for the runner and MongoDB, then run the CLI container interactively when you need to monitor or manage levels.
+
+### 5. Check Dependencies
 
 Use the provided script to check and start dependencies:
 
@@ -828,6 +928,76 @@ cargo test --test integration
 # Run with coverage (requires cargo-tarpaulin)
 cargo tarpaulin --tests --test integration
 ```
+
+## CI/CD
+
+The project includes a GitHub Actions CI pipeline that runs automatically on every commit and pull request.
+
+### GitHub Actions Workflow
+
+The CI pipeline (`.github/workflows/ci.yml`) includes:
+
+1. **Code Formatting Check** (`fmt`)
+   - Verifies code follows Rust formatting standards
+   - Uses `cargo fmt --check`
+
+2. **Linting** (`clippy`)
+   - Runs Clippy with all warnings as errors
+   - Catches common Rust issues and anti-patterns
+
+3. **Build Verification** (`build`)
+   - Builds all packages (runner, trading-cli)
+   - Tests both modes (levels, strategies)
+   - Ensures code compiles successfully
+
+4. **Unit Tests** (`test`)
+   - Runs all unit tests
+   - Fast feedback on core functionality
+
+5. **Integration Tests** (`integration-test`)
+   - Runs integration tests (excluding ignored tests)
+   - Validates service interactions
+   - Excludes external API calls
+
+6. **Cargo Check** (`check`)
+   - Verifies all packages compile
+   - Catches compilation errors early
+
+7. **Docker Build** (`docker-build`)
+   - Validates Docker images build successfully
+   - Tests multi-stage builds
+   - Uses Docker layer caching
+
+### Running CI Locally
+
+You can run CI checks locally:
+
+```bash
+# Check formatting
+cargo fmt --all -- --check
+
+# Run clippy
+cargo clippy --all-targets --all-features -- -D warnings
+
+# Run all tests (excluding ignored)
+cargo test --test integration
+
+# Build all packages
+cargo build --release --package runner
+cargo build --release --bin trading-cli
+
+# Check all packages
+cargo check --all-targets --all-features
+```
+
+### CI Configuration
+
+The CI workflow is configured to:
+- Run on all branches (`branches: ['*']`)
+- Run on push and pull request events
+- Cache Cargo dependencies for faster builds
+- Use stable Rust toolchain
+- Run tests in parallel where possible
 
 ## Maintenance
 

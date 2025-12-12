@@ -1,0 +1,61 @@
+# Multi-stage build for TUI CLI
+FROM rust:1.75-slim as builder
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y \
+    pkg-config \
+    libssl-dev \
+    ca-certificates \
+    protobuf-compiler \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set working directory
+WORKDIR /app
+
+# Copy workspace files
+COPY Cargo.toml Cargo.lock ./
+COPY rust-toolchain.toml ./
+
+# Copy workspace members
+COPY libs/trading_core ./libs/trading_core
+COPY cli ./cli
+
+# Build dependencies first (caching layer)
+RUN cargo build --release --package cli --bin trading-cli || true
+
+# Copy source code (this invalidates cache if source changes)
+COPY . .
+
+# Build the CLI binary (from cli package)
+RUN cargo build --release --package cli --bin trading-cli
+
+# Runtime stage
+FROM debian:bookworm-slim
+
+# Install runtime dependencies
+RUN apt-get update && apt-get install -y \
+    ca-certificates \
+    libssl3 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create app user
+RUN useradd -m -u 1000 appuser
+
+# Set working directory
+WORKDIR /app
+
+# Copy binary from builder
+COPY --from=builder /app/target/release/trading-cli /app/trading-cli
+
+# Create logs directory
+RUN mkdir -p /app/logs && chown -R appuser:appuser /app
+
+# Switch to non-root user
+USER appuser
+
+# Note: TUI CLI is interactive and requires terminal
+# It should be run with: docker run -it --rm trading-system-cli [endpoint]
+# Default endpoint: http://trading-system:50051 (when using docker-compose)
+
+ENTRYPOINT ["/app/trading-cli"]
+

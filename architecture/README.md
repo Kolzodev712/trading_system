@@ -58,6 +58,14 @@ This directory contains detailed architectural documentation for each service an
    - Real-time monitoring
    - Level management and trading control
 
+### Deployment & Operations
+
+10. **[Docker Guide](DOCKER.md)**
+    - Docker containerization
+    - Docker Compose setup
+    - Running the system and CLI in containers
+    - Troubleshooting and common commands
+
 ## Architecture Principles
 
 ### State Management
@@ -135,6 +143,7 @@ All services are configured via:
 
 ## Related Documentation
 
-- [Architecture Summary](../proposals/00-ARCHITECTURE-SUMMARY.md): Complete system overview
-- [Run CLI Guide](../proposals/RUN_CLI.md): CLI usage guide
+- [Architecture Summary](../ARCHITECTURE.md): Complete system overview
+- [Docker Guide](DOCKER.md): Docker deployment guide
+- [README](../README.md): User guide and usage instructions
 

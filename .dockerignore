@@ -1,0 +1,67 @@
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Rust
+target/
+**/*.rs.bk
+*.pdb
+# Note: Cargo.lock should be included for reproducible builds
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Documentation
+*.md
+!README.md
+docs/
+architecture/
+proposals/
+
+# Logs
+*.log
+logs/
+cli_debug.log
+
+# Test files
+tests/
+**/*_test.rs
+**/test_*.rs
+# Exclude test binaries from Docker build
+**/bin/test_*.rs
+
+# Build artifacts
+*.o
+*.a
+*.so
+*.dylib
+*.dll
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+Dockerfile*
+docker-compose*.yml
+.dockerignore
+
+# CI/CD
+.github/
+
+# Config (will be mounted as volume)
+# config/
+
+# Scripts
+scripts/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+

@@ -850,21 +850,25 @@ pub async fn initialize_indicator_service(
         .await
         .initialize(indicator_market_data_rx, indicator_tx, 1);
 
-    // Load indicators from MongoDB (required)
+    // Load indicators from MongoDB (non-fatal - system can run without pre-configured indicators)
     let loaded_count = match indicator_service.lock().await.load_from_mongo().await {
-        Ok(count) => count,
+        Ok(count) => {
+            info!("Loaded {} indicator(s) from MongoDB", count);
+            count
+        }
         Err(e) => {
-            return Err(format!(
-                "Failed to load indicators from MongoDB: {}. Make sure MongoDB is running and contains indicator configurations.",
+            warn!(
+                "Failed to load indicators from MongoDB: {}. System will continue without pre-configured indicators. You can add indicators via the API or they will be created on-demand.",
                 e
-            ).into());
+            );
+            0 // Continue with 0 indicators - system can still work
         }
     };
 
-    // Verify indicators were loaded from MongoDB
+    // Log indicator status (non-fatal warning if none loaded)
     if loaded_count == 0 {
         warn!(
-            "WARNING: No indicators loaded from MongoDB. The database may be empty or indicators haven't been configured yet."
+            "WARNING: No indicators loaded from MongoDB. The database may be empty or indicators haven't been configured yet. System will continue and indicators can be created on-demand."
         );
         warn!(
             "To add indicators, use the indicator management API or ensure indicators are configured in MongoDB collection 'indicators'."

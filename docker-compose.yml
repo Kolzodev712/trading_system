@@ -1,0 +1,82 @@
+version: '3.8'
+
+services:
+  # MongoDB for configuration persistence
+  mongodb:
+    image: mongo:7.0
+    container_name: trading-system-mongodb
+    restart: unless-stopped
+    ports:
+      - "27018:27017"  # Use different host port to avoid conflict with host MongoDB
+    environment:
+      MONGO_INITDB_DATABASE: trading_system
+    volumes:
+      - mongodb_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - trading-network
+
+  # Trading System Runner (main service)
+  trading-system:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: trading-system
+    restart: unless-stopped
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    ports:
+      - "50051:50051"  # gRPC
+      - "8080:8080"    # Health endpoint
+    environment:
+      - RUST_LOG=info
+    volumes:
+      - ./config:/app/config:ro  # Mount config as read-only
+      - trading-logs:/app/logs
+    networks:
+      - trading-network
+    # Override command if needed
+    # command: ["/app/trading-system", "--mode", "strategies", "--strategies-config", "/app/config/strategies.json"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 40s
+      retries: 3
+
+  # TUI CLI (interactive - run manually when needed)
+  # Note: This service is defined but typically run manually with docker run
+  # Uncomment the service below if you want to use docker-compose run/exec
+  # trading-cli:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile.cli
+  #   container_name: trading-cli
+  #   depends_on:
+  #     trading-system:
+  #       condition: service_healthy
+  #   environment:
+  #     - RUST_LOG=debug
+  #   networks:
+  #     - trading-network
+  #   stdin_open: true
+  #   tty: true
+  #   command: ["http://trading-system:50051"]
+  #   profiles:
+  #     - cli  # Only start with --profile cli
+
+volumes:
+  mongodb_data:
+    driver: local
+  trading-logs:
+    driver: local
+
+networks:
+  trading-network:
+    driver: bridge
+

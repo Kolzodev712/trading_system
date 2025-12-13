@@ -1,0 +1,79 @@
+{
+  "levels": [
+    {
+      "id": "buy_level_1",
+      "name": "Buy at SMA-2%",
+      "symbol": {
+        "base": "BTC",
+        "quote": "USDC"
+      },
+      "side": "Buy",
+      "order_type": "Limit",
+      "quantity": {
+        "type": "Fixed",
+        "value": "0.001"
+      },
+      "price": {
+        "Indicator": {
+          "indicator_name": "sma_20_btcusdc",
+          "offset_type": "PercentBelow",
+          "offset_value": "2.0"
+        }
+      },
+      "risk": {
+        "max_position": "0.01",
+        "max_orders": 2,
+        "daily_loss_limit": "50.0"
+      },
+      "lifecycle": {
+        "auto_repost": true,
+        "auto_repost_on_cancel": true,
+        "max_reposts": null,
+        "repost_delay_secs": 5,
+        "repost_conditions": []
+      },
+      "enabled": true,
+      "group": "main_strategy"
+    },
+    {
+      "id": "sell_level_1",
+      "name": "Sell at SMA+2%",
+      "symbol": {
+        "base": "BTC",
+        "quote": "USDC"
+      },
+      "side": "Sell",
+      "order_type": "Limit",
+      "quantity": {
+        "type": "Fixed",
+        "value": "0.001"
+      },
+      "price": {
+        "Indicator": {
+          "indicator_name": "sma_20_btcusdc",
+          "offset_type": "PercentAbove",
+          "offset_value": "2.0"
+        }
+      },
+      "risk": {
+        "max_position": "0.01",
+        "max_orders": 2
+      },
+      "lifecycle": {
+        "auto_repost": true,
+        "auto_repost_on_cancel": true,
+        "repost_delay_secs": 5
+      },
+      "enabled": true,
+      "group": "main_strategy"
+    }
+  ],
+  "risk_limits": {
+    "total_max_position": "0.1",
+    "max_total_orders": 20,
+    "daily_loss_limit_all_pairs": "500.0",
+    "daily_loss_limit_per_pair": {
+      "BTCUSDC": "200.0"
+    }
+  }
+}

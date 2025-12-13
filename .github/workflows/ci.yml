@@ -40,6 +40,9 @@ jobs:
           toolchain: stable
           components: clippy
       
+      - name: Install protobuf compiler
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+      
       - name: Cache cargo registry
         uses: actions/cache@v4
         with:
@@ -74,6 +77,9 @@ jobs:
         with:
           toolchain: stable
       
+      - name: Install protobuf compiler
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+      
       - name: Cache cargo registry
         uses: actions/cache@v4
         with:
@@ -90,7 +96,7 @@ jobs:
           if [ "${{ matrix.package }}" = "runner" ]; then
             cargo build --release --package runner
           elif [ "${{ matrix.package }}" = "trading-cli" ]; then
-            cargo build --release --bin trading-cli
+            cargo build --release --package cli --bin trading-cli
           fi
 
   # Run unit tests
@@ -104,6 +110,9 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
+      
+      - name: Install protobuf compiler
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
       
       - name: Cache cargo registry
         uses: actions/cache@v4
@@ -131,6 +140,9 @@ jobs:
         with:
           toolchain: stable
       
+      - name: Install protobuf compiler
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+      
       - name: Cache cargo registry
         uses: actions/cache@v4
         with:
@@ -156,6 +168,9 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
+      
+      - name: Install protobuf compiler
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
       
       - name: Cache cargo registry
         uses: actions/cache@v4

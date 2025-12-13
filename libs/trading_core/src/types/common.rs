@@ -193,7 +193,7 @@ impl std::fmt::Display for Symbol {
 impl From<Symbol> for SmolStr {
     #[inline]
     fn from(value: Symbol) -> Self {
-        value.0.into()
+        value.0
     }
 }
 

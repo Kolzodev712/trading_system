@@ -586,6 +586,33 @@ The system uses three main configuration files:
 2. **`config/strategies.json`**: Strategy-specific configuration (for strategy mode)
 3. **`config/levels.json`**: Levels-specific configuration (for levels mode)
 
+> **⚠️ Important**: The `config/` directory is ignored by git (contains API keys and sensitive data). You must create this directory manually.
+
+#### Initial Setup
+
+To set up the configuration:
+
+1. **Create the config directory**:
+   ```bash
+   mkdir -p config
+   ```
+
+2. **Copy the sample configuration files** from `sample_config/`:
+   ```bash
+   cp sample_config/bot.json config/bot.json
+   cp sample_config/strategies.json config/strategies.json
+   cp sample_config/levels.json config/levels.json
+   ```
+
+3. **Edit `config/bot.json`** and add your:
+   - Binance API keys (`binance.rest.api_key` and `binance.rest.secret_key`)
+   - Binance WebSocket API keys (`binance.ws.api_key` and `binance.ws.secret_key`)
+   - MongoDB connection string if different from default
+
+4. **Customize** `config/strategies.json` and `config/levels.json` as needed for your trading strategy.
+
+> **Note**: The `sample_config/` directory contains template files without API keys. Always use these as a starting point, then add your own credentials to the `config/` directory.
+
 ### Main Configuration (`config/bot.json`)
 
 ```json

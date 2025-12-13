@@ -58,8 +58,10 @@ WORKDIR /app
 # Copy binary from builder
 COPY --from=builder /app/target/release/runner /app/trading-system
 
-# Copy config directory
-COPY config ./config
+# Copy sample_config and create config directory from it
+# (config will be mounted as volume at runtime in docker-compose)
+COPY sample_config ./sample_config
+RUN mkdir -p ./config && cp -r ./sample_config/* ./config/
 
 # Create logs directory
 RUN mkdir -p /app/logs && chown -R appuser:appuser /app

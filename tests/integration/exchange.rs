@@ -12,7 +12,7 @@ use trading_core::types::exchange::{Balance, Order};
 async fn test_exchange_state_manager_creation() {
     let (_manager, _rx) = create_test_exchange_state_manager().await;
     // Should not panic
-    assert!(true);
+    // Test passes if we get here
 }
 
 #[tokio::test]
@@ -71,7 +71,7 @@ async fn test_exchange_open_order() {
 
     // In a real test, this would place an order via the exchange
     // For now, just verify manager exists
-    assert!(true);
+    // Test passes if we get here
 }
 
 #[tokio::test]
@@ -81,7 +81,7 @@ async fn test_exchange_cancel_order() {
     let (_manager, _rx) = create_test_exchange_state_manager().await;
 
     // In a real test, this would cancel an order via the exchange
-    assert!(true);
+    // Test passes if we get here
 }
 
 #[tokio::test]
@@ -91,7 +91,7 @@ async fn test_exchange_fetch_balances() {
     let (_manager, _rx) = create_test_exchange_state_manager().await;
 
     // In a real test, this would fetch balances from the exchange
-    assert!(true);
+    // Test passes if we get here
 }
 
 #[tokio::test]
@@ -101,7 +101,7 @@ async fn test_exchange_websocket_connection() {
     let (_manager, _rx) = create_test_exchange_state_manager().await;
 
     // In a real test, this would verify WebSocket connection
-    assert!(true);
+    // Test passes if we get here
 }
 
 #[tokio::test]
@@ -111,5 +111,5 @@ async fn test_exchange_reconciliation() {
     let (_manager, _rx) = create_test_exchange_state_manager().await;
 
     // In a real test, this would test WS vs REST reconciliation
-    assert!(true);
+    // Test passes if we get here
 }

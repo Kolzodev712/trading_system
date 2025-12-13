@@ -86,7 +86,7 @@ impl ExchangeState {
         if let Some(pair) = self.symbol_registry.get_pair(&symbol) {
             self.orders_by_pair
                 .entry(pair.clone())
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(order_id);
         }
 

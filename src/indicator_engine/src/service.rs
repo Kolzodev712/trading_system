@@ -15,6 +15,12 @@ pub struct IndicatorService {
     persistence: Option<Arc<IndicatorPersistence>>,
 }
 
+impl Default for IndicatorService {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl IndicatorService {
     pub fn new() -> Self {
         Self {
@@ -257,6 +263,6 @@ mod tests {
 
         service.initialize(market_rx, indicator_tx, 1);
         // Should not panic
-        assert!(true);
+        // Test passes if we get here
     }
 }

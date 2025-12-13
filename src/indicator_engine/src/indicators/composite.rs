@@ -120,6 +120,7 @@ impl CompositeIndicatorConfig {
         self.extract_dependencies_from_expr(&self.expression)
     }
 
+    #[allow(clippy::only_used_in_recursion)]
     fn extract_dependencies_from_expr(&self, expr: &IndicatorExpression) -> Vec<SmolStr> {
         match expr {
             IndicatorExpression::Simple { indicator_id } => vec![indicator_id.clone()],

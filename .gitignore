@@ -4,3 +4,7 @@
 /src/exchange_engine/config/binance_config.json
 /config
 /cli_debug.log
+
+# Encrypted config files
+*.enc
+config/*.enc

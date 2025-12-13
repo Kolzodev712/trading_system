@@ -161,11 +161,11 @@ impl IndicatorResolver {
                 let mut qty = base_qty;
 
                 if let Some(mult) = multiplier {
-                    qty = qty * mult;
+                    qty *= mult;
                 }
 
                 if let Some(off) = offset {
-                    qty = qty + off;
+                    qty += off;
                 }
 
                 qty.max(Decimal::ZERO)

@@ -43,6 +43,7 @@ pub struct StrategyExecutor<S: Strategy + 'static> {
 }
 
 impl<S: Strategy> StrategyExecutor<S> {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         strategy: Arc<RwLock<S>>,
         trading_client: Arc<RwLock<dyn TradingClient<trading_core::types::exchange::OrderRequest>>>,
@@ -515,7 +516,7 @@ impl<S: Strategy> StrategyExecutor<S> {
     /// Handle execution report from exchange
     pub async fn handle_execution_report(&self, order: &Order) -> Result<(), EngineError> {
         let mut strategy_guard = self.strategy.write().await;
-        strategy_guard.on_execution_report(&order).await?;
+        strategy_guard.on_execution_report(order).await?;
 
         Ok(())
     }

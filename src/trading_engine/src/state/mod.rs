@@ -28,7 +28,7 @@ pub struct Position {
 }
 
 /// Manages active orders and positions
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct TradingState {
     pub positions: HashMap<Pair, Position>,
     pub active_orders: HashMap<OrderId, Order>,

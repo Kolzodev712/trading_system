@@ -44,6 +44,7 @@ pub struct BuyLowSellHigh {
 }
 
 impl BuyLowSellHigh {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         trading_client: Arc<RwLock<dyn TradingClient<OrderRequest>>>,
         symbol: Pair,
@@ -227,6 +228,7 @@ impl Strategy for BuyLowSellHigh {
         };
 
         // Periodic price status (every 30 updates to reduce noise)
+        #[allow(clippy::manual_is_multiple_of)]
         if self.price_history.len() % 30 == 0 {
             debug!(
                 "Price status: mid={mid_price}, avg={avg_price}, diff={diff:.3}%, position={position} BTC",
@@ -357,7 +359,7 @@ impl Strategy for BuyLowSellHigh {
                 );
             } else {
                 // Only log when far from signal (every 60 updates) to reduce noise
-                if self.price_history.len() % 60 == 0 {
+                if self.price_history.len().is_multiple_of(60) {
                     debug!(
                         "No trade signal: price_diff={diff:.3}%, thresholds={buy_threshold:.2}%/{sell_threshold:.2}%, position={position}",
                         diff = price_diff_from_avg,

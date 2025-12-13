@@ -325,7 +325,7 @@ impl LevelPersistence {
 
         Ok(LevelConfig {
             id: SmolStr::new(&doc.id),
-            name: doc.name.as_ref().map(|n| SmolStr::new(n)),
+            name: doc.name.as_ref().map(SmolStr::new),
             symbol,
             side,
             order_type,
@@ -344,7 +344,7 @@ impl LevelPersistence {
                 repost_conditions: Vec::new(), // Not stored in document, default to empty
             },
             enabled: doc.enabled,
-            group: doc.group.as_ref().map(|g| SmolStr::new(g)),
+            group: doc.group.as_ref().map(SmolStr::new),
         })
     }
 }

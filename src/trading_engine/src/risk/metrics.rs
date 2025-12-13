@@ -255,7 +255,7 @@ mod tests {
     fn test_risk_metrics_calculator_new() {
         let _calc = RiskMetricsCalculator::new();
         // Should not panic
-        assert!(true);
+        // Test passes if we get here
     }
 
     #[test]

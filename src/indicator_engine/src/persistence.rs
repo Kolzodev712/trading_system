@@ -42,7 +42,7 @@ impl IndicatorPersistence {
             .mongo_client
             .get_collection::<SimpleIndicatorDocument>(INDICATORS_COLLECTION);
 
-        let now = chrono::Utc::now().timestamp() as i64;
+        let now = chrono::Utc::now().timestamp();
         let indicator_doc = SimpleIndicatorDocument {
             indicator_id: config.id.to_string(),
             indicator_type: "simple".to_string(),
@@ -190,7 +190,7 @@ impl IndicatorPersistence {
                 "pair": config.pair.to_string(),
                 "period": config.period as u32,
                 "source": format!("{:?}", config.source),
-                "updated_at": now as i64
+                "updated_at": now
             }
         };
 

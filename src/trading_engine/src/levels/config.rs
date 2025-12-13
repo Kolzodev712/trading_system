@@ -124,7 +124,7 @@ pub enum PriceOffsetType {
 }
 
 /// Level risk configuration
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct LevelRiskConfig {
     /// Maximum position size for this level
     pub max_position: Option<Decimal>,
@@ -134,16 +134,6 @@ pub struct LevelRiskConfig {
 
     /// Daily loss limit for this level
     pub daily_loss_limit: Option<Decimal>,
-}
-
-impl Default for LevelRiskConfig {
-    fn default() -> Self {
-        Self {
-            max_position: None,
-            max_orders: None,
-            daily_loss_limit: None,
-        }
-    }
 }
 
 /// Lifecycle configuration

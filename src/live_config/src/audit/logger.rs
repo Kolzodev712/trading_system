@@ -60,8 +60,7 @@ mod tests {
     #[test]
     fn test_audit_logger_new() {
         let _logger = AuditLogger::new("/tmp/test_audit.log".to_string());
-        // Should not panic
-        assert!(true);
+        // Should not panic - test passes if we get here
     }
 
     #[test]

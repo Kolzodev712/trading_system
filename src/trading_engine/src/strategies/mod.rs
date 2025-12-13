@@ -1,6 +1,7 @@
 pub mod backtest;
 pub mod executor;
 pub mod persistence;
+#[allow(clippy::module_inception)]
 pub mod strategies;
 pub mod strategy_manager;
 

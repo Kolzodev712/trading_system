@@ -125,6 +125,7 @@ impl AssetService {
     }
 
     /// Parse Binance exchange info into our types
+    #[allow(clippy::type_complexity)]
     fn parse_exchange_info(
         exchange_info: &exchanges::binance::types::BinanceExchangeInfo,
         pairs: &[Pair],
@@ -345,7 +346,7 @@ mod tests {
     async fn test_asset_service_new() {
         let _service = AssetService::new();
         // Service should be created successfully
-        assert!(true); // Just verify it doesn't panic
+        // Test passes if we get here - verifies it doesn't panic
     }
 
     #[tokio::test]

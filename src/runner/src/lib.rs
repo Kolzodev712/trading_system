@@ -320,7 +320,7 @@ pub async fn level_runner(
     };
 
     // Save to MongoDB if enabled (after loading from file or MongoDB)
-    if let Some(_) = level_persistence {
+    if level_persistence.is_some() {
         if let Err(e) = level_manager.save_all_levels(&risk_limits).await {
             warn!("Failed to save levels to MongoDB: {}", e);
         } else {
@@ -446,18 +446,14 @@ pub async fn level_runner(
     let mut shutdown_rx_subscriber = services.shutdown_manager.subscribe();
     let subscriber_handle = tokio::spawn(async move {
         let mut subscriber = subscriber_for_task.write().await;
-        loop {
-            tokio::select! {
-                result = subscriber.run() => {
-                    if let Err(e) = result {
-                        error!("Indicator subscriber error: {e}");
-                    }
-                    break;
+        tokio::select! {
+            result = subscriber.run() => {
+                if let Err(e) = result {
+                    error!("Indicator subscriber error: {e}");
                 }
-                _ = shutdown_rx_subscriber.recv() => {
-                    info!("Indicator subscriber shutting down");
-                    break;
-                }
+            }
+            _ = shutdown_rx_subscriber.recv() => {
+                info!("Indicator subscriber shutting down");
             }
         }
     });

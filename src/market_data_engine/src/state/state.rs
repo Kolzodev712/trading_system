@@ -47,7 +47,7 @@ impl MarketDataState {
 
     /// Add a public trade for a pair
     pub fn add_public_trade(&mut self, pair: Pair, trade: StructuredPublicTrade) {
-        let trades = self.public_trades.entry(pair).or_insert_with(Vec::new);
+        let trades = self.public_trades.entry(pair).or_default();
         trades.push(trade);
 
         // Keep only last 100 trades per pair to prevent unbounded growth

@@ -6,4 +6,5 @@
 pub mod manager;
 pub mod publisher;
 pub mod reconciler;
+#[allow(clippy::module_inception)]
 pub mod state;

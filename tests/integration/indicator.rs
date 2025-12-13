@@ -99,5 +99,5 @@ async fn test_indicator_service_initialization() {
     service.initialize(market_rx, indicator_tx, 1);
 
     // Service should be initialized
-    assert!(true);
+    // Test passes if we get here
 }

@@ -8,7 +8,7 @@ use std::sync::Arc;
 async fn test_asset_service_creation() {
     let _service = AssetService::new();
     // Should not panic
-    assert!(true);
+    // Test passes if we get here
 }
 
 #[tokio::test]
@@ -23,5 +23,5 @@ async fn test_asset_service_exchange_registration() {
         .await
         .unwrap();
     // Should not panic
-    assert!(true);
+    // Test passes if we get here
 }

@@ -34,6 +34,7 @@ pub struct LevelBasedEventLoop {
 
 impl LevelBasedEventLoop {
     /// Create a new level-based event loop
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         level_manager: Arc<RwLock<LevelManager>>,
         level_executor: Arc<LevelExecutor>,

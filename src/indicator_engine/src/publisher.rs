@@ -83,7 +83,7 @@ mod tests {
         let (tx, _rx) = indicator_update_channel(10);
         let _publisher = IndicatorPublisher::new(calculator, tx, 1);
         // Should not panic
-        assert!(true);
+        // Test passes if we get here
     }
 
     #[tokio::test]

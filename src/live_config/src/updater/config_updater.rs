@@ -3,6 +3,7 @@
 
 use crate::types::{ConfigPath, ConfigValue};
 
+#[derive(Debug, Default)]
 pub struct ConfigUpdater {
     // Bot config would be stored here when implemented
 }
@@ -44,8 +45,7 @@ mod tests {
     #[tokio::test]
     async fn test_config_updater_new() {
         let _updater = ConfigUpdater::new();
-        // Should not panic
-        assert!(true);
+        // Should not panic - test passes if we get here
     }
 
     #[tokio::test]

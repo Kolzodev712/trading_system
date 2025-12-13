@@ -76,6 +76,9 @@ pub enum EngineError {
     #[error("Invalid config")]
     InvalidConfig,
 
+    #[error("Config error: {0}")]
+    ConfigError(Error),
+
     #[error("Unsupported Exchange")]
     UnsupportedExchange,
 

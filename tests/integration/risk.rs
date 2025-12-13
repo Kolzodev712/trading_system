@@ -16,8 +16,10 @@ async fn test_risk_manager_initialization() {
 
 #[tokio::test]
 async fn test_risk_manager_position_limit() {
-    let mut limits = RiskLimits::default();
-    limits.total_max_position = Some(dec!(1.0));
+    let limits = RiskLimits {
+        total_max_position: Some(dec!(1.0)),
+        ..Default::default()
+    };
 
     let symbol_registry =
         std::sync::Arc::new(trading_core::registry::symbol::SymbolRegistry::new());
@@ -59,8 +61,10 @@ async fn test_risk_manager_position_limit() {
 
 #[tokio::test]
 async fn test_risk_manager_order_limit() {
-    let mut limits = RiskLimits::default();
-    limits.max_total_orders = Some(2);
+    let limits = RiskLimits {
+        max_total_orders: Some(2),
+        ..Default::default()
+    };
 
     let symbol_registry =
         std::sync::Arc::new(trading_core::registry::symbol::SymbolRegistry::new());
@@ -87,16 +91,20 @@ async fn test_risk_manager_order_limit() {
 async fn test_risk_manager_daily_loss_limit_all_pairs() {
     use trading_engine::risk::metrics::RiskMetrics;
 
-    let mut limits = RiskLimits::default();
-    limits.daily_loss_limit_all_pairs = Some(dec!(1000));
+    let limits = RiskLimits {
+        daily_loss_limit_all_pairs: Some(dec!(1000)),
+        ..Default::default()
+    };
 
     let symbol_registry =
         std::sync::Arc::new(trading_core::registry::symbol::SymbolRegistry::new());
     let risk_manager = trading_engine::risk::RiskManager::new(limits, symbol_registry);
 
     // Create metrics with loss
-    let mut metrics = RiskMetrics::default();
-    metrics.daily_pnl = dec!(-500); // Loss of 500
+    let mut metrics = RiskMetrics {
+        daily_pnl: dec!(-500), // Loss of 500
+        ..Default::default()
+    };
 
     let result = risk_manager.check_daily_loss_limits_global(&metrics);
     assert!(result.allowed); // Under limit
@@ -109,20 +117,25 @@ async fn test_risk_manager_daily_loss_limit_all_pairs() {
 
 #[tokio::test]
 async fn test_risk_manager_daily_loss_limit_per_pair() {
+    use std::collections::HashMap;
     use trading_engine::risk::metrics::RiskMetrics;
 
-    let mut limits = RiskLimits::default();
-    limits
-        .daily_loss_limit_per_pair
-        .insert(smol_str::SmolStr::new("BTCUSDT"), dec!(500));
+    let mut daily_loss_per_pair = HashMap::new();
+    daily_loss_per_pair.insert(smol_str::SmolStr::new("BTCUSDT"), dec!(500));
+    let limits = RiskLimits {
+        daily_loss_limit_per_pair: daily_loss_per_pair,
+        ..Default::default()
+    };
 
     let symbol_registry =
         std::sync::Arc::new(trading_core::registry::symbol::SymbolRegistry::new());
     let risk_manager = trading_engine::risk::RiskManager::new(limits, symbol_registry);
 
     let pair = trading_core::types::common::Pair::new("BTC", "USDT");
-    let mut metrics = RiskMetrics::default();
-    metrics.daily_pnl = dec!(-300);
+    let mut metrics = RiskMetrics {
+        daily_pnl: dec!(-300),
+        ..Default::default()
+    };
 
     let result = risk_manager.check_daily_loss_limits(&metrics, &pair);
     assert!(result.allowed);
@@ -142,18 +155,20 @@ async fn test_risk_manager_balance_check() {
     let balances = vec![create_test_balance("USDT", dec!(1000), dec!(0))];
 
     // Should pass (1000 USDT > 5000 USDT needed)
-    let result = risk_manager.check_balance(&order_request, &balances);
+    let _result = risk_manager.check_balance(&order_request, &balances);
     // Note: This might fail if balance is insufficient, adjust test accordingly
     // For now, just verify the method exists and runs
-    assert!(result.allowed || !result.allowed); // Either is valid
+    // The result can be either allowed or not - both are valid test outcomes
 }
 
 #[tokio::test]
 async fn test_risk_manager_all_checks() {
-    let mut limits = RiskLimits::default();
-    limits.total_max_position = Some(dec!(1.0));
-    limits.max_total_orders = Some(5);
-    limits.daily_loss_limit_all_pairs = Some(dec!(1000));
+    let limits = RiskLimits {
+        total_max_position: Some(dec!(1.0)),
+        max_total_orders: Some(5),
+        daily_loss_limit_all_pairs: Some(dec!(1000)),
+        ..Default::default()
+    };
 
     let symbol_registry =
         std::sync::Arc::new(trading_core::registry::symbol::SymbolRegistry::new());

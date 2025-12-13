@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use smol_str::SmolStr;
 
 /// Global risk limits
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct RiskLimits {
     /// Maximum total position size across all levels
     pub total_max_position: Option<Decimal>,
@@ -17,17 +17,6 @@ pub struct RiskLimits {
 
     /// Daily loss limit per pair
     pub daily_loss_limit_per_pair: std::collections::HashMap<SmolStr, Decimal>,
-}
-
-impl Default for RiskLimits {
-    fn default() -> Self {
-        Self {
-            total_max_position: None,
-            max_total_orders: None,
-            daily_loss_limit_all_pairs: None,
-            daily_loss_limit_per_pair: std::collections::HashMap::new(),
-        }
-    }
 }
 
 /// Risk check result

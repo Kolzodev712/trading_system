@@ -88,7 +88,7 @@ async fn test_multiple_levels_concurrent_operations() {
     // Create multiple levels
     for i in 0..10 {
         let config = LevelConfig {
-            id: SmolStr::new(&format!("level_{}", i)),
+            id: SmolStr::new(format!("level_{}", i)),
             name: None,
             symbol: Pair::new("BTC", "USDT"),
             side: Side::Buy,
@@ -111,7 +111,7 @@ async fn test_multiple_levels_concurrent_operations() {
     // Disable all
     for i in 0..10 {
         manager
-            .disable_level(&SmolStr::new(&format!("level_{}", i)))
+            .disable_level(&SmolStr::new(format!("level_{}", i)))
             .await
             .unwrap();
     }

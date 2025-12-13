@@ -31,7 +31,7 @@ async fn test_live_config_service_creation() {
     );
 
     // Should not panic
-    assert!(true);
+    // Test passes if we get here
 }
 
 #[tokio::test]

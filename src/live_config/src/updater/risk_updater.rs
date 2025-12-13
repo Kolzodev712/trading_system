@@ -95,8 +95,7 @@ mod tests {
     async fn test_risk_updater_new() {
         let risk_manager = Arc::new(RwLock::new(create_test_risk_manager()));
         let _updater = RiskUpdater::new(risk_manager);
-        // Should not panic
-        assert!(true);
+        // Should not panic - test passes if we get here
     }
 
     #[tokio::test]

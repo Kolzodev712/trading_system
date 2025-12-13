@@ -166,8 +166,7 @@ mod tests {
     async fn test_level_updater_new() {
         let level_manager = Arc::new(RwLock::new(LevelManager::new()));
         let _updater = LevelUpdater::new(level_manager);
-        // Should not panic
-        assert!(true);
+        // Should not panic - test passes if we get here
     }
 
     #[tokio::test]

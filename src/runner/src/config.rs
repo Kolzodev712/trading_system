@@ -73,7 +73,7 @@ pub struct ServerConfig {
 }
 
 /// Redis configuration (optional, only needed if using Redis feature for Web UI)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct RedisConfig {
     /// Redis connection URL (optional)
     #[serde(default)]
@@ -86,15 +86,6 @@ pub struct RedisConfig {
 
 fn default_redis_enabled() -> bool {
     false
-}
-
-impl Default for RedisConfig {
-    fn default() -> Self {
-        Self {
-            url: String::new(),
-            enabled: false,
-        }
-    }
 }
 
 /// Feature flags for enabling/disabling system features
@@ -269,9 +260,37 @@ pub struct StrategiesConfig {
 }
 
 impl BotConfig {
-    /// Load bot configuration from a JSON file
+    /// Load bot configuration from a JSON file (supports encrypted files)
+    ///
+    /// If the file is encrypted, tries CONFIG_PASSWORD env var first,
+    /// then prompts for password if env var is not set.
     pub fn load_from_file(path: &str) -> Result<Self, Box<dyn std::error::Error>> {
-        let config_data = std::fs::read_to_string(path)?;
+        use trading_core::config;
+
+        // Check if file is encrypted
+        let config_data = if config::is_encrypted_file(path) {
+            // Get password: try env var first, then prompt
+            let password = match std::env::var("CONFIG_PASSWORD") {
+                Ok(pwd) => pwd,
+                Err(_) => {
+                    // Prompt for password
+                    use std::io::{self, Write};
+                    print!("Enter config password: ");
+                    io::stdout().flush()?;
+                    let mut password = String::new();
+                    io::stdin().read_line(&mut password)?;
+                    password.trim().to_string()
+                }
+            };
+
+            // Decrypt config
+            config::decrypt_config_file(path, &password)
+                .map_err(|e| format!("Failed to decrypt config: {}", e))?
+        } else {
+            // Plain config file
+            std::fs::read_to_string(path)?
+        };
+
         let config: BotConfig = serde_json::from_str(&config_data)?;
         Ok(config)
     }

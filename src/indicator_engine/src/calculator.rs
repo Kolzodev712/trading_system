@@ -49,6 +49,12 @@ pub struct IndicatorCalculator {
     name_index: Arc<RwLock<HashMap<SmolStr, Vec<SmolStr>>>>,
 }
 
+impl Default for IndicatorCalculator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl IndicatorCalculator {
     pub fn new() -> Self {
         Self {
@@ -85,14 +91,11 @@ impl IndicatorCalculator {
         // Update indices (release indicators lock first)
         {
             let mut pair_index = self.pair_index.write();
-            pair_index
-                .entry(pair)
-                .or_insert_with(Vec::new)
-                .push(id.clone());
+            pair_index.entry(pair).or_default().push(id.clone());
         }
         {
             let mut name_index = self.name_index.write();
-            name_index.entry(name).or_insert_with(Vec::new).push(id);
+            name_index.entry(name).or_default().push(id);
         }
 
         Ok(())
@@ -109,10 +112,7 @@ impl IndicatorCalculator {
         // Use pair_index to get indicator IDs efficiently (read-only, no filtering needed)
         let pair_indicators: Vec<SmolStr> = {
             let pair_index = self.pair_index.read();
-            pair_index
-                .get(&pair_smol)
-                .map(|ids| ids.clone())
-                .unwrap_or_default()
+            pair_index.get(&pair_smol).cloned().unwrap_or_default()
         };
 
         if pair_indicators.is_empty() {

@@ -46,23 +46,18 @@ impl From<BinanceOrderbook> for StructuredOrderbook {
         // Convert symbol to Pair - simple parsing for common Binance symbols
         // For "BTCUSDT", we split at common quote currencies
         let symbol_str = orderbook.symbol.as_str();
-        let pair = if symbol_str.ends_with("USDT") {
-            let base = &symbol_str[..symbol_str.len() - 4];
+        let pair = if let Some(base) = symbol_str.strip_suffix("USDT") {
             Pair::new(base, "USDT")
-        } else if symbol_str.ends_with("BTC") {
-            let base = &symbol_str[..symbol_str.len() - 3];
+        } else if let Some(base) = symbol_str.strip_suffix("BTC") {
             Pair::new(base, "BTC")
-        } else if symbol_str.ends_with("ETH") {
-            let base = &symbol_str[..symbol_str.len() - 3];
+        } else if let Some(base) = symbol_str.strip_suffix("ETH") {
             Pair::new(base, "ETH")
-        } else if symbol_str.ends_with("BNB") {
-            let base = &symbol_str[..symbol_str.len() - 3];
+        } else if let Some(base) = symbol_str.strip_suffix("BNB") {
             Pair::new(base, "BNB")
         } else {
             // Fallback: assume last 4 chars are quote, rest is base
             if symbol_str.len() >= 4 {
-                let base = &symbol_str[..symbol_str.len() - 4];
-                let quote = &symbol_str[symbol_str.len() - 4..];
+                let (base, quote) = symbol_str.split_at(symbol_str.len() - 4);
                 Pair::new(base, quote)
             } else {
                 // Last resort: use UNKNOWN

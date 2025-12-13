@@ -52,14 +52,14 @@ mod tests {
     fn test_shutdown_manager_new() {
         let _manager = ShutdownManager::new(10);
         // Should not panic
-        assert!(true);
+        // Test passes if we get here
     }
 
     #[test]
     fn test_shutdown_manager_default() {
         let _manager = ShutdownManager::default();
         // Should not panic
-        assert!(true);
+        // Test passes if we get here
     }
 
     #[tokio::test]

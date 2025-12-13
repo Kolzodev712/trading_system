@@ -10,7 +10,7 @@ use trading_core::types::market_data::StructuredPublicTrade;
 async fn test_market_data_state_manager_creation() {
     let (_, _rx) = create_test_market_data_manager();
     // Should not panic
-    assert!(true);
+    // Test passes if we get here
 }
 
 #[tokio::test]

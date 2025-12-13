@@ -33,6 +33,12 @@ rust_decimal = { version = "1.35.0", features = ["serde"] }
 base64 = "0.22.1"
 uuid = { version = "1.10.0", features = ["v4", "fast-rng"] }
 
+# Encryption (for config file encryption)
+aes-gcm = "0.10"
+pbkdf2 = "0.12"
+sha2 = "0.10"
+getrandom = "0.2"
+
 # gRPC utilities (NOT proto definitions)
 tonic = "0.11"
 prost = "0.12"
@@ -46,4 +52,8 @@ redis = { version = "0.27.6", features = ["tokio-comp"] }
 
 # MongoDB (for configuration persistence)
 mongodb = { workspace = true }
+
+[[bin]]
+name = "encrypt_config"
+path = "src/bin/encrypt_config.rs"
 

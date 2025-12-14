@@ -16,6 +16,16 @@ pub struct MonitoringService {
     pub trading_state_manager: Arc<TradingStateManager>,
     pub exchange_state_manager: Arc<ExchangeStateManager>,
     pub indicator_calculator: Arc<indicator_engine::calculator::IndicatorCalculator>,
+    /// Strategy info (only set in strategies mode)
+    pub strategy_info: Option<StrategyInfo>,
+}
+
+/// Strategy information for monitoring
+#[derive(Clone)]
+pub struct StrategyInfo {
+    pub strategy_name: String,
+    pub symbol: trading_core::types::common::Pair,
+    pub max_active_orders: usize,
 }
 
 impl MonitoringService {
@@ -142,6 +152,14 @@ impl MonitoringService {
             );
         }
 
+        // Collect strategy status if in strategies mode
+        let strategy_status = if let Some(ref strategy_info) = self.strategy_info {
+            self.collect_strategy_status(strategy_info, &positions)
+                .await
+        } else {
+            None
+        };
+
         Ok(trading_cli::MonitoringData {
             orders,
             balances,
@@ -149,6 +167,7 @@ impl MonitoringService {
             positions,
             indicators,
             aggregated: Some(aggregated),
+            strategy: strategy_status,
         })
     }
 
@@ -212,5 +231,60 @@ impl MonitoringService {
         converted.truncate(100);
 
         Ok(converted)
+    }
+
+    /// Collect strategy status information
+    async fn collect_strategy_status(
+        &self,
+        strategy_info: &StrategyInfo,
+        positions: &[trading_cli::Position],
+    ) -> Option<trading_cli::StrategyStatus> {
+        // Find position for this strategy's symbol
+        let symbol_str = strategy_info.symbol.convert_to_smolstr().to_string();
+        let position = positions.iter().find(|p| p.symbol == symbol_str);
+
+        // Get active orders count for this symbol
+        let trading_state_arc = self.trading_state_manager.get_state();
+        let trading_state = trading_state_arc.read().await;
+        let active_orders = trading_state
+            .active_orders
+            .values()
+            .filter(|o| {
+                let order_symbol: smol_str::SmolStr = o.symbol.clone().into();
+                order_symbol.as_str() == symbol_str
+            })
+            .count();
+
+        // Calculate P&L if we have a position
+        // TODO: Get current price from MarketDataStateManager for accurate P&L
+        let (position_quantity, position_avg_price, unrealized_pnl, unrealized_pnl_percent) =
+            if let Some(pos) = position {
+                (
+                    pos.quantity.clone(),
+                    pos.avg_price.clone(),
+                    "N/A".to_string(), // Will calculate when we have market data access
+                    "N/A".to_string(),
+                )
+            } else {
+                (
+                    "0".to_string(),
+                    "0".to_string(),
+                    "0".to_string(),
+                    "0%".to_string(),
+                )
+            };
+
+        Some(trading_cli::StrategyStatus {
+            strategy_name: strategy_info.strategy_name.clone(),
+            symbol: symbol_str,
+            position_quantity,
+            position_avg_price,
+            unrealized_pnl,
+            unrealized_pnl_percent,
+            active_orders: active_orders as i32,
+            max_active_orders: strategy_info.max_active_orders as i32,
+            last_signal: "None".to_string(), // TODO: Track last signal from strategy
+            signal_strength: String::new(),  // TODO: Get from strategy if available
+        })
     }
 }

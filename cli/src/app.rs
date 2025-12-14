@@ -339,6 +339,14 @@ impl App {
         self.monitoring_data.as_ref()
     }
 
+    /// Check if we're in strategies mode (has strategy data)
+    pub fn has_strategy(&self) -> bool {
+        self.monitoring_data
+            .as_ref()
+            .and_then(|md| md.strategy.as_ref())
+            .is_some()
+    }
+
     pub fn levels(&self) -> Option<&Vec<crate::client::trading_cli::Level>> {
         self.levels.as_ref()
     }

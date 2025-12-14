@@ -236,6 +236,102 @@ pub fn render_indicators(frame: &mut Frame, area: Rect, app: &App) -> Result<(),
     Ok(())
 }
 
+/// Render the strategy panel
+pub fn render_strategy(frame: &mut Frame, area: Rect, app: &App) -> Result<(), CliError> {
+    let data = app.monitoring_data();
+    let strategy = data.and_then(|md| md.strategy.as_ref());
+    let trading_status = app.trading_status();
+
+    let rows = if let Some(strat) = strategy {
+        vec![
+            Row::new(vec![
+                Cell::from("Strategy:"),
+                Cell::from(strat.strategy_name.as_str()),
+            ]),
+            Row::new(vec![
+                Cell::from("Status:"),
+                Cell::from(if trading_status {
+                    "● Running"
+                } else {
+                    "⏸ Paused"
+                })
+                .style(if trading_status {
+                    Style::default().fg(Color::Green)
+                } else {
+                    Style::default().fg(Color::Red)
+                }),
+            ]),
+            Row::new(vec![
+                Cell::from("Symbol:"),
+                Cell::from(strat.symbol.as_str()),
+            ]),
+            Row::new(vec![
+                Cell::from("Position:"),
+                Cell::from(if strat.position_quantity != "0" {
+                    format!("{} @ {}", strat.position_quantity, strat.position_avg_price)
+                } else {
+                    "None".to_string()
+                }),
+            ]),
+            Row::new(vec![
+                Cell::from("P&L:"),
+                Cell::from(
+                    if strat.unrealized_pnl != "N/A" && strat.unrealized_pnl != "0" {
+                        format!(
+                            "{} ({})",
+                            strat.unrealized_pnl, strat.unrealized_pnl_percent
+                        )
+                    } else {
+                        "N/A".to_string()
+                    },
+                )
+                .style(if strat.unrealized_pnl.starts_with('-') {
+                    Style::default().fg(Color::Red)
+                } else if !strat.unrealized_pnl.is_empty()
+                    && strat.unrealized_pnl != "0"
+                    && strat.unrealized_pnl != "N/A"
+                {
+                    Style::default().fg(Color::Green)
+                } else {
+                    Style::default()
+                }),
+            ]),
+            Row::new(vec![
+                Cell::from("Orders:"),
+                Cell::from(format!(
+                    "{}/{}",
+                    strat.active_orders, strat.max_active_orders
+                )),
+            ]),
+            Row::new(vec![
+                Cell::from("Last Signal:"),
+                Cell::from(
+                    if !strat.last_signal.is_empty() && strat.last_signal != "None" {
+                        strat.last_signal.as_str()
+                    } else {
+                        "None"
+                    },
+                ),
+            ]),
+        ]
+    } else {
+        vec![Row::new(vec![Cell::from("No strategy data available")])]
+    };
+
+    let widths = [
+        ratatui::layout::Constraint::Length(12),
+        ratatui::layout::Constraint::Min(0),
+    ];
+
+    let table = Table::new(rows, widths).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title("Strategy Status"),
+    );
+    frame.render_widget(table, area);
+    Ok(())
+}
+
 /// Render the trades panel
 pub fn render_trades(frame: &mut Frame, area: Rect, app: &App) -> Result<(), CliError> {
     let data = app.monitoring_data();

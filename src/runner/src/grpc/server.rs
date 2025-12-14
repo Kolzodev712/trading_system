@@ -45,6 +45,34 @@ impl TradingGrpcServer {
         Self { service }
     }
 
+    /// Create a new gRPC server with strategy info (for strategies mode)
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_with_strategy(
+        level_manager: Arc<RwLock<LevelManager>>,
+        trading_state_manager: Arc<TradingStateManager>,
+        trading_client: Arc<RwLock<dyn TradingClient<OrderRequest>>>,
+        exchange_state_manager: Arc<ExchangeStateManager>,
+        indicator_service: Arc<Mutex<IndicatorService>>,
+        indicator_calculator: Arc<IndicatorCalculator>,
+        trading_control: Arc<trading_core::grpc::TradingControl>,
+        strategy_name: String,
+        symbol: trading_core::types::common::Pair,
+        max_active_orders: usize,
+    ) -> Self {
+        let service = TradingCliServiceImpl::new(
+            level_manager,
+            trading_state_manager,
+            trading_client,
+            exchange_state_manager,
+            indicator_service,
+            indicator_calculator,
+            trading_control,
+        )
+        .with_strategy_info(strategy_name, symbol, max_active_orders);
+
+        Self { service }
+    }
+
     /// Start the gRPC server
     pub async fn start(
         self,

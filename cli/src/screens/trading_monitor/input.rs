@@ -302,8 +302,17 @@ async fn handle_normal_input(app: &mut App, key: KeyCode) -> Result<(), CliError
             app.select_level_down();
         }
         KeyCode::Char('t') | KeyCode::Char('T') => {
-            // Toggle selected level
-            app.toggle_selected_level().await?;
+            // In strategies mode: toggle trading
+            // In levels mode: toggle selected level
+            if app.has_strategy() {
+                // Toggle trading enabled/disabled
+                let current_status = app.trading_status();
+                app.set_trading_enabled(!current_status).await?;
+                app.refresh_trading_status().await?;
+            } else {
+                // Toggle selected level
+                app.toggle_selected_level().await?;
+            }
         }
         KeyCode::Char('l') | KeyCode::Char('L') => {
             // Toggle level details popup

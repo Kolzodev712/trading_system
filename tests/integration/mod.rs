@@ -19,6 +19,7 @@ pub mod exchange;
 pub mod live_config;
 pub mod channels;
 pub mod workflows;
+pub mod strategy;
 pub mod risk_metrics;
 pub mod level_execution;
 

@@ -187,14 +187,20 @@ ExchangeStateManager (via broadcast channel) → Trading Engine
   - `execute()` - Execute strategy logic
   - `get_state()` - Get strategy state
 
-- **BuyLowSellHigh** (`strategies.rs`): Example strategy implementation
-  - Buy when price drops, sell when price rises
-  - Configurable thresholds and limits
+- **BuyLowSellHigh** (`rust_strategies/low_high.rs`): Mean reversion strategy
+  - Buy when price drops below average, sell when price rises above average
+  - Volatility-adaptive thresholds
+  - EMA smoothing and RSI confirmation
+  - Trend filtering and liquidity analysis
+  - Dynamic position sizing and smart order selection
+  - Performance tracking and adaptation
 
 - **StrategyExecutor** (`executor.rs`): Strategy execution loop
   - Subscribes to orderbook updates via channels
   - Executes strategies based on market conditions
   - Uses TradingStateManager for state interactions
+  - Respects trading control flag (enable/disable trading)
+  - Performs risk checks before order placement
 
 - **StrategyManager** (`strategy_manager.rs`): Multi-strategy management
   - Manages multiple strategies

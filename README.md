@@ -711,21 +711,37 @@ To set up the configuration:
 
 ```json
 {
-  "strategies": [
-    {
-      "strategy_type": "BuyLowSellHigh",
-      "parameters": {
-        "position_size": 0.001,
-        "max_position": 0.01,
-        "buy_threshold_percent": 2.0,
-        "sell_threshold_percent": 2.0,
-        "stop_loss_percent": 5.0,
-        "take_profit_percent": 10.0
-      }
-    }
-  ]
+  "strategy_type": "BuyLowSellHigh",
+  "symbol": {
+    "base": "BTC",
+    "quote": "USDT"
+  },
+  "position_size": 0.001,
+  "max_position": 0.01,
+  "buy_threshold_percent": 2.0,
+  "sell_threshold_percent": 2.0,
+  "stop_loss_percent": 5.0,
+  "take_profit_percent": 10.0,
+  "max_active_orders": 5,
+  "price_history_size": 100,
+  "min_price_history": 20
 }
 ```
+
+**Configuration Parameters**:
+- `strategy_type`: Strategy name (currently "BuyLowSellHigh")
+- `symbol`: Trading pair (base and quote currencies)
+- `position_size`: Base position size per trade
+- `max_position`: Maximum total position size
+- `buy_threshold_percent`: Percentage below average price to trigger buy
+- `sell_threshold_percent`: Percentage above average price to trigger sell
+- `stop_loss_percent`: Stop loss percentage (optional)
+- `take_profit_percent`: Take profit percentage (optional)
+- `max_active_orders`: Maximum number of active orders
+- `price_history_size`: Size of price history buffer
+- `min_price_history`: Minimum price history required before trading
+
+For detailed strategy documentation, see [Strategy Guide](docs/STRATEGY_GUIDE.md).
 
 ### Environment Variables (Optional)
 
@@ -801,25 +817,52 @@ Once the TUI starts, you'll see:
 
 ### Running in Strategies Mode
 
-**Strategies mode** supports algorithmic trading strategies.
+**Strategies mode** supports algorithmic trading strategies (e.g., Buy Low, Sell High).
 
 #### 1. Start the Trading System
 
 ```bash
 # Strategies mode
-cargo run --release --package runner -- --mode strategies
+cargo run --release --bin runner -- --mode strategies
 
 # With custom strategies config
-cargo run --release --package runner -- --mode strategies --strategies-config config/strategies.json
+cargo run --release --bin runner -- --mode strategies --strategies-config config/strategies.json
 ```
 
 #### 2. Start the TUI CLI (Optional)
 
-Same as levels mode:
+In a **separate terminal**, start the TUI CLI:
 
 ```bash
+# Connect to default gRPC endpoint
 cargo run --release --package cli
+
+# Or specify custom endpoint
+cargo run --release --package cli -- http://localhost:50051
 ```
+
+#### 3. Using the TUI CLI in Strategies Mode
+
+Once the TUI starts, you'll see:
+
+- **Main Menu**: Trading status and navigation
+- **Trading Monitor**: Real-time display with **Strategy panel** (replaces Levels panel)
+  - Strategy status (Running/Paused)
+  - Current position and average price
+  - Unrealized P&L
+  - Active orders count
+  - Last signal
+
+**Navigation**:
+- `T`: Toggle trading on/off (start/stop strategy)
+- `R`: Refresh data
+- `Esc`: Back to main menu
+- `Q`: Quit
+
+**Trading Control**:
+- Press `T` in the Trading Monitor or Main Menu to enable/disable trading
+- When trading is disabled, the strategy continues monitoring but won't place orders
+- Strategy panel shows "● Running" (green) when enabled, "⏸ Paused" (red) when disabled
 
 ### Running Test Binary
 

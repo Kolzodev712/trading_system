@@ -151,7 +151,7 @@ pub async fn strategy_runner(
     let grpc_addr: std::net::SocketAddr = "[::]:50051"
         .parse()
         .map_err(|e| format!("Failed to parse gRPC address: {}", e))?;
-    let grpc_server = TradingGrpcServer::new(
+    let grpc_server = TradingGrpcServer::new_with_strategy(
         dummy_level_manager.clone(),
         services.trading_state_manager.clone(),
         services.trading_client.clone(),
@@ -159,6 +159,9 @@ pub async fn strategy_runner(
         services.indicator_service.clone(),
         services.indicator_calculator.clone(),
         trading_control.clone(), // Pass the same TradingControl instance
+        strategies_config.strategy_type.to_string(),
+        strategies_config.symbol.clone(),
+        strategies_config.max_active_orders,
     );
     let grpc_handle = grpc_server.start(grpc_addr).await?;
     info!("gRPC server started on {}", grpc_addr);

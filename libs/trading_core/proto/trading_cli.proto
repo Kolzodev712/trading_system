@@ -137,6 +137,7 @@ message MonitoringData {
     repeated Position positions = 4;
     repeated IndicatorValue indicators = 5;
     AggregatedData aggregated = 6;
+    optional StrategyStatus strategy = 7; // Strategy info (only present in strategies mode)
 }
 
 message Order {
@@ -215,6 +216,19 @@ message LevelStatistics {
     string filled_quantity_today = 4;
     string pnl = 5;
     int64 last_fill_at = 6;
+}
+
+message StrategyStatus {
+    string strategy_name = 1;        // e.g., "BuyLowSellHigh"
+    string symbol = 2;                // e.g., "BTC/USDC"
+    string position_quantity = 3;     // Current position size
+    string position_avg_price = 4;    // Average entry price
+    string unrealized_pnl = 5;       // Unrealized P&L
+    string unrealized_pnl_percent = 6; // Unrealized P&L as percentage
+    int32 active_orders = 7;          // Number of active orders
+    int32 max_active_orders = 8;      // Maximum allowed active orders
+    string last_signal = 9;           // "Buy", "Sell", or "None"
+    string signal_strength = 10;     // Signal strength percentage (if available)
 }
 
 

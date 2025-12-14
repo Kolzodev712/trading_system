@@ -100,7 +100,8 @@ cli/
 - **Panels** (`panels.rs`): Individual panel rendering
   - Orders panel: Open orders with level mapping
   - Balances panel: Account balances
-  - Levels panel: Active levels with status
+  - Levels panel: Active levels with status (levels mode only)
+  - Strategy panel: Strategy status, position, P&L, active orders (strategies mode only)
   - Indicators panel: Real-time indicator values
   - Trades panel: Recent trades
 
@@ -114,19 +115,26 @@ cli/
 
 - **Input Handling** (`input.rs`): Keyboard input handling
   - Navigation (↑/↓, Tab)
-  - Level toggle (T)
-  - Level details (L)
-  - Edit level (E)
-  - Create level (C)
+  - Level toggle (T) - in levels mode
+  - Trading toggle (T) - in strategies mode
+  - Level details (L) - in levels mode
+  - Edit level (E) - in levels mode
+  - Create level (C) - in levels mode
   - Form navigation and editing
 
 **Features**:
 - Real-time updates via gRPC streaming
-- Level selection and navigation
-- Level toggle (enable/disable)
-- Level details view
-- Level editing
-- Level creation
+- **Levels Mode**:
+  - Level selection and navigation
+  - Level toggle (enable/disable)
+  - Level details view
+  - Level editing
+  - Level creation
+- **Strategies Mode**:
+  - Strategy status display (Running/Paused)
+  - Position and P&L monitoring
+  - Active orders tracking
+  - Trading control (enable/disable)
 - Real-time data display
 
 ## Data Flow

@@ -66,8 +66,12 @@ impl TradingMonitorScreen {
         // Balances (top-right)
         panels::render_balances(frame, top_row[1], app)?;
 
-        // Levels (bottom-left)
-        panels::render_levels(frame, bottom_row[0], app)?;
+        // Strategy or Levels (bottom-left) - show strategy if available, else levels
+        if app.has_strategy() {
+            panels::render_strategy(frame, bottom_row[0], app)?;
+        } else {
+            panels::render_levels(frame, bottom_row[0], app)?;
+        }
 
         // Indicators (bottom-right)
         panels::render_indicators(frame, bottom_row[1], app)?;
@@ -167,7 +171,11 @@ impl TradingMonitorScreen {
                         .fg(Color::Yellow)
                         .add_modifier(Modifier::BOLD),
                 ),
-                Span::from(" Toggle  │  "),
+                Span::from(if app.has_strategy() {
+                    " Toggle Trading  │  "
+                } else {
+                    " Toggle  │  "
+                }),
                 Span::styled(
                     "L",
                     Style::default()

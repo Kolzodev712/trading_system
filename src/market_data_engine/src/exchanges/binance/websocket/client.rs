@@ -36,30 +36,33 @@ pub struct BinanceChannel {
 
 #[derive(Debug, Clone)]
 pub struct BinanceSubscriptionHandler {
-    channel_info: BinanceChannel,
+    channels: Vec<BinanceChannel>,
 }
 
 impl BinanceSubscriptionHandler {
-    pub fn new(channel_info: BinanceChannel) -> Self {
-        Self { channel_info }
+    pub fn new(channels: Vec<BinanceChannel>) -> Self {
+        Self { channels }
     }
 }
 
 impl SubscriptionHandler for BinanceSubscriptionHandler {
     fn create_subscription_request(&self) -> Option<Message> {
-        let channel_name = match self.channel_info.channel {
+        let channel_name = match self.channels.first()?.channel {
             DataType::Orderbook => "depth",
             DataType::Trade => "trade",
             _ => "unknown",
         };
 
+        // Build subscription params for all pairs
+        let params: Vec<SmolStr> = self
+            .channels
+            .iter()
+            .map(|ch| format!("{}{}@{}", ch.base, ch.quote, channel_name).into())
+            .collect();
+
         let subscription_msg = BinanceWSMessage {
             method: "SUBSCRIBE".into(),
-            params: vec![format!(
-                "{}{}@{}",
-                self.channel_info.base, self.channel_info.quote, channel_name
-            )
-            .into()],
+            params,
             id: generate_custom_uuid().into(),
         };
 
@@ -162,10 +165,10 @@ pub struct BinanceWSClient {
 }
 
 impl BinanceWSClient {
-    pub fn new(channel_info: BinanceChannel) -> Self {
+    pub fn new(channels: Vec<BinanceChannel>) -> Self {
         Self {
             url: BINANCE_WS_URL.into(),
-            subscription_handler: BinanceSubscriptionHandler::new(channel_info),
+            subscription_handler: BinanceSubscriptionHandler::new(channels),
         }
     }
 

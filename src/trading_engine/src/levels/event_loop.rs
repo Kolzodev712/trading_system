@@ -26,10 +26,10 @@ pub struct LevelBasedEventLoop {
     trading_client: Arc<RwLock<dyn TradingClient<OrderRequest>>>,
     trading_state_manager: Arc<crate::state::manager::TradingStateManager>,
     market_data_rx: MarketDataUpdateReceiver,
-    symbol: Pair,
+    pairs: Vec<Pair>,
     reconciliation_interval_secs: u64,
-    /// Last seen price for periodic risk checks
-    last_price: Arc<RwLock<Option<Decimal>>>,
+    /// Last seen prices for periodic risk checks (one per pair)
+    last_prices: Arc<RwLock<HashMap<Pair, Decimal>>>,
 }
 
 impl LevelBasedEventLoop {
@@ -43,7 +43,7 @@ impl LevelBasedEventLoop {
         indicator_subscriber: Arc<RwLock<IndicatorSubscriber>>,
         trading_client: Arc<RwLock<dyn TradingClient<OrderRequest>>>,
         market_data_rx: MarketDataUpdateReceiver,
-        symbol: Pair,
+        pairs: Vec<Pair>,
         trading_state_manager: Arc<crate::state::manager::TradingStateManager>,
         reconciliation_interval_secs: u64,
     ) -> Self {
@@ -56,55 +56,57 @@ impl LevelBasedEventLoop {
             trading_client,
             trading_state_manager,
             market_data_rx,
-            symbol,
+            pairs,
             reconciliation_interval_secs,
-            last_price: Arc::new(RwLock::new(None)),
+            last_prices: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
     /// Main event loop
     pub async fn run(&self) -> Result<(), EngineError> {
-        // Start periodic reconciliation using TradingStateManager
+        // Start periodic reconciliation using TradingStateManager for all pairs
         let trading_state_manager_for_recon = Arc::clone(&self.trading_state_manager);
-        let symbol_for_recon = self.symbol.clone();
+        let pairs_for_recon = self.pairs.clone();
         let reconciliation_interval_secs = self.reconciliation_interval_secs;
         tokio::spawn(async move {
             tracing::info!(
-                "Starting periodic trading-level reconciliation (interval: {} seconds)",
+                "Starting periodic trading-level reconciliation for {} pair(s) (interval: {} seconds)",
+                pairs_for_recon.len(),
                 reconciliation_interval_secs
             );
             let mut interval = interval(Duration::from_secs(reconciliation_interval_secs));
             loop {
                 interval.tick().await;
 
-                tracing::info!(
-                    "Running periodic trading-level reconciliation for {}",
-                    symbol_for_recon
-                );
+                // Reconcile all pairs
+                for pair in &pairs_for_recon {
+                    tracing::info!("Running periodic trading-level reconciliation for {}", pair);
 
-                // Reconcile using TradingStateManager
-                match trading_state_manager_for_recon
-                    .reconcile(&symbol_for_recon, None)
-                    .await
-                {
-                    Ok(result) => {
-                        if result.reconciled {
-                            tracing::info!(
-                                "Trading-level reconciliation completed for {symbol}: internal={internal_qty}, exchange={exchange_qty}, discrepancy={discrepancy}",
-                                symbol = result.symbol,
-                                internal_qty = result.internal_quantity,
-                                exchange_qty = result.exchange_quantity,
-                                discrepancy = result.discrepancy
-                            );
-                        } else {
-                            tracing::info!(
-                                "Trading-level reconciliation for {symbol}: no discrepancies found",
-                                symbol = result.symbol
+                    // Reconcile using TradingStateManager
+                    match trading_state_manager_for_recon.reconcile(pair, None).await {
+                        Ok(result) => {
+                            if result.reconciled {
+                                tracing::info!(
+                                    "Trading-level reconciliation completed for {symbol}: internal={internal_qty}, exchange={exchange_qty}, discrepancy={discrepancy}",
+                                    symbol = result.symbol,
+                                    internal_qty = result.internal_quantity,
+                                    exchange_qty = result.exchange_quantity,
+                                    discrepancy = result.discrepancy
+                                );
+                            } else {
+                                tracing::info!(
+                                    "Trading-level reconciliation for {symbol}: no discrepancies found",
+                                    symbol = result.symbol
+                                );
+                            }
+                        }
+                        Err(e) => {
+                            tracing::error!(
+                                "Trading-level reconciliation error for {}: {}",
+                                pair,
+                                e
                             );
                         }
-                    }
-                    Err(e) => {
-                        tracing::error!("Trading-level reconciliation error: {e}");
                     }
                 }
             }
@@ -128,7 +130,8 @@ impl LevelBasedEventLoop {
                         Ok(MarketDataUpdate::Orderbook { orderbook }) => {
                             // Update last seen price for periodic risk checks
                             if let Some(price) = orderbook.mid_price() {
-                                *self.last_price.write().await = Some(price);
+                                // Store price for the orderbook's pair
+                                self.last_prices.write().await.insert(orderbook.pair.clone(), price);
                             }
 
                             if let Err(e) = self.handle_orderbook(&orderbook, &subscriber_cache).await {
@@ -216,11 +219,11 @@ impl LevelBasedEventLoop {
                 .await?;
 
             // Perform risk checks
-            // Get current price from orderbook
+            // Get current price from orderbook for the level's symbol
             let current_price = orderbook.mid_price();
             let current_prices = current_price.map(|price| {
                 let mut map = HashMap::new();
-                map.insert(self.symbol.clone(), price);
+                map.insert(level.config.symbol.clone(), price);
                 map
             });
             let risk_result = self
@@ -273,7 +276,7 @@ impl LevelBasedEventLoop {
                     let current_price = orderbook.mid_price();
                     if let Some(price) = current_price {
                         let mut current_prices = HashMap::new();
-                        current_prices.insert(self.symbol.clone(), price);
+                        current_prices.insert(level.config.symbol.clone(), price);
 
                         // Get fresh trading state after order was added
                         let trading_state = self.trading_state_manager.get_state();
@@ -350,11 +353,12 @@ impl LevelBasedEventLoop {
         // Handle level reposting
         self.handle_reposting().await?;
 
-        // Periodic risk check
-        if let Some(price) = *self.last_price.read().await {
-            let mut current_prices = HashMap::new();
-            current_prices.insert(self.symbol.clone(), price);
+        // Periodic risk check for all pairs
+        let last_prices_guard = self.last_prices.read().await;
+        let current_prices: HashMap<Pair, Decimal> = last_prices_guard.clone();
+        drop(last_prices_guard);
 
+        if !current_prices.is_empty() {
             let trading_state = self.trading_state_manager.get_state();
             let state = {
                 let state_guard = trading_state.read().await;

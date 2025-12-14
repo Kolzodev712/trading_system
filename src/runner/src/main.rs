@@ -1,9 +1,9 @@
 use runner::config::BotConfig;
 use runner::shutdown::ShutdownManager;
 use runner::{
-    collect_configured_pairs, fetch_asset_data, initialize_asset_service,
-    initialize_exchange_engine, initialize_indicator_service, initialize_market_data_engine,
-    initialize_mongodb, setup_shutdown_handler,
+    fetch_asset_data, initialize_asset_service, initialize_exchange_engine,
+    initialize_indicator_service, initialize_market_data_engine, initialize_mongodb,
+    setup_shutdown_handler,
 };
 use runner::{level_runner, strategy_runner, SharedServices};
 use std::sync::Arc;
@@ -55,17 +55,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize Asset Service
     let asset_service = initialize_asset_service(bot_config.exchange.exchange.clone()).await?;
 
-    // Collect all configured pairs and fetch asset data
-    let configured_pairs = collect_configured_pairs(
-        &bot_config,
-        &args.mode,
-        &args.levels_config,
-        &args.strategies_config,
-    )?;
+    // Get pairs from exchange config
+    let configured_pairs = bot_config.get_pairs()?;
+    if configured_pairs.is_empty() {
+        return Err("No pairs configured in bot.json".into());
+    }
     fetch_asset_data(
         &asset_service,
         bot_config.exchange.exchange.clone(),
-        &configured_pairs,
+        &configured_pairs.clone(),
     )
     .await;
 
@@ -89,10 +87,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         market_data_rx.resubscribe(),
         indicator_tx,
         &shutdown_manager,
+        configured_pairs.as_slice(),
     )
     .await?;
 
-    // Initialize Exchange Engine
+    // Initialize Exchange Engine (pass pairs from bot config)
     let (exchange_state_manager, exchange_update_rx, trading_client) =
         initialize_exchange_engine(&bot_config, &shutdown_manager).await?;
 

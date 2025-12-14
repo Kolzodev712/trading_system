@@ -43,6 +43,7 @@ use trading_core::{
 /// Tuple of (state_manager, exchange_update_rx, trading_client) for external use
 pub async fn run(
     config: ExchangeEngineConfig,
+    pairs: Vec<Pair>,
     shutdown_rx: broadcast::Receiver<()>,
     reconciliation_interval_secs: u64,
     reconciliation_enabled: bool,
@@ -55,14 +56,18 @@ pub async fn run(
     ),
     EngineError,
 > {
+    if pairs.is_empty() {
+        return Err(EngineError::CustomError(anyhow::anyhow!(
+            "No pairs provided to exchange engine"
+        )));
+    }
+
     // 1. Establish channels to send data to other services
     let (exchange_update_tx, exchange_update_rx) =
         exchange_update_channel(channels.exchange_update_capacity);
 
-    // Extract primary pair from config for symbol registry
-    let primary_pair = get_primary_pair_from_config(&config)?;
-    let pairs = vec![primary_pair.clone()];
-    let symbol_registry = Arc::new(SymbolRegistry::from_pairs(pairs));
+    // Use provided pairs for symbol registry (pairs come from bot config)
+    let symbol_registry = Arc::new(SymbolRegistry::from_pairs(pairs.clone()));
 
     // 2. Create trading client first (needed for state manager)
     let (trading_client, binance_config_for_driver) = match &config.exchange_config {
@@ -91,7 +96,7 @@ pub async fn run(
 
     // 4. Configure reconciliation:
     //    - Perform initial bootstrap reconciliation (REST calls to initialize state)
-    let configured_pairs = vec![primary_pair.clone()];
+    let configured_pairs = pairs.clone();
 
     // Perform bootstrap reconciliation
     let bootstrap_result = state_manager.bootstrap_reconcile(&configured_pairs).await?;
@@ -129,21 +134,48 @@ pub async fn run(
         )?,
     };
 
+    // Keep client reference for readiness checking before moving driver
+    let client_for_readiness = driver.client().clone();
+
     // 6. Power up the integration: Start the driver's event loop
     // The driver's run() method handles the WebSocket event loop and protocol communication
-    // This is spawned so run() can return immediately with state_manager and channels
+    let shutdown_rx_for_driver = shutdown_rx;
     tokio::spawn(async move {
-        if let Err(e) = driver.run(shutdown_rx).await {
+        if let Err(e) = driver.run(shutdown_rx_for_driver).await {
             tracing::error!("Exchange driver error: {}", e);
         }
     });
 
-    Ok((state_manager, exchange_update_rx, trading_client))
-}
+    // 7. Wait for WebSocket connection to be ready before returning
+    // This ensures the RPC channel is available before strategies start placing orders
+    tracing::info!("Waiting for WebSocket connection to be ready...");
+    let start = std::time::Instant::now();
+    let timeout = tokio::time::Duration::from_secs(30);
+    loop {
+        // Check if connection session exists
+        if client_for_readiness
+            .get_connection_session()
+            .await
+            .is_some()
+        {
+            // Also check RPC channel
+            let rpc_ready = {
+                let guard = client_for_readiness.outbound_rpc_tx.lock().await;
+                guard.is_some()
+            };
+            if rpc_ready {
+                tracing::info!("WebSocket connection ready, RPC channel available");
+                break;
+            }
+        }
 
-/// Extract the primary trading pair from exchange config
-fn get_primary_pair_from_config(config: &ExchangeEngineConfig) -> Result<Pair, EngineError> {
-    match &config.exchange_config {
-        ExchangeConfig::Binance(binance_config) => Ok(binance_config.symbol.clone().into()),
+        if start.elapsed() > timeout {
+            tracing::warn!("Timeout waiting for WebSocket connection (30s), proceeding anyway - connection may still be establishing");
+            break;
+        }
+
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
     }
+
+    Ok((state_manager, exchange_update_rx, trading_client))
 }

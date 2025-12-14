@@ -62,11 +62,39 @@ impl BinanceDriver {
         &self.state_manager
     }
 
-    /// Get the connection session (for checking if connected)
-    pub async fn get_connection_session(
-        &self,
-    ) -> Option<super::websocket::client::ConnectionSession> {
-        self.client.get_connection_session().await
+    /// Get a reference to the client for readiness checking
+    pub fn client(&self) -> &BinanceClient {
+        &self.client
+    }
+
+    /// Check if the WebSocket connection and RPC channel are ready
+    pub async fn is_ready(&self) -> bool {
+        // Check if connection session exists
+        if self.client.get_connection_session().await.is_none() {
+            return false;
+        }
+        // Check if RPC channel is ready
+        let guard = self.client.outbound_rpc_tx.lock().await;
+        guard.is_some()
+    }
+
+    /// Wait for the WebSocket connection and RPC channel to be ready
+    /// Returns true if ready, false if timeout
+    pub async fn wait_for_ready(&self, timeout_secs: u64) -> bool {
+        let start = std::time::Instant::now();
+        let timeout = tokio::time::Duration::from_secs(timeout_secs);
+
+        loop {
+            if self.is_ready().await {
+                return true;
+            }
+
+            if start.elapsed() > timeout {
+                return false;
+            }
+
+            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        }
     }
 }
 

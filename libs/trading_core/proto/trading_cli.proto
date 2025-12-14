@@ -137,7 +137,7 @@ message MonitoringData {
     repeated Position positions = 4;
     repeated IndicatorValue indicators = 5;
     AggregatedData aggregated = 6;
-    optional StrategyStatus strategy = 7; // Strategy info (only present in strategies mode)
+    repeated StrategyStatus strategies = 7; // Strategy info (only present in strategies mode, supports multiple)
 }
 
 message Order {

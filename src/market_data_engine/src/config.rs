@@ -56,10 +56,12 @@ mod tests {
             "exchange": "Binance",
             "exchange_config": {
                 "Binance": {
-                    "symbol": {
-                        "base": "BTC",
-                        "quote": "USDT"
-                    },
+                    "pairs": [
+                        {
+                            "base": "BTC",
+                            "quote": "USDT"
+                        }
+                    ],
                     "limit": 100,
                     "baseDelay": 2,
                     "maxDelay": 60
@@ -72,19 +74,16 @@ mod tests {
 
         assert_eq!(config.redis_url, None);
         assert_eq!(config.exchange, Exchange::Binance);
-        assert_eq!(
-            config.exchange_config,
-            ExchangeConfig::Binance(BinanceConfig {
-                symbol: Pair {
-                    base: "BTC".into(),
-                    quote: "USDT".into()
-                }
-                .into(),
-                limit: 100,
-                base_delay: None,
-                max_delay: None
-            })
-        );
+        match config.exchange_config {
+            ExchangeConfig::Binance(binance_config) => {
+                assert_eq!(binance_config.pairs.len(), 1);
+                assert_eq!(binance_config.pairs[0].base, "BTC");
+                assert_eq!(binance_config.pairs[0].quote, "USDT");
+                assert_eq!(binance_config.limit, 100);
+                assert_eq!(binance_config.base_delay, None);
+                assert_eq!(binance_config.max_delay, None);
+            }
+        }
     }
 
     // Test for successful retrieval of exchange config
@@ -94,11 +93,10 @@ mod tests {
             redis_url: None,
             exchange: Exchange::Binance,
             exchange_config: ExchangeConfig::Binance(BinanceConfig {
-                symbol: Pair {
+                pairs: vec![Pair {
                     base: "BTC".into(),
                     quote: "USDT".into(),
-                }
-                .into(),
+                }],
                 limit: 100,
                 base_delay: Some(2),
                 max_delay: Some(60),
@@ -109,8 +107,9 @@ mod tests {
         assert!(result.is_ok());
         let binance_config = result.unwrap();
 
-        assert_eq!(binance_config.symbol.base, "BTC");
-        assert_eq!(binance_config.symbol.quote, "USDT");
+        assert_eq!(binance_config.pairs.len(), 1);
+        assert_eq!(binance_config.pairs[0].base, "BTC");
+        assert_eq!(binance_config.pairs[0].quote, "USDT");
         assert_eq!(binance_config.limit, 100);
         assert_eq!(binance_config.base_delay, Some(2));
         assert_eq!(binance_config.max_delay, Some(60));

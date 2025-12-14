@@ -6,17 +6,23 @@
   "exchange": {
     "exchange": "Binance",
     "binance": {
-      "symbol": {
-        "base": "BTC",
-        "quote": "USDC"
-      },
+      "pairs": [
+        {
+          "base": "ETH",
+          "quote": "USDC"
+        },
+        {
+          "base": "SOL",
+          "quote": "USDC"
+        }
+      ],
       "ws": {
-        "apiKey": "xxxxxxxxxxxxxxxxx",
-        "secretKey": "xxxxxxxxxxxxxxxxx"
+        "apiKey": "xxxxxxxxxxxxxxxxxxxx",
+        "secretKey": "xxxxxxxxxxxxxxxxxxxx"
       },
       "rest": {
-        "apiKey": "xxxxxxxxxxxxxxxxx",
-        "secretKey": "xxxxxxxxxxxxxxxxx"
+        "apiKey": "xxxxxxxxxxxxxxxxxxxx",
+        "secretKey": "xxxxxxxxxxxxxxxxxxxx"
       },
       "limit": 100,
       "baseDelay": 2,

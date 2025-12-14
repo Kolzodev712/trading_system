@@ -143,7 +143,7 @@ impl TradingMonitorScreen {
                 Span::from(" Cancel"),
             ])]
         } else {
-            vec![Line::from(vec![
+            let mut footer_spans = vec![
                 Span::styled(
                     "Esc",
                     Style::default()
@@ -182,31 +182,41 @@ impl TradingMonitorScreen {
                         .fg(Color::Yellow)
                         .add_modifier(Modifier::BOLD),
                 ),
-                Span::from(" Details  │  "),
-                Span::styled(
+                Span::from(" Details"),
+            ];
+
+            // Only add Edit/Create options in levels mode
+            if !app.has_strategy() {
+                footer_spans.push(Span::from("  │  "));
+                footer_spans.push(Span::styled(
                     "E",
                     Style::default()
                         .fg(Color::Yellow)
                         .add_modifier(Modifier::BOLD),
-                ),
-                Span::from(" Edit  │  "),
-                Span::styled(
+                ));
+                footer_spans.push(Span::from(" Edit  │  "));
+                footer_spans.push(Span::styled(
                     "C",
                     Style::default()
                         .fg(Color::Yellow)
                         .add_modifier(Modifier::BOLD),
-                ),
-                Span::from(" Create"),
-            ])]
+                ));
+                footer_spans.push(Span::from(" Create"));
+            }
+
+            vec![Line::from(footer_spans)]
         };
         let footer = Paragraph::new(footer_text)
             .alignment(Alignment::Center)
             .block(Block::default().borders(Borders::ALL));
         frame.render_widget(footer, chunks[3]);
 
-        // Level details popup (if shown) - render LAST so it overlays everything
+        // Level/Strategy details popup (if shown) - render LAST so it overlays everything
         if app.show_level_details() {
             popups::render_level_details_popup(frame, app)?;
+        }
+        if app.show_strategy_details() {
+            popups::render_strategy_details_popup(frame, app)?;
         }
 
         // Edit form popup (if shown) - render LAST so it overlays everything

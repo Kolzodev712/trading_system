@@ -26,7 +26,7 @@ pub struct StrategyExecutor<S: Strategy + 'static> {
     strategy: Arc<RwLock<S>>,
     trading_client: Arc<RwLock<dyn TradingClient<trading_core::types::exchange::OrderRequest>>>,
     market_data_rx: MarketDataUpdateReceiver,
-    symbol: Pair,
+    pairs: Vec<Pair>, // All pairs this executor handles
     circuit_breaker: Arc<Mutex<CircuitBreaker>>,
     trading_state_manager: Arc<crate::state::manager::TradingStateManager>,
     order_timeout_secs: u64,
@@ -48,7 +48,7 @@ impl<S: Strategy> StrategyExecutor<S> {
         strategy: Arc<RwLock<S>>,
         trading_client: Arc<RwLock<dyn TradingClient<trading_core::types::exchange::OrderRequest>>>,
         market_data_rx: MarketDataUpdateReceiver,
-        symbol: Pair,
+        pairs: Vec<Pair>,
         trading_state_manager: Arc<crate::state::manager::TradingStateManager>,
         reconciliation_interval_secs: u64,
         asset_service: Option<Arc<AssetService>>,
@@ -58,11 +58,14 @@ impl<S: Strategy> StrategyExecutor<S> {
         config_tick_size: Decimal,
         config_min_notional: Decimal,
     ) -> Self {
+        if pairs.is_empty() {
+            panic!("StrategyExecutor requires at least one pair");
+        }
         Self {
             strategy,
             trading_client,
             market_data_rx,
-            symbol,
+            pairs,
             circuit_breaker: Arc::new(Mutex::new(order_circuit_breaker())),
             trading_state_manager,
             order_timeout_secs: 300, // 5 minutes default timeout for limit orders
@@ -91,65 +94,66 @@ impl<S: Strategy> StrategyExecutor<S> {
     /// Main execution loop - consumes orderbooks from channels and executes strategy
     pub async fn run(&self) -> Result<(), EngineError> {
         debug!(
-            "Starting strategy executor for {symbol:?}",
-            symbol = self.symbol
+            "Starting strategy executor for {} pair(s): {:?}",
+            self.pairs.len(),
+            self.pairs
         );
 
         let strategy = Arc::clone(&self.strategy);
         let trading_client = Arc::clone(&self.trading_client);
-        let symbol = self.symbol.clone();
         let circuit_breaker = Arc::clone(&self.circuit_breaker);
         let mut market_data_rx = self.market_data_rx.resubscribe();
 
-        // Start periodic reconciliation task
+        // Start periodic reconciliation task for all pairs
         // Start periodic reconciliation using TradingStateManager
         let trading_state_manager_for_recon = Arc::clone(&self.trading_state_manager);
-        let symbol_for_recon = self.symbol.clone();
+        let pairs_for_recon = self.pairs.clone();
         let strategy_for_price = Arc::clone(&strategy);
         let reconciliation_interval_secs = self.reconciliation_interval_secs;
         tokio::spawn(async move {
             info!(
-                "Starting periodic trading-level reconciliation (interval: {} seconds)",
-                reconciliation_interval_secs
+                "Starting periodic trading-level reconciliation (interval: {} seconds) for {} pair(s)",
+                reconciliation_interval_secs,
+                pairs_for_recon.len()
             );
             let mut interval = interval(Duration::from_secs(reconciliation_interval_secs));
             loop {
                 interval.tick().await;
 
-                info!(
-                    "Running periodic trading-level reconciliation for {}",
-                    symbol_for_recon
-                );
+                // Reconcile each pair
+                for pair in &pairs_for_recon {
+                    info!("Running periodic trading-level reconciliation for {}", pair);
 
-                // Get current price from strategy if available
-                let current_price = {
-                    let strat = strategy_for_price.read().await;
-                    strat.get_last_price()
-                };
+                    // Get current price from strategy if available
+                    let current_price = {
+                        let strat = strategy_for_price.read().await;
+                        strat.get_last_price()
+                    };
 
-                // Reconcile using TradingStateManager
-                match trading_state_manager_for_recon
-                    .reconcile(&symbol_for_recon, current_price)
-                    .await
-                {
-                    Ok(result) => {
-                        if result.reconciled {
-                            info!(
-                                "Trading-level reconciliation completed for {symbol}: internal={internal_qty}, exchange={exchange_qty}, discrepancy={discrepancy}",
-                                symbol = result.symbol,
-                                internal_qty = result.internal_quantity,
-                                exchange_qty = result.exchange_quantity,
-                                discrepancy = result.discrepancy
-                            );
-                        } else {
-                            info!(
-                                "Trading-level reconciliation for {symbol}: no discrepancies found",
-                                symbol = result.symbol
-                            );
+                    // Reconcile using TradingStateManager
+                    match trading_state_manager_for_recon
+                        .reconcile(pair, current_price)
+                        .await
+                    {
+                        Ok(result) => {
+                            if result.reconciled {
+                                info!(
+                                    "Trading-level reconciliation completed for {symbol}: internal={internal_qty}, exchange={exchange_qty}, discrepancy={discrepancy}",
+                                    symbol = result.symbol,
+                                    internal_qty = result.internal_quantity,
+                                    exchange_qty = result.exchange_quantity,
+                                    discrepancy = result.discrepancy
+                                );
+                            } else {
+                                info!(
+                                    "Trading-level reconciliation for {symbol}: no discrepancies found",
+                                    symbol = result.symbol
+                                );
+                            }
                         }
-                    }
-                    Err(e) => {
-                        error!("Trading-level reconciliation error: {e}");
+                        Err(e) => {
+                            error!("Trading-level reconciliation error for {}: {e}", pair);
+                        }
                     }
                 }
             }
@@ -198,9 +202,15 @@ impl<S: Strategy> StrategyExecutor<S> {
         });
 
         // Consume market data updates from channel
+        let pairs_set: std::collections::HashSet<_> = self.pairs.iter().collect();
         loop {
             match market_data_rx.recv().await {
                 Ok(MarketDataUpdate::Orderbook { orderbook, .. }) => {
+                    // Only process orderbooks for pairs we're handling
+                    if !pairs_set.contains(&orderbook.pair) {
+                        continue;
+                    }
+
                     // Get strategy decision using TradingStateManager's state
                     let order_request = {
                         let trading_state = self.trading_state_manager.get_state();
@@ -219,6 +229,8 @@ impl<S: Strategy> StrategyExecutor<S> {
                     };
 
                     // If strategy wants to place an order, do it
+                    // Use the orderbook's pair (single source of truth) instead of converting from symbol
+                    let orderbook_pair = orderbook.pair.clone();
                     if let Some(mut req) = order_request {
                         debug!(
                             "Strategy requested order: side={side}, symbol={symbol}, price={price}, amount={amount}",
@@ -240,10 +252,11 @@ impl<S: Strategy> StrategyExecutor<S> {
                         drop(cb);
 
                         // Check active orders limit from TradingStateManager
+                        // Use the orderbook's pair (single source of truth)
                         let trading_state = self.trading_state_manager.get_state();
                         let active_count = {
                             let state = trading_state.read().await;
-                            state.get_active_order_count(&symbol)
+                            state.get_active_order_count(&orderbook_pair)
                         };
 
                         if active_count >= 5 {
@@ -259,6 +272,7 @@ impl<S: Strategy> StrategyExecutor<S> {
                         );
 
                         // Check balance before placing order
+                        // Use the orderbook's pair (single source of truth)
                         match trading_client.read().await.fetch_balance().await {
                             Ok(balances) => {
                                 match req.side {
@@ -268,9 +282,9 @@ impl<S: Strategy> StrategyExecutor<S> {
                                             .iter()
                                             .find(|b| {
                                                 let balance_symbol = b.symbol.as_ref();
-                                                balance_symbol == symbol.quote.as_str()
+                                                balance_symbol == orderbook_pair.quote.as_str()
                                                     || balance_symbol
-                                                        .ends_with(symbol.quote.as_str())
+                                                        .ends_with(orderbook_pair.quote.as_str())
                                             })
                                             .map(|b| b.free)
                                             .unwrap_or(Decimal::ZERO);
@@ -280,7 +294,7 @@ impl<S: Strategy> StrategyExecutor<S> {
                                             warn!(
                                                 "Insufficient balance: need {required} {quote}, have {available} {quote}. Skipping order.",
                                                 required = required_balance,
-                                                quote = symbol.quote,
+                                                quote = orderbook_pair.quote,
                                                 available = quote_balance
                                             );
                                             continue;
@@ -288,7 +302,7 @@ impl<S: Strategy> StrategyExecutor<S> {
                                         debug!(
                                             "Balance check passed: {available} {quote} >= {required} {quote}",
                                             available = quote_balance,
-                                            quote = symbol.quote,
+                                            quote = orderbook_pair.quote,
                                             required = required_balance
                                         );
                                     }
@@ -298,9 +312,9 @@ impl<S: Strategy> StrategyExecutor<S> {
                                             .iter()
                                             .find(|b| {
                                                 let balance_symbol = b.symbol.as_ref();
-                                                balance_symbol == symbol.base.as_str()
+                                                balance_symbol == orderbook_pair.base.as_str()
                                                     || balance_symbol
-                                                        .starts_with(symbol.base.as_str())
+                                                        .starts_with(orderbook_pair.base.as_str())
                                             })
                                             .map(|b| b.free)
                                             .unwrap_or(Decimal::ZERO);
@@ -309,7 +323,7 @@ impl<S: Strategy> StrategyExecutor<S> {
                                             warn!(
                                                 "Insufficient balance: need {required} {base}, have {available} {base}. Skipping order.",
                                                 required = req.amount,
-                                                base = symbol.base,
+                                                base = orderbook_pair.base,
                                                 available = base_balance
                                             );
                                             continue;
@@ -317,7 +331,7 @@ impl<S: Strategy> StrategyExecutor<S> {
                                         debug!(
                                             "Balance check passed: {available} {base} >= {required} {base}",
                                             available = base_balance,
-                                            base = symbol.base,
+                                            base = orderbook_pair.base,
                                             required = req.amount
                                         );
                                     }
@@ -332,13 +346,14 @@ impl<S: Strategy> StrategyExecutor<S> {
                         }
 
                         // Get trading rules from Asset Engine (with config fallback)
+                        // Use the orderbook's pair (single source of truth)
                         use crate::levels::order_validation::{
                             get_trading_rules, round_price, round_quantity, validate_order,
                         };
                         let rules = get_trading_rules(
                             self.asset_service.as_ref(),
                             self.exchange.clone(),
-                            &self.symbol,
+                            &orderbook_pair,
                             self.config_min_order_size,
                             self.config_step_size,
                             self.config_tick_size,

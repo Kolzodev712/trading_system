@@ -597,22 +597,20 @@ impl TradingClient<OrderRequest, Pair> for BinanceClient {
                     // This is acceptable since Binance accepts cancellation without exact order_type match
                     (symbol.as_ref().into(), BinanceOrderType::Limit)
                 } else {
-                    // Order not in state - use config symbol as fallback
-                    debug!(
-                        "Order {order_id} not found in state, using config symbol",
-                        order_id = order_id.as_str()
-                    );
-                    (
-                        self.config.symbol.convert_to_smolstr(),
-                        BinanceOrderType::Limit,
-                    )
+                    // Order not in state - cannot determine pair, return error
+                    return Err(EngineError::new_custom_error(
+                        format!(
+                            "Order {} not found in state manager. Cannot determine trading pair for cancellation.",
+                            order_id.as_str()
+                        )
+                        .into(),
+                    ));
                 }
             } else {
-                // State manager not available - use config symbol as fallback
-                (
-                    self.config.symbol.convert_to_smolstr(),
-                    BinanceOrderType::Limit,
-                )
+                // State manager not available - cannot determine pair, return error
+                return Err(EngineError::new_custom_error(
+                    "State manager not available. Cannot determine trading pair for order cancellation.".into(),
+                ));
             }
         };
 

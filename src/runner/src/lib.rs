@@ -14,7 +14,6 @@ use crate::config::{BotConfig, StrategiesConfig};
 use crate::grpc::server::TradingGrpcServer;
 use crate::shutdown::ShutdownManager;
 use live_config::{LiveConfigClient, LiveConfigService};
-use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -30,8 +29,9 @@ use trading_engine::levels::{
     CancellationManager, IndicatorSubscriber, LevelBasedEventLoop, LevelExecutor, LevelManager,
 };
 use trading_engine::risk::RiskManager;
-use trading_engine::state::Strategy;
-use trading_engine::strategies::{BuyLowSellHigh, StrategyExecutor};
+use trading_engine::strategies::{
+    BuyLowSellHigh, StrategyExecutor, StrategyManager, StrategyManagerWrapper,
+};
 
 /// Shared execution report handler
 /// Processes execution reports from the exchange and calls the provided handler function
@@ -104,38 +104,105 @@ pub async fn strategy_runner(
     let strategies_config = StrategiesConfig::load_from_file(&strategies_config_path)?;
     strategies_config.validate()?;
 
-    info!(
-        "Creating {} Strategy...",
-        strategies_config.strategy_type.as_str()
-    );
-    let strategy = Arc::new(RwLock::new(BuyLowSellHigh::new(
-        services.trading_client.clone(),
-        strategies_config.symbol.clone(),
-        strategies_config.position_size,
-        strategies_config.max_position,
-        strategies_config.buy_threshold_percent,
-        strategies_config.sell_threshold_percent,
-        strategies_config.stop_loss_percent,
-        strategies_config.take_profit_percent,
-        strategies_config.max_active_orders,
-        strategies_config.price_history_size,
-        strategies_config.min_price_history,
-        Some(services.indicator_calculator.clone()), // Use calculator directly (read-only, no Mutex)
-    )));
+    // Get pairs from exchange config
+    let configured_pairs = bot_config.get_pairs()?;
+    if configured_pairs.is_empty() {
+        return Err("No pairs configured in bot.json".into());
+    }
 
-    info!("Creating Strategy Executor...");
-    let min_order_size = strategies_config
+    // Get all strategy configs (supports both single and multiple)
+    let strategy_configs = strategies_config.into_vec();
+    info!("Creating {} strategy(ies)...", strategy_configs.len());
+
+    if strategy_configs.is_empty() {
+        return Err("No strategies configured".into());
+    }
+
+    // Validate that we have enough pairs for all strategies
+    if strategy_configs.len() > configured_pairs.len() {
+        return Err(format!(
+            "Not enough pairs configured: {} strategies but only {} pairs in bot.json",
+            strategy_configs.len(),
+            configured_pairs.len()
+        )
+        .into());
+    }
+
+    // Create StrategyManager and add all strategies
+    // Validate that all strategy symbols match pairs from bot config
+    let mut strategy_manager = StrategyManager::new();
+    let mut all_symbols = Vec::new();
+    let mut strategy_infos = Vec::new(); // For gRPC monitoring
+
+    for config in strategy_configs.iter() {
+        let pair = &config.symbol;
+
+        // Validate that strategy symbol matches one of the configured pairs
+        if !configured_pairs
+            .iter()
+            .any(|p| p.base == pair.base && p.quote == pair.quote)
+        {
+            return Err(format!(
+                "Strategy {} uses symbol {} which is not in bot.json pairs. Available pairs: {:?}",
+                config.strategy_type, pair, configured_pairs
+            )
+            .into());
+        }
+
+        info!(
+            "Creating {} strategy for {}...",
+            config.strategy_type.as_str(),
+            pair
+        );
+        let strategy = Arc::new(RwLock::new(BuyLowSellHigh::new(
+            services.trading_client.clone(),
+            pair.clone(),
+            config.position_size,
+            config.max_position,
+            config.buy_threshold_percent,
+            config.sell_threshold_percent,
+            config.stop_loss_percent,
+            config.take_profit_percent,
+            config.max_active_orders,
+            config.price_history_size,
+            config.min_price_history,
+            Some(services.indicator_calculator.clone()), // Use calculator directly (read-only, no Mutex)
+        )));
+        strategy_manager.add_strategy(strategy);
+        all_symbols.push(pair.clone());
+        strategy_infos.push((
+            config.strategy_type.to_string(),
+            pair.clone(),
+            config.max_active_orders,
+        ));
+    }
+
+    // Get order size configs from first strategy (they should be the same for all)
+    let first_config = &strategy_configs[0];
+    let min_order_size = first_config
         .min_order_size
         .unwrap_or_else(|| rust_decimal::Decimal::new(1, 5));
-    let step_size = strategies_config
+    let step_size = first_config
         .step_size
         .unwrap_or_else(|| rust_decimal::Decimal::new(1, 5));
-    let tick_size = strategies_config
+    let tick_size = first_config
         .tick_size
         .unwrap_or_else(|| rust_decimal::Decimal::new(1, 2));
-    let min_notional = strategies_config
+    let min_notional = first_config
         .min_notional
         .unwrap_or_else(|| rust_decimal::Decimal::new(5, 0));
+
+    // Wrap StrategyManager to work with StrategyExecutor
+    let strategy_manager_arc = Arc::new(RwLock::new(strategy_manager));
+    let strategy_wrapper = Arc::new(RwLock::new(StrategyManagerWrapper::new(
+        strategy_manager_arc.clone(),
+    )));
+
+    info!(
+        "Creating Strategy Executor for {} strategy(ies) with {} pair(s)...",
+        strategy_infos.len(),
+        all_symbols.len()
+    );
 
     let trading_reconciliation_interval_secs =
         bot_config.reconciliation.trading_level_interval_ms / 1000;
@@ -151,7 +218,20 @@ pub async fn strategy_runner(
     let grpc_addr: std::net::SocketAddr = "[::]:50051"
         .parse()
         .map_err(|e| format!("Failed to parse gRPC address: {}", e))?;
-    let grpc_server = TradingGrpcServer::new_with_strategy(
+
+    // Convert strategy infos to monitoring format
+    let monitoring_strategy_infos: Vec<crate::grpc::service::StrategyInfo> = strategy_infos
+        .iter()
+        .map(
+            |(name, symbol, max_orders)| crate::grpc::service::StrategyInfo {
+                strategy_name: name.clone(),
+                symbol: symbol.clone(),
+                max_active_orders: *max_orders,
+            },
+        )
+        .collect();
+
+    let grpc_server = TradingGrpcServer::new_with_strategies(
         dummy_level_manager.clone(),
         services.trading_state_manager.clone(),
         services.trading_client.clone(),
@@ -159,18 +239,17 @@ pub async fn strategy_runner(
         services.indicator_service.clone(),
         services.indicator_calculator.clone(),
         trading_control.clone(), // Pass the same TradingControl instance
-        strategies_config.strategy_type.to_string(),
-        strategies_config.symbol.clone(),
-        strategies_config.max_active_orders,
+        monitoring_strategy_infos,
     );
     let grpc_handle = grpc_server.start(grpc_addr).await?;
     info!("gRPC server started on {}", grpc_addr);
 
+    // Pass all pairs to executor (no .first() - single source of truth)
     let executor = StrategyExecutor::new(
-        strategy.clone(),
+        strategy_wrapper.clone(),
         services.trading_client.clone(),
         services.market_data_rx.resubscribe(),
-        strategies_config.symbol.clone(),
+        all_symbols.clone(),
         services.trading_state_manager.clone(),
         trading_reconciliation_interval_secs,
         services.asset_service.clone(),
@@ -182,16 +261,16 @@ pub async fn strategy_runner(
     )
     .with_trading_control(trading_control.enabled_flag());
 
-    // Set up execution report handler
-    let strategy_for_reports = Arc::clone(&strategy);
+    // Set up execution report handler (StrategyManager handles routing to all strategies)
+    let strategy_manager_for_reports = strategy_manager_arc.clone();
     let shutdown_rx_reports = services.shutdown_manager.subscribe();
     let exec_report_rx = services.exec_report_rx;
     let _execution_report_handle = tokio::spawn(async move {
         execution_report_handler(exec_report_rx, shutdown_rx_reports, move |order| {
-            let strategy = Arc::clone(&strategy_for_reports);
+            let manager = Arc::clone(&strategy_manager_for_reports);
             async move {
-                let mut strat = strategy.write().await;
-                strat
+                let manager_guard = manager.read().await;
+                manager_guard
                     .on_execution_report(&order)
                     .await
                     .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
@@ -220,10 +299,12 @@ pub async fn strategy_runner(
     });
 
     info!("All systems ready! Starting strategy execution...");
-    info!("Strategy: {}", strategies_config.strategy_type.as_str());
-    info!("Position size: {}", strategies_config.position_size);
-    info!("Max position: {}", strategies_config.max_position);
-    info!("Symbol: {}", strategies_config.symbol);
+    for (strategy_type, symbol, max_orders) in &strategy_infos {
+        info!(
+            "  - {} for {} (max orders: {})",
+            strategy_type, symbol, max_orders
+        );
+    }
 
     let mut shutdown_rx_executor = services.shutdown_manager.subscribe();
     let executor_handle = tokio::spawn(async move {
@@ -242,19 +323,23 @@ pub async fn strategy_runner(
     services.shutdown_manager.wait_for_shutdown().await;
 
     info!("Shutting down gracefully...");
-    info!(
-        "Cancelling all open orders for {}...",
-        strategies_config.symbol
-    );
-    match services
-        .trading_client
-        .write()
-        .await
-        .cancel_all_orders(&strategies_config.symbol)
-        .await
-    {
-        Ok(_) => info!("All orders cancelled successfully"),
-        Err(e) => warn!("Failed to cancel all orders: {error}", error = e),
+    // Cancel orders for all symbols
+    for symbol in &all_symbols {
+        info!("Cancelling all open orders for {}...", symbol);
+        match services
+            .trading_client
+            .write()
+            .await
+            .cancel_all_orders(symbol)
+            .await
+        {
+            Ok(_) => info!("All orders cancelled successfully for {}", symbol),
+            Err(e) => warn!(
+                "Failed to cancel all orders for {}: {error}",
+                symbol,
+                error = e
+            ),
+        }
     }
 
     services.shutdown_manager.signal_shutdown();
@@ -334,18 +419,31 @@ pub async fn level_runner(
 
     info!("Loaded {} levels", level_manager.get_all_levels().len());
 
-    // Extract symbol from first level (needed for symbol registry)
-    let symbol = {
-        let level_manager_guard = level_manager.get_all_levels();
-        level_manager_guard
-            .first()
-            .map(|l| l.config.symbol.clone())
-            .ok_or("No levels configured")?
-    };
+    // Get pairs from exchange config
+    let configured_pairs = bot_config.get_pairs()?;
+    if configured_pairs.is_empty() {
+        return Err("No pairs configured in bot.json".into());
+    }
 
-    // Create symbol registry for risk manager
+    // Validate that all level symbols match pairs from bot config
+    let level_manager_guard = level_manager.get_all_levels();
+    for level in level_manager_guard.iter() {
+        let level_symbol = &level.config.symbol;
+        if !configured_pairs
+            .iter()
+            .any(|p| p.base == level_symbol.base && p.quote == level_symbol.quote)
+        {
+            warn!(
+                "Level {} uses symbol {} which is not in bot.json pairs. Available pairs: {:?}",
+                level.config.id, level_symbol, configured_pairs
+            );
+        }
+    }
+    drop(level_manager_guard);
+
+    // Use all configured pairs for symbol registry (levels can use any of these pairs)
     let symbol_registry = Arc::new(trading_core::registry::symbol::SymbolRegistry::from_pairs(
-        vec![symbol.clone()],
+        configured_pairs.clone(),
     ));
 
     // Create level executor with AssetService integration
@@ -463,6 +561,7 @@ pub async fn level_runner(
     });
 
     // Create level-based event loop
+    // Pass all pairs from bot config for reconciliation
     let trading_reconciliation_interval_secs =
         bot_config.reconciliation.trading_level_interval_ms / 1000;
     let event_loop = LevelBasedEventLoop::new(
@@ -473,7 +572,7 @@ pub async fn level_runner(
         indicator_subscriber,
         services.trading_client.clone(),
         services.market_data_rx.resubscribe(),
-        symbol.clone(),
+        configured_pairs.clone(),
         services.trading_state_manager.clone(),
         trading_reconciliation_interval_secs,
     );
@@ -500,7 +599,11 @@ pub async fn level_runner(
     });
 
     info!("=== All systems ready! ===");
-    info!("Starting level-based trading for symbol: {}", symbol);
+    info!(
+        "Starting level-based trading for {} pair(s): {:?}",
+        configured_pairs.len(),
+        configured_pairs
+    );
 
     // Run event loop
     let mut shutdown_rx_event_loop = services.shutdown_manager.subscribe();
@@ -520,16 +623,23 @@ pub async fn level_runner(
     services.shutdown_manager.wait_for_shutdown().await;
 
     info!("Shutting down gracefully...");
-    info!("Cancelling all open orders for {}...", symbol);
-    match services
-        .trading_client
-        .write()
-        .await
-        .cancel_all_orders(&symbol)
-        .await
-    {
-        Ok(_) => info!("All orders cancelled successfully"),
-        Err(e) => warn!("Failed to cancel all orders: {error}", error = e),
+    // Cancel all orders for all configured pairs
+    for pair in configured_pairs {
+        info!("Cancelling all open orders for {}...", pair);
+        match services
+            .trading_client
+            .write()
+            .await
+            .cancel_all_orders(&pair)
+            .await
+        {
+            Ok(_) => info!("All orders cancelled successfully for {}", pair),
+            Err(e) => warn!(
+                "Failed to cancel all orders for {}: {error}",
+                pair,
+                error = e
+            ),
+        }
     }
 
     services.shutdown_manager.signal_shutdown();
@@ -560,77 +670,6 @@ pub async fn level_runner(
 // ============================================================================
 // Initialization Functions
 // ============================================================================
-
-/// Extract the configured pair from BotConfig (exchange-agnostic)
-fn extract_bot_pair(bot_config: &BotConfig) -> Result<Pair, Box<dyn std::error::Error>> {
-    match bot_config.exchange.exchange {
-        Exchange::Binance => {
-            let binance_config_json = bot_config
-                .exchange
-                .exchange_specific
-                .get("binance")
-                .ok_or("Binance exchange configuration is required")?;
-            let binance_config: exchange_engine::exchanges::binance::config::BinanceConfig =
-                serde_json::from_value(binance_config_json.clone())
-                    .map_err(|e| format!("Failed to deserialize Binance config: {e}"))?;
-            Ok(binance_config.symbol.clone().into())
-        }
-        Exchange::Unsupported => Err("Unsupported exchange".into()),
-    }
-}
-
-/// Collect all configured pairs from bot config, levels config, and strategies config
-pub fn collect_configured_pairs(
-    bot_config: &BotConfig,
-    mode: &str,
-    levels_config_path: &str,
-    strategies_config_path: &str,
-) -> Result<Vec<Pair>, Box<dyn std::error::Error>> {
-    let mut pairs = HashSet::new();
-    let bot_pair = extract_bot_pair(bot_config)?;
-    pairs.insert(bot_pair);
-
-    match mode {
-        "levels" => {
-            if let Ok(levels) = load_pairs_from_levels_config(levels_config_path) {
-                pairs.extend(levels);
-            }
-        }
-        "strategies" => {
-            if let Ok(pair) = load_pair_from_strategies_config(strategies_config_path) {
-                pairs.insert(pair);
-            }
-        }
-        _ => {}
-    }
-
-    Ok(pairs.into_iter().collect())
-}
-
-/// Load pairs from levels config file
-fn load_pairs_from_levels_config(path: &str) -> Result<Vec<Pair>, Box<dyn std::error::Error>> {
-    use std::fs;
-    use trading_engine::levels::config::LevelConfig;
-
-    let content = fs::read_to_string(path)?;
-    let json: serde_json::Value = serde_json::from_str(&content)?;
-
-    let levels: Vec<LevelConfig> = json
-        .get("levels")
-        .and_then(|v| v.as_array())
-        .ok_or("Missing 'levels' array in config")?
-        .iter()
-        .filter_map(|level_json| serde_json::from_value(level_json.clone()).ok())
-        .collect();
-
-    Ok(levels.into_iter().map(|level| level.symbol).collect())
-}
-
-/// Load pair from strategies config file
-fn load_pair_from_strategies_config(path: &str) -> Result<Pair, Box<dyn std::error::Error>> {
-    let config = StrategiesConfig::load_from_file(path)?;
-    Ok(config.symbol)
-}
 
 /// Initialize MongoDB client if enabled
 /// Initialize MongoDB connection
@@ -748,14 +787,20 @@ pub fn initialize_market_data_engine(
     Box<dyn std::error::Error>,
 > {
     use market_data_engine::exchanges::binance::config::BinanceConfig as MDBinanceConfig;
-    use market_data_engine::exchanges::binance::websocket::types::common::BinanceSymbol as MDBinanceSymbol;
 
     info!(
         "Starting Market Data Engine (exchange: {:?})...",
         bot_config.exchange.exchange
     );
 
+    // Get pairs from exchange config
+    let pairs = bot_config.get_pairs()?;
+    if pairs.is_empty() {
+        return Err("No pairs configured in bot.json".into());
+    }
+
     // Extract exchange-specific config
+    // Pairs come from bot.json - single source of truth
     let market_data_config = match bot_config.exchange.exchange {
         Exchange::Binance => {
             let binance_config_json = bot_config
@@ -771,10 +816,7 @@ pub fn initialize_market_data_engine(
                 redis_url: None,
                 exchange: bot_config.exchange.exchange.clone(),
                 exchange_config: MDExchangeConfig::Binance(MDBinanceConfig {
-                    symbol: MDBinanceSymbol {
-                        base: binance_config.symbol.base.clone(),
-                        quote: binance_config.symbol.quote.clone(),
-                    },
+                    pairs: pairs.clone(), // Single source of truth from bot.json
                     limit: binance_config.limit.unwrap_or(100),
                     base_delay: binance_config.base_delay,
                     max_delay: binance_config.max_delay,
@@ -795,6 +837,7 @@ pub fn initialize_market_data_engine(
         market_data_config,
         market_data_tx.clone(),
         bot_config.channels.clone(),
+        pairs.clone(),
     )?;
 
     let mut shutdown_rx = shutdown_manager.subscribe();
@@ -818,11 +861,12 @@ pub fn initialize_market_data_engine(
 /// Returns the service, handle, and calculator reference for use by runners
 /// MongoDB is REQUIRED for indicator persistence
 pub async fn initialize_indicator_service(
-    bot_config: &BotConfig,
+    _bot_config: &BotConfig,
     mongo_client: &Arc<MongoClient>,
     market_data_rx: trading_core::channels::market_data::MarketDataUpdateReceiver,
     indicator_tx: trading_core::channels::indicators::IndicatorUpdateSender,
     shutdown_manager: &ShutdownManager,
+    configured_pairs: &[trading_core::types::common::Pair],
 ) -> Result<
     (
         Arc<Mutex<IndicatorService>>,
@@ -831,8 +875,6 @@ pub async fn initialize_indicator_service(
     ),
     Box<dyn std::error::Error>,
 > {
-    let default_pair = extract_bot_pair(bot_config)?;
-
     info!("Initializing Indicator Service (MongoDB persistence: enabled)...");
 
     let indicator_market_data_rx = market_data_rx.resubscribe();
@@ -883,57 +925,85 @@ pub async fn initialize_indicator_service(
         );
     }
 
-    // Register default indicators
-    let pair_str = default_pair.convert_to_smolstr();
-    info!("Registering default indicators for pair: {}", pair_str);
+    // Register default indicators (SMA and EMA) for all configured pairs
+    info!(
+        "Registering default indicators (SMA, EMA) for {} configured pair(s): {:?}",
+        configured_pairs.len(),
+        configured_pairs
+    );
 
-    let sma_config = indicator_engine::indicators::IndicatorConfig {
-        id: smol_str::SmolStr::new(format!("sma_20_{}", pair_str)),
-        name: smol_str::SmolStr::new("SMA"),
-        pair: pair_str.clone(),
-        period: 20,
-        source: indicator_engine::indicators::PriceSource::Close,
-    };
-    if let Err(e) = indicator_service
-        .lock()
-        .await
-        .register_indicator(sma_config.clone())
-        .await
-    {
-        warn!("Failed to register SMA indicator: {e}");
-    } else {
-        info!(
-            "Registered SMA indicator: {} for pair: {}",
-            sma_config.id, pair_str
-        );
+    let mut registered_count = 0;
+    for pair in configured_pairs {
+        let pair_str = pair.convert_to_smolstr();
+        info!("Processing pair: {} (formatted as: {})", pair, pair_str);
+
+        // Register SMA indicator
+        let sma_id = smol_str::SmolStr::new(format!("sma_20_{}", pair_str));
+        let sma_config = indicator_engine::indicators::IndicatorConfig {
+            id: sma_id.clone(),
+            name: smol_str::SmolStr::new("SMA"),
+            pair: pair_str.clone(),
+            period: 20,
+            source: indicator_engine::indicators::PriceSource::Close,
+        };
+        match indicator_service
+            .lock()
+            .await
+            .register_indicator(sma_config.clone())
+            .await
+        {
+            Ok(_) => {
+                info!(
+                    "✓ Registered SMA indicator: {} for pair: {}",
+                    sma_id, pair_str
+                );
+                registered_count += 1;
+            }
+            Err(e) => {
+                warn!("✗ Failed to register SMA indicator for {}: {e}", pair_str);
+            }
+        }
+
+        // Register EMA indicator
+        let ema_id = smol_str::SmolStr::new(format!("ema_12_{}", pair_str));
+        let ema_config = indicator_engine::indicators::IndicatorConfig {
+            id: ema_id.clone(),
+            name: smol_str::SmolStr::new("EMA"),
+            pair: pair_str.clone(),
+            period: 12,
+            source: indicator_engine::indicators::PriceSource::Close,
+        };
+        match indicator_service
+            .lock()
+            .await
+            .register_indicator(ema_config.clone())
+            .await
+        {
+            Ok(_) => {
+                info!(
+                    "✓ Registered EMA indicator: {} for pair: {}",
+                    ema_id, pair_str
+                );
+                registered_count += 1;
+            }
+            Err(e) => {
+                warn!("✗ Failed to register EMA indicator for {}: {e}", pair_str);
+            }
+        }
     }
 
-    let ema_config = indicator_engine::indicators::IndicatorConfig {
-        id: smol_str::SmolStr::new(format!("ema_12_{}", pair_str)),
-        name: smol_str::SmolStr::new("EMA"),
-        pair: pair_str.clone(),
-        period: 12,
-        source: indicator_engine::indicators::PriceSource::Close,
-    };
-    if let Err(e) = indicator_service
-        .lock()
-        .await
-        .register_indicator(ema_config.clone())
-        .await
-    {
-        warn!("Failed to register EMA indicator: {e}");
-    } else {
-        info!(
-            "Registered EMA indicator: {} for pair: {}",
-            ema_config.id, pair_str
-        );
-    }
+    info!(
+        "Successfully registered {} indicator(s) for {} pair(s)",
+        registered_count,
+        configured_pairs.len()
+    );
 
     // Log total indicator count after registration
     let total_indicators = indicator_service.lock().await.get_indicator_count();
     info!(
-        "Total indicators registered: {} (pair: {})",
-        total_indicators, pair_str
+        "Total indicators registered: {} (across {} pair(s))",
+        total_indicators,
+        configured_pairs.len()
     );
 
     // Get calculator reference BEFORE spawning the task (which will hold the lock forever)
@@ -1003,8 +1073,8 @@ pub async fn initialize_exchange_engine(
         }
     );
 
-    // Extract exchange-specific config
-    let exchange_engine_config = match bot_config.exchange.exchange {
+    // Extract exchange-specific config and get pairs
+    let (exchange_engine_config, pairs) = match bot_config.exchange.exchange {
         Exchange::Binance => {
             let binance_config_json = bot_config
                 .exchange
@@ -1015,10 +1085,21 @@ pub async fn initialize_exchange_engine(
                 serde_json::from_value(binance_config_json.clone())
                     .map_err(|e| format!("Failed to deserialize Binance config: {e}"))?;
 
-            ExchangeEngineConfig {
+            // Validate pairs
+            if binance_config.pairs.is_empty() {
+                return Err("No pairs configured in binance config".into());
+            }
+
+            // Pairs are now the only source of truth - no symbol field needed
+
+            let pairs = binance_config.pairs.clone();
+
+            let exchange_config = ExchangeEngineConfig {
                 exchange: Exchange::Binance,
                 exchange_config: exchange_engine::config::ExchangeConfig::Binance(binance_config),
-            }
+            };
+
+            (exchange_config, pairs)
         }
         Exchange::Unsupported => {
             return Err("Unsupported exchange for Exchange Engine".into());
@@ -1028,6 +1109,7 @@ pub async fn initialize_exchange_engine(
     let shutdown_rx = shutdown_manager.subscribe();
     let (exchange_state_manager, exchange_update_rx, trading_client) = run::run(
         exchange_engine_config,
+        pairs,
         shutdown_rx,
         exchange_reconciliation_interval_secs,
         reconciliation_enabled,

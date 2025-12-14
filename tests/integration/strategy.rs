@@ -45,19 +45,19 @@ async fn test_strategy_monitoring_with_position() {
         trading_state_manager: trading_state_manager.clone(),
         exchange_state_manager,
         indicator_calculator: indicator_calculator.clone(),
-        strategy_info: Some(runner::grpc::service::monitoring::StrategyInfo {
+        strategy_infos: vec![runner::grpc::service::monitoring::StrategyInfo {
             strategy_name: "BuyLowSellHigh".to_string(),
             symbol: pair.clone(),
             max_active_orders: 2,
-        }),
+        }],
     };
 
     // Collect monitoring data
     let monitoring_data = monitoring_service.collect_monitoring_data().await.unwrap();
 
     // Verify strategy status is present
-    assert!(monitoring_data.strategy.is_some());
-    let strategy_status = monitoring_data.strategy.unwrap();
+    assert!(!monitoring_data.strategies.is_empty());
+    let strategy_status = &monitoring_data.strategies[0];
 
     assert_eq!(strategy_status.strategy_name, "BuyLowSellHigh");
     assert_eq!(strategy_status.symbol, "BTCUSDC");
@@ -92,19 +92,19 @@ async fn test_strategy_monitoring_without_position() {
         trading_state_manager: trading_state_manager.clone(),
         exchange_state_manager,
         indicator_calculator: indicator_calculator.clone(),
-        strategy_info: Some(runner::grpc::service::monitoring::StrategyInfo {
+        strategy_infos: vec![runner::grpc::service::monitoring::StrategyInfo {
             strategy_name: "BuyLowSellHigh".to_string(),
             symbol: pair.clone(),
             max_active_orders: 2,
-        }),
+        }],
     };
 
     // Collect monitoring data
     let monitoring_data = monitoring_service.collect_monitoring_data().await.unwrap();
 
     // Verify strategy status is present
-    assert!(monitoring_data.strategy.is_some());
-    let strategy_status = monitoring_data.strategy.unwrap();
+    assert!(!monitoring_data.strategies.is_empty());
+    let strategy_status = &monitoring_data.strategies[0];
 
     assert_eq!(strategy_status.strategy_name, "BuyLowSellHigh");
     assert_eq!(strategy_status.position_quantity, "0");
@@ -149,19 +149,19 @@ async fn test_strategy_monitoring_with_active_orders() {
         trading_state_manager: trading_state_manager.clone(),
         exchange_state_manager,
         indicator_calculator: indicator_calculator.clone(),
-        strategy_info: Some(runner::grpc::service::monitoring::StrategyInfo {
+        strategy_infos: vec![runner::grpc::service::monitoring::StrategyInfo {
             strategy_name: "BuyLowSellHigh".to_string(),
             symbol: pair.clone(),
             max_active_orders: 2,
-        }),
+        }],
     };
 
     // Collect monitoring data
     let monitoring_data = monitoring_service.collect_monitoring_data().await.unwrap();
 
     // Verify strategy status shows active orders
-    assert!(monitoring_data.strategy.is_some());
-    let strategy_status = monitoring_data.strategy.unwrap();
+    assert!(!monitoring_data.strategies.is_empty());
+    let strategy_status = &monitoring_data.strategies[0];
 
     assert_eq!(strategy_status.active_orders, 1);
     assert_eq!(strategy_status.max_active_orders, 2);

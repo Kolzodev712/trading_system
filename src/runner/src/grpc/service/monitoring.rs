@@ -16,8 +16,8 @@ pub struct MonitoringService {
     pub trading_state_manager: Arc<TradingStateManager>,
     pub exchange_state_manager: Arc<ExchangeStateManager>,
     pub indicator_calculator: Arc<indicator_engine::calculator::IndicatorCalculator>,
-    /// Strategy info (only set in strategies mode)
-    pub strategy_info: Option<StrategyInfo>,
+    /// Strategy info (only set in strategies mode, supports multiple)
+    pub strategy_infos: Vec<StrategyInfo>,
 }
 
 /// Strategy information for monitoring
@@ -152,13 +152,16 @@ impl MonitoringService {
             );
         }
 
-        // Collect strategy status if in strategies mode
-        let strategy_status = if let Some(ref strategy_info) = self.strategy_info {
-            self.collect_strategy_status(strategy_info, &positions)
+        // Collect strategy statuses for all strategies
+        let mut strategy_statuses = Vec::new();
+        for strategy_info in &self.strategy_infos {
+            if let Some(status) = self
+                .collect_strategy_status(strategy_info, &positions)
                 .await
-        } else {
-            None
-        };
+            {
+                strategy_statuses.push(status);
+            }
+        }
 
         Ok(trading_cli::MonitoringData {
             orders,
@@ -167,7 +170,7 @@ impl MonitoringService {
             positions,
             indicators,
             aggregated: Some(aggregated),
-            strategy: strategy_status,
+            strategies: strategy_statuses,
         })
     }
 

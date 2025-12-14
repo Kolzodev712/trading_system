@@ -29,21 +29,23 @@ impl MarketDataDriver {
     /// * `config` - Market data configuration
     /// * `market_data_tx` - Channel sender for publishing market data updates
     /// * `channels` - Channel configuration for buffer sizes
+    /// * `pairs` - All trading pairs to subscribe to
     ///
-    /// The driver creates its own symbol registry from the config's pair information.
+    /// The driver creates its own symbol registry from all provided pairs.
     pub fn new(
         config: MarketDataConfig,
         market_data_tx: MarketDataUpdateSender,
         channels: ChannelConfig,
+        pairs: Vec<Pair>,
     ) -> Result<Self, EngineError> {
-        // Extract pair from config and create symbol registry
-        let pair = match &config.exchange_config {
-            ExchangeConfig::Binance(binance_config) => Pair::new(
-                binance_config.symbol.base.as_str(),
-                binance_config.symbol.quote.as_str(),
-            ),
-        };
-        let symbol_registry = Arc::new(SymbolRegistry::from_pairs(vec![pair]));
+        if pairs.is_empty() {
+            return Err(EngineError::CustomError(anyhow::anyhow!(
+                "No pairs provided to MarketDataDriver"
+            )));
+        }
+
+        // Create symbol registry with all pairs
+        let symbol_registry = Arc::new(SymbolRegistry::from_pairs(pairs.clone()));
 
         // Create state manager with symbol registry
         let state_manager = Arc::new(MarketDataStateManager::new(
@@ -51,7 +53,7 @@ impl MarketDataDriver {
             symbol_registry,
         ));
 
-        // Create exchange client with state manager handler
+        // Create exchange client with state manager handler and all pairs
         let exchange_client =
             Self::create_exchange_client(&config, state_manager.clone(), &channels)?;
 
@@ -73,11 +75,13 @@ impl MarketDataDriver {
     ) -> Result<Box<dyn MarketDataClient>, EngineError> {
         match &config.exchange_config {
             ExchangeConfig::Binance(binance_config) => {
+                // Use pairs from config (single source of truth)
                 let message_handler = Box::new(StateManagerMessageHandler::new(state_manager));
                 Ok(Box::new(BinanceClient::new(
                     binance_config.clone(),
                     channels.market_data_engine_buffer,
                     Some(message_handler),
+                    binance_config.pairs.clone(), // Use pairs from config
                 )))
             } // _ => Err(EngineError::UnsupportedExchange), => add this when more exchanges are supported
         }

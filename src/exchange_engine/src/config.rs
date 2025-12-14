@@ -41,7 +41,6 @@ mod tests {
 
     use super::*;
     use serde_json;
-    use trading_core::types::common::Pair;
 
     // Sample config JSON for deserialization
     const CONFIG_JSON: &str = r#"
@@ -49,10 +48,12 @@ mod tests {
         "exchange": "Binance",
         "exchange_config": {
             "Binance": {
-            "symbol": {
-                "base": "BTC",
-                "quote": "USDT"
-            },
+            "pairs": [
+                {
+                    "base": "BTC",
+                    "quote": "USDT"
+                }
+            ],
             "rest": {
                 "apiKey": "some_key",
                 "secretKey": "some_secret"    
@@ -78,8 +79,6 @@ mod tests {
 
         match config.exchange_config {
             ExchangeConfig::Binance(ref binance_config) => {
-                assert_eq!(binance_config.symbol.base, "BTC");
-                assert_eq!(binance_config.symbol.quote, "USDT");
                 assert_eq!(binance_config.rest.api_key, "some_key".into());
                 assert_eq!(binance_config.rest.secret_key, "some_secret".into());
                 assert_eq!(binance_config.ws.api_key, "some_key".into());
@@ -95,11 +94,7 @@ mod tests {
     #[test]
     fn test_exchange_engine_config_serialization() {
         let binance_config = BinanceConfig {
-            symbol: Pair {
-                base: "BTC".into(),
-                quote: "USDT".into(),
-            }
-            .into(),
+            pairs: vec![trading_core::types::common::Pair::new("BTC", "USDT")],
             rest: BinanceCredentials {
                 api_key: trading_core::secret::SecretString::from("some_key"),
                 secret_key: trading_core::secret::SecretString::from("some_secret"),
@@ -121,18 +116,14 @@ mod tests {
         let json = serde_json::to_string(&exchange_engine_config).unwrap();
         assert!(json.contains("\"exchange\":\"Binance\""));
         assert!(json.contains("\"apiKey\":\"some_key\""));
-        assert!(json.contains("\"symbol\":{\"base\":\"BTC\",\"quote\":\"USDT\"}"));
+        assert!(json.contains("\"pairs\":[{\"base\":\"BTC\",\"quote\":\"USDT\"}]"));
     }
 
     // Test for retrieving the BinanceConfig from the ExchangeEngineConfig
     #[test]
     fn test_get_exchange_config() {
         let binance_config = BinanceConfig {
-            symbol: Pair {
-                base: "BTC".into(),
-                quote: "USDT".into(),
-            }
-            .into(),
+            pairs: vec![trading_core::types::common::Pair::new("BTC", "USDT")],
             rest: BinanceCredentials {
                 api_key: trading_core::secret::SecretString::from("some_key"),
                 secret_key: trading_core::secret::SecretString::from("some_secret"),
@@ -153,8 +144,6 @@ mod tests {
 
         let retrieved_config: BinanceConfig = exchange_engine_config.get_exchange_config().unwrap();
 
-        assert_eq!(retrieved_config.symbol.base, "BTC");
-        assert_eq!(retrieved_config.symbol.quote, "USDT");
         assert_eq!(retrieved_config.rest.api_key, "some_key".into());
         assert_eq!(retrieved_config.rest.secret_key, "some_secret".into());
         assert_eq!(retrieved_config.ws.api_key, "some_key".into());

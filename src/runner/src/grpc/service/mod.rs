@@ -4,6 +4,9 @@ mod levels;
 mod monitoring;
 mod trading_control;
 
+// Re-export StrategyInfo for use in other modules
+pub use monitoring::StrategyInfo;
+
 use async_trait::async_trait;
 use exchange_engine::state::manager::ExchangeStateManager;
 use indicator_engine::IndicatorService;
@@ -31,8 +34,8 @@ pub struct TradingCliServiceImpl {
     indicator_service: Arc<Mutex<IndicatorService>>,
     // Store calculator directly - it's thread-safe, no locking needed for reads
     indicator_calculator: Arc<indicator_engine::calculator::IndicatorCalculator>,
-    /// Strategy info (only set in strategies mode)
-    strategy_info: Option<monitoring::StrategyInfo>,
+    /// Strategy infos (only set in strategies mode, supports multiple)
+    strategy_infos: Vec<monitoring::StrategyInfo>,
 }
 
 impl TradingCliServiceImpl {
@@ -53,7 +56,7 @@ impl TradingCliServiceImpl {
             exchange_state_manager,
             indicator_service,
             indicator_calculator,
-            strategy_info: None,
+            strategy_infos: Vec::new(),
         }
     }
 
@@ -64,11 +67,17 @@ impl TradingCliServiceImpl {
         symbol: trading_core::types::common::Pair,
         max_active_orders: usize,
     ) -> Self {
-        self.strategy_info = Some(monitoring::StrategyInfo {
+        self.strategy_infos.push(monitoring::StrategyInfo {
             strategy_name,
             symbol,
             max_active_orders,
         });
+        self
+    }
+
+    /// Set multiple strategy infos (called in strategies mode with multiple strategies)
+    pub fn with_strategy_infos(mut self, strategy_infos: Vec<monitoring::StrategyInfo>) -> Self {
+        self.strategy_infos = strategy_infos;
         self
     }
 
@@ -82,7 +91,7 @@ impl TradingCliServiceImpl {
             exchange_state_manager: self.exchange_state_manager.clone(),
             indicator_service: self.indicator_service.clone(),
             indicator_calculator: self.indicator_calculator.clone(),
-            strategy_info: self.strategy_info.clone(),
+            strategy_infos: self.strategy_infos.clone(),
         }
     }
 
@@ -93,7 +102,7 @@ impl TradingCliServiceImpl {
             trading_state_manager: self.trading_state_manager.clone(),
             exchange_state_manager: self.exchange_state_manager.clone(),
             indicator_calculator: self.indicator_calculator.clone(),
-            strategy_info: self.strategy_info.clone(),
+            strategy_infos: self.strategy_infos.clone(),
         }
     }
 

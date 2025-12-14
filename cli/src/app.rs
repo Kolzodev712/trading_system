@@ -17,10 +17,13 @@ pub struct App {
     trading_status: bool,
     monitoring_data: Option<MonitoringData>,
     levels: Option<Vec<crate::client::trading_cli::Level>>,
+    strategies: Option<Vec<crate::client::trading_cli::StrategyStatus>>, // Strategies list
     streaming_active: bool,
     selected_level_index: Option<usize>, // Selected level index in levels list
+    selected_strategy_index: Option<usize>, // Selected strategy index in strategies list
     level_details: Option<crate::client::trading_cli::Level>, // Currently viewed level details
     show_level_details: bool,            // Whether to show level details popup
+    show_strategy_details: bool,         // Whether to show strategy details popup
     edit_form: Option<EditFormState>,    // Edit form state
     create_form: Option<CreateFormState>, // Create form state
 }
@@ -76,10 +79,13 @@ impl App {
             trading_status: true, // Default to enabled
             monitoring_data: None,
             levels: None,
+            strategies: None,
             streaming_active: false,
             selected_level_index: None,
+            selected_strategy_index: None,
             level_details: None,
             show_level_details: false,
+            show_strategy_details: false,
             edit_form: None,
             create_form: None,
         })
@@ -271,7 +277,13 @@ impl App {
                 // Handle streaming updates
                 update = stream_rx.recv() => {
                     if let Some(data) = update {
-                        self.monitoring_data = Some(data);
+                        self.monitoring_data = Some(data.clone());
+                        // Extract strategies from monitoring data
+                        self.strategies = if !data.strategies.is_empty() {
+                            Some(data.strategies.clone())
+                        } else {
+                            None
+                        };
                         needs_redraw = true; // Data updated, need redraw
                     }
                 }
@@ -343,8 +355,74 @@ impl App {
     pub fn has_strategy(&self) -> bool {
         self.monitoring_data
             .as_ref()
-            .and_then(|md| md.strategy.as_ref())
-            .is_some()
+            .map(|md| !md.strategies.is_empty())
+            .unwrap_or(false)
+    }
+
+    pub fn strategies(&self) -> Option<&Vec<crate::client::trading_cli::StrategyStatus>> {
+        self.strategies.as_ref()
+    }
+
+    pub fn selected_strategy_index(&self) -> Option<usize> {
+        self.selected_strategy_index
+    }
+
+    pub fn selected_strategy(&self) -> Option<&crate::client::trading_cli::StrategyStatus> {
+        if let (Some(strategies), Some(idx)) =
+            (self.strategies.as_ref(), self.selected_strategy_index)
+        {
+            strategies.get(idx)
+        } else {
+            None
+        }
+    }
+
+    pub fn show_strategy_details(&self) -> bool {
+        self.show_strategy_details
+    }
+
+    pub async fn toggle_strategy_details(&mut self) -> Result<(), CliError> {
+        if self.show_strategy_details {
+            // Close details
+            self.show_strategy_details = false;
+        } else {
+            // Show details for selected strategy (data is already in monitoring_data)
+            if self.selected_strategy().is_some() {
+                self.show_strategy_details = true;
+            }
+        }
+        Ok(())
+    }
+
+    /// Strategy selection methods (similar to level selection)
+    pub fn select_strategy_up(&mut self) {
+        if let Some(strategies) = &self.strategies {
+            if strategies.is_empty() {
+                self.selected_strategy_index = None;
+                return;
+            }
+            let max_idx = strategies.len() - 1;
+            self.selected_strategy_index = Some(
+                self.selected_strategy_index
+                    .map(|idx| if idx == 0 { max_idx } else { idx - 1 })
+                    .unwrap_or(0),
+            );
+        }
+    }
+
+    pub fn select_strategy_down(&mut self) {
+        if let Some(strategies) = &self.strategies {
+            if strategies.is_empty() {
+                self.selected_strategy_index = None;
+                return;
+            }
+            let max_idx = strategies.len() - 1;
+            self.selected_strategy_index = Some(
+                self.selected_strategy_index
+                    .map(|idx| if idx >= max_idx { 0 } else { idx + 1 })
+                    .unwrap_or(0),
+            );
+        }
     }
 
     pub fn levels(&self) -> Option<&Vec<crate::client::trading_cli::Level>> {
@@ -356,7 +434,13 @@ impl App {
             // Use timeout to avoid blocking
             match tokio::time::timeout(Duration::from_secs(2), client.get_monitoring_data()).await {
                 Ok(Ok(data)) => {
-                    self.monitoring_data = Some(data);
+                    self.monitoring_data = Some(data.clone());
+                    // Extract strategies from monitoring data
+                    self.strategies = if !data.strategies.is_empty() {
+                        Some(data.strategies.clone())
+                    } else {
+                        None
+                    };
                 }
                 Ok(Err(_)) => {}
                 Err(_) => {}
@@ -471,6 +555,7 @@ impl App {
         self.streaming_active = false; // Stop streaming when leaving Trading Monitor
         self.show_level_details = false; // Close details popup
         self.level_details = None;
+        self.show_strategy_details = false; // Close strategy details popup
         self.edit_form = None; // Close edit form
         self.create_form = None; // Close create form
     }

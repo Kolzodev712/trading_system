@@ -1,11 +1,12 @@
-use crate::exchanges::binance::common_types::BinanceSymbol;
 use serde::{Deserialize, Serialize};
 use trading_core::secret::SecretString;
+use trading_core::types::common::Pair;
 
 #[derive(Debug, PartialEq, Eq, Deserialize, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct BinanceConfig {
-    pub symbol: BinanceSymbol,
+    /// Trading pairs to use (centralized pair configuration)
+    pub pairs: Vec<Pair>,
     pub rest: BinanceCredentials,
     pub ws: BinanceCredentials,
     pub limit: Option<u64>,
@@ -24,6 +25,7 @@ pub struct BinanceCredentials {
 mod tests {
     use super::*;
     use serde_json;
+    use trading_core::types::common::Pair;
 
     #[test]
     fn test_binance_credentials_serde() {
@@ -46,7 +48,7 @@ mod tests {
     #[test]
     fn test_binance_config_serde() {
         let config = BinanceConfig {
-            symbol: BinanceSymbol::new("BTC", "USDT"),
+            pairs: vec![Pair::new("BTC", "USDT")],
             rest: BinanceCredentials {
                 api_key: SecretString::new("rest_api_key"),
                 secret_key: SecretString::new("rest_secret_key"),
@@ -85,14 +87,14 @@ mod tests {
             deserialized.ws.secret_key.expose(),
             config.ws.secret_key.expose()
         );
-        assert_eq!(deserialized.symbol, config.symbol);
+        assert_eq!(deserialized.pairs, config.pairs);
         assert_eq!(deserialized.limit, config.limit);
     }
 
     #[test]
     fn test_binance_config_optional_fields_none() {
         let config = BinanceConfig {
-            symbol: BinanceSymbol::new("ETH", "USDT"),
+            pairs: vec![Pair::new("ETH", "USDT")],
             rest: BinanceCredentials {
                 api_key: SecretString::new("rest_api_key"),
                 secret_key: SecretString::new("rest_secret_key"),
@@ -124,6 +126,6 @@ mod tests {
             deserialized.ws.secret_key.expose(),
             config.ws.secret_key.expose()
         );
-        assert_eq!(deserialized.symbol, config.symbol);
+        assert_eq!(deserialized.pairs, config.pairs);
     }
 }

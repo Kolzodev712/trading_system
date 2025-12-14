@@ -284,6 +284,8 @@ async fn handle_normal_input(app: &mut App, key: KeyCode) -> Result<(), CliError
             // If details popup is open, close it first
             if app.show_level_details() {
                 app.toggle_level_details().await?;
+            } else if app.show_strategy_details() {
+                app.toggle_strategy_details().await?;
             } else {
                 // Otherwise navigate back to main menu
                 app.go_to_main_menu();
@@ -294,12 +296,20 @@ async fn handle_normal_input(app: &mut App, key: KeyCode) -> Result<(), CliError
             app.refresh_monitoring_data().await?;
         }
         KeyCode::Up => {
-            // Select level up
-            app.select_level_up();
+            // Select up (level or strategy depending on mode)
+            if app.has_strategy() {
+                app.select_strategy_up();
+            } else {
+                app.select_level_up();
+            }
         }
         KeyCode::Down => {
-            // Select level down
-            app.select_level_down();
+            // Select down (level or strategy depending on mode)
+            if app.has_strategy() {
+                app.select_strategy_down();
+            } else {
+                app.select_level_down();
+            }
         }
         KeyCode::Char('t') | KeyCode::Char('T') => {
             // In strategies mode: toggle trading
@@ -315,16 +325,24 @@ async fn handle_normal_input(app: &mut App, key: KeyCode) -> Result<(), CliError
             }
         }
         KeyCode::Char('l') | KeyCode::Char('L') => {
-            // Toggle level details popup
-            app.toggle_level_details().await?;
+            // Toggle level/strategy details popup
+            if app.has_strategy() {
+                app.toggle_strategy_details().await?;
+            } else {
+                app.toggle_level_details().await?;
+            }
         }
         KeyCode::Char('e') | KeyCode::Char('E') => {
-            // Open edit form
-            app.open_edit_form().await?;
+            // Open edit form (only in levels mode)
+            if !app.has_strategy() {
+                app.open_edit_form().await?;
+            }
         }
         KeyCode::Char('c') | KeyCode::Char('C') => {
-            // Open create form
-            app.open_create_form().await?;
+            // Open create form (only in levels mode)
+            if !app.has_strategy() {
+                app.open_create_form().await?;
+            }
         }
         _ => {}
     }

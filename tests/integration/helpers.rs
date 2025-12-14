@@ -88,12 +88,11 @@ pub fn create_test_balance(
 
 /// Create Binance config for testing
 pub fn create_test_binance_config() -> exchange_engine::exchanges::binance::config::BinanceConfig {
-    use exchange_engine::exchanges::binance::common_types::BinanceSymbol;
     use exchange_engine::exchanges::binance::config::BinanceCredentials;
     use trading_core::secret::SecretString;
 
     exchange_engine::exchanges::binance::config::BinanceConfig {
-        symbol: BinanceSymbol::new("BTC", "USDT"),
+        pairs: vec![Pair::new("BTC", "USDT")],
         rest: BinanceCredentials {
             api_key: SecretString::new("test_key"),
             secret_key: SecretString::new("test_secret"),

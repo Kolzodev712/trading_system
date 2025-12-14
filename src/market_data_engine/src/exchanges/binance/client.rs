@@ -26,6 +26,7 @@ impl BinanceClient {
         config: BinanceConfig,
         buffer_size: usize,
         message_handler: Option<Box<dyn WSMessageHandler + Send + Sync>>,
+        _pairs: Vec<trading_core::types::common::Pair>, // Pairs come from config now, kept for API compatibility
     ) -> Self {
         BinanceClient {
             config,
@@ -40,23 +41,28 @@ impl BinanceClient {
 
     pub async fn start_stream(&mut self, data_type: DataType) -> Result<(), EngineError> {
         let (tx, rx) = mpsc::channel(self.buffer_size);
-        let channel = self.build_channel(data_type.clone());
+        let channels = self.build_channels(data_type.clone());
 
-        self.run_with_reconnect(channel, tx, rx, data_type).await
+        self.run_with_reconnect(channels, tx, rx, data_type).await
     }
 
-    fn build_channel(&self, data_type: DataType) -> BinanceChannel {
-        BinanceChannel {
-            channel: data_type,
-            base: self.config.symbol.base.to_lowercase().into(),
-            quote: self.config.symbol.quote.to_lowercase().into(),
-            limit: self.config.limit,
-        }
+    fn build_channels(&self, data_type: DataType) -> Vec<BinanceChannel> {
+        // Use pairs from config (single source of truth)
+        self.config
+            .pairs
+            .iter()
+            .map(|pair| BinanceChannel {
+                channel: data_type.clone(),
+                base: pair.base.to_lowercase().into(),
+                quote: pair.quote.to_lowercase().into(),
+                limit: self.config.limit,
+            })
+            .collect()
     }
 
     async fn run_with_reconnect(
         &self,
-        channel: BinanceChannel,
+        channels: Vec<BinanceChannel>,
         tx: mpsc::Sender<ParsedBinanceMessage>,
         mut rx: mpsc::Receiver<ParsedBinanceMessage>,
         data_type: DataType,
@@ -66,7 +72,7 @@ impl BinanceClient {
 
         loop {
             match self
-                .connect_and_stream(channel.clone(), tx.clone(), &mut rx, data_type.clone())
+                .connect_and_stream(channels.clone(), tx.clone(), &mut rx, data_type.clone())
                 .await
             {
                 Ok(_) => debug!("WebSocket stream closed cleanly"),
@@ -79,15 +85,19 @@ impl BinanceClient {
 
     async fn connect_and_stream(
         &self,
-        channel: BinanceChannel,
+        channels: Vec<BinanceChannel>,
         tx: mpsc::Sender<ParsedBinanceMessage>,
         rx: &mut mpsc::Receiver<ParsedBinanceMessage>,
         data_type: DataType,
     ) -> Result<(), EngineError> {
-        let client = BinanceWSClient::new(channel);
+        let pair_count = channels.len();
+        let client = BinanceWSClient::new(channels);
         client.run(tx.clone()).await?;
 
-        info!("WebSocket stream started for {data_type:?}");
+        info!(
+            "WebSocket stream started for {data_type:?} ({} pair(s))",
+            pair_count
+        );
 
         self.event_loop(rx).await
     }

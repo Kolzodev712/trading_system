@@ -203,8 +203,19 @@ impl Default for MongoConfig {
 pub use trading_core::config::ChannelConfig;
 
 /// Strategy-specific configuration - trading parameters for strategies mode
+/// Supports both single strategy (legacy) and multiple strategies (array)
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct StrategiesConfig {
+#[serde(untagged)]
+pub enum StrategiesConfig {
+    /// Single strategy format (for backward compatibility)
+    Single(Box<StrategyConfig>),
+    /// Multiple strategies format (array)
+    Multiple { strategies: Vec<StrategyConfig> },
+}
+
+/// Individual strategy configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StrategyConfig {
     /// Strategy type: "BuyLowSellHigh", "MeanReversion", etc.
     #[serde(
         serialize_with = "trading_core::utils::serialize_smol_str",
@@ -259,6 +270,24 @@ pub struct StrategiesConfig {
     pub min_notional: Option<Decimal>,
 }
 
+impl StrategiesConfig {
+    /// Get all strategy configs as a vector
+    pub fn into_vec(self) -> Vec<StrategyConfig> {
+        match self {
+            StrategiesConfig::Single(config) => vec![*config],
+            StrategiesConfig::Multiple { strategies } => strategies,
+        }
+    }
+
+    /// Get all strategy configs as a reference vector
+    pub fn as_vec(&self) -> Vec<&StrategyConfig> {
+        match self {
+            StrategiesConfig::Single(config) => vec![config],
+            StrategiesConfig::Multiple { strategies } => strategies.iter().collect(),
+        }
+    }
+}
+
 impl BotConfig {
     /// Load bot configuration from a JSON file
     pub fn load_from_file(path: &str) -> Result<Self, Box<dyn std::error::Error>> {
@@ -277,6 +306,24 @@ impl BotConfig {
         // Redis is only needed if Web UI feature is enabled (future)
         Ok(())
     }
+
+    /// Get pairs from exchange-specific config
+    pub fn get_pairs(&self) -> Result<Vec<Pair>, Box<dyn std::error::Error>> {
+        match self.exchange.exchange {
+            Exchange::Binance => {
+                let binance_config_json = self
+                    .exchange
+                    .exchange_specific
+                    .get("binance")
+                    .ok_or("Binance exchange configuration is required")?;
+                let binance_config: exchange_engine::exchanges::binance::config::BinanceConfig =
+                    serde_json::from_value(binance_config_json.clone())
+                        .map_err(|e| format!("Failed to deserialize Binance config: {e}"))?;
+                Ok(binance_config.pairs)
+            }
+            Exchange::Unsupported => Err("Unsupported exchange".into()),
+        }
+    }
 }
 
 impl StrategiesConfig {
@@ -288,6 +335,22 @@ impl StrategiesConfig {
     }
 
     /// Validate strategies configuration
+    pub fn validate(&self) -> Result<(), String> {
+        let configs = self.as_vec();
+        if configs.is_empty() {
+            return Err("At least one strategy must be configured".to_string());
+        }
+        for (idx, config) in configs.iter().enumerate() {
+            config
+                .validate()
+                .map_err(|e| format!("Strategy {}: {}", idx, e))?;
+        }
+        Ok(())
+    }
+}
+
+impl StrategyConfig {
+    /// Validate individual strategy configuration
     pub fn validate(&self) -> Result<(), String> {
         if self.position_size <= Decimal::ZERO {
             return Err("Position size must be greater than zero".to_string());

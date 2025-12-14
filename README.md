@@ -490,6 +490,10 @@ docker build -t trading-system:latest -f Dockerfile .
 
 # Build CLI image
 docker build -t trading-system-cli:latest -f Dockerfile.cli .
+
+# Or use the rebuild script (recommended)
+./scripts/rebuild.sh              # Quick rebuild (uses cache)
+./scripts/rebuild.sh --no-cache   # Full rebuild (no cache)
 ```
 
 #### Running with Docker
@@ -847,22 +851,26 @@ Once the TUI starts, you'll see:
 
 - **Main Menu**: Trading status and navigation
 - **Trading Monitor**: Real-time display with **Strategy panel** (replaces Levels panel)
-  - Strategy status (Running/Paused)
-  - Current position and average price
-  - Unrealized P&L
-  - Active orders count
-  - Last signal
+  - Strategy status per strategy (Running/Paused, enabled/disabled)
+  - Current position and average price per strategy
+  - Unrealized P&L per strategy
+  - Active orders count per strategy
+  - Last signal per strategy
+  - Strategy selection (↑/↓ keys to navigate between strategies)
 
 **Navigation**:
-- `T`: Toggle trading on/off (start/stop strategy)
+- `T`: Toggle selected strategy on/off (in strategies mode) or toggle selected level (in levels mode)
 - `R`: Refresh data
 - `Esc`: Back to main menu
 - `Q`: Quit
 
 **Trading Control**:
-- Press `T` in the Trading Monitor or Main Menu to enable/disable trading
-- When trading is disabled, the strategy continues monitoring but won't place orders
-- Strategy panel shows "● Running" (green) when enabled, "⏸ Paused" (red) when disabled
+- **Strategies Mode**: Press `T` to toggle the selected strategy (enable/disable individual strategy)
+  - Each strategy can be enabled/disabled independently
+  - When disabled, the strategy continues monitoring but won't place orders
+  - Strategy panel shows "●" (green) when enabled, "⏸" (red) when disabled for each strategy
+  - Disabling a strategy automatically cancels its active orders
+- **Levels Mode**: Press `T` to toggle the selected level (enable/disable individual level)
 
 ### Running Test Binary
 
@@ -1135,7 +1143,9 @@ mongorestore --uri="mongodb://localhost:27017" --db=trading_system /backup/path/
 
 1. **Backup Configuration**: Backup `config/` directory and MongoDB
 2. **Pull Latest Code**: `git pull`
-3. **Rebuild**: `cargo build --release`
+3. **Rebuild**: 
+   - Local: `cargo build --release`
+   - Docker: `./scripts/rebuild.sh` (or `./scripts/rebuild.sh --no-cache` for clean build)
 4. **Test**: Run integration tests
 5. **Deploy**: Restart the system
 

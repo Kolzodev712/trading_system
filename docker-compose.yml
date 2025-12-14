@@ -41,7 +41,9 @@ services:
     networks:
       - trading-network
     # Override command if needed
-    # command: ["/app/trading-system", "--mode", "strategies", "--strategies-config", "/app/config/strategies.json"]
+    # For strategies mode, uncomment the line below:
+    command: ["/app/trading-system", "--mode", "strategies", "--strategies-config", "/app/config/strategies.json"]
+    # For levels mode (default), comment out the line above or remove it
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
       interval: 30s

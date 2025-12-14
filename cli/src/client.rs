@@ -13,7 +13,7 @@ use trading_cli::trading_cli_service_client::TradingCliServiceClient;
 use trading_cli::{
     CreateLevelRequest, GetLevelRequest, GetLevelsRequest, GetMonitoringDataRequest,
     GetTradingStatusRequest, SetTradingEnabledRequest, StreamMonitoringDataRequest,
-    ToggleLevelRequest, UpdateLevelRequest,
+    ToggleLevelRequest, ToggleStrategyRequest, UpdateLevelRequest,
 };
 
 pub struct TradingCliClient {
@@ -103,6 +103,27 @@ impl TradingCliClient {
                 .map_err(|e| CliError::Grpc(e))?;
 
         Ok(response.into_inner().success)
+    }
+
+    /// Toggle strategy enabled/disabled
+    pub async fn toggle_strategy(
+        &mut self,
+        strategy_name: &str,
+        symbol: &str,
+        enabled: bool,
+    ) -> Result<Vec<String>, CliError> {
+        let request = tonic::Request::new(ToggleStrategyRequest {
+            strategy_name: strategy_name.to_string(),
+            symbol: symbol.to_string(),
+            enabled,
+        });
+        let response =
+            tokio::time::timeout(Duration::from_secs(5), self.client.toggle_strategy(request))
+                .await
+                .map_err(|_| CliError::Custom("gRPC call timed out".to_string()))?
+                .map_err(|e| CliError::Grpc(e))?;
+
+        Ok(response.into_inner().cancelled_orders)
     }
 
     /// Get single level details

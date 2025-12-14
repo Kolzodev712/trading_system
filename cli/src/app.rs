@@ -186,9 +186,6 @@ impl App {
         loop {
             // Start streaming if we're in Trading Monitor and not already streaming
             if matches!(self.current_screen, Screen::TradingMonitor) && !self.streaming_active {
-                tracing::debug!(
-                    "[CLI] Event loop: detected TradingMonitor screen, starting streaming..."
-                );
                 // Refresh levels immediately when entering
                 if let Err(_) = self.refresh_levels().await {
                     // Ignore errors, will retry next cycle
@@ -276,15 +273,24 @@ impl App {
 
                 // Handle streaming updates
                 update = stream_rx.recv() => {
-                    if let Some(data) = update {
-                        self.monitoring_data = Some(data.clone());
-                        // Extract strategies from monitoring data
-                        self.strategies = if !data.strategies.is_empty() {
-                            Some(data.strategies.clone())
-                        } else {
-                            None
-                        };
-                        needs_redraw = true; // Data updated, need redraw
+                    match update {
+                        Some(data) => {
+                            self.monitoring_data = Some(data.clone());
+                            // Extract strategies from monitoring data
+                            self.strategies = if !data.strategies.is_empty() {
+                                Some(data.strategies.clone())
+                            } else {
+                                None
+                            };
+                            needs_redraw = true; // Data updated, need redraw
+                        }
+                        None => {
+                            // Channel closed - this means the stream handler stopped
+                            // Try to restart streaming if we're still in Trading Monitor
+                            if matches!(self.current_screen, Screen::TradingMonitor) {
+                                self.streaming_active = false;
+                            }
+                        }
                     }
                 }
 
@@ -545,6 +551,37 @@ impl App {
                         Err(_) => {}
                     }
                 }
+            }
+        }
+        Ok(())
+    }
+
+    pub async fn toggle_selected_strategy(&mut self) -> Result<(), CliError> {
+        // Extract strategy info before mutable borrow
+        let (strategy_name, symbol, new_enabled) = if let Some(strategy) = self.selected_strategy()
+        {
+            (
+                strategy.strategy_name.clone(),
+                strategy.symbol.clone(),
+                !strategy.enabled,
+            )
+        } else {
+            return Ok(()); // No strategy selected
+        };
+
+        if let Some(ref mut client) = self.client {
+            match tokio::time::timeout(
+                Duration::from_secs(2),
+                client.toggle_strategy(&strategy_name, &symbol, new_enabled),
+            )
+            .await
+            {
+                Ok(Ok(_cancelled_orders)) => {
+                    // Refresh monitoring data to get updated state
+                    self.refresh_monitoring_data().await?;
+                }
+                Ok(Err(_)) => {}
+                Err(_) => {}
             }
         }
         Ok(())
@@ -860,11 +897,8 @@ impl App {
         tx: tokio::sync::mpsc::Sender<MonitoringData>,
     ) -> Result<(), CliError> {
         if self.streaming_active {
-            tracing::debug!("[CLI] start_streaming: already streaming, skipping");
             return Ok(()); // Already streaming
         }
-
-        tracing::debug!("[CLI] start_streaming: attempting to start streaming...");
 
         // Get a mutable reference to the client
         let client = self
@@ -872,41 +906,23 @@ impl App {
             .as_mut()
             .ok_or_else(|| CliError::Custom("Client not initialized".to_string()))?;
 
-        tracing::debug!("[CLI] start_streaming: calling client.stream_monitoring_data()...");
         match client.stream_monitoring_data().await {
             Ok(mut stream) => {
-                tracing::info!("[CLI] start_streaming: stream received, spawning handler task");
                 self.streaming_active = true;
 
                 // Spawn a task to handle the stream
                 tokio::spawn(async move {
-                    tracing::debug!("[CLI] stream_handler: started, waiting for messages...");
                     loop {
                         match stream.message().await {
                             Ok(Some(update)) => {
-                                let indicator_count = update
-                                    .data
-                                    .as_ref()
-                                    .map(|d| d.indicators.len())
-                                    .unwrap_or(0);
-                                tracing::debug!(
-                                    "[CLI] stream_handler: received update with {} indicators",
-                                    indicator_count
-                                );
                                 if let Some(data) = update.data {
                                     if tx.send(data).await.is_err() {
-                                        tracing::debug!(
-                                            "[CLI] stream_handler: receiver dropped, stopping"
-                                        );
                                         // Receiver dropped, stop streaming
                                         break;
                                     }
                                 }
-                                // Refresh levels periodically (every 5 seconds)
-                                // This is a simple approach - in production, you might want a separate task
                             }
                             Ok(None) => {
-                                tracing::info!("[CLI] stream_handler: stream ended (Ok(None))");
                                 // Stream ended
                                 break;
                             }
@@ -918,10 +934,7 @@ impl App {
                             }
                         }
                     }
-                    tracing::debug!("[CLI] stream_handler: task ended");
                 });
-
-                tracing::info!("[CLI] start_streaming: streaming started successfully");
                 Ok(())
             }
             Err(e) => {

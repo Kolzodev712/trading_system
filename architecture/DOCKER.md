@@ -292,6 +292,26 @@ docker build -t trading-system-cli -f Dockerfile.cli .
 docker-compose build
 ```
 
+### Rebuilding After Code Changes
+
+After making code changes, rebuild and restart the containers:
+
+```bash
+# Quick rebuild (uses cache)
+./scripts/rebuild.sh
+
+# Full rebuild (no cache, slower but ensures clean build)
+./scripts/rebuild.sh --no-cache
+```
+
+The rebuild script will:
+1. Stop all containers
+2. Rebuild the trading-system image
+3. Start all containers
+4. Show container status
+
+**Note**: The rebuild script is located in `scripts/rebuild.sh` and handles the full rebuild cycle automatically.
+
 ### Debugging
 
 ```bash

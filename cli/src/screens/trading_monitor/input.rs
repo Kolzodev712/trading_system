@@ -312,13 +312,11 @@ async fn handle_normal_input(app: &mut App, key: KeyCode) -> Result<(), CliError
             }
         }
         KeyCode::Char('t') | KeyCode::Char('T') => {
-            // In strategies mode: toggle trading
+            // In strategies mode: toggle selected strategy
             // In levels mode: toggle selected level
             if app.has_strategy() {
-                // Toggle trading enabled/disabled
-                let current_status = app.trading_status();
-                app.set_trading_enabled(!current_status).await?;
-                app.refresh_trading_status().await?;
+                // Toggle selected strategy enabled/disabled
+                app.toggle_selected_strategy().await?;
             } else {
                 // Toggle selected level
                 app.toggle_selected_level().await?;

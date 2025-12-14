@@ -103,15 +103,24 @@ The TUI CLI displays a **Strategy panel** (replaces the Levels panel in strategi
 
 ### Trading Control
 
-**Enable/Disable Trading**:
-- Press `T` in the Trading Monitor or Main Menu to toggle trading
+**Per-Strategy Enable/Disable**:
+- Press `T` in the Trading Monitor to toggle the **selected** strategy
+- Each strategy can be enabled/disabled independently
 - When disabled, the strategy continues monitoring but won't place orders
-- Strategy panel shows status: "● Running" (enabled) or "⏸ Paused" (disabled)
+- Strategy panel shows status: "●" (green, enabled) or "⏸" (red, disabled) for each strategy
+- Disabling a strategy automatically cancels all active orders for that strategy's trading pair
 
 **How It Works**:
-- The strategy executor checks the trading control flag before placing orders
-- If trading is disabled, orders are blocked but market analysis continues
-- This allows you to pause trading without stopping the strategy
+- The `StrategyManager` maintains per-strategy enabled flags (keyed by `strategy_name:symbol`)
+- The strategy executor checks the enabled flag before processing orderbook updates
+- If a strategy is disabled, it's skipped during orderbook processing
+- Market analysis continues for all strategies, but disabled strategies won't place orders
+- This allows you to pause individual strategies without stopping the entire system
+
+**Multiple Strategies**:
+- When running multiple strategies (e.g., ETH/USDC and SOL/USDC), each can be toggled independently
+- Use arrow keys (↑/↓) to select a strategy, then press `T` to toggle it
+- The strategy ID format is `strategy_name:symbol` (e.g., "BuyLowSellHigh:ETH/USDC")
 
 ## Strategy Behavior
 

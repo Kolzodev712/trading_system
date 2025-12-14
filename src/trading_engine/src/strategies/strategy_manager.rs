@@ -7,28 +7,71 @@
 use crate::state::Strategy;
 use chrono::{DateTime, Datelike, Timelike, Utc};
 use rust_decimal::Decimal;
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use trading_core::{
     error::EngineError,
-    types::{exchange::Order, market_data::Orderbook},
+    types::{common::Pair, exchange::Order, market_data::Orderbook},
 };
 
-/// Manages multiple strategies
+/// Strategy identifier: strategy_name + symbol
+pub type StrategyId = String;
+
+/// Manages multiple strategies with per-strategy enable/disable support
 pub struct StrategyManager {
     strategies: Vec<Arc<RwLock<dyn Strategy>>>,
+    /// Maps strategy identifier (strategy_name:symbol) to enabled state
+    strategy_enabled: Arc<RwLock<HashMap<StrategyId, bool>>>,
+    /// Maps strategy index to strategy identifier
+    strategy_ids: Vec<StrategyId>,
 }
 
 impl StrategyManager {
     pub fn new() -> Self {
         Self {
             strategies: Vec::new(),
+            strategy_enabled: Arc::new(RwLock::new(HashMap::new())),
+            strategy_ids: Vec::new(),
         }
     }
 
-    pub fn add_strategy(&mut self, strategy: Arc<RwLock<dyn Strategy>>) {
+    /// Add a strategy with its identifier
+    pub async fn add_strategy(
+        &mut self,
+        strategy: Arc<RwLock<dyn Strategy>>,
+        strategy_id: StrategyId,
+    ) {
+        // Default to enabled
+        let mut enabled = self.strategy_enabled.write().await;
+        enabled.insert(strategy_id.clone(), true);
+        drop(enabled);
+
+        self.strategy_ids.push(strategy_id);
         self.strategies.push(strategy);
+    }
+
+    /// Set enabled state for a strategy
+    pub async fn set_strategy_enabled(&self, strategy_id: &StrategyId, enabled: bool) {
+        let mut enabled_map = self.strategy_enabled.write().await;
+        enabled_map.insert(strategy_id.clone(), enabled);
+    }
+
+    /// Get enabled state for a strategy
+    pub async fn is_strategy_enabled(&self, strategy_id: &StrategyId) -> bool {
+        let enabled_map = self.strategy_enabled.read().await;
+        enabled_map.get(strategy_id).copied().unwrap_or(true) // Default to enabled
+    }
+
+    /// Get a reference to the enabled map (for direct access to avoid nested locks)
+    /// This allows callers to clone the Arc and access the map without holding the manager lock
+    pub fn get_enabled_map(&self) -> &Arc<RwLock<HashMap<StrategyId, bool>>> {
+        &self.strategy_enabled
+    }
+
+    /// Generate strategy ID from name and symbol
+    pub fn make_strategy_id(strategy_name: &str, symbol: &Pair) -> StrategyId {
+        format!("{}:{}", strategy_name, symbol)
     }
 
     pub async fn on_orderbook(
@@ -37,7 +80,27 @@ impl StrategyManager {
     ) -> Result<Vec<trading_core::types::exchange::OrderRequest>, EngineError> {
         let mut requests = Vec::new();
 
-        for strategy in &self.strategies {
+        // Get enabled states (clone to avoid holding lock during async operations)
+        let enabled_states: Vec<(usize, bool)> = {
+            let enabled_map = self.strategy_enabled.read().await;
+            self.strategy_ids
+                .iter()
+                .enumerate()
+                .map(|(idx, strategy_id)| {
+                    let enabled = enabled_map.get(strategy_id).copied().unwrap_or(true);
+                    (idx, enabled)
+                })
+                .collect()
+        };
+
+        for (idx, strategy) in self.strategies.iter().enumerate() {
+            // Check if this strategy is enabled
+            if let Some((_, enabled)) = enabled_states.get(idx) {
+                if !enabled {
+                    continue; // Skip disabled strategies
+                }
+            }
+
             let mut strat = strategy.write().await;
             let state = strat.get_state().clone();
             if let Some(req) = strat.on_orderbook(orderbook, &state).await? {

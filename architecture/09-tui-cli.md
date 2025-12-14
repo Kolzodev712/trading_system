@@ -131,10 +131,12 @@ cli/
   - Level editing
   - Level creation
 - **Strategies Mode**:
-  - Strategy status display (Running/Paused)
-  - Position and P&L monitoring
-  - Active orders tracking
-  - Trading control (enable/disable)
+  - Strategy selection and navigation (↑/↓ keys)
+  - Per-strategy status display (Running/Paused for each strategy)
+  - Position and P&L monitoring per strategy
+  - Active orders tracking per strategy
+  - Per-strategy trading control (enable/disable individual strategies)
+  - Strategy details view (L key) - popup overlay with full strategy information
 - Real-time data display
 
 ## Data Flow

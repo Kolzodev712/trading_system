@@ -168,7 +168,16 @@ pub async fn strategy_runner(
             config.min_price_history,
             Some(services.indicator_calculator.clone()), // Use calculator directly (read-only, no Mutex)
         )));
-        strategy_manager.add_strategy(strategy);
+
+        // Create strategy ID: "strategy_name:symbol"
+        let strategy_id =
+            trading_engine::strategies::strategy_manager::StrategyManager::make_strategy_id(
+                &config.strategy_type.to_string(),
+                pair,
+            );
+        strategy_manager
+            .add_strategy(strategy, strategy_id.clone())
+            .await;
         all_symbols.push(pair.clone());
         strategy_infos.push((
             config.strategy_type.to_string(),
@@ -231,16 +240,30 @@ pub async fn strategy_runner(
         )
         .collect();
 
-    let grpc_server = TradingGrpcServer::new_with_strategies(
+    info!(
+        "Created {} monitoring strategy infos: {:?}",
+        monitoring_strategy_infos.len(),
+        monitoring_strategy_infos
+            .iter()
+            .map(|s| format!("{}:{}", s.strategy_name, s.symbol))
+            .collect::<Vec<_>>()
+    );
+
+    // Create gRPC service with strategy manager for individual toggling
+    use crate::grpc::service::TradingCliServiceImpl;
+    let grpc_service = TradingCliServiceImpl::new(
         dummy_level_manager.clone(),
         services.trading_state_manager.clone(),
         services.trading_client.clone(),
         services.exchange_state_manager.clone(),
         services.indicator_service.clone(),
         services.indicator_calculator.clone(),
-        trading_control.clone(), // Pass the same TradingControl instance
-        monitoring_strategy_infos,
-    );
+        trading_control.clone(),
+    )
+    .with_strategy_infos(monitoring_strategy_infos)
+    .with_strategy_manager(strategy_manager_arc.clone());
+
+    let grpc_server = TradingGrpcServer::from_service(grpc_service);
     let grpc_handle = grpc_server.start(grpc_addr).await?;
     info!("gRPC server started on {}", grpc_addr);
 

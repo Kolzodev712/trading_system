@@ -99,6 +99,11 @@ impl TradingGrpcServer {
         Self { service }
     }
 
+    /// Create gRPC server from a service (for advanced use cases)
+    pub fn from_service(service: TradingCliServiceImpl) -> Self {
+        Self { service }
+    }
+
     /// Start the gRPC server
     pub async fn start(
         self,

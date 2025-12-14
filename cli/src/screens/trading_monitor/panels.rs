@@ -240,7 +240,6 @@ pub fn render_indicators(frame: &mut Frame, area: Rect, app: &App) -> Result<(),
 pub fn render_strategy(frame: &mut Frame, area: Rect, app: &App) -> Result<(), CliError> {
     let strategies = app.strategies();
     let selected_idx = app.selected_strategy_index();
-    let trading_status = app.trading_status();
 
     let rows = if let Some(strategies_vec) = strategies {
         if strategies_vec.is_empty() {
@@ -252,7 +251,9 @@ pub fn render_strategy(frame: &mut Frame, area: Rect, app: &App) -> Result<(), C
                 .enumerate()
                 .map(|(idx, strat)| {
                     let is_selected = selected_idx == Some(idx);
-                    let status_color = if trading_status {
+                    // Use strategy's enabled status instead of global trading_status
+                    let strategy_enabled = strat.enabled;
+                    let status_color = if strategy_enabled {
                         Color::Green
                     } else {
                         Color::Red
@@ -271,7 +272,7 @@ pub fn render_strategy(frame: &mut Frame, area: Rect, app: &App) -> Result<(), C
                     Row::new(vec![
                         Cell::from(strat.strategy_name.as_str()).style(row_style),
                         Cell::from(strat.symbol.as_str()).style(row_style),
-                        Cell::from(if trading_status { "●" } else { "⏸" }).style(
+                        Cell::from(if strategy_enabled { "●" } else { "⏸" }).style(
                             Style::default().fg(status_color).bg(if is_selected {
                                 Color::Cyan
                             } else {

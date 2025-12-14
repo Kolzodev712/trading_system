@@ -19,6 +19,7 @@ use trading_core::traits::TradingClient;
 use trading_core::types::exchange::OrderRequest;
 use trading_engine::levels::LevelManager;
 use trading_engine::state::manager::TradingStateManager;
+use trading_engine::strategies::strategy_manager::StrategyManager;
 
 // Import the generated protobuf code
 use crate::grpc::trading_cli;
@@ -36,6 +37,8 @@ pub struct TradingCliServiceImpl {
     indicator_calculator: Arc<indicator_engine::calculator::IndicatorCalculator>,
     /// Strategy infos (only set in strategies mode, supports multiple)
     strategy_infos: Vec<monitoring::StrategyInfo>,
+    /// Strategy manager (only set in strategies mode, for toggling individual strategies)
+    strategy_manager: Option<Arc<RwLock<StrategyManager>>>,
 }
 
 impl TradingCliServiceImpl {
@@ -57,6 +60,7 @@ impl TradingCliServiceImpl {
             indicator_service,
             indicator_calculator,
             strategy_infos: Vec::new(),
+            strategy_manager: None,
         }
     }
 
@@ -81,6 +85,12 @@ impl TradingCliServiceImpl {
         self
     }
 
+    /// Set strategy manager (for toggling individual strategies)
+    pub fn with_strategy_manager(mut self, strategy_manager: Arc<RwLock<StrategyManager>>) -> Self {
+        self.strategy_manager = Some(strategy_manager);
+        self
+    }
+
     /// Clone self for use in streaming tasks
     fn clone_for_streaming(&self) -> Self {
         Self {
@@ -92,6 +102,7 @@ impl TradingCliServiceImpl {
             indicator_service: self.indicator_service.clone(),
             indicator_calculator: self.indicator_calculator.clone(),
             strategy_infos: self.strategy_infos.clone(),
+            strategy_manager: self.strategy_manager.clone(),
         }
     }
 
@@ -103,6 +114,7 @@ impl TradingCliServiceImpl {
             exchange_state_manager: self.exchange_state_manager.clone(),
             indicator_calculator: self.indicator_calculator.clone(),
             strategy_infos: self.strategy_infos.clone(),
+            strategy_manager: self.strategy_manager.clone(),
         }
     }
 
@@ -193,6 +205,126 @@ impl TradingCliService for TradingCliServiceImpl {
         self.level_service().toggle_level(request).await
     }
 
+    /// Toggle strategy enabled/disabled
+    async fn toggle_strategy(
+        &self,
+        request: Request<trading_cli::ToggleStrategyRequest>,
+    ) -> Result<Response<trading_cli::ToggleStrategyResponse>, Status> {
+        let req = request.into_inner();
+
+        // Get strategy manager
+        let strategy_manager = self.strategy_manager.as_ref().ok_or_else(|| {
+            Status::failed_precondition("Strategy manager not available (not in strategies mode)")
+        })?;
+
+        // Parse symbol from "BASE/QUOTE" format
+        let parts: Vec<&str> = req.symbol.split('/').collect();
+        if parts.len() != 2 {
+            return Err(Status::invalid_argument(format!(
+                "Invalid symbol format: {}. Expected 'BASE/QUOTE'",
+                req.symbol
+            )));
+        }
+        let symbol = trading_core::types::common::Pair::new(parts[0], parts[1]);
+        let strategy_id = StrategyManager::make_strategy_id(&req.strategy_name, &symbol);
+
+        // Get current enabled state
+        let current_enabled = strategy_manager
+            .read()
+            .await
+            .is_strategy_enabled(&strategy_id)
+            .await;
+
+        // Only toggle if the requested state is different from current
+        if current_enabled != req.enabled {
+            strategy_manager
+                .write()
+                .await
+                .set_strategy_enabled(&strategy_id, req.enabled)
+                .await;
+
+            // If disabling, cancel active orders for this strategy's symbol
+            let mut cancelled_orders = Vec::new();
+            if !req.enabled {
+                let trading_state_arc = self.trading_state_manager.get_state();
+                let trading_state = trading_state_arc.read().await;
+
+                // Find and cancel orders for this symbol
+                // Order symbols might be in "ETHUSDC" format, so check both formats
+                let symbol_str = req.symbol.clone();
+                let symbol_no_slash = symbol_str.replace('/', "");
+                let active_order_ids: Vec<_> = trading_state
+                    .active_orders
+                    .values()
+                    .filter(|o| {
+                        let order_symbol: smol_str::SmolStr = o.symbol.clone().into();
+                        order_symbol.as_str() == symbol_str
+                            || order_symbol.as_str() == symbol_no_slash
+                    })
+                    .map(|o| o.order_id.clone())
+                    .collect();
+
+                drop(trading_state);
+
+                // Cancel orders
+                if !active_order_ids.is_empty() {
+                    let trading_client = self.trading_client.read().await;
+                    for order_id in active_order_ids {
+                        match trading_client.cancel_order_by_id(order_id.clone()).await {
+                            Ok(_) => {
+                                cancelled_orders.push(order_id.as_str().to_string());
+                                tracing::info!(
+                                    "Cancelled order {} for disabled strategy {}",
+                                    order_id.as_str(),
+                                    strategy_id
+                                );
+                            }
+                            Err(e) => {
+                                tracing::warn!(
+                                    "Failed to cancel order {} for strategy {}: {}",
+                                    order_id.as_str(),
+                                    strategy_id,
+                                    e
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+
+            tracing::info!(
+                "Strategy {} {} (cancelled {} orders)",
+                strategy_id,
+                if req.enabled { "enabled" } else { "disabled" },
+                cancelled_orders.len()
+            );
+
+            Ok(Response::new(trading_cli::ToggleStrategyResponse {
+                success: true,
+                message: if req.enabled {
+                    format!("Strategy {} enabled", strategy_id)
+                } else {
+                    format!(
+                        "Strategy {} disabled. Cancelled {} orders.",
+                        strategy_id,
+                        cancelled_orders.len()
+                    )
+                },
+                cancelled_orders,
+            }))
+        } else {
+            Ok(Response::new(trading_cli::ToggleStrategyResponse {
+                success: true,
+                message: format!(
+                    "Strategy {} is already {}",
+                    strategy_id,
+                    if req.enabled { "enabled" } else { "disabled" }
+                ),
+                cancelled_orders: vec![],
+            }))
+        }
+    }
+
     /// Get monitoring data (one-shot)
     async fn get_monitoring_data(
         &self,
@@ -214,11 +346,9 @@ impl TradingCliService for TradingCliServiceImpl {
         &self,
         _request: Request<trading_cli::StreamMonitoringDataRequest>,
     ) -> Result<Response<Self::StreamMonitoringDataStream>, Status> {
-        tracing::info!("[gRPC] stream_monitoring_data: RPC called");
         let (tx, rx) = tokio::sync::mpsc::channel(100);
         let service = self.clone_for_streaming();
 
-        tracing::info!("[gRPC] stream_monitoring_data: spawning streaming task");
         tokio::spawn(async move {
             // Add panic handler to catch silent failures
             std::panic::set_hook(Box::new(|panic_info| {
@@ -227,8 +357,6 @@ impl TradingCliService for TradingCliServiceImpl {
                     panic_info
                 );
             }));
-
-            tracing::info!("[gRPC] stream_monitoring_data: task started");
             // Use longer interval to reduce load - 1 second instead of 500ms
             let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(1));
             // Skip the first tick which happens immediately
@@ -236,9 +364,19 @@ impl TradingCliService for TradingCliServiceImpl {
             loop {
                 interval.tick().await;
 
-                // Collect data - no timeout needed since we access calculator directly (no lock contention)
-                match service.monitoring_service().collect_monitoring_data().await {
-                    Ok(data) => {
+                // Collect data with timeout to avoid hanging forever
+                let collect_result = tokio::time::timeout(
+                    std::time::Duration::from_secs(5),
+                    service.monitoring_service().collect_monitoring_data(),
+                )
+                .await;
+
+                match collect_result {
+                    Ok(Ok(data)) => {
+                        let _strategy_count = data.strategies.len();
+                        let _order_count = data.orders.len();
+                        let _balance_count = data.balances.len();
+
                         let timestamp = std::time::SystemTime::now()
                             .duration_since(std::time::UNIX_EPOCH)
                             .unwrap()
@@ -249,14 +387,19 @@ impl TradingCliService for TradingCliServiceImpl {
                             timestamp,
                         };
 
-                        if tx.send(Ok(update)).await.is_err() {
-                            tracing::info!(
-                                "[gRPC] stream_monitoring_data: receiver dropped, stopping"
-                            );
-                            break; // Receiver dropped
+                        match tx.send(Ok(update)).await {
+                            Ok(_) => {
+                                // Data sent successfully
+                            }
+                            Err(_) => {
+                                tracing::debug!(
+                                    "[gRPC] stream_monitoring_data: receiver dropped, stopping"
+                                );
+                                break; // Receiver dropped
+                            }
                         }
                     }
-                    Err(e) => {
+                    Ok(Err(e)) => {
                         tracing::error!(
                             "[gRPC] stream_monitoring_data: collect_monitoring_data failed: {}",
                             e
@@ -269,9 +412,15 @@ impl TradingCliService for TradingCliServiceImpl {
                             .await;
                         break;
                     }
+                    Err(_) => {
+                        tracing::error!(
+                            "[gRPC] stream_monitoring_data: collect_monitoring_data timed out after 5 seconds"
+                        );
+                        // Continue instead of breaking - maybe next time it will work
+                        continue;
+                    }
                 }
             }
-            tracing::info!("[gRPC] stream_monitoring_data: task ended");
         });
 
         Ok(Response::new(

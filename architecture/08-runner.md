@@ -146,8 +146,9 @@ src/runner/
   - `toggle_level()` - Toggle level enabled/disabled
 
 - `trading_control.rs`: Trading control RPC handlers
-  - `set_trading_enabled()` - Enable/disable trading
-  - `get_trading_status()` - Get trading status
+  - `set_trading_enabled()` - Enable/disable global trading (legacy, for backwards compatibility)
+  - `get_trading_status()` - Get global trading status
+  - `toggle_strategy()` - Toggle individual strategy enabled/disabled (per-strategy control)
 
 - `converters.rs`: Type converters
   - Conversion between internal types and protobuf messages

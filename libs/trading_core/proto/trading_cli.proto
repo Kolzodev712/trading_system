@@ -7,6 +7,7 @@ service TradingCliService {
     // Trading Control
     rpc SetTradingEnabled(SetTradingEnabledRequest) returns (SetTradingEnabledResponse);
     rpc GetTradingStatus(GetTradingStatusRequest) returns (GetTradingStatusResponse);
+    rpc ToggleStrategy(ToggleStrategyRequest) returns (ToggleStrategyResponse);
     
     // Level Management (Phase 3)
     rpc GetLevels(GetLevelsRequest) returns (GetLevelsResponse);
@@ -36,6 +37,18 @@ message GetTradingStatusRequest {}
 
 message GetTradingStatusResponse {
     bool enabled = 1;
+}
+
+message ToggleStrategyRequest {
+    string strategy_name = 1;  // e.g., "BuyLowSellHigh"
+    string symbol = 2;          // e.g., "ETH/USDC"
+    bool enabled = 3;           // true to enable, false to disable
+}
+
+message ToggleStrategyResponse {
+    bool success = 1;
+    string message = 2;
+    repeated string cancelled_orders = 3; // Order IDs that were cancelled
 }
 
 // Level Management Messages (Phase 3 - placeholders for now)
@@ -219,16 +232,18 @@ message LevelStatistics {
 }
 
 message StrategyStatus {
-    string strategy_name = 1;        // e.g., "BuyLowSellHigh"
-    string symbol = 2;                // e.g., "BTC/USDC"
-    string position_quantity = 3;     // Current position size
-    string position_avg_price = 4;    // Average entry price
-    string unrealized_pnl = 5;       // Unrealized P&L
-    string unrealized_pnl_percent = 6; // Unrealized P&L as percentage
-    int32 active_orders = 7;          // Number of active orders
-    int32 max_active_orders = 8;      // Maximum allowed active orders
-    string last_signal = 9;           // "Buy", "Sell", or "None"
-    string signal_strength = 10;     // Signal strength percentage (if available)
+    string strategy_id = 1;           // Unique identifier: "strategy_name:symbol" (e.g., "BuyLowSellHigh:ETH/USDC")
+    string strategy_name = 2;         // e.g., "BuyLowSellHigh"
+    string symbol = 3;                // e.g., "BTC/USDC"
+    bool enabled = 4;                 // Whether this strategy is enabled
+    string position_quantity = 5;     // Current position size
+    string position_avg_price = 6;    // Average entry price
+    string unrealized_pnl = 7;       // Unrealized P&L
+    string unrealized_pnl_percent = 8; // Unrealized P&L as percentage
+    int32 active_orders = 9;          // Number of active orders
+    int32 max_active_orders = 10;      // Maximum allowed active orders
+    string last_signal = 11;           // "Buy", "Sell", or "None"
+    string signal_strength = 12;     // Signal strength percentage (if available)
 }
 
 

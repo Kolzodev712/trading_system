@@ -72,9 +72,7 @@ impl TradingControlService {
         &self,
         _request: Request<trading_cli::GetTradingStatusRequest>,
     ) -> Result<Response<trading_cli::GetTradingStatusResponse>, Status> {
-        tracing::info!("[gRPC] get_trading_status called");
         let enabled = self.trading_control.is_enabled().await;
-        tracing::info!("[gRPC] get_trading_status returning: enabled={}", enabled);
         Ok(Response::new(trading_cli::GetTradingStatusResponse {
             enabled,
         }))

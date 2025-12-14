@@ -7,6 +7,7 @@ use tokio::sync::RwLock;
 use tonic::Status;
 use trading_engine::levels::LevelManager;
 use trading_engine::state::manager::TradingStateManager;
+use trading_engine::strategies::strategy_manager::StrategyManager;
 
 use super::converters;
 
@@ -18,6 +19,8 @@ pub struct MonitoringService {
     pub indicator_calculator: Arc<indicator_engine::calculator::IndicatorCalculator>,
     /// Strategy info (only set in strategies mode, supports multiple)
     pub strategy_infos: Vec<StrategyInfo>,
+    /// Strategy manager (only set in strategies mode, for checking enabled status)
+    pub strategy_manager: Option<Arc<RwLock<StrategyManager>>>,
 }
 
 /// Strategy information for monitoring
@@ -32,6 +35,10 @@ impl MonitoringService {
     /// Collect monitoring data from all sources
     pub async fn collect_monitoring_data(&self) -> Result<trading_cli::MonitoringData, Status> {
         let start = std::time::Instant::now();
+        tracing::debug!(
+            "[gRPC] collect_monitoring_data: Starting collection ({} strategy infos)",
+            self.strategy_infos.len()
+        );
         // Collect all data in parallel to avoid sequential blocking
         let ((orders, balances), positions, indicators, trades) = tokio::join!(
             // Get orders and balances from ExchangeStateManager
@@ -155,15 +162,33 @@ impl MonitoringService {
         // Collect strategy statuses for all strategies
         let mut strategy_statuses = Vec::new();
         for strategy_info in &self.strategy_infos {
-            if let Some(status) = self
+            match self
                 .collect_strategy_status(strategy_info, &positions)
                 .await
             {
-                strategy_statuses.push(status);
+                Some(status) => {
+                    strategy_statuses.push(status);
+                }
+                None => {
+                    tracing::warn!(
+                        "Failed to collect status for strategy {}:{}",
+                        strategy_info.strategy_name,
+                        strategy_info.symbol
+                    );
+                }
             }
         }
+        tracing::debug!(
+            "[gRPC] collect_monitoring_data: Collected {} strategy statuses from {} strategy infos, {} orders, {} balances, {} positions, {} indicators",
+            strategy_statuses.len(),
+            self.strategy_infos.len(),
+            orders.len(),
+            balances.len(),
+            positions.len(),
+            indicators.len()
+        );
 
-        Ok(trading_cli::MonitoringData {
+        let data = trading_cli::MonitoringData {
             orders,
             balances,
             trades,
@@ -171,7 +196,10 @@ impl MonitoringService {
             indicators,
             aggregated: Some(aggregated),
             strategies: strategy_statuses,
-        })
+        };
+
+        tracing::debug!("[gRPC] collect_monitoring_data: Returning data successfully");
+        Ok(data)
     }
 
     /// Get recent trades from ExchangeStateManager (already populated via WebSocket)
@@ -243,8 +271,26 @@ impl MonitoringService {
         positions: &[trading_cli::Position],
     ) -> Option<trading_cli::StrategyStatus> {
         // Find position for this strategy's symbol
-        let symbol_str = strategy_info.symbol.convert_to_smolstr().to_string();
-        let position = positions.iter().find(|p| p.symbol == symbol_str);
+        // Convert Pair to string format: "BASE/QUOTE" (e.g., "ETH/USDC")
+        let symbol_str = format!(
+            "{}/{}",
+            strategy_info.symbol.base, strategy_info.symbol.quote
+        );
+        tracing::debug!(
+            "Collecting strategy status for {}:{} (symbol_str: {})",
+            strategy_info.strategy_name,
+            strategy_info.symbol,
+            symbol_str
+        );
+        // Position symbols might be in "ETHUSDC" format, so check both
+        let symbol_no_slash = format!(
+            "{}{}",
+            strategy_info.symbol.base, strategy_info.symbol.quote
+        );
+        let position = positions.iter().find(|p| {
+            // Try both formats: "ETHUSDC" and "ETH/USDC"
+            p.symbol == symbol_str || p.symbol == symbol_no_slash
+        });
 
         // Get active orders count for this symbol
         let trading_state_arc = self.trading_state_manager.get_state();
@@ -254,7 +300,8 @@ impl MonitoringService {
             .values()
             .filter(|o| {
                 let order_symbol: smol_str::SmolStr = o.symbol.clone().into();
-                order_symbol.as_str() == symbol_str
+                // Order symbols might be in "ETHUSDC" format, so check both
+                order_symbol.as_str() == symbol_str || order_symbol.as_str() == symbol_no_slash
             })
             .count();
 
@@ -277,9 +324,27 @@ impl MonitoringService {
                 )
             };
 
+        // Get strategy ID and enabled status
+        let strategy_id =
+            StrategyManager::make_strategy_id(&strategy_info.strategy_name, &strategy_info.symbol);
+
+        // Get enabled status from strategy manager
+        // We use is_strategy_enabled which handles the locking internally
+        let enabled = if let Some(ref strategy_manager) = self.strategy_manager {
+            strategy_manager
+                .read()
+                .await
+                .is_strategy_enabled(&strategy_id)
+                .await
+        } else {
+            true // Default to enabled if strategy manager not available
+        };
+
         Some(trading_cli::StrategyStatus {
+            strategy_id: strategy_id.clone(),
             strategy_name: strategy_info.strategy_name.clone(),
             symbol: symbol_str,
+            enabled,
             position_quantity,
             position_avg_price,
             unrealized_pnl,

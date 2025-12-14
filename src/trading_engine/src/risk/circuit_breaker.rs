@@ -88,23 +88,33 @@ impl CircuitBreaker {
 
     /// Record a failed operation
     pub async fn record_failure(&self) {
-        let mut failure_count_guard = self.failure_count.write().await;
-        *failure_count_guard += 1;
-        warn!(
-            "Circuit breaker: Failure recorded. Total failures: {}",
-            *failure_count_guard
-        );
-
-        let state_guard = self.state.read().await;
-        if *state_guard == CircuitBreakerState::HalfOpen {
-            drop(state_guard); // Drop read lock before acquiring write lock
-            self.open("Failure in Half-Open state").await;
-        } else if *state_guard == CircuitBreakerState::Closed
-            && *failure_count_guard >= self.max_failures
+        let should_open;
+        let open_reason;
         {
-            drop(state_guard); // Drop read lock before acquiring write lock
-            self.open(&format!("Max failures ({}) reached", self.max_failures))
-                .await;
+            let mut failure_count_guard = self.failure_count.write().await;
+            *failure_count_guard += 1;
+            warn!(
+                "Circuit breaker: Failure recorded. Total failures: {}",
+                *failure_count_guard
+            );
+
+            let state_guard = self.state.read().await;
+            if *state_guard == CircuitBreakerState::HalfOpen {
+                should_open = true;
+                open_reason = "Failure in Half-Open state".to_string();
+            } else if *state_guard == CircuitBreakerState::Closed
+                && *failure_count_guard >= self.max_failures
+            {
+                should_open = true;
+                open_reason = format!("Max failures ({}) reached", self.max_failures);
+            } else {
+                should_open = false;
+                open_reason = String::new();
+            }
+        } // Drop all locks before calling open()
+
+        if should_open {
+            self.open(&open_reason).await;
         }
     }
 

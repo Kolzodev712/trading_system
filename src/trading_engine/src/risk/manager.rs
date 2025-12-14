@@ -430,9 +430,10 @@ impl RiskManager {
             // Calculate total position across all pairs
             let total_position: Decimal = state.positions.values().map(|p| p.quantity.abs()).sum();
 
-            if total_position >= max_total_position {
+            // Block only if position exceeds the limit (not at exactly the limit)
+            if total_position > max_total_position {
                 return RiskCheckResult::blocked(SmolStr::new(format!(
-                    "Total position limit exceeded: {} >= {}",
+                    "Total position limit exceeded: {} > {}",
                     total_position, max_total_position
                 )));
             }
@@ -445,6 +446,7 @@ impl RiskManager {
         // Check total order count
         if let Some(max_total_orders) = self.limits.max_total_orders {
             let total_active_orders = state.active_orders.len();
+            // Block at or above the limit (order limit is stricter than position limit)
             if total_active_orders >= max_total_orders {
                 return RiskCheckResult::blocked(SmolStr::new(format!(
                     "Total order limit reached: {} >= {}",

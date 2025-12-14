@@ -120,6 +120,7 @@ pub async fn strategy_runner(
         strategies_config.max_active_orders,
         strategies_config.price_history_size,
         strategies_config.min_price_history,
+        Some(services.indicator_calculator.clone()), // Use calculator directly (read-only, no Mutex)
     )));
 
     info!("Creating Strategy Executor...");

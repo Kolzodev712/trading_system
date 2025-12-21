@@ -21,6 +21,7 @@ async fn test_exchange_state_order_management() {
 
     let order = Order {
         order_id: OrderId::new("test_order".into()),
+        client_order_id: None,
         symbol: Symbol::from("BTCUSDT"),
         side: trading_core::types::common::Side::Buy,
         price: dec!(50000),

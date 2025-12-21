@@ -18,7 +18,7 @@ impl TradingControl {
     /// Create a new TradingControl service
     pub fn new(trading_client: Arc<RwLock<dyn TradingClient<OrderRequest>>>) -> Self {
         Self {
-            enabled: Arc::new(RwLock::new(true)), // Default to enabled
+            enabled: Arc::new(RwLock::new(false)), // Default to disabled
             trading_client,
         }
     }
@@ -39,50 +39,126 @@ impl TradingControl {
         &self,
         enabled: bool,
         active_order_ids: Vec<crate::types::common::OrderId>,
+        pairs_with_orders: Vec<crate::types::common::Pair>,
     ) -> Result<Vec<String>, Box<dyn std::error::Error>> {
         let mut enabled_guard = self.enabled.write().await;
 
+        tracing::info!(
+            "[TradingControl] set_enabled called: enabled={}, current_state={}, pairs={}, orders={}",
+            enabled,
+            *enabled_guard,
+            pairs_with_orders.len(),
+            active_order_ids.len()
+        );
+
         if *enabled_guard == enabled {
+            tracing::info!(
+                "[TradingControl] No state change needed (already {})",
+                if enabled { "enabled" } else { "disabled" }
+            );
             return Ok(vec![]); // No change
         }
 
         *enabled_guard = enabled;
 
         if !enabled {
-            // Cancel all active orders
-            let cancelled_orders = self.cancel_orders(active_order_ids).await?;
+            // Cancel all active orders using cancel_all_orders for each pair
             tracing::info!(
-                "Trading disabled. Cancelled {} active orders",
+                "[TradingControl] Disabling trading, cancelling orders for {} pair(s)...",
+                pairs_with_orders.len()
+            );
+            let cancelled_orders = self
+                .cancel_all_orders_for_pairs(pairs_with_orders, active_order_ids)
+                .await?;
+            tracing::info!(
+                "[TradingControl] Trading disabled. Cancelled {} active orders",
                 cancelled_orders.len()
             );
             Ok(cancelled_orders)
         } else {
-            tracing::info!("Trading enabled");
+            tracing::info!("[TradingControl] Trading enabled");
             Ok(vec![])
         }
     }
 
-    /// Cancel a list of orders
-    async fn cancel_orders(
+    /// Cancel all orders for the given pairs using cancel_all_orders endpoint
+    /// Returns the list of order IDs that were cancelled (from active_order_ids parameter)
+    async fn cancel_all_orders_for_pairs(
         &self,
-        order_ids: Vec<crate::types::common::OrderId>,
+        pairs: Vec<crate::types::common::Pair>,
+        active_order_ids: Vec<crate::types::common::OrderId>,
     ) -> Result<Vec<String>, Box<dyn std::error::Error>> {
         let mut cancelled_order_ids = Vec::new();
-        let client = self.trading_client.write().await;
+        let total_pairs = pairs.len();
 
-        for order_id in order_ids {
-            let order_id_str = order_id.as_str().to_string();
-            match client.cancel_order_by_id(order_id.clone()).await {
+        tracing::info!("[TradingControl] Attempting to cancel all orders for {} pair(s) using cancel_all_orders endpoint...", total_pairs);
+
+        for pair in pairs {
+            tracing::info!(
+                "[TradingControl] Cancelling all orders for {}/{}...",
+                pair.base,
+                pair.quote
+            );
+
+            // Clone what we need and release the lock quickly to avoid blocking
+            let trading_client_arc = Arc::clone(&self.trading_client);
+            let pair_clone = pair.clone();
+            let cancel_result = async move {
+                let trading_client = trading_client_arc.read().await;
+                trading_client.cancel_all_orders(&pair_clone).await
+            }
+            .await;
+
+            match cancel_result {
                 Ok(_) => {
-                    cancelled_order_ids.push(order_id_str.clone());
-                    tracing::info!("Cancelled order: {}", order_id_str);
+                    tracing::info!(
+                        "[TradingControl] Successfully cancelled all orders for {}/{}",
+                        pair.base,
+                        pair.quote
+                    );
                 }
                 Err(e) => {
-                    tracing::warn!("Failed to cancel order {}: {}", order_id_str, e);
+                    let error_msg = format!("{}", e);
+                    if error_msg.contains("Unknown order") || error_msg.contains("-2011") {
+                        tracing::info!(
+                            "[TradingControl] Orders for {}/{} were already cancelled",
+                            pair.base,
+                            pair.quote
+                        );
+                    } else if error_msg.contains("Timeout acquiring RPC channel")
+                        || error_msg.contains("RPC channel not ready")
+                        || error_msg.contains("RPC channel closed")
+                        || error_msg.contains("RPC request timeout")
+                    {
+                        tracing::error!(
+                            "[TradingControl] RPC channel unavailable when cancelling orders for {}/{}: {} - connection may be down",
+                            pair.base,
+                            pair.quote,
+                            e
+                        );
+                    } else {
+                        tracing::warn!(
+                            "[TradingControl] Failed to cancel all orders for {}/{}: {}",
+                            pair.base,
+                            pair.quote,
+                            e
+                        );
+                    }
                 }
             }
         }
 
+        // Return all active order IDs as cancelled (since we called cancel_all_orders for each pair)
+        // The actual cancellation status will be confirmed by executionReports from the exchange
+        for order_id in active_order_ids {
+            cancelled_order_ids.push(order_id.as_str().to_string());
+        }
+
+        tracing::info!(
+            "[TradingControl] Cancellation complete: {} orders cancelled across {} pair(s)",
+            cancelled_order_ids.len(),
+            total_pairs
+        );
         Ok(cancelled_order_ids)
     }
 }

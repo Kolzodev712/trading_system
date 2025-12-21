@@ -7,10 +7,8 @@
 //! **Note**: This requires valid Binance API keys in `config/binance_config.json`
 
 use exchange_engine::exchanges::binance::{
-    common_types::{BinanceOrderType, BinanceSymbol},
-    config::BinanceConfig,
-    websocket::types::rpc::cancel_order::BinanceWsCancelOrderReqParams,
-    ws_client::BinanceClient,
+    common_types::BinanceSymbol, config::BinanceConfig,
+    websocket::types::rpc::cancel_order::BinanceWsCancelOrderReqParams, ws_client::BinanceClient,
 };
 use smol_str::ToSmolStr;
 use std::{fs, sync::Arc};
@@ -53,26 +51,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
-    // 3) wait for the in‐memory session to be populated
+    // 3) wait for the RPC channel to be ready
     loop {
-        if binance_client
-            .read()
-            .await
-            .get_connection_session()
-            .await
-            .is_some()
-        {
-            info!("WebSocket session ready");
+        let rpc_ready = {
+            let client = binance_client.read().await;
+            client.rpc_client().get_rpc_request_tx().await.is_some()
+        };
+        if rpc_ready {
+            info!("WebSocket RPC channel ready");
             break;
         }
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     }
 
     // 4) build and send your cancel‐order RPC
-    let params = BinanceWsCancelOrderReqParams::new(
+    let params = BinanceWsCancelOrderReqParams::new_with_client_order_id(
         BinanceSymbol::new("BTC", "USDT").convert_to_smolstr(),
         "myClientOrderId".to_smolstr(),
-        BinanceOrderType::Limit,
     );
     {
         let client = binance_client.read().await;

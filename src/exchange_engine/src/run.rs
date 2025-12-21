@@ -70,20 +70,25 @@ pub async fn run(
     let symbol_registry = Arc::new(SymbolRegistry::from_pairs(pairs.clone()));
 
     // 2. Create trading client first (needed for state manager)
-    let (trading_client, binance_config_for_driver) = match &config.exchange_config {
-        ExchangeConfig::Binance(binance_config) => {
-            let client = crate::exchanges::binance::ws_client::BinanceClient::new(
-                binance_config.clone(),
-                channels.websocket_inbound_capacity,
-                channels.websocket_ping_capacity,
-                channels.websocket_outbound_rpc_capacity,
-                channels.shutdown_capacity,
-            );
-            let trading_client: Arc<tokio::sync::RwLock<dyn TradingClient<OrderRequest>>> =
-                Arc::new(tokio::sync::RwLock::new(client.clone()));
-            (trading_client, binance_config.clone())
-        }
-    };
+    // Create ONE BinanceClient instance that will be shared between driver and trading_client
+    // Since BinanceClient contains Arc<BinanceRpcClient>, cloning it shares the same RPC client instance
+    let (trading_client, binance_client_for_driver, _binance_config_for_driver) =
+        match &config.exchange_config {
+            ExchangeConfig::Binance(binance_config) => {
+                let client = crate::exchanges::binance::ws_client::BinanceClient::new(
+                    binance_config.clone(),
+                    channels.websocket_inbound_capacity,
+                    channels.websocket_ping_capacity,
+                    channels.websocket_outbound_rpc_capacity,
+                    channels.shutdown_capacity,
+                );
+                // Clone the client - since it contains Arc<BinanceRpcClient>, both clones share the same RPC client
+                let client_for_driver = client.clone();
+                let trading_client: Arc<tokio::sync::RwLock<dyn TradingClient<OrderRequest>>> =
+                    Arc::new(tokio::sync::RwLock::new(client));
+                (trading_client, client_for_driver, binance_config.clone())
+            }
+        };
 
     // 3. Create state manager (top-level setup)
     let state_manager = Arc::new(ExchangeStateManager::new(
@@ -125,12 +130,13 @@ pub async fn run(
     state_manager.start_reconciliation(configured_pairs);
 
     // 5. Power up the exchange-specific integration (driver handles protocol/communication)
+    // Pass the same BinanceClient instance to the driver that's used in trading_client
+    // Since BinanceClient contains Arc<BinanceRpcClient>, both will share the same RPC channel
     let mut driver = match config.exchange_config {
         ExchangeConfig::Binance(_) => crate::exchanges::binance::driver::BinanceDriver::new(
-            binance_config_for_driver,
+            binance_client_for_driver,
             state_manager.clone(),
             trading_client.clone(),
-            channels.clone(),
         )?,
     };
 
@@ -139,8 +145,9 @@ pub async fn run(
 
     // 6. Power up the integration: Start the driver's event loop
     // The driver's run() method handles the WebSocket event loop and protocol communication
+    // Use the new ExchangeDriver trait methods for better connection management
     let shutdown_rx_for_driver = shutdown_rx;
-    tokio::spawn(async move {
+    let driver_handle = tokio::spawn(async move {
         if let Err(e) = driver.run(shutdown_rx_for_driver).await {
             tracing::error!("Exchange driver error: {}", e);
         }
@@ -148,25 +155,28 @@ pub async fn run(
 
     // 7. Wait for WebSocket connection to be ready before returning
     // This ensures the RPC channel is available before strategies start placing orders
+    // Use the driver's is_connection_ready() method for proper readiness checking
     tracing::info!("Waiting for WebSocket connection to be ready...");
     let start = std::time::Instant::now();
     let timeout = tokio::time::Duration::from_secs(30);
+
+    // Create a temporary driver reference for readiness checking
+    // Note: We can't use driver.is_connection_ready() here since driver was moved
+    // So we fall back to checking the client directly
     loop {
-        // Check if connection session exists
-        if client_for_readiness
-            .get_connection_session()
-            .await
-            .is_some()
-        {
-            // Also check RPC channel
-            let rpc_ready = {
-                let guard = client_for_readiness.outbound_rpc_tx.lock().await;
-                guard.is_some()
-            };
-            if rpc_ready {
-                tracing::info!("WebSocket connection ready, RPC channel available");
-                break;
+        // Check if RPC channel is ready AND open (not just set)
+        let rpc_ready = {
+            let rpc_tx = client_for_readiness.rpc_client.get_rpc_request_tx().await;
+            if let Some(tx) = rpc_tx {
+                // Channel exists - check if it's actually open
+                !tx.is_closed()
+            } else {
+                false
             }
+        };
+        if rpc_ready {
+            tracing::info!("WebSocket connection ready, RPC channel available and open");
+            break;
         }
 
         if start.elapsed() > timeout {
@@ -176,6 +186,10 @@ pub async fn run(
 
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
     }
+
+    // Store driver handle for potential cleanup (though it runs until shutdown)
+    // In a production system, you might want to track this for graceful shutdown
+    drop(driver_handle);
 
     Ok((state_manager, exchange_update_rx, trading_client))
 }

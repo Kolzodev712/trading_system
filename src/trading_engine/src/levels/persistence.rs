@@ -9,7 +9,6 @@ use trading_core::error::EngineError;
 use trading_core::persistence::mongo::{
     client::MongoClient, collections::BOT_CONFIG_COLLECTION, models::*,
 };
-use trading_core::types::common::Pair;
 
 /// Level Manager persistence
 pub struct LevelPersistence {
@@ -43,6 +42,7 @@ impl LevelPersistence {
         &self,
         levels: &[LevelConfig],
         risk_limits: &RiskLimits,
+        configured_pairs: &[trading_core::types::common::Pair],
     ) -> Result<(), PersistenceError> {
         let collection = self
             .mongo_client
@@ -66,12 +66,10 @@ impl LevelPersistence {
                 .collect(),
         };
 
-        // Get configured pairs from levels
-        let configured_pairs: Vec<String> = levels
+        // Get configured pairs from parameter (from bot config)
+        let configured_pairs: Vec<String> = configured_pairs
             .iter()
-            .map(|level| format!("{}{}", level.symbol.base, level.symbol.quote))
-            .collect::<std::collections::HashSet<_>>()
-            .into_iter()
+            .map(|p| format!("{}{}", p.base, p.quote))
             .collect();
 
         let trading_config = TradingConfigDocument { configured_pairs };
@@ -251,9 +249,11 @@ impl LevelPersistence {
         Ok(LevelConfigDocument {
             id: level.id.to_string(),
             name: level.name.as_ref().map(|n| n.to_string()),
+            // Note: symbol is deprecated - levels are now pair-agnostic
+            // Store empty pair for backward compatibility
             symbol: PairDocument {
-                base: level.symbol.base.to_string(),
-                quote: level.symbol.quote.to_string(),
+                base: String::new(),
+                quote: String::new(),
             },
             side: format!("{:?}", level.side),
             order_type: format!("{:?}", level.order_type),
@@ -320,13 +320,12 @@ impl LevelPersistence {
             }
         };
 
-        // Convert PairDocument to Pair
-        let symbol = Pair::new(&doc.symbol.base, &doc.symbol.quote);
+        // Note: symbol is deprecated - levels are now pair-agnostic
+        // Ignore symbol from document (will be expanded per pair when loading)
 
         Ok(LevelConfig {
             id: SmolStr::new(&doc.id),
             name: doc.name.as_ref().map(SmolStr::new),
-            symbol,
             side,
             order_type,
             quantity,

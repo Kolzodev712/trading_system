@@ -56,4 +56,15 @@ where
     /// TODO: Return type will be ExchangeMarketData (to be defined in Proposal 08)
     /// For now, returns () as placeholder until ExchangeMarketData type is created.
     async fn fetch_market_data_snapshot(&self, pair: &InstrumentId) -> Result<(), EngineError>;
+
+    /// Amends (modifies) an existing order by canceling it and placing a new one.
+    /// Returns the new order. The original order will be marked as Amended in state.
+    ///
+    /// Note: Some exchanges don't support direct order amendments, so this method
+    /// implements the cancel + place new order pattern.
+    async fn amend_order(
+        &self,
+        order_id: OrderId,
+        new_request: OrderRequestType,
+    ) -> Result<Order, EngineError>;
 }

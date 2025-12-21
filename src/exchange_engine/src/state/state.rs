@@ -76,14 +76,16 @@ impl ExchangeState {
     /// The order will be indexed by Pair if a symbol-to-pair mapping exists in the registry.
     /// If no mapping exists, the order is still stored but not indexed by pair.
     pub fn update_order(&mut self, order: Order) {
+        // Optimization #1: Extract order_id once and reuse
+        // Optimization #2: Use symbol reference directly instead of cloning
         let order_id = order.order_id.clone();
-        let symbol = order.symbol.clone();
+        let pair_opt = self.symbol_registry.get_pair(&order.symbol);
 
-        // Update orders map
+        // Insert order into map (order is moved here, order_id cloned for HashMap key)
         self.orders.insert(order_id.clone(), order);
 
         // Update orders_by_pair index if we have a mapping in the registry
-        if let Some(pair) = self.symbol_registry.get_pair(&symbol) {
+        if let Some(pair) = pair_opt {
             self.orders_by_pair
                 .entry(pair.clone())
                 .or_default()
@@ -233,6 +235,21 @@ impl ExchangeState {
             .collect()
     }
 
+    /// Get open orders for a specific pair (orders that are not filled, cancelled, rejected, or expired)
+    pub fn get_open_orders_for_pair(&self, pair: &Pair) -> Vec<&Order> {
+        use trading_core::types::common::OrderStatus;
+        self.orders_by_pair
+            .get(pair)
+            .map(|order_ids| {
+                order_ids
+                    .iter()
+                    .filter_map(|id| self.orders.get(id))
+                    .filter(|o| matches!(o.status, OrderStatus::New | OrderStatus::PartiallyFilled))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
     /// Get last update timestamp
     pub fn last_update(&self) -> u64 {
         self.last_update
@@ -254,6 +271,7 @@ mod tests {
     fn create_test_order(order_id: &str, symbol: &str, status: OrderStatus) -> Order {
         Order {
             order_id: OrderId::new(order_id.into()),
+            client_order_id: None,
             symbol: Symbol::from(symbol),
             side: Side::Buy,
             price: Decimal::new(100, 0),

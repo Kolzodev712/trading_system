@@ -22,6 +22,11 @@ pub fn render_orders(frame: &mut Frame, area: Rect, app: &App) -> Result<(), Cli
                     Cell::from(o.side.as_str()),
                     Cell::from(o.price.as_str()),
                     Cell::from(o.quantity.as_str()),
+                    Cell::from(if o.level_id.is_empty() {
+                        "N/A"
+                    } else {
+                        o.level_id.as_str()
+                    }),
                     Cell::from(o.status.as_str()),
                 ])
             })
@@ -36,6 +41,7 @@ pub fn render_orders(frame: &mut Frame, area: Rect, app: &App) -> Result<(), Cli
         ratatui::layout::Constraint::Length(6),
         ratatui::layout::Constraint::Length(10),
         ratatui::layout::Constraint::Length(8),
+        ratatui::layout::Constraint::Length(12),
         ratatui::layout::Constraint::Length(10),
     ];
 
@@ -46,6 +52,7 @@ pub fn render_orders(frame: &mut Frame, area: Rect, app: &App) -> Result<(), Cli
             Cell::from("Side"),
             Cell::from("Price"),
             Cell::from("Qty"),
+            Cell::from("Level"),
             Cell::from("Status"),
         ]))
         .block(Block::default().borders(Borders::ALL).title("Open Orders"));

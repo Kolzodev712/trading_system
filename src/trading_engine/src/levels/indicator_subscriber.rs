@@ -8,7 +8,7 @@ use trading_core::channels::indicators::IndicatorUpdateReceiver;
 
 /// Subscribes to indicator updates and maintains a cache
 pub struct IndicatorSubscriber {
-    receiver: IndicatorUpdateReceiver,
+    pub(crate) receiver: IndicatorUpdateReceiver,
     indicators: Arc<RwLock<HashMap<SmolStr, IndicatorValue>>>,
 }
 
@@ -24,6 +24,11 @@ impl IndicatorSubscriber {
     /// Get access to the indicators cache
     pub fn cache(&self) -> Arc<RwLock<HashMap<SmolStr, IndicatorValue>>> {
         self.indicators.clone()
+    }
+
+    /// Set the indicators cache (for sharing cache between tasks)
+    pub fn set_cache(&mut self, cache: Arc<RwLock<HashMap<SmolStr, IndicatorValue>>>) {
+        self.indicators = cache;
     }
 
     /// Start listening for indicator updates

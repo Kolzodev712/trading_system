@@ -53,24 +53,25 @@ services:
 
   # TUI CLI (interactive - run manually when needed)
   # Note: This service is defined but typically run manually with docker run
-  # Uncomment the service below if you want to use docker-compose run/exec
-  # trading-cli:
-  #   build:
-  #     context: .
-  #     dockerfile: Dockerfile.cli
-  #   container_name: trading-cli
-  #   depends_on:
-  #     trading-system:
-  #       condition: service_healthy
-  #   environment:
-  #     - RUST_LOG=debug
-  #   networks:
-  #     - trading-network
-  #   stdin_open: true
-  #   tty: true
-  #   command: ["http://trading-system:50051"]
-  #   profiles:
-  #     - cli  # Only start with --profile cli
+  # Use: docker-compose run --rm trading-cli
+  # Or: ./scripts/run-tui-docker.sh
+  trading-cli:
+    build:
+      context: .
+      dockerfile: Dockerfile.cli
+    container_name: trading-cli
+    depends_on:
+      trading-system:
+        condition: service_healthy
+    environment:
+      - RUST_LOG=info
+    networks:
+      - trading-network
+    stdin_open: true
+    tty: true
+    command: ["http://trading-system:50051"]
+    profiles:
+      - cli  # Only start with --profile cli (prevents auto-start)
 
 volumes:
   mongodb_data:

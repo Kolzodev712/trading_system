@@ -54,16 +54,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
-    // -- wait until the subscription handshake finished and we have a session --
+    // -- wait until the RPC channel is ready --
     loop {
-        if binance_client
-            .read()
-            .await
-            .get_connection_session()
-            .await
-            .is_some()
-        {
-            info!("WebSocket session ready, proceeding...");
+        let rpc_ready = {
+            let client = binance_client.read().await;
+            client.rpc_client().get_rpc_request_tx().await.is_some()
+        };
+        if rpc_ready {
+            info!("WebSocket RPC channel ready, proceeding...");
             break;
         }
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
@@ -90,9 +88,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         BinanceSymbol::new("BTC", "USDT").convert_to_smolstr(),
         BinanceSide::Buy,
         BinanceOrderType::Limit,
-        BinanceTimeInForce::Gtc,
-        test_price,
-        test_quantity,
+        Some(BinanceTimeInForce::Gtc),
+        Some(test_price),
+        Some(test_quantity),
     );
 
     {

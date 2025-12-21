@@ -1,12 +1,15 @@
 //! Level runtime types
 use super::config::LevelConfig;
 use rust_decimal::Decimal;
-use trading_core::types::common::{OrderId, OrderType};
+use trading_core::types::common::{OrderId, OrderType, Pair};
 
 /// Runtime level representation with resolved values
 #[derive(Debug, Clone)]
 pub struct Level {
     pub config: LevelConfig,
+
+    /// Trading pair this level instance is for
+    pub pair: Pair,
 
     /// Current state
     pub state: LevelState,
@@ -25,10 +28,11 @@ pub struct Level {
 }
 
 impl Level {
-    /// Create a new level from config
-    pub fn new(config: LevelConfig) -> Self {
+    /// Create a new level from config and pair
+    pub fn new(config: LevelConfig, pair: Pair) -> Self {
         Self {
             config,
+            pair,
             state: LevelState::Created,
             active_orders: Vec::new(),
             repost_count: 0,
@@ -102,7 +106,6 @@ mod tests {
         let config = LevelConfig {
             id: SmolStr::new("test"),
             name: None,
-            symbol: Pair::new("BTC", "USDT"),
             side: Side::Buy,
             order_type: OrderTypeConfig::Limit,
             quantity: QuantityConfig::Fixed(dec!(0.001)),
@@ -113,7 +116,8 @@ mod tests {
             group: None,
         };
 
-        let level = Level::new(config);
+        let pair = Pair::new("BTC", "USDT");
+        let level = Level::new(config, pair);
         assert_eq!(level.state, LevelState::Created);
         assert!(level.active_orders.is_empty());
         assert_eq!(level.repost_count, 0);
@@ -124,7 +128,6 @@ mod tests {
         let config = LevelConfig {
             id: SmolStr::new("test"),
             name: None,
-            symbol: Pair::new("BTC", "USDT"),
             side: Side::Buy,
             order_type: OrderTypeConfig::Limit,
             quantity: QuantityConfig::Fixed(dec!(0.001)),
@@ -135,7 +138,8 @@ mod tests {
             group: None,
         };
 
-        let level = Level::new(config);
+        let pair = Pair::new("BTC", "USDT");
+        let level = Level::new(config, pair);
         assert!(level.is_ready_to_post());
 
         let mut disabled_level = level.clone();

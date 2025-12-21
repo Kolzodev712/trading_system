@@ -112,6 +112,7 @@ mod tests {
     fn create_test_order() -> Order {
         Order {
             order_id: OrderId::new("12345".into()),
+            client_order_id: None,
             symbol: Symbol::from("BTCUSDT"),
             side: Side::Buy,
             price: Decimal::new(100, 0),

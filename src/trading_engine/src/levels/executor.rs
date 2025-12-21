@@ -91,7 +91,7 @@ impl LevelExecutor {
                 // Need quote currency balance
                 balances
                     .iter()
-                    .find(|b| b.symbol.as_ref() == level.config.symbol.quote.as_str())
+                    .find(|b| b.symbol.as_ref() == level.pair.quote.as_str())
                     .map(|b| b.free)
                     .unwrap_or(rust_decimal::Decimal::ZERO)
             }
@@ -99,7 +99,7 @@ impl LevelExecutor {
                 // Need base currency balance
                 balances
                     .iter()
-                    .find(|b| b.symbol.as_ref() == level.config.symbol.base.as_str())
+                    .find(|b| b.symbol.as_ref() == level.pair.base.as_str())
                     .map(|b| b.free)
                     .unwrap_or(rust_decimal::Decimal::ZERO)
             }
@@ -108,12 +108,7 @@ impl LevelExecutor {
         // Resolve price (with rounding to tick size)
         let resolved_price = self
             .resolver
-            .resolve_price(
-                &level.config.price,
-                indicators,
-                orderbook,
-                &level.config.symbol,
-            )
+            .resolve_price(&level.config.price, indicators, orderbook, &level.pair)
             .await?;
 
         // Resolve quantity (with rounding to step size)
@@ -124,7 +119,7 @@ impl LevelExecutor {
                 indicators,
                 balance,
                 current_price,
-                &level.config.symbol,
+                &level.pair,
             )
             .await?;
 
@@ -132,7 +127,7 @@ impl LevelExecutor {
         let rules = get_trading_rules(
             self.asset_service.as_ref(),
             self.exchange.clone(),
-            &level.config.symbol,
+            &level.pair,
             self.config_min_order_size,
             self.config_step_size,
             self.config_tick_size,
@@ -179,7 +174,7 @@ impl LevelExecutor {
 
         // Create order request
         let order_request = OrderRequest {
-            symbol: Symbol::from(level.config.symbol.convert_to_smolstr()),
+            symbol: Symbol::from(level.pair.convert_to_smolstr()),
             side: level.config.side.clone(),
             order_type: resolved.resolved_order_type,
             price: resolved.resolved_price,
@@ -195,20 +190,69 @@ impl LevelExecutor {
     }
 
     /// Cancel all orders for a level
+    /// Cancels individual orders for this level only (not all orders for the pair)
     pub async fn cancel_level_orders(&self, level: &Level) -> Result<(), EngineError> {
         let client = self.trading_client.write().await;
 
+        if level.active_orders.is_empty() {
+            tracing::debug!("Level {} has no active orders to cancel", level.config.id);
+            return Ok(());
+        }
+
+        tracing::info!(
+            "Cancelling {} order(s) for level {} ({}/{})",
+            level.active_orders.len(),
+            level.config.id,
+            level.pair.base,
+            level.pair.quote
+        );
+
+        let mut cancelled_count = 0;
+        let mut failed_count = 0;
+
+        // Cancel individual orders for this level only
         for order_id in &level.active_orders {
-            if let Err(e) = client.cancel_order_by_id(order_id.clone()).await {
-                tracing::warn!(
-                    "Failed to cancel order {} for level {}: {}",
-                    order_id.as_str(),
-                    level.config.id,
-                    e
-                );
+            tracing::info!(
+                "Cancelling order {} for level {}",
+                order_id.as_str(),
+                level.config.id
+            );
+            match client.cancel_order_by_id(order_id.clone()).await {
+                Ok(_) => {
+                    cancelled_count += 1;
+                    tracing::info!(
+                        "Successfully cancelled order {} for level {}",
+                        order_id.as_str(),
+                        level.config.id
+                    );
+                }
+                Err(e) => {
+                    failed_count += 1;
+                    tracing::warn!(
+                        "Failed to cancel order {} for level {}: {}",
+                        order_id.as_str(),
+                        level.config.id,
+                        e
+                    );
+                }
             }
         }
 
-        Ok(())
+        tracing::info!(
+            "Level {} cancellation complete: {} cancelled, {} failed",
+            level.config.id,
+            cancelled_count,
+            failed_count
+        );
+
+        if failed_count > 0 {
+            Err(EngineError::CustomError(anyhow::anyhow!(
+                "Failed to cancel {} order(s) for level {}",
+                failed_count,
+                level.config.id
+            )))
+        } else {
+            Ok(())
+        }
     }
 }

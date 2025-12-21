@@ -1,5 +1,6 @@
 use crate::exchanges::binance::common_types::{
-    BinanceOrderStatus, BinanceOrderType, BinanceSide, BinanceTimeInForce,
+    BinanceCancelRestrictions, BinanceOrderStatus, BinanceOrderType,
+    BinanceSelfTradePreventionMode, BinanceSide, BinanceTimeInForce,
 };
 use trading_core::types::common::Symbol;
 
@@ -34,39 +35,50 @@ pub struct BinanceWsCancelOrderReqParams {
         deserialize_with = "deserialize_smol_str"
     )]
     pub symbol: SmolStr,
-    #[serde(
-        serialize_with = "serialize_smol_str",
-        deserialize_with = "deserialize_smol_str"
-    )]
-    pub orig_client_order_id: SmolStr,
-    pub order_type: BinanceOrderType,
+    // Either orderId OR origClientOrderId must be provided
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub order_id: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub orig_client_order_id: Option<SmolStr>,
+    // Optional fields
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub new_client_order_id: Option<SmolStr>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cancel_restrictions: Option<BinanceCancelRestrictions>,
     #[serde(flatten)]
     pub session: SessionLogonParams,
 }
 
 impl BinanceWsCancelOrderReqParams {
-    pub fn new(
+    pub fn new_with_client_order_id(
         symbol: SmolStr,
         orig_client_order_id: impl Into<SmolStr>,
-        order_type: BinanceOrderType,
     ) -> Self {
         Self {
             symbol,
-            orig_client_order_id: orig_client_order_id.into(),
-            order_type,
+            order_id: None,
+            orig_client_order_id: Some(orig_client_order_id.into()),
+            new_client_order_id: None,
+            cancel_restrictions: None,
+            session: SessionLogonParams::default(),
+        }
+    }
+
+    pub fn new_with_order_id(symbol: SmolStr, order_id: i64) -> Self {
+        Self {
+            symbol,
+            order_id: Some(order_id),
+            orig_client_order_id: None,
+            new_client_order_id: None,
+            cancel_restrictions: None,
             session: SessionLogonParams::default(),
         }
     }
 }
 
-impl From<(Symbol, SmolStr, BinanceOrderType)> for BinanceWsCancelOrderReqParams {
-    fn from((symbol, client_id, order_type): (Symbol, SmolStr, BinanceOrderType)) -> Self {
-        Self {
-            symbol: SmolStr::from(&symbol),
-            orig_client_order_id: client_id,
-            order_type,
-            session: SessionLogonParams::default(),
-        }
+impl From<(Symbol, SmolStr)> for BinanceWsCancelOrderReqParams {
+    fn from((symbol, client_id): (Symbol, SmolStr)) -> Self {
+        Self::new_with_client_order_id(SmolStr::from(&symbol), client_id)
     }
 }
 
@@ -80,36 +92,194 @@ pub struct BinanceWsCancelOrderResponse {
     )]
     pub id: SmolStr,
     pub status: i64,
-    pub result: BinanceWsCancelOrderResult,
-    pub rate_limits: BinanceRateLimit,
+    // Response can be a single order OR an order list (optional for error responses)
+    #[serde(default)]
+    pub result: Option<BinanceWsCancelOrderResult>,
+    // Error field for error responses
+    #[serde(default)]
+    pub error: Option<BinanceWsCancelOrderError>,
+    #[serde(default, rename = "rateLimits")]
+    pub rate_limits: Option<Vec<BinanceRateLimit>>,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct BinanceWsCancelOrderResult {
+pub struct BinanceWsCancelOrderError {
+    pub code: i64,
+    #[serde(
+        default,
+        serialize_with = "serialize_smol_str",
+        deserialize_with = "deserialize_smol_str"
+    )]
+    pub msg: SmolStr,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(untagged)]
+pub enum BinanceWsCancelOrderResult {
+    // Single order cancellation
+    SingleOrder(SingleCancelOrderResult),
+    // Order list cancellation (OCO)
+    OrderList(OrderListCancelResult),
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SingleCancelOrderResult {
     #[serde(
         serialize_with = "serialize_smol_str",
         deserialize_with = "deserialize_smol_str"
     )]
-    symbol: SmolStr,
+    pub symbol: SmolStr,
     #[serde(
         serialize_with = "serialize_smol_str",
         deserialize_with = "deserialize_smol_str"
     )]
-    // order id that was cancelled
-    orig_client_order_id: SmolStr,
+    pub orig_client_order_id: SmolStr,
+    pub order_id: i64,
+    pub order_list_id: i64,
     #[serde(
         serialize_with = "serialize_smol_str",
         deserialize_with = "deserialize_smol_str"
     )]
-    order_id: SmolStr,
-    price: Decimal,
-    orig_qty: Decimal,
-    status: BinanceOrderStatus,
-    time_in_force: BinanceTimeInForce,
+    pub client_order_id: SmolStr,
+    pub transact_time: i64,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub price: Decimal,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub orig_qty: Decimal,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub executed_qty: Decimal,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "rust_decimal::serde::str_option"
+    )]
+    pub orig_quote_order_qty: Option<Decimal>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "rust_decimal::serde::str_option"
+    )]
+    pub cummulative_quote_qty: Option<Decimal>,
+    pub status: BinanceOrderStatus,
+    pub time_in_force: BinanceTimeInForce,
     #[serde(rename = "type")]
-    type_: BinanceOrderType,
-    side: BinanceSide,
+    pub type_: BinanceOrderType,
+    pub side: BinanceSide,
+    // Conditional fields
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "rust_decimal::serde::str_option"
+    )]
+    pub stop_price: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trailing_delta: Option<i64>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "rust_decimal::serde::str_option"
+    )]
+    pub iceberg_qty: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub strategy_id: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub strategy_type: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub self_trade_prevention_mode: Option<BinanceSelfTradePreventionMode>,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OrderListCancelResult {
+    pub order_list_id: i64,
+    pub contingency_type: SmolStr,
+    pub list_status_type: SmolStr,
+    pub list_order_status: SmolStr,
+    #[serde(
+        serialize_with = "serialize_smol_str",
+        deserialize_with = "deserialize_smol_str"
+    )]
+    pub list_client_order_id: SmolStr,
+    pub transaction_time: i64,
+    #[serde(
+        serialize_with = "serialize_smol_str",
+        deserialize_with = "deserialize_smol_str"
+    )]
+    pub symbol: SmolStr,
+    pub orders: Vec<OcoOrder>,
+    pub order_reports: Vec<OcoOrderReport>,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OcoOrder {
+    #[serde(
+        serialize_with = "serialize_smol_str",
+        deserialize_with = "deserialize_smol_str"
+    )]
+    pub symbol: SmolStr,
+    pub order_id: i64,
+    #[serde(
+        serialize_with = "serialize_smol_str",
+        deserialize_with = "deserialize_smol_str"
+    )]
+    pub client_order_id: SmolStr,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OcoOrderReport {
+    #[serde(
+        serialize_with = "serialize_smol_str",
+        deserialize_with = "deserialize_smol_str"
+    )]
+    pub symbol: SmolStr,
+    #[serde(
+        serialize_with = "serialize_smol_str",
+        deserialize_with = "deserialize_smol_str"
+    )]
+    pub orig_client_order_id: SmolStr,
+    pub order_id: i64,
+    pub order_list_id: i64,
+    #[serde(
+        serialize_with = "serialize_smol_str",
+        deserialize_with = "deserialize_smol_str"
+    )]
+    pub client_order_id: SmolStr,
+    pub transact_time: i64,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub price: Decimal,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub orig_qty: Decimal,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub executed_qty: Decimal,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "rust_decimal::serde::str_option"
+    )]
+    pub orig_quote_order_qty: Option<Decimal>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "rust_decimal::serde::str_option"
+    )]
+    pub cummulative_quote_qty: Option<Decimal>,
+    pub status: BinanceOrderStatus,
+    pub time_in_force: BinanceTimeInForce,
+    #[serde(rename = "type")]
+    pub type_: BinanceOrderType,
+    pub side: BinanceSide,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "rust_decimal::serde::str_option"
+    )]
+    pub stop_price: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub self_trade_prevention_mode: Option<BinanceSelfTradePreventionMode>,
 }
 
 #[cfg(test)]
@@ -126,8 +296,10 @@ mod tests {
             method: SmolStr::new("order.cancel"),
             params: BinanceWsCancelOrderReqParams {
                 symbol: SmolStr::new("BTCUSDT"),
-                orig_client_order_id: SmolStr::new("myorder-789"),
-                order_type: BinanceOrderType::Limit,
+                order_id: None,
+                orig_client_order_id: Some(SmolStr::new("myorder-789")),
+                new_client_order_id: None,
+                cancel_restrictions: None,
                 session: SessionLogonParams {
                     api_key: SmolStr::new("api-key"),
                     timestamp: 1234567890,
@@ -146,47 +318,43 @@ mod tests {
         let response = BinanceWsCancelOrderResponse {
             id: SmolStr::new("cancel-resp-123"),
             status: 200,
-            result: BinanceWsCancelOrderResult {
-                symbol: SmolStr::new("BTCUSDT"),
-                orig_client_order_id: SmolStr::new("myorder-789"),
-                order_id: SmolStr::new("order-123"),
-                price: Decimal::new(200005, 4),
-                orig_qty: Decimal::new(100, 2),
-                status: BinanceOrderStatus::Canceled,
-                time_in_force: BinanceTimeInForce::Gtc,
-                type_: BinanceOrderType::Limit,
-                side: BinanceSide::Buy,
-            },
-            rate_limits: BinanceRateLimit {
+            result: Some(BinanceWsCancelOrderResult::SingleOrder(
+                SingleCancelOrderResult {
+                    symbol: SmolStr::new("BTCUSDT"),
+                    orig_client_order_id: SmolStr::new("myorder-789"),
+                    order_id: 12569099453,
+                    order_list_id: -1,
+                    client_order_id: SmolStr::new("order-123"),
+                    transact_time: 1684804350068,
+                    price: Decimal::new(200005, 4),
+                    orig_qty: Decimal::new(100, 2),
+                    executed_qty: Decimal::new(10, 3),
+                    orig_quote_order_qty: None,
+                    cummulative_quote_qty: Some(Decimal::new(234161, 5)),
+                    status: BinanceOrderStatus::Canceled,
+                    time_in_force: BinanceTimeInForce::Gtc,
+                    type_: BinanceOrderType::Limit,
+                    side: BinanceSide::Buy,
+                    stop_price: None,
+                    trailing_delta: None,
+                    iceberg_qty: None,
+                    strategy_id: None,
+                    strategy_type: None,
+                    self_trade_prevention_mode: Some(BinanceSelfTradePreventionMode::None),
+                },
+            )),
+            error: None,
+            rate_limits: Some(vec![BinanceRateLimit {
                 rate_limit_type: SmolStr::new("ORDERS"),
                 interval: SmolStr::new("MINUTE"),
                 interval_num: 1,
                 limit: 1200,
                 count: 50,
-            },
+            }]),
         };
 
         let json = serde_json::to_string(&response).unwrap();
         let back: BinanceWsCancelOrderResponse = serde_json::from_str(&json).unwrap();
         assert_eq!(response, back);
-    }
-
-    #[test]
-    fn test_binance_ws_cancel_order_result_ser_deser() {
-        let result = BinanceWsCancelOrderResult {
-            symbol: SmolStr::new("ETHUSDT"),
-            orig_client_order_id: SmolStr::new("original-order-id"),
-            order_id: SmolStr::new("order-id-123"),
-            price: Decimal::new(180000, 4),
-            orig_qty: Decimal::new(50, 2),
-            status: BinanceOrderStatus::New,
-            time_in_force: BinanceTimeInForce::Gtc,
-            type_: BinanceOrderType::Limit,
-            side: BinanceSide::Sell,
-        };
-
-        let json = serde_json::to_string(&result).unwrap();
-        let back: BinanceWsCancelOrderResult = serde_json::from_str(&json).unwrap();
-        assert_eq!(result, back);
     }
 }

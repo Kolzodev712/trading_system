@@ -64,6 +64,7 @@ impl LevelBasedEventLoop {
 
     /// Main event loop
     pub async fn run(&self) -> Result<(), EngineError> {
+        tracing::debug!("[LEVELS EVENT LOOP] ========== run() method ENTERED ==========");
         // Start periodic reconciliation using TradingStateManager for all pairs
         let trading_state_manager_for_recon = Arc::clone(&self.trading_state_manager);
         let pairs_for_recon = self.pairs.clone();
@@ -80,7 +81,7 @@ impl LevelBasedEventLoop {
 
                 // Reconcile all pairs
                 for pair in &pairs_for_recon {
-                    tracing::info!("Running periodic trading-level reconciliation for {}", pair);
+                    tracing::debug!("Running periodic trading-level reconciliation for {}", pair);
 
                     // Reconcile using TradingStateManager
                     match trading_state_manager_for_recon.reconcile(pair, None).await {
@@ -113,21 +114,33 @@ impl LevelBasedEventLoop {
         });
 
         // Start indicator subscriber in background
-        let subscriber_cache = {
-            let subscriber = self.indicator_subscriber.read().await;
-            subscriber.cache()
-        };
+        tracing::info!("[LEVELS EVENT LOOP] Getting subscriber cache...");
+        let subscriber_cache = self.indicator_subscriber.read().await.cache();
+        tracing::info!("[LEVELS EVENT LOOP] Subscriber cache obtained");
 
         // Consume market data updates from channel
+        tracing::info!("[LEVELS EVENT LOOP] Resubscribing to market_data_rx...");
         let mut market_data_rx = self.market_data_rx.resubscribe();
+        tracing::info!("[LEVELS EVENT LOOP] Market data resubscribe complete");
         let mut periodic_timer = interval(Duration::from_secs(1)); // Check every second
+        tracing::info!("[LEVELS EVENT LOOP] Periodic timer created");
 
+        tracing::info!(
+            "[LEVELS EVENT LOOP] Starting event loop, waiting for market data updates..."
+        );
         loop {
             tokio::select! {
                 // Handle market data updates from channel
                 update = market_data_rx.recv() => {
+                    tracing::debug!("[LEVELS EVENT LOOP] Received update from market_data_rx channel");
                     match update {
                         Ok(MarketDataUpdate::Orderbook { orderbook }) => {
+                            tracing::debug!(
+                                "Received orderbook update for {}/{} (mid_price={:?})",
+                                orderbook.pair.base,
+                                orderbook.pair.quote,
+                                orderbook.mid_price()
+                            );
                             // Update last seen price for periodic risk checks
                             if let Some(price) = orderbook.mid_price() {
                                 // Store price for the orderbook's pair
@@ -171,20 +184,88 @@ impl LevelBasedEventLoop {
         orderbook: &StructuredOrderbook,
         indicator_cache: &Arc<RwLock<HashMap<SmolStr, IndicatorValue>>>,
     ) -> Result<(), EngineError> {
-        // Get indicators from cache
-        let indicators: HashMap<SmolStr, IndicatorValue> = {
+        // Get indicators from cache (read fresh each time to avoid stale data)
+        let _indicators: HashMap<SmolStr, IndicatorValue> = {
             let cache = indicator_cache.read().await;
-            cache.clone()
+            let cloned = cache.clone();
+            let available: Vec<_> = cloned.keys().map(|k| k.as_str()).collect();
+            tracing::debug!(
+                "[LEVELS EVENT LOOP] Reading indicator cache: {} indicators available: {:?}",
+                cloned.len(),
+                available
+            );
+            drop(cache); // Release lock immediately
+            cloned
         };
 
-        // Get levels ready to post (clone IDs to avoid lifetime issues)
+        // Get levels ready to post for THIS orderbook's pair
+        // Filter by pair to only process levels matching the current orderbook
         let level_ids: Vec<SmolStr> = {
             let manager = self.level_manager.read().await;
-            manager
-                .get_levels_ready_to_post()
+            let all_levels = manager.get_all_levels();
+            tracing::debug!(
+                "Total levels: {}, checking which are ready to post for {}/{}...",
+                all_levels.len(),
+                orderbook.pair.base,
+                orderbook.pair.quote
+            );
+
+            // Filter levels by pair AND ready to post
+            let ready_levels: Vec<_> = all_levels
                 .iter()
-                .map(|level| level.config.id.clone())
-                .collect()
+                .filter(|level| {
+                    // Match the orderbook's pair
+                    level.pair.base == orderbook.pair.base
+                        && level.pair.quote == orderbook.pair.quote
+                })
+                .filter(|level| level.is_ready_to_post())
+                .collect();
+
+            if !ready_levels.is_empty() {
+                tracing::debug!(
+                    "Found {} level(s) ready to post for {}/{}: {:?}",
+                    ready_levels.len(),
+                    orderbook.pair.base,
+                    orderbook.pair.quote,
+                    ready_levels
+                        .iter()
+                        .map(|l| l.config.id.as_str())
+                        .collect::<Vec<_>>()
+                );
+            } else {
+                tracing::info!(
+                    "No levels ready to post for {}/{} (checking level states...)",
+                    orderbook.pair.base,
+                    orderbook.pair.quote
+                );
+                for level in all_levels.iter() {
+                    if level.pair.base == orderbook.pair.base
+                        && level.pair.quote == orderbook.pair.quote
+                    {
+                        tracing::info!(
+                            "Level {}: state={:?}, enabled={}, active_orders={}, pair={}/{}",
+                            level.config.id,
+                            level.state,
+                            level.config.enabled,
+                            level.active_orders.len(),
+                            level.pair.base,
+                            level.pair.quote
+                        );
+                    }
+                }
+            }
+
+            // Use the actual HashMap key (expanded ID) - we need to get it from the manager
+            // Since we don't have the key, we'll need to reconstruct it or store it
+            // For now, let's get levels by iterating and matching
+            let mut matching_level_ids = Vec::new();
+            for level in ready_levels {
+                // Reconstruct the expanded ID: "buy_level_1" -> "buy_level_1_ETHUSDC"
+                let pair_str = level.pair.convert_to_smolstr();
+                let expanded_id = SmolStr::new(&format!("{}_{}", level.config.id, pair_str));
+                matching_level_ids.push(expanded_id);
+            }
+            matching_level_ids
         };
 
         // Get balances
@@ -202,8 +283,28 @@ impl LevelBasedEventLoop {
             };
 
             let level = match level {
-                Some(l) => l,
-                None => continue,
+                Some(l) => {
+                    // Verify the level matches the orderbook's pair
+                    if l.pair.base != orderbook.pair.base || l.pair.quote != orderbook.pair.quote {
+                        tracing::debug!(
+                            "Skipping level {} - pair mismatch: level={}/{}, orderbook={}/{}",
+                            level_id,
+                            l.pair.base,
+                            l.pair.quote,
+                            orderbook.pair.base,
+                            orderbook.pair.quote
+                        );
+                        continue;
+                    }
+                    l
+                }
+                None => {
+                    tracing::warn!(
+                        "Level {} not found in manager (this should not happen)",
+                        level_id
+                    );
+                    continue;
+                }
             };
             // Get trading state
             let trading_state = self.trading_state_manager.get_state();
@@ -212,27 +313,71 @@ impl LevelBasedEventLoop {
                 state_guard.clone()
             };
 
-            // Resolve level
-            let resolved = self
+            // Resolve level - read fresh indicators from cache right before resolving
+            // This ensures we have the latest indicator values
+            let fresh_indicators: HashMap<SmolStr, IndicatorValue> = {
+                let cache = indicator_cache.read().await;
+                cache.clone()
+            };
+
+            tracing::debug!(
+                "Attempting to resolve level {} for {}/{} (indicators in cache: {})",
+                level.config.id,
+                level.pair.base,
+                level.pair.quote,
+                fresh_indicators.len()
+            );
+            let resolved = match self
                 .level_executor
-                .resolve_level(&level, &indicators, Some(orderbook), &balances)
-                .await?;
+                .resolve_level(&level, &fresh_indicators, Some(orderbook), &balances)
+                .await
+            {
+                Ok(r) => {
+                    tracing::info!(
+                        "Level {} resolved: price={}, quantity={}, order_type={:?}",
+                        level.config.id,
+                        r.resolved_price,
+                        r.resolved_quantity,
+                        r.resolved_order_type
+                    );
+                    r
+                }
+                Err(e) => {
+                    tracing::debug!(
+                        "Failed to resolve level {} for {}/{}: {}",
+                        level.config.id,
+                        level.pair.base,
+                        level.pair.quote,
+                        e
+                    );
+                    continue;
+                }
+            };
 
             // Perform risk checks
             // Get current price from orderbook for the level's symbol
             let current_price = orderbook.mid_price();
             let current_prices = current_price.map(|price| {
                 let mut map = HashMap::new();
-                map.insert(level.config.symbol.clone(), price);
+                map.insert(level.pair.clone(), price);
                 map
             });
+
+            tracing::debug!(
+                "Performing risk check for level {} ({}/{}), current_price={:?}",
+                level.config.id,
+                level.pair.base,
+                level.pair.quote,
+                current_price
+            );
+
             let risk_result = self
                 .risk_manager
                 .check_level(&resolved, &state, &balances, current_prices.as_ref())
                 .await;
 
             if !risk_result.allowed {
-                tracing::debug!(
+                tracing::info!(
                     "Level {} blocked by risk check: {}",
                     level.config.id,
                     risk_result
@@ -244,27 +389,103 @@ impl LevelBasedEventLoop {
                 continue;
             }
 
-            // Post level
+            tracing::debug!(
+                "Risk check passed for level {} ({}/{})",
+                level.config.id,
+                level.pair.base,
+                level.pair.quote
+            );
+
+            // Check if level is enabled (individual toggle)
+            if !level.config.enabled {
+                tracing::info!(
+                    "Level {} ({}/{}) is disabled, skipping",
+                    level.config.id,
+                    level.pair.base,
+                    level.pair.quote
+                );
+                continue; // Skip disabled levels
+            }
+
+            // CRITICAL: Check state again right before posting to prevent race condition
+            // Another orderbook update might have already posted this level
+            // Use expanded ID to look up the level (matching how it's stored in HashMap)
+            {
+                let expanded_id = {
+                    let pair_str = level.pair.convert_to_smolstr();
+                    SmolStr::new(&format!("{}_{}", level.config.id, pair_str))
+                };
+                let manager = self.level_manager.read().await;
+                if let Some(current_level) = manager.get_level(&expanded_id) {
+                    if !current_level.is_ready_to_post() {
+                        tracing::info!(
+                            "Level {} ({}/{}) is no longer ready to post (state={:?}, active_orders={}), skipping",
+                            level.config.id,
+                            level.pair.base,
+                            level.pair.quote,
+                            current_level.state,
+                            current_level.active_orders.len()
+                        );
+                        continue;
+                    }
+                } else {
+                    tracing::warn!(
+                        "Level {} ({}/{}) no longer exists in manager (expanded_id={}), skipping",
+                        level.config.id,
+                        level.pair.base,
+                        level.pair.quote,
+                        expanded_id
+                    );
+                    continue;
+                }
+            }
+
+            tracing::info!(
+                "Attempting to post level {} ({}/{}) - price={}, quantity={}",
+                level.config.id,
+                level.pair.base,
+                level.pair.quote,
+                resolved.resolved_price,
+                resolved.resolved_quantity
+            );
+
+            // Post level (LevelExecutor will also check global trading control)
+            // Use fresh indicators for posting as well
             match self
                 .level_executor
-                .post_level(&level, &indicators, Some(orderbook), &balances)
+                .post_level(&level, &fresh_indicators, Some(orderbook), &balances)
                 .await
             {
                 Ok(order) => {
                     tracing::info!(
-                        "Level {} posted order: {}",
+                        "[SUCCESS] Level {} posted order: {} for {}/{}",
                         level.config.id,
-                        order.order_id.as_str()
+                        order.order_id.as_str(),
+                        level.pair.base,
+                        level.pair.quote
                     );
 
                     // Update level state
                     {
+                        // Use expanded ID to look up the level
+                        let expanded_id = {
+                            let pair_str = level.pair.convert_to_smolstr();
+                            SmolStr::new(&format!("{}_{}", level.config.id, pair_str))
+                        };
                         let mut manager = self.level_manager.write().await;
-                        if let Some(level_mut) = manager.get_level_mut(&level.config.id) {
+                        if let Some(level_mut) = manager.get_level_mut(&expanded_id) {
                             level_mut.state = super::LevelState::Posted;
                             level_mut.active_orders.push(order.order_id.clone());
                             level_mut.last_posted_at =
                                 Some(trading_core::utils::current_timestamp());
+                        } else {
+                            tracing::warn!(
+                                "Level {} ({}/{}) not found when updating state (expanded_id={})",
+                                level.config.id,
+                                level.pair.base,
+                                level.pair.quote,
+                                expanded_id
+                            );
                         }
                     }
 
@@ -276,7 +497,7 @@ impl LevelBasedEventLoop {
                     let current_price = orderbook.mid_price();
                     if let Some(price) = current_price {
                         let mut current_prices = HashMap::new();
-                        current_prices.insert(level.config.symbol.clone(), price);
+                        current_prices.insert(level.pair.clone(), price);
 
                         // Get fresh trading state after order was added
                         let trading_state = self.trading_state_manager.get_state();
@@ -306,7 +527,13 @@ impl LevelBasedEventLoop {
                     }
                 }
                 Err(e) => {
-                    tracing::warn!("Failed to post level {}: {}", level.config.id, e);
+                    tracing::warn!(
+                        "Failed to post level {} for {}/{}: {}",
+                        level.config.id,
+                        level.pair.base,
+                        level.pair.quote,
+                        e
+                    );
                 }
             }
         }
@@ -417,7 +644,7 @@ impl LevelBasedEventLoop {
                 if let Some(max_reposts) = level.config.lifecycle.max_reposts {
                     if level.repost_count >= max_reposts {
                         level.state = super::LevelState::Paused;
-                        tracing::info!("Level {} paused after {} reposts", level_id, max_reposts);
+                        tracing::debug!("Level {} paused after {} reposts", level_id, max_reposts);
                     }
                 }
             }

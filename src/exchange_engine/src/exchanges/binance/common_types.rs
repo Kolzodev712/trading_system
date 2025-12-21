@@ -80,6 +80,7 @@ impl From<OrderStatus> for BinanceOrderStatus {
             OrderStatus::Rejected => BinanceOrderStatus::Rejected,
             OrderStatus::PartiallyFilled | OrderStatus::Filled => BinanceOrderStatus::Trade,
             OrderStatus::Expired => BinanceOrderStatus::Expired,
+            OrderStatus::Amended => BinanceOrderStatus::Canceled, // Amended orders are treated as canceled (old order was canceled)
         }
     }
 }
@@ -149,6 +150,42 @@ impl Display for BinanceTimeInForce {
             BinanceTimeInForce::Gtc => write!(f, "GTC"),
             BinanceTimeInForce::Ioc => write!(f, "IOC"),
             BinanceTimeInForce::Fok => write!(f, "FOK"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum BinanceCancelRestrictions {
+    OnlyNew,
+    OnlyPartiallyFilled,
+}
+
+impl Display for BinanceCancelRestrictions {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            BinanceCancelRestrictions::OnlyNew => write!(f, "ONLY_NEW"),
+            BinanceCancelRestrictions::OnlyPartiallyFilled => write!(f, "ONLY_PARTIALLY_FILLED"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum BinanceSelfTradePreventionMode {
+    None,
+    ExpireTaker,
+    ExpireMaker,
+    ExpireBoth,
+}
+
+impl Display for BinanceSelfTradePreventionMode {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            BinanceSelfTradePreventionMode::None => write!(f, "NONE"),
+            BinanceSelfTradePreventionMode::ExpireTaker => write!(f, "EXPIRE_TAKER"),
+            BinanceSelfTradePreventionMode::ExpireMaker => write!(f, "EXPIRE_MAKER"),
+            BinanceSelfTradePreventionMode::ExpireBoth => write!(f, "EXPIRE_BOTH"),
         }
     }
 }

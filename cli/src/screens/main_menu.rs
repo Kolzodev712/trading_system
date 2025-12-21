@@ -115,9 +115,14 @@ impl MainMenuScreen {
         frame.render_widget(menu_paragraph, main_chunks[1]);
 
         // Footer
+        let mode_label = if app.has_strategy() {
+            "Strategies"
+        } else {
+            "Levels"
+        };
         let footer_text = vec![Line::from(vec![
             Span::styled("Mode: ", Style::default().fg(Color::DarkGray)),
-            Span::styled("Levels", Style::default().fg(Color::Cyan)),
+            Span::styled(mode_label, Style::default().fg(Color::Cyan)),
             Span::from("  │  "),
             Span::styled("Exchange: ", Style::default().fg(Color::DarkGray)),
             Span::styled("Binance", Style::default().fg(Color::Cyan)),

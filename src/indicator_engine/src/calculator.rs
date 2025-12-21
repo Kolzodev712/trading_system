@@ -145,7 +145,7 @@ impl IndicatorCalculator {
 
                 // Log when indicator becomes ready for the first time
                 if !was_ready && is_now_ready {
-                    tracing::info!(
+                    tracing::debug!(
                         "Indicator {} ({}) is now ready (accumulated {} data points)",
                         indicator_id,
                         name,
@@ -188,7 +188,7 @@ impl IndicatorCalculator {
                                     indicator_id.clone(),
                                     CacheEntry::new(indicator_value_for_cache),
                                 );
-                                tracing::info!(
+                                tracing::debug!(
                                     "Cached new indicator value for {}: {} = {}",
                                     indicator_id,
                                     name,

@@ -18,7 +18,6 @@ pub fn create_test_level_config(id: &str) -> LevelConfig {
     LevelConfig {
         id: SmolStr::new(id),
         name: None,
-        symbol: Pair::new("BTC", "USDT"),
         side: Side::Buy,
         order_type: OrderTypeConfig::Limit,
         quantity: QuantityConfig::Fixed(dec!(0.001)),
@@ -45,6 +44,7 @@ pub fn create_test_order(
 ) -> Order {
     Order {
         order_id: trading_core::types::common::OrderId::new(order_id.into()),
+        client_order_id: None,
         symbol: Symbol::from("BTCUSDT"),
         side: Side::Buy,
         price,

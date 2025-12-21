@@ -1,12 +1,14 @@
 //! Level management RPC handlers
 use crate::grpc::trading_cli;
+use exchange_engine::state::manager::ExchangeStateManager;
 use smol_str::SmolStr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tonic::{Request, Response, Status};
+use trading_core::grpc::TradingControl;
 use trading_core::traits::TradingClient;
 use trading_core::types::exchange::OrderRequest;
-use trading_engine::levels::LevelManager;
+use trading_engine::levels::{LevelExecutor, LevelManager};
 
 use super::converters;
 
@@ -14,6 +16,8 @@ use super::converters;
 pub struct LevelService {
     pub level_manager: Arc<RwLock<LevelManager>>,
     pub trading_client: Arc<RwLock<dyn TradingClient<OrderRequest>>>,
+    pub trading_control: Arc<TradingControl>,
+    pub exchange_state_manager: Arc<ExchangeStateManager>,
 }
 
 impl LevelService {
@@ -170,14 +174,10 @@ impl LevelService {
             None
         };
 
-        // Build LevelConfig
+        // Build LevelConfig (pair-agnostic)
         let level_config = trading_engine::levels::config::LevelConfig {
             id: SmolStr::new(&config.id),
             name: None,
-            symbol: trading_core::types::common::Pair {
-                base: SmolStr::new(&symbol.base),
-                quote: SmolStr::new(&symbol.quote),
-            },
             side,
             order_type,
             quantity: quantity_config,
@@ -198,10 +198,16 @@ impl LevelService {
             group: None,
         };
 
-        // Add level via LevelManager
+        // Convert symbol to Pair
+        let pair = trading_core::types::common::Pair {
+            base: SmolStr::new(&symbol.base),
+            quote: SmolStr::new(&symbol.quote),
+        };
+
+        // Add level via LevelManager (with pair)
         let mut level_manager = self.level_manager.write().await;
         level_manager
-            .add_level(level_config.clone())
+            .add_level(level_config.clone(), pair)
             .await
             .map_err(|e| Status::internal(format!("Failed to create level: {}", e)))?;
 
@@ -334,11 +340,19 @@ impl LevelService {
 
         let mut level_manager = self.level_manager.write().await;
 
-        // Get current enabled state and active orders to determine what to do
-        let (current_enabled, active_orders) = level_manager
+        // Get current enabled state to determine what to do
+        let current_enabled = level_manager
             .get_level(&level_id)
-            .map(|l| (l.config.enabled, l.active_orders.clone()))
+            .map(|l| l.config.enabled)
             .ok_or_else(|| Status::not_found(format!("Level {} not found", req.level_id)))?;
+
+        // Check global trading control - if disabled, prevent enabling individual levels
+        let global_trading_enabled = self.trading_control.is_enabled().await;
+        if !global_trading_enabled && req.enabled {
+            return Err(Status::failed_precondition(
+                "Cannot enable individual level when global trading is disabled. Enable global trading first."
+            ));
+        }
 
         // Only toggle if the requested state is different from current
         if current_enabled != req.enabled {
@@ -348,46 +362,166 @@ impl LevelService {
                     .await
                     .map_err(|e| Status::internal(format!("Failed to enable level: {}", e)))?;
             } else {
-                // When disabling, cancel all active orders for this level
-                if !active_orders.is_empty() {
-                    let trading_client = self.trading_client.read().await;
-                    let mut cancelled_count = 0;
-                    let mut failed_count = 0;
+                // When disabling, cancel orders for this level only
+                // Get the level to access its active orders
+                let level_for_cancel = level_manager
+                    .get_level(&level_id)
+                    .cloned()
+                    .ok_or_else(|| Status::not_found(format!("Level {} not found", level_id)))?;
 
-                    for order_id in &active_orders {
-                        match trading_client.cancel_order_by_id(order_id.clone()).await {
-                            Ok(_) => {
-                                cancelled_count += 1;
+                // Check if there are orders to cancel (either in active_orders or on exchange)
+                let orders_in_level = level_for_cancel.active_orders.len();
+
+                // Also check ExchangeStateManager for OPEN orders on this pair that might belong to this level
+                // Only count open orders (New, PartiallyFilled) - not cancelled/filled orders
+                let orders_on_exchange = {
+                    self.exchange_state_manager
+                        .get_open_orders_for_pair(&level_for_cancel.pair)
+                        .await
+                        .len()
+                };
+
+                if orders_in_level > 0 || orders_on_exchange > 0 {
+                    tracing::info!(
+                        "[gRPC] Disabling level {} ({}/{}), cancelling orders (level has {}, exchange has {})...",
+                        level_id,
+                        level_for_cancel.pair.base,
+                        level_for_cancel.pair.quote,
+                        orders_in_level,
+                        orders_on_exchange
+                    );
+
+                    if orders_in_level > 0 {
+                        // Cancel individual orders for this level
+                        let executor = LevelExecutor::new(
+                            self.trading_client.clone(),
+                            None, // asset_service not needed for cancellation
+                            trading_core::types::common::Exchange::Binance,
+                            rust_decimal::Decimal::new(1, 5), // config_min_order_size
+                            rust_decimal::Decimal::new(1, 5), // config_step_size
+                            rust_decimal::Decimal::new(1, 2), // config_tick_size
+                            rust_decimal::Decimal::new(5, 0), // config_min_notional
+                        );
+
+                        // Cancel orders with timeout to prevent blocking the gRPC handler
+                        match tokio::time::timeout(
+                            tokio::time::Duration::from_secs(5),
+                            executor.cancel_level_orders(&level_for_cancel),
+                        )
+                        .await
+                        {
+                            Ok(Ok(_)) => {
                                 tracing::info!(
-                                    "Cancelled order {} for disabled level {}",
-                                    order_id.as_str(),
+                                    "[gRPC] Successfully cancelled orders for level {}",
                                     level_id
                                 );
                             }
-                            Err(e) => {
-                                failed_count += 1;
+                            Ok(Err(e)) => {
                                 tracing::warn!(
-                                    "Failed to cancel order {} for level {}: {}",
-                                    order_id.as_str(),
+                                    "[gRPC] Failed to cancel some orders for level {}: {}",
                                     level_id,
                                     e
                                 );
                             }
+                            Err(_) => {
+                                tracing::error!(
+                                    "[gRPC] Timeout cancelling orders for level {} (5s timeout)",
+                                    level_id
+                                );
+                            }
                         }
                     }
-                    drop(trading_client);
 
-                    tracing::info!(
-                        "Level {} disabled: cancelled {} order(s), {} failed",
-                        level_id,
-                        cancelled_count,
-                        failed_count
-                    );
+                    // If there are open orders on exchange but not in active_orders, use cancel_all_orders as fallback
+                    // This handles the case where post_level timed out but the order was placed
+                    // NOTE: This will cancel ALL orders for the pair, not just this level's orders
+                    // This is a limitation - ideally we'd track which orders belong to which level
+                    if orders_on_exchange > 0 && orders_in_level == 0 {
+                        tracing::info!(
+                            "[gRPC] Level {} has {} open order(s) on exchange but not in active_orders, using cancel_all_orders as fallback (WARNING: will cancel ALL orders for {}/{})",
+                            level_id,
+                            orders_on_exchange,
+                            level_for_cancel.pair.base,
+                            level_for_cancel.pair.quote
+                        );
+                        // Clone the pair before releasing the lock
+                        let pair_to_cancel = level_for_cancel.pair.clone();
+                        drop(level_for_cancel); // Release level lock before acquiring trading_client lock
+
+                        tracing::info!(
+                            "[gRPC] Calling cancel_all_orders for {}/{}...",
+                            pair_to_cancel.base,
+                            pair_to_cancel.quote
+                        );
+
+                        // Clone what we need and release the lock quickly to avoid blocking
+                        let trading_client_arc = Arc::clone(&self.trading_client);
+                        let pair_clone = pair_to_cancel.clone();
+                        let cancel_result = async move {
+                            let trading_client = trading_client_arc.read().await;
+                            trading_client.cancel_all_orders(&pair_clone).await
+                        }
+                        .await;
+
+                        match cancel_result {
+                            Ok(_) => {
+                                tracing::info!(
+                                    "[gRPC] Successfully cancelled all orders for {}/{} (fallback)",
+                                    pair_to_cancel.base,
+                                    pair_to_cancel.quote
+                                );
+                            }
+                            Err(e) => {
+                                // Check if error is "Unknown order sent" - this means orders were already cancelled
+                                let error_msg = format!("{}", e);
+                                if error_msg.contains("Unknown order")
+                                    || error_msg.contains("-2011")
+                                {
+                                    tracing::info!(
+                                        "[gRPC] Orders for {}/{} were already cancelled (likely by global disable or another level)",
+                                        pair_to_cancel.base,
+                                        pair_to_cancel.quote
+                                    );
+                                } else if error_msg.contains("Timeout acquiring RPC channel")
+                                    || error_msg.contains("RPC channel not ready")
+                                    || error_msg.contains("RPC channel closed")
+                                {
+                                    tracing::error!(
+                                        "[gRPC] RPC channel unavailable when cancelling orders for {}/{}: {} - connection may be down",
+                                        pair_to_cancel.base,
+                                        pair_to_cancel.quote,
+                                        e
+                                    );
+                                } else {
+                                    tracing::warn!(
+                                        "[gRPC] Failed to cancel all orders for {}/{} (fallback): {}",
+                                        pair_to_cancel.base,
+                                        pair_to_cancel.quote,
+                                        e
+                                    );
+                                }
+                            }
+                        }
+                    } else if orders_on_exchange == 0 && orders_in_level == 0 {
+                        tracing::debug!(
+                            "[gRPC] Level {} has no open orders to cancel (level has {}, exchange has {})",
+                            level_id,
+                            orders_in_level,
+                            orders_on_exchange
+                        );
+                    }
 
                     // Clear active orders from the level
                     if let Some(level) = level_manager.get_level_mut(&level_id) {
                         level.active_orders.clear();
                     }
+                } else {
+                    tracing::info!(
+                        "[gRPC] Disabling level {} ({}/{}), no orders to cancel",
+                        level_id,
+                        level_for_cancel.pair.base,
+                        level_for_cancel.pair.quote
+                    );
                 }
 
                 // Now disable the level

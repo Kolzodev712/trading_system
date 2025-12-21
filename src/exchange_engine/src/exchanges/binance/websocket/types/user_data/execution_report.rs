@@ -77,6 +77,7 @@ impl From<ExecutionReport> for Order {
 
         Order {
             order_id: report.order_id.into(),
+            client_order_id: None, // ExecutionReport doesn't include client_order_id
             symbol: report.symbol.into(),
             side: report.side.into(),
             price: report.price,

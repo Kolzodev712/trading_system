@@ -65,7 +65,7 @@ fn default_indicator_update_capacity() -> usize {
 }
 
 fn default_websocket_inbound_capacity() -> usize {
-    1024
+    4096
 }
 
 fn default_websocket_ping_capacity() -> usize {
@@ -73,7 +73,7 @@ fn default_websocket_ping_capacity() -> usize {
 }
 
 fn default_websocket_outbound_rpc_capacity() -> usize {
-    1024
+    4096
 }
 
 fn default_live_config_request_capacity() -> usize {

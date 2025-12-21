@@ -1,4 +1,3 @@
-use crate::exchanges::binance::common_types::BinanceOrderType;
 use crate::exchanges::binance::rest::client::BinanceHttpClient;
 use crate::state::manager::ExchangeStateManager;
 use smol_str::SmolStr;
@@ -7,7 +6,7 @@ use trading_core::{
     rest::HttpMethod,
     traits::TradingClient,
     types::{
-        common::{OrderId, OrderStatus, Pair, Symbol},
+        common::{OrderId, OrderStatus, Pair},
         exchange::{Balance, Order, OrderRequest, Trade},
     },
 };
@@ -17,13 +16,13 @@ use super::super::binance::websocket::types::rpc::{
     cancel_order::BinanceWsCancelOrderReqParams,
     open_order::{map_open_order_to_core, BinanceWsOrderReqParams},
 };
-use super::websocket::client::{BinanceSubscriptionHandler, ConnectionSession};
+use super::rpc_client::BinanceRpcClient;
+use super::streaming_client::BinanceStreamingClient;
 use super::{
     config::BinanceConfig,
     websocket::{
-        client::{BinanceWSClient, InboundHandler},
+        client::BinanceSubscriptionHandler,
         types::{
-            common::BinanceInbound,
             rpc::{BinanceRpcRequest, BinanceRpcResponse},
             user_data::events::ParsedBinanceMessage,
         },
@@ -31,23 +30,23 @@ use super::{
 };
 use crate::exchanges::binance::sign::BinanceWsAuthenticator;
 use async_trait::async_trait;
-use std::{collections::HashMap, fmt::Debug, sync::Arc};
+use std::{fmt::Debug, sync::Arc};
 use tokio::{
-    sync::{broadcast, mpsc, oneshot, Mutex, RwLock},
-    time::{sleep, timeout, Duration},
+    sync::{mpsc, RwLock},
+    time::{sleep, Duration},
 };
-use tracing::{debug, error, warn};
+use tracing::{error, info, warn};
 use trading_core::{traits::PrivateDataClient, types::common::Exchange};
 
 #[derive(Debug, Clone)]
 pub struct BinanceClient {
     pub(crate) config: BinanceConfig,
-    pub(crate) outbound_rpc_tx: Arc<Mutex<Option<mpsc::Sender<BinanceRpcRequest>>>>,
-    outbound_rpc_rx: Arc<Mutex<HashMap<String, oneshot::Sender<BinanceRpcResponse>>>>,
-    ws_client: BinanceWSClient,
-    connection_session: Arc<RwLock<Option<ConnectionSession>>>,
+    /// RPC client for request/response operations
+    pub(crate) rpc_client: Arc<BinanceRpcClient>,
+    /// Streaming client for subscription events
+    streaming_client: Arc<BinanceStreamingClient>,
+    /// Subscription handler for creating RPC requests
     subscription_handler: BinanceSubscriptionHandler,
-    shutdown_tx: broadcast::Sender<()>,
     /// REST HTTP client for reconciliation calls
     rest_client: BinanceHttpClient,
     /// Exchange state manager (optional - for state management and publishing)
@@ -64,25 +63,29 @@ impl BinanceClient {
         inbound_capacity: usize,
         ping_capacity: usize,
         outbound_rpc_capacity: usize,
-        shutdown_capacity: usize,
+        _shutdown_capacity: usize,
     ) -> Self {
-        let (shutdown_tx, _) = broadcast::channel(shutdown_capacity);
-
         let signer =
             BinanceWsAuthenticator::new(config.ws.api_key.clone(), config.ws.secret_key.clone());
         let session = Arc::new(RwLock::new(None));
-        let ws_client = BinanceWSClient::new(signer.clone(), session.clone());
         let subscription_handler = BinanceSubscriptionHandler::new(signer, session);
+
+        let rpc_client = Arc::new(BinanceRpcClient::new(
+            config.clone(),
+            outbound_rpc_capacity,
+            ping_capacity,
+        ));
+        let streaming_client = Arc::new(BinanceStreamingClient::new(
+            config.clone(),
+            inbound_capacity,
+        ));
         let rest_client = BinanceHttpClient::new(config.clone());
 
         BinanceClient {
             config,
-            outbound_rpc_tx: Arc::new(Mutex::new(None)),
-            outbound_rpc_rx: Arc::new(Mutex::new(HashMap::new())),
-            ws_client,
-            connection_session: Arc::new(RwLock::new(None)),
+            rpc_client,
+            streaming_client,
             subscription_handler,
-            shutdown_tx,
             rest_client,
             state_manager: Arc::new(tokio::sync::Mutex::new(None)),
             inbound_capacity,
@@ -93,338 +96,208 @@ impl BinanceClient {
 
     /// Set the exchange state manager
     pub async fn set_state_manager(&self, state_manager: Arc<ExchangeStateManager>) {
-        *self.state_manager.lock().await = Some(state_manager);
+        *self.state_manager.lock().await = Some(state_manager.clone());
+        // Set on both clients
+        self.streaming_client
+            .set_state_manager(state_manager.clone())
+            .await;
+        // RPC client doesn't need state manager
     }
 
-    pub async fn get_connection_session(&self) -> Option<ConnectionSession> {
-        self.connection_session.read().await.clone()
+    /// Get a reference to the RPC client (for readiness checks)
+    pub fn rpc_client(&self) -> &Arc<BinanceRpcClient> {
+        &self.rpc_client
     }
 
     pub async fn stream(&mut self) -> Result<(), EngineError> {
-        self.start_event_loop().await
-    }
+        info!(
+            "[BINANCE CLIENT] Starting stream - using single connection for both streaming and RPC"
+        );
 
-    async fn start_event_loop(&mut self) -> Result<(), EngineError> {
+        // Use ONE authenticated connection for both streaming and RPC
+        // This is the correct approach for Binance - RPC requests work on the same connection as userDataStream
         let mut backoff_iter = 0u32;
+        let mut connection_id = 0u64;
 
         loop {
-            let (inbound_tx, inbound_rx) = mpsc::channel::<BinanceInbound>(self.inbound_capacity);
-            let (ping_tx, ping_rx) = mpsc::channel::<Vec<u8>>(self.ping_capacity);
+            connection_id += 1;
+            info!(
+                "[BINANCE CLIENT {}] Connection attempt {} (backoff_iter={})",
+                connection_id, connection_id, backoff_iter
+            );
 
-            match self
-                .connect_and_start_stream(inbound_tx, ping_tx, ping_rx)
-                .await
-            {
-                Ok(session) => {
-                    *self.connection_session.write().await = Some(session);
-
-                    let shutdown_rx = self.shutdown_tx.subscribe();
-                    if let Err(e) = self.run_stream_loop(inbound_rx, shutdown_rx).await {
-                        error!("Stream loop exited with error: {:?}", e);
-                    }
+            match self.connect_and_run_unified().await {
+                Ok(_) => {
+                    info!(
+                        "[BINANCE CLIENT {}] Connection ended, reconnecting...",
+                        connection_id
+                    );
                 }
                 Err(e) => {
-                    error!("Failed to connect / auth: {:?}", e);
-                    let mut guard = self.outbound_rpc_rx.lock().await;
-                    Self::fail_all_pending(&mut guard);
+                    warn!(
+                        "[BINANCE CLIENT {}] Connection error: {:?}, reconnecting...",
+                        connection_id, e
+                    );
                 }
             }
 
+            // Reset RPC channel on disconnect
+            {
+                let mut guard = self.rpc_client.rpc_request_tx.lock().await;
+                if guard.is_some() {
+                    warn!("[BINANCE CLIENT {}] ========== Resetting RPC channel (connection dropped) ==========", connection_id);
+                }
+                *guard = None;
+            }
+
+            // Exponential backoff
             self.exponential_backoff_wait(backoff_iter).await;
             backoff_iter = backoff_iter.saturating_add(1);
         }
     }
 
-    async fn connect_and_start_stream(
-        &mut self,
-        inbound_tx: mpsc::Sender<BinanceInbound>,
-        ping_tx: mpsc::Sender<Vec<u8>>,
-        ping_rx: mpsc::Receiver<Vec<u8>>,
-    ) -> Result<ConnectionSession, EngineError> {
-        debug!("Starting WebSocket connection and authentication...");
-        let mut ws = self.ws_client.connect_and_authenticate().await?;
-        debug!("Authentication complete, subscribing to user stream...");
+    async fn connect_and_run_unified(&mut self) -> Result<(), EngineError> {
+        info!("[BINANCE CLIENT] Starting unified connection...");
 
-        self.ws_client.subscribe_to_user_stream(&mut ws).await?;
-        debug!("Subscription complete, splitting stream into reader/writer tasks...");
-
-        let (outbound_tx, outbound_rx) =
+        // Create channels for unified connection
+        let (rpc_request_tx, rpc_request_rx) =
             mpsc::channel::<BinanceRpcRequest>(self.outbound_rpc_capacity);
-        *self.outbound_rpc_tx.lock().await = Some(outbound_tx.clone());
+        let (rpc_response_tx, rpc_response_rx) =
+            mpsc::channel::<BinanceRpcResponse>(self.outbound_rpc_capacity);
+        let (event_tx, event_rx) = mpsc::channel::<ParsedBinanceMessage>(self.inbound_capacity);
+        let (ping_tx, ping_rx) = mpsc::channel::<Vec<u8>>(self.ping_capacity);
 
-        let session = self
+        // DO NOT set RPC channel yet - wait until writer task is spawned
+
+        // Connect and authenticate ONCE - use streaming client's ws_client
+        info!("[BINANCE CLIENT] Connecting and authenticating...");
+        let mut ws = self
+            .streaming_client
+            .ws_client
+            .connect_and_authenticate()
+            .await?;
+        info!("[BINANCE CLIENT] Authentication successful");
+
+        // Subscribe to user stream
+        info!("[BINANCE CLIENT] Subscribing to userDataStream...");
+        self.streaming_client
+            .ws_client
+            .subscribe_to_user_stream(&mut ws)
+            .await?;
+        info!("[BINANCE CLIENT] User stream subscription successful");
+
+        // Now split the stream and handle both RPC and events
+        info!("[BINANCE CLIENT] Splitting stream for unified handling...");
+        use crate::exchanges::binance::websocket::client::InboundHandler;
+        let mut session = self
+            .streaming_client
             .ws_client
             .split_stream(
                 ws,
-                inbound_tx,
-                outbound_tx,
-                outbound_rx,
+                rpc_request_tx.clone(),
+                rpc_request_rx,
+                rpc_response_tx.clone(),
+                event_tx.clone(),
                 ping_tx,
                 ping_rx,
                 InboundHandler,
             )
             .await?;
+        info!("[BINANCE CLIENT] Stream split successful - writer task spawned");
 
-        debug!("WebSocket stream split complete, connection ready");
-        Ok(session)
-    }
-
-    async fn run_stream_loop(
-        &self,
-        mut inbound_rx: mpsc::Receiver<BinanceInbound>,
-        mut shutdown_rx: broadcast::Receiver<()>,
-    ) -> Result<(), EngineError> {
-        loop {
-            tokio::select! {
-                _ = shutdown_rx.recv() => {
-                    debug!("🚪 Received external shutdown, stopping stream loop");
-
-                    let mut guard = self.outbound_rpc_rx.lock().await;
-                    Self::fail_all_pending(&mut guard);
-
-                    break;
+        // Wait for writer task to be ready (proper signaling instead of arbitrary sleep)
+        if let Some(writer_ready_rx) = session.writer_ready_rx.take() {
+            match tokio::time::timeout(tokio::time::Duration::from_secs(5), writer_ready_rx).await {
+                Ok(Ok(_)) => {
+                    info!("[BINANCE CLIENT] Writer task is ready");
                 }
-                maybe = inbound_rx.recv() => match maybe {
-                    Some(BinanceInbound::Rpc(resp)) => {
-                        // extract id
-                        let id = match &resp {
-                            BinanceRpcResponse::AccountStatus(r) => r.id.to_string(),
-                            BinanceRpcResponse::TestOrder(r)     => r.id.to_string(),
-                            BinanceRpcResponse::OpenOrder(r)     => r.id.to_string(),
-                            BinanceRpcResponse::CancelOrder(r)   => r.id.to_string(),
-                            BinanceRpcResponse::CancelAll(r)     => r.id.to_string(),
-                        };
-                        debug!("Received RPC response: id={id}, looking for pending request...", id = id);
-                        // try to fulfill pending waiter
-                        let mut pending = self.outbound_rpc_rx.lock().await;
-                        if let Some(tx) = pending.remove(&id) {
-                            debug!("Found pending request for id={id}, sending response", id = id);
-                            let _ = tx.send(resp);
-                        } else {
-                            warn!("RPC response with id {id} had no pending waiter (may be duplicate or unsolicited)", id = id);
-                        }
-                    }
-                    Some(BinanceInbound::Event(evt)) => {
-                        match evt {
-                            ParsedBinanceMessage::OutboundAccountPosition(position) => {
-                                debug!("OutboundAccountPosition: {:?}", position);
-
-                                // Update state manager if available
-                                if let Some(state_mgr) = self.state_manager.lock().await.as_ref() {
-                                    let balances: Vec<Balance> = position.into();
-                                    if let Err(e) = state_mgr.update_balances(balances).await {
-                                        warn!("Failed to update balances in state manager: {}", e);
-                                    }
-                                }
-                            }
-                            ParsedBinanceMessage::BalanceUpdate(update) => {
-                                debug!("BalanceUpdate (delta): asset={}, delta={}", update.asset, update.delta);
-
-                                // Apply delta to current balance
-                                if let Some(state_mgr) = self.state_manager.lock().await.as_ref() {
-                                    let state_arc = state_mgr.get_state();
-                                    let state = state_arc.read().await;
-
-                                    // Get current balance or create new one
-                                    let current_balance = state.get_balance(update.asset.as_str())
-                                        .cloned()
-                                        .unwrap_or_else(|| Balance {
-                                            symbol: update.asset.clone().into(),
-                                            free: rust_decimal::Decimal::ZERO,
-                                            used: rust_decimal::Decimal::ZERO,
-                                            total: rust_decimal::Decimal::ZERO,
-                                        });
-
-                                    drop(state);
-
-                                    // Apply delta to free balance (delta can be positive or negative)
-                                    let updated_balance = Balance {
-                                        symbol: update.asset.clone().into(),
-                                        free: current_balance.free + update.delta,
-                                        used: current_balance.used,
-                                        total: current_balance.free + update.delta + current_balance.used,
-                                    };
-
-                                    if let Err(e) = state_mgr.update_balance(updated_balance).await {
-                                        warn!("Failed to update balance from delta: {}", e);
-                                    }
-                                }
-                            }
-                            ParsedBinanceMessage::ExecutionReport(report) => {
-                                debug!("Exec rpt: {:?}", report);
-
-                                // Clone report for trade creation (before converting to Order which takes ownership)
-                                let report_for_trade = report.clone();
-                                let order_status: OrderStatus = report.order_status.clone().into();
-
-                                // Convert to Order and update state manager if available
-                                let order: Order = report.clone().into();
-
-                                if let Some(state_mgr) = self.state_manager.lock().await.as_ref() {
-                                    // Update order in state
-                                    if let Err(e) = state_mgr.update_order(order.clone()).await {
-                                        warn!("Failed to update order in state manager: {}", e);
-                                    }
-
-                                    // Create Trade when order is filled (Filled or PartiallyFilled)
-                                    if matches!(order_status, OrderStatus::Filled | OrderStatus::PartiallyFilled) {
-                                        // Get the cumulative filled quantity (total filled so far)
-                                        let cumulative_filled = report_for_trade.cumulative_filled_quantity
-                                            .unwrap_or_else(|| {
-                                                if order_status == OrderStatus::Filled {
-                                                    report_for_trade.quantity
-                                                } else {
-                                                    rust_decimal::Decimal::ZERO
-                                                }
-                                            });
-
-                                        // Calculate delta (new fill amount) by comparing with previous filled_amount from state
-                                        let order_id = report_for_trade.order_id.into();
-                                        let previous_filled = {
-                                            let state_arc = state_mgr.get_state();
-                                            let state = state_arc.read().await;
-                                            state.get_order_by_id(&order_id)
-                                                .map(|o| o.filled_amount)
-                                                .unwrap_or(rust_decimal::Decimal::ZERO)
-                                        };
-
-                                        // Delta is the new fill amount in this ExecutionReport
-                                        let fill_delta = cumulative_filled - previous_filled;
-
-                                        // Only create trade if there's actually a new fill (delta > 0)
-                                        if fill_delta > rust_decimal::Decimal::ZERO {
-                                            // Get pair from symbol registry
-                                            let state_arc = state_mgr.get_state();
-                                            let state = state_arc.read().await;
-                                            let pair = state.symbol_registry()
-                                                .get_pair(&report_for_trade.symbol.clone().into())
-                                                .cloned();
-                                            drop(state);
-
-                                            if let Some(pair) = pair {
-                                                // Create trade from execution report
-                                                let trade = Trade {
-                                                    trade_id: format!("{}_{}", report_for_trade.order_id, report_for_trade.transaction_time).into(),
-                                                    order_id: report_for_trade.order_id.into(),
-                                                    pair,
-                                                    price: report_for_trade.price,
-                                                    quantity: fill_delta, // Use delta, not cumulative
-                                                    side: report_for_trade.side.clone().into(),
-                                                    timestamp: report_for_trade.transaction_time,
-                                                    fee: rust_decimal::Decimal::ZERO, // Fee not available in ExecutionReport
-                                                    fee_currency: Symbol::from("USDT"), // Default, will be updated from REST if needed
-                                                };
-
-                                                if let Err(e) = state_mgr.add_trade(trade).await {
-                                                    warn!("Failed to add trade from execution report: {}", e);
-                                                }
-                                            } else {
-                                                warn!("Could not find pair for symbol {} when creating trade", report_for_trade.symbol);
-                                            }
-                                        }
-                                    }
-                                }
-
-                                // Note: Execution reports are published via ExchangeStateManager's
-                                // exchange_update channel. Strategies should subscribe to ExchangeUpdate::Order
-                                // instead of using a separate execution_report channel.
-                            }
-                            ParsedBinanceMessage::Raw(r) => debug!("Raw msg: {r}"),
-                        }
-                    }
-                    None => {
-                        warn!(
-                            "Inbound channel closed - WebSocket connection lost. Will attempt reconnection..."
-                        );
-
-                        let mut guard = self.outbound_rpc_rx.lock().await;
-                        Self::fail_all_pending(&mut guard);
-
-                        break;
-                    }
+                Ok(Err(_)) => {
+                    warn!("[BINANCE CLIENT] Writer ready signal channel closed");
+                }
+                Err(_) => {
+                    warn!("[BINANCE CLIENT] Timeout waiting for writer ready signal (5s)");
                 }
             }
         }
+
+        // Mark RPC channel as ready (writer task is confirmed running)
+        {
+            let mut guard = self.rpc_client.rpc_request_tx.lock().await;
+            *guard = Some(rpc_request_tx.clone());
+            info!("[BINANCE CLIENT] RPC channel marked as ready");
+        }
+
+        // Spawn event handler
+        let state_manager_clone = self.state_manager.clone();
+        let event_handler_handle = tokio::spawn(async move {
+            BinanceStreamingClient::run_event_handler(event_rx, state_manager_clone).await;
+        });
+
+        // Spawn RPC response handler
+        let rpc_client_clone = Arc::clone(&self.rpc_client);
+        let rpc_handler_handle = tokio::spawn(async move {
+            if let Err(e) = rpc_client_clone
+                .run_rpc_response_handler(rpc_response_rx)
+                .await
+            {
+                warn!("[BINANCE CLIENT] RPC response handler error: {:?}", e);
+            }
+        });
+
+        // Extract handles from session
+        let mut reader_handle = session.reader_handle.take().expect("Reader handle missing");
+        let mut writer_handle = session.writer_handle.take().expect("Writer handle missing");
+
+        info!("[BINANCE CLIENT] All handlers spawned, monitoring connection...");
+
+        // Wait for reader or writer to exit (connection dropped)
+        tokio::select! {
+            result = &mut reader_handle => {
+                warn!("[BINANCE CLIENT] Reader task exited: {:?}", result);
+            }
+            result = &mut writer_handle => {
+                warn!("[BINANCE CLIENT] Writer task exited: {:?}", result);
+            }
+            _ = event_handler_handle => {
+                warn!("[BINANCE CLIENT] Event handler task exited");
+            }
+            _ = rpc_handler_handle => {
+                warn!("[BINANCE CLIENT] RPC handler task exited");
+            }
+        }
+
+        info!("[BINANCE CLIENT] Connection dropped, exiting unified connection");
+        // Channel will be reset by the caller (stream() loop)
         Ok(())
     }
+
+    async fn exponential_backoff_wait(&self, iter: u32) {
+        let base = Duration::from_secs(self.config.base_delay.unwrap_or(2));
+        let max = Duration::from_secs(self.config.max_delay.unwrap_or(60));
+        let delay = (base * 2u32.saturating_pow(iter)).min(max);
+        // Simple jitter using system time
+        let jitter_ms = (std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis()
+            % 1000) as u64;
+        let jitter = Duration::from_millis(jitter_ms);
+        let to_sleep = (delay + jitter).min(max);
+        info!(
+            "[BINANCE CLIENT] Waiting {:?} before reconnecting...",
+            to_sleep
+        );
+        sleep(to_sleep).await;
+    }
+
+    // Old event loop code removed - now using separate streaming and RPC clients
 
     async fn send_rpc_and_wait(
         &self,
         req: BinanceRpcRequest,
     ) -> Result<BinanceRpcResponse, EngineError> {
-        let id = match &req {
-            BinanceRpcRequest::AccountStatus(r) => r.id.to_string(),
-            BinanceRpcRequest::TestOrder(r) => r.id.to_string(),
-            BinanceRpcRequest::OpenOrder(r) => {
-                debug!(
-                    "Sending open_order RPC: id={id}, method={method}",
-                    id = r.id,
-                    method = r.method
-                );
-                r.id.to_string()
-            }
-            BinanceRpcRequest::CancelOrder(r) => r.id.to_string(),
-            BinanceRpcRequest::CancelAll(r) => r.id.to_string(),
-        };
-
-        let (tx, rx) = oneshot::channel();
-        {
-            let mut pending = self.outbound_rpc_rx.lock().await;
-            pending.insert(id.clone(), tx);
-        }
-
-        let tx_rpc = {
-            let guard = self.outbound_rpc_tx.lock().await;
-            guard
-                .as_ref()
-                .cloned()
-                .ok_or_else(|| EngineError::new_custom_error("RPC channel not yet ready".into()))?
-        };
-
-        debug!("Sending RPC request: id={id}", id = id);
-        if tx_rpc.send(req).await.is_err() {
-            error!("Failed to send RPC to writer channel: id={id}", id = id);
-            let mut pending = self.outbound_rpc_rx.lock().await;
-            pending.remove(&id);
-            return Err(EngineError::new_custom_error("Failed to send RPC".into()));
-        }
-        debug!(
-            "RPC request sent to writer, waiting for response (timeout=30s): id={id}",
-            id = id
-        );
-
-        // Wait for response with timeout (30 seconds for order operations)
-        match timeout(Duration::from_secs(30), rx).await {
-            Ok(Ok(resp)) => {
-                debug!("RPC response received: id={id}", id = id);
-                Self::ensure_ok(&resp)?;
-                Ok(resp)
-            }
-            Ok(Err(_)) => {
-                // Channel closed
-                error!("RPC response channel closed: id={id}", id = id);
-                let mut pending = self.outbound_rpc_rx.lock().await;
-                pending.remove(&id);
-                Err(EngineError::ChannelClosedError)
-            }
-            Err(_) => {
-                // Timeout - check if request is still pending
-                let pending_count = {
-                    let pending = self.outbound_rpc_rx.lock().await;
-                    pending.len()
-                };
-                error!(
-                    "RPC request timed out after 30 seconds: id={id}, pending_requests={pending_count}",
-                    id = id,
-                    pending_count = pending_count
-                );
-                let mut pending = self.outbound_rpc_rx.lock().await;
-                pending.remove(&id);
-                Err(EngineError::new_custom_error(
-                    format!("RPC request timed out after 30 seconds (id: {id})").into(),
-                ))
-            }
-        }
+        // Delegate to RPC client
+        self.rpc_client.send_rpc_and_wait(req).await
     }
 
     pub async fn account_status(&self) -> Result<BinanceRpcResponse, EngineError> {
@@ -521,28 +394,14 @@ impl BinanceClient {
                     ));
                 }
             }
+            BinanceRpcResponse::Error(msg) => {
+                return Err(EngineError::new_custom_error(msg.clone().into()));
+            }
         }
         Ok(())
     }
 
-    async fn exponential_backoff_wait(&self, iter: u32) {
-        let base = Duration::from_secs(self.config.base_delay.unwrap_or(2));
-        let max = Duration::from_secs(self.config.max_delay.unwrap_or(60));
-
-        let delay = (base * 2u32.saturating_pow(iter)).min(max);
-        let jitter = Duration::from_millis(rand::random::<u64>() % 1000);
-        let to_sleep = (delay + jitter).min(max);
-
-        debug!("⏳ reconnecting in {:?}", to_sleep);
-        sleep(to_sleep).await;
-    }
-
-    fn fail_all_pending(
-        map: &mut std::collections::HashMap<String, oneshot::Sender<BinanceRpcResponse>>,
-    ) {
-        // Draining drops each Sender, which closes the oneshot.
-        for _ in map.drain() {}
-    }
+    // Old helper methods removed - now handled by separate clients
 }
 
 #[async_trait::async_trait]
@@ -561,6 +420,7 @@ impl TradingClient<OrderRequest, Pair> for BinanceClient {
         Self::ensure_ok(&resp)?;
         match resp {
             BinanceRpcResponse::TestOrder(_) => Ok(()),
+            BinanceRpcResponse::Error(msg) => Err(EngineError::new_custom_error(msg.into())),
             other => Err(EngineError::new_custom_error(
                 format!("unexpected RPC variant: {:?}", other).into(),
             )),
@@ -579,6 +439,7 @@ impl TradingClient<OrderRequest, Pair> for BinanceClient {
                 let order = map_open_order_to_core(params_for_map.clone(), ws_resp.clone())?;
                 Ok(order)
             }
+            BinanceRpcResponse::Error(msg) => Err(EngineError::new_custom_error(msg.into())),
             other => Err(EngineError::new_custom_error(
                 format!("unexpected RPC variant in open_order: {other:?}").into(),
             )),
@@ -586,18 +447,23 @@ impl TradingClient<OrderRequest, Pair> for BinanceClient {
     }
 
     async fn cancel_order_by_id(&self, order_id: OrderId) -> Result<(), EngineError> {
-        // Binance WebSocket API requires symbol, orig_client_order_id, and order_type.
-        // Get order from state manager (authoritative source).
-        let (symbol, order_type) = {
+        // Binance WebSocket API requires symbol and either orderId (numeric) or origClientOrderId (string)
+        // According to Binance docs: prefer numeric orderId, fallback to origClientOrderId
+        // Get order from state manager (authoritative source) to get symbol and client_order_id
+        let (symbol, client_order_id) = {
             if let Some(state_mgr) = self.state_manager.lock().await.as_ref() {
                 if let Some(order) = state_mgr.get_order_by_id(&order_id).await {
-                    // Extract symbol and order_type from the order
+                    // Extract symbol and client_order_id from the order
                     let symbol = order.symbol.clone();
-                    // Infer order_type from order (we don't store it, so default to Limit)
-                    // This is acceptable since Binance accepts cancellation without exact order_type match
-                    (symbol.as_ref().into(), BinanceOrderType::Limit)
+                    tracing::info!(
+                        "Found order {} in state manager: symbol={}",
+                        order_id.as_str(),
+                        symbol.as_ref()
+                    );
+                    (symbol.as_ref().into(), order.client_order_id.clone())
                 } else {
                     // Order not in state - cannot determine pair, return error
+                    tracing::error!("Order {} not found in state manager. Cannot determine trading pair for cancellation.", order_id.as_str());
                     return Err(EngineError::new_custom_error(
                         format!(
                             "Order {} not found in state manager. Cannot determine trading pair for cancellation.",
@@ -608,30 +474,84 @@ impl TradingClient<OrderRequest, Pair> for BinanceClient {
                 }
             } else {
                 // State manager not available - cannot determine pair, return error
+                tracing::error!("State manager not available. Cannot determine trading pair for order cancellation.");
                 return Err(EngineError::new_custom_error(
                     "State manager not available. Cannot determine trading pair for order cancellation.".into(),
                 ));
             }
         };
 
-        let orig_client_order_id = SmolStr::new(order_id.as_str());
-        let params = BinanceWsCancelOrderReqParams::new(symbol, orig_client_order_id, order_type);
+        tracing::info!("Cancelling order {}: symbol={}", order_id.as_str(), symbol);
+        // According to Binance docs: prefer numeric orderId (more reliable), fallback to origClientOrderId
+        let params = if let Some(numeric_id) = order_id.as_numeric_id() {
+            // Use numeric orderId (preferred by Binance - more reliable)
+            BinanceWsCancelOrderReqParams::new_with_order_id(symbol, numeric_id)
+        } else if let Some(client_id) = client_order_id {
+            // Try client_order_id from stored order if order_id is not numeric
+            BinanceWsCancelOrderReqParams::new_with_client_order_id(symbol, client_id)
+        } else {
+            // Last resort: use order_id as string (shouldn't happen for Binance orders)
+            BinanceWsCancelOrderReqParams::new_with_client_order_id(
+                symbol,
+                SmolStr::new(order_id.as_str()),
+            )
+        };
         let resp = self.cancel_order_rpc(params).await?;
         Self::ensure_ok(&resp)?;
 
+        tracing::info!("Successfully cancelled order {} via RPC", order_id.as_str());
         Ok(())
     }
 
     async fn cancel_all_orders(&self, pair: &Pair) -> Result<(), EngineError> {
-        let params = BinanceWsCancelAllOrdersReqParams::new(pair.convert_to_smolstr());
-        let resp = self.cancel_all_orders_rpc(params).await?;
+        tracing::info!(
+            "[BinanceClient] cancel_all_orders called for {}/{}",
+            pair.base,
+            pair.quote
+        );
+        let symbol = pair.convert_to_smolstr();
+        let params = BinanceWsCancelAllOrdersReqParams::new(symbol.clone());
+
+        tracing::info!(
+            "[BinanceClient] Calling cancel_all_orders_rpc for symbol {}...",
+            symbol
+        );
+        let resp = match self.cancel_all_orders_rpc(params).await {
+            Ok(r) => {
+                tracing::info!("[BinanceClient] cancel_all_orders_rpc returned successfully");
+                r
+            }
+            Err(e) => {
+                tracing::error!("[BinanceClient] cancel_all_orders_rpc failed: {}", e);
+                return Err(e);
+            }
+        };
+
+        tracing::info!("[BinanceClient] Checking response status...");
         Self::ensure_ok(&resp)?;
 
         match resp {
-            BinanceRpcResponse::CancelAll(_) => Ok(()),
-            other => Err(EngineError::new_custom_error(
-                format!("unexpected RPC variant: {:?}", other).into(),
-            )),
+            BinanceRpcResponse::CancelAll(_result) => {
+                tracing::info!(
+                    "[BinanceClient] cancel_all_orders succeeded for {}/{}",
+                    pair.base,
+                    pair.quote
+                );
+                Ok(())
+            }
+            BinanceRpcResponse::Error(msg) => {
+                tracing::error!("[BinanceClient] cancel_all_orders RPC error: {}", msg);
+                Err(EngineError::new_custom_error(msg.into()))
+            }
+            other => {
+                tracing::error!(
+                    "[BinanceClient] cancel_all_orders unexpected response variant: {:?}",
+                    other
+                );
+                Err(EngineError::new_custom_error(
+                    format!("unexpected RPC variant: {:?}", other).into(),
+                ))
+            }
         }
     }
 
@@ -807,6 +727,49 @@ impl TradingClient<OrderRequest, Pair> for BinanceClient {
         // once that type is defined in Proposal 08 implementation.
         unimplemented!("fetch_market_data_snapshot() - to be implemented for asset data (trading rules, symbol info, etc.)")
     }
+
+    async fn amend_order(
+        &self,
+        order_id: OrderId,
+        new_request: OrderRequest,
+    ) -> Result<Order, EngineError> {
+        // Get original order from state
+        let original_order = if let Some(state_mgr) = self.state_manager.lock().await.as_ref() {
+            state_mgr.get_order_by_id(&order_id).await.ok_or_else(|| {
+                EngineError::new_custom_error(
+                    format!("Order {} not found in state", order_id.as_str()).into(),
+                )
+            })?
+        } else {
+            return Err(EngineError::new_custom_error(
+                "State manager not available".into(),
+            ));
+        };
+
+        // 1. Cancel existing order
+        self.cancel_order_by_id(order_id.clone()).await?;
+
+        // 2. Mark original order as Amended in state
+        if let Some(state_mgr) = self.state_manager.lock().await.as_ref() {
+            let mut amended_order = original_order.clone();
+            amended_order.status = OrderStatus::Amended;
+            if let Err(e) = state_mgr.update_order(amended_order).await {
+                warn!("Failed to mark order as amended: {}", e);
+            }
+        }
+
+        // 3. Wait a bit for cancellation to propagate
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // 4. Place new order
+        let new_order = self.open_order(new_request).await?;
+
+        // 5. Create AmendedOrder record in state (if state manager supports it)
+        // For now, just return the new order
+        // TODO: Add AmendedOrder tracking to ExchangeStateManager if needed
+
+        Ok(new_order)
+    }
 }
 
 #[async_trait]
@@ -816,18 +779,37 @@ impl PrivateDataClient for BinanceClient {
     }
 
     async fn stream(&mut self) -> Result<(), EngineError> {
-        self.start_event_loop().await
+        // Start both clients in separate tasks
+        let streaming_client = Arc::clone(&self.streaming_client);
+        let rpc_client = Arc::clone(&self.rpc_client);
+
+        let streaming_handle = tokio::spawn(async move {
+            if let Err(e) = streaming_client.start_streaming_loop().await {
+                error!("Streaming client error: {:?}", e);
+            }
+        });
+
+        let rpc_handle = tokio::spawn(async move {
+            if let Err(e) = rpc_client.start_rpc_loop().await {
+                error!("RPC client error: {:?}", e);
+            }
+        });
+
+        // Wait for either to exit (shouldn't happen in normal operation)
+        tokio::select! {
+            result = streaming_handle => {
+                error!("Streaming client task exited: {:?}", result);
+            }
+            result = rpc_handle => {
+                error!("RPC client task exited: {:?}", result);
+            }
+        }
+
+        Ok(())
     }
 
     fn shutdown(&self) {
-        let _ = self.shutdown_tx.send(());
-
-        tokio::spawn({
-            let pending = self.outbound_rpc_rx.clone();
-            async move {
-                let mut guard = pending.lock().await;
-                Self::fail_all_pending(&mut guard);
-            }
-        });
+        // Clients handle their own shutdown via connection drops
+        // No explicit shutdown needed
     }
 }

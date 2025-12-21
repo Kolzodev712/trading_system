@@ -31,13 +31,13 @@ use std::sync::Arc;
 use tokio::{
     net::TcpStream,
     sync::{mpsc, Mutex, RwLock},
-    time::timeout,
+    time::{interval, timeout, Duration},
 };
 use tokio_tungstenite::{
     connect_async, tungstenite::protocol::frame::CloseFrame, tungstenite::protocol::Message,
     MaybeTlsStream, WebSocketStream,
 };
-use tracing::{debug, error, warn};
+use tracing::{debug, error, info, warn};
 use trading_core::{
     authenticator::ExchangeAuthenticator,
     error::EngineError,
@@ -65,22 +65,53 @@ pub struct InboundHandler;
 
 impl MessageHandler<BinanceInbound> for InboundHandler {
     fn handle_text_message(&self, text: SmolStr) -> Result<BinanceInbound, EngineError> {
+        // Try parsing as RPC responses first
         if let Ok(resp) = serde_json::from_str::<BinanceAccountStatusResponse>(&text) {
+            tracing::debug!("[InboundHandler] Parsed as AccountStatus RPC response");
             return Ok(BinanceInbound::Rpc(BinanceRpcResponse::AccountStatus(resp)));
         }
 
-        if let Ok(resp) = serde_json::from_str::<BinanceWsOrderResponse>(&text) {
-            return Ok(BinanceInbound::Rpc(BinanceRpcResponse::OpenOrder(resp)));
-        }
-
-        if let Ok(resp) = serde_json::from_str::<BinanceWsCancelOrderResponse>(&text) {
-            return Ok(BinanceInbound::Rpc(BinanceRpcResponse::CancelOrder(resp)));
-        }
-
+        // Try CancelAll first (has array result) before OpenOrder (has object result)
         if let Ok(resp) = serde_json::from_str::<BinanceWsCancelAllOrdersResponse>(&text) {
+            tracing::info!("[InboundHandler] Successfully parsed as CancelAll RPC response (id={}, status={}, cancelled {} orders)", resp.id, resp.status, resp.result.len());
             return Ok(BinanceInbound::Rpc(BinanceRpcResponse::CancelAll(resp)));
         }
 
+        if let Ok(resp) = serde_json::from_str::<BinanceWsCancelOrderResponse>(&text) {
+            if resp.status == 200 {
+                tracing::debug!(
+                    "[InboundHandler] Parsed as CancelOrder RPC response (id={}, status={})",
+                    resp.id,
+                    resp.status
+                );
+            } else {
+                tracing::info!("[InboundHandler] Parsed as CancelOrder RPC error response (id={}, status={}, error={:?})", resp.id, resp.status, resp.error);
+            }
+            return Ok(BinanceInbound::Rpc(BinanceRpcResponse::CancelOrder(resp)));
+        }
+
+        if let Ok(resp) = serde_json::from_str::<BinanceWsOrderResponse>(&text) {
+            tracing::info!(
+                "[InboundHandler] Successfully parsed as OpenOrder RPC response (id={}, status={})",
+                resp.id,
+                resp.status
+            );
+            return Ok(BinanceInbound::Rpc(BinanceRpcResponse::OpenOrder(resp)));
+        } else if text.contains("\"id\"")
+            && text.contains("\"status\"")
+            && text.contains("\"result\"")
+        {
+            // This looks like an RPC response but failed to parse - log the error
+            if let Err(e) = serde_json::from_str::<BinanceWsOrderResponse>(&text) {
+                tracing::warn!(
+                    "[InboundHandler] Failed to parse as BinanceWsOrderResponse: {}, text: {}",
+                    e,
+                    text
+                );
+            }
+        }
+
+        // Fall back to parsing as event
         let event = serde_json::from_str::<ParsedBinanceMessage>(&text)
             .map(BinanceInbound::Event)
             .unwrap_or(BinanceInbound::Event(ParsedBinanceMessage::Raw(
@@ -106,18 +137,14 @@ impl MessageHandler<BinanceInbound> for InboundHandler {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct ConnectionSession {
-    pub outbound_tx: mpsc::Sender<BinanceRpcRequest>,
-}
-
-impl ConnectionSession {
-    pub async fn send_rpc_request(&self, request: BinanceRpcRequest) -> Result<(), EngineError> {
-        self.outbound_tx
-            .send(request)
-            .await
-            .map_err(|_| EngineError::new_custom_error("Failed to send RPC request".into()))
-    }
+    pub rpc_request_tx: mpsc::Sender<BinanceRpcRequest>,
+    pub rpc_response_tx: mpsc::Sender<BinanceRpcResponse>,
+    pub event_tx: mpsc::Sender<ParsedBinanceMessage>,
+    pub reader_handle: Option<tokio::task::JoinHandle<()>>,
+    pub writer_handle: Option<tokio::task::JoinHandle<()>>,
+    pub writer_ready_rx: Option<tokio::sync::oneshot::Receiver<()>>,
 }
 
 #[derive(Debug, Clone)]
@@ -284,12 +311,18 @@ impl BinanceSubscriptionHandler {
         signed_params.insert("symbol".into(), params.symbol.clone());
         signed_params.insert("side".into(), params.side.to_string().into());
         signed_params.insert("type".into(), params.order_type.to_string().into());
-        signed_params.insert(
-            "timeInForce".into(),
-            params.time_in_force.to_string().into(),
-        );
-        signed_params.insert("price".into(), params.price.to_string().into());
-        signed_params.insert("quantity".into(), params.quantity.to_string().into());
+        if let Some(tif) = &params.time_in_force {
+            signed_params.insert("timeInForce".into(), tif.to_string().into());
+        }
+        if let Some(price) = &params.price {
+            signed_params.insert("price".into(), price.to_string().into());
+        }
+        if let Some(quantity) = &params.quantity {
+            signed_params.insert("quantity".into(), quantity.to_string().into());
+        }
+        if let Some(quote_qty) = &params.quote_order_qty {
+            signed_params.insert("quoteOrderQty".into(), quote_qty.to_string().into());
+        }
 
         let signed_params = self.signer.build_signed_params(signed_params)?;
 
@@ -360,11 +393,21 @@ impl BinanceSubscriptionHandler {
         );
         signed_params.insert("timestamp".into(), timestamp.to_string().into());
         signed_params.insert("symbol".into(), params.symbol.clone());
-        signed_params.insert(
-            "origClientOrderId".into(),
-            params.orig_client_order_id.clone(),
-        );
-        signed_params.insert("type".into(), params.order_type.to_string().into());
+        if let Some(order_id) = params.order_id {
+            signed_params.insert("orderId".into(), order_id.to_string().into());
+        }
+        if let Some(orig_client_order_id) = &params.orig_client_order_id {
+            signed_params.insert("origClientOrderId".into(), orig_client_order_id.clone());
+        }
+        if let Some(new_client_order_id) = &params.new_client_order_id {
+            signed_params.insert("newClientOrderId".into(), new_client_order_id.clone());
+        }
+        if let Some(cancel_restrictions) = &params.cancel_restrictions {
+            signed_params.insert(
+                "cancelRestrictions".into(),
+                cancel_restrictions.to_string().into(),
+            );
+        }
 
         let signed_params = self.signer.build_signed_params(signed_params)?;
 
@@ -670,10 +713,12 @@ impl BinanceWSClient {
     fn handle_read_stream<H, R>(
         &self,
         mut reader: R,
-        inbound_tx: mpsc::Sender<BinanceInbound>,
+        rpc_response_tx: mpsc::Sender<BinanceRpcResponse>,
+        event_tx: mpsc::Sender<ParsedBinanceMessage>,
         ping_tx: mpsc::Sender<Vec<u8>>,
         handler: H,
-    ) where
+    ) -> tokio::task::JoinHandle<()>
+    where
         H: MessageHandler<BinanceInbound> + Send + Sync + 'static,
         R: Stream<Item = Result<Message, tokio_tungstenite::tungstenite::Error>>
             + Unpin
@@ -681,50 +726,73 @@ impl BinanceWSClient {
             + 'static,
     {
         tokio::spawn(async move {
-            debug!("WebSocket reader task started");
+            use std::sync::atomic::{AtomicU64, Ordering};
+            static READER_ID: AtomicU64 = AtomicU64::new(0);
+            let reader_id = READER_ID.fetch_add(1, Ordering::SeqCst);
+
+            info!("[READER {}] WebSocket reader task started", reader_id);
             let mut message_count = 0u64;
 
-            while let Some(message) = reader.next().await {
+            loop {
+                let message_opt = reader.next().await;
+                if message_opt.is_none() {
+                    warn!("[READER {}] reader.next() returned None immediately - stream ended before processing any messages. Reader task exiting.", reader_id);
+                    break;
+                }
+                let message = message_opt.unwrap();
                 message_count += 1;
+                debug!("[READER {}] Received message #{count}: type={type:?}", reader_id, count = message_count, type = match &message { Ok(Message::Text(_)) => "Text", Ok(Message::Binary(_)) => "Binary", Ok(Message::Ping(_)) => "Ping", Ok(Message::Pong(_)) => "Pong", Ok(Message::Close(_)) => "Close", Err(_) => "Error" });
                 match message {
                     Ok(Message::Text(txt)) => {
+                        debug!(
+                            "[READER {}] Processing Text message #{count}: {text}",
+                            reader_id,
+                            count = message_count,
+                            text = txt
+                        );
                         // Check if this looks like an RPC response (has "id" field)
                         let is_rpc_response = txt.contains("\"id\"")
                             && (txt.contains("\"status\"") || txt.contains("\"result\""));
                         if is_rpc_response {
-                            debug!(
-                                "Reader received RPC response #{count}: {text}",
+                            tracing::info!(
+                                "[READER {}] Received RPC response #{count}: {text}",
+                                reader_id,
                                 count = message_count,
                                 text = txt
                             );
                         } else {
                             debug!(
-                                "Reader received text message #{count}: {text}",
+                                "[READER {}] Received text message #{count}: {text}",
+                                reader_id,
                                 count = message_count,
                                 text = txt
                             );
                         }
+                        let txt_clone = txt.clone();
                         match handler.handle_text_message(txt.into()) {
                             Ok(BinanceInbound::Rpc(rpc)) => {
-                                debug!("Parsed as RPC response, forwarding to handler...");
-                                if inbound_tx.send(BinanceInbound::Rpc(rpc)).await.is_err() {
-                                    warn!("Failed to send RPC to inbound channel (channel closed)");
+                                tracing::info!("[READER {}] Parsed as RPC response (message #{count}), forwarding to rpc_response_tx...", reader_id, count = message_count);
+                                if rpc_response_tx.send(rpc).await.is_err() {
+                                    warn!("[READER {}] Failed to send RPC to rpc_response_tx (channel closed) - reader task exiting", reader_id);
                                     break;
                                 }
                             }
                             Ok(BinanceInbound::Event(evt)) => {
-                                debug!("Parsed as event, forwarding...");
-                                if inbound_tx.send(BinanceInbound::Event(evt)).await.is_err() {
-                                    warn!(
-                                        "Failed to send event to inbound channel (channel closed)"
+                                debug!("[READER {}] Parsed as event (message #{count}), forwarding to event_tx...", reader_id, count = message_count);
+                                if event_tx.send(evt).await.is_err() {
+                                    error!(
+                                        "[READER {}] Failed to send event to event_tx (channel closed) - reader task exiting",
+                                        reader_id
                                     );
                                     break;
                                 }
                             }
                             Err(e) => {
-                                error!(
-                                    "WS parse error on message #{count}: {e}",
-                                    count = message_count
+                                tracing::warn!(
+                                    "[READER {}] WS parse error on message #{count}: {e}, text: {text}",
+                                    reader_id,
+                                    count = message_count,
+                                    text = txt_clone
                                 );
                             }
                         }
@@ -739,10 +807,9 @@ impl BinanceWSClient {
                     }
                     Ok(Message::Ping(payload)) => {
                         debug!(
-                            "Reader received Ping #{count} (payload_len={len}, payload={payload:?})",
+                            "[KEEPALIVE] Reader received Ping #{count} from Binance (payload_len={len})",
                             count = message_count,
-                            len = payload.len(),
-                            payload = payload
+                            len = payload.len()
                         );
                         handler.handle_ping(payload.clone());
                         if ping_tx.send(payload).await.is_err() {
@@ -751,7 +818,7 @@ impl BinanceWSClient {
                     }
                     Ok(Message::Pong(p)) => {
                         debug!(
-                            "Reader received Pong #{count} (payload_len={len})",
+                            "[KEEPALIVE] Reader received Pong #{count} from Binance (response to our Ping, payload_len={len})",
                             count = message_count,
                             len = p.len()
                         );
@@ -760,14 +827,16 @@ impl BinanceWSClient {
                     Ok(Message::Close(c)) => {
                         if let Some(close_frame) = &c {
                             error!(
-                                "WebSocket closed by server (message #{count}): code={code}, reason={reason}",
+                                "[READER {}] WebSocket closed by server (message #{count}): code={code}, reason={reason} - THIS IS WHY CONNECTION DROPS",
+                                reader_id,
                                 count = message_count,
                                 code = close_frame.code,
                                 reason = close_frame.reason
                             );
                         } else {
                             error!(
-                                "WebSocket closed by server (message #{count}, no close frame)",
+                                "[READER {}] WebSocket closed by server (message #{count}, no close frame) - THIS IS WHY CONNECTION DROPS",
+                                reader_id,
                                 count = message_count
                             );
                         }
@@ -778,7 +847,8 @@ impl BinanceWSClient {
                     }
                     Err(e) => {
                         error!(
-                            "WebSocket read error on message #{count}: {e}",
+                            "[READER {}] WebSocket read error on message #{count}: {e} - THIS IS WHY CONNECTION DROPS",
+                            reader_id,
                             count = message_count
                         );
                         // Close the inbound channel on error
@@ -787,12 +857,18 @@ impl BinanceWSClient {
                     }
                 }
             }
-            debug!(
-                "WebSocket reader task exiting (processed {count} messages total)",
+            // Loop exited - reader.next() returned None
+            info!(
+                "[READER {}] WebSocket reader task exiting - reader.next() returned None (stream ended). Processed {count} messages total.",
+                reader_id,
                 count = message_count
             );
-            // inbound_tx is automatically dropped here when it goes out of scope
-        });
+            // Channels are automatically dropped here when they go out of scope
+            info!(
+                "[READER {}] Reader task finished, channels dropped",
+                reader_id
+            );
+        })
     }
 
     fn handle_write_stream(
@@ -800,11 +876,23 @@ impl BinanceWSClient {
         mut outbound_rx: mpsc::Receiver<BinanceRpcRequest>,
         mut ping_rx: mpsc::Receiver<Vec<u8>>,
         ws_write: Arc<Mutex<SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>>>,
-    ) {
+        ready_tx: Option<tokio::sync::oneshot::Sender<()>>,
+    ) -> tokio::task::JoinHandle<()> {
         tokio::spawn(async move {
             debug!("WebSocket writer task started");
+
+            // Signal that writer is ready
+            if let Some(tx) = ready_tx {
+                let _ = tx.send(());
+                debug!("Writer task signaled ready");
+            }
             let mut rpc_count = 0u64;
             let mut pong_count = 0u64;
+            let mut ping_count = 0u64;
+
+            // Proactive keepalive: send Ping every 30 seconds to keep connection alive
+            let mut keepalive_interval = interval(Duration::from_secs(30));
+            keepalive_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
             loop {
                 tokio::select! {
@@ -819,17 +907,10 @@ impl BinanceWSClient {
                         };
                         match json {
                             Ok(payload) => {
-                                debug!("Writer sending RPC #{count} ({type}) to WebSocket: {payload}",
-                                    count = rpc_count,
-                                    type = rpc_type,
-                                    payload = payload
-                                );
+                                tracing::info!("[WRITER] Sending RPC #{} ({}) to WebSocket: {}", rpc_count, rpc_type, payload);
                                 let mut w = ws_write.lock().await;
                                 if let Err(e) = w.send(Message::Text(payload)).await {
-                                    error!("Failed to send RPC #{count} ({type}): {e:?}",
-                                        count = rpc_count,
-                                        type = rpc_type
-                                    );
+                                    tracing::error!("[WRITER] Failed to send RPC #{} ({}): {:?}", rpc_count, rpc_type, e);
                                     break;
                                 }
                                 debug!("RPC #{count} ({type}) sent successfully", count = rpc_count, type = rpc_type);
@@ -845,7 +926,7 @@ impl BinanceWSClient {
                     }
                     Some(p) = ping_rx.recv() => {
                         pong_count += 1;
-                        debug!("Writer sending Pong #{count} (payload_len={len})",
+                        debug!("[KEEPALIVE] Writer sending Pong #{count} response to Binance Ping (payload_len={len})",
                             count = pong_count,
                             len = p.len()
                         );
@@ -855,7 +936,17 @@ impl BinanceWSClient {
                             break;
                         }
                     }
-
+                    _ = keepalive_interval.tick() => {
+                        // Proactive keepalive: send Ping to server
+                        ping_count += 1;
+                        debug!("[KEEPALIVE] Writer sending proactive Ping #{count} to Binance (every 30s)", count = ping_count);
+                        let mut w = ws_write.lock().await;
+                        // Send empty ping payload (Binance accepts empty pings)
+                        if let Err(e) = w.send(Message::Ping(vec![])).await {
+                            error!("Failed to send proactive Ping #{count}: {e:?}", count = ping_count);
+                            break;
+                        }
+                    }
                     else => {
                         debug!("Both RPC and ping channels closed, writer exiting (sent {rpc_count} RPCs, {pong_count} Pongs)",
                             rpc_count = rpc_count,
@@ -867,42 +958,64 @@ impl BinanceWSClient {
             }
 
             debug!(
-                "WebSocket writer task exited (sent {rpc_count} RPCs, {pong_count} Pongs total)",
+                "WebSocket writer task exited (sent {rpc_count} RPCs, {pong_count} Pongs, {ping_count} proactive Pings total)",
                 rpc_count = rpc_count,
-                pong_count = pong_count
+                pong_count = pong_count,
+                ping_count = ping_count
             );
-        });
+        })
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub async fn split_stream(
         &self,
         ws_stream: WebSocketStream<MaybeTlsStream<TcpStream>>,
-        inbound_tx: mpsc::Sender<BinanceInbound>,
-        outbound_tx: mpsc::Sender<BinanceRpcRequest>,
-        outbound_rx: mpsc::Receiver<BinanceRpcRequest>,
+        rpc_request_tx: mpsc::Sender<BinanceRpcRequest>,
+        rpc_request_rx: mpsc::Receiver<BinanceRpcRequest>,
+        rpc_response_tx: mpsc::Sender<BinanceRpcResponse>,
+        event_tx: mpsc::Sender<ParsedBinanceMessage>,
         ping_tx: mpsc::Sender<Vec<u8>>,
         ping_rx: mpsc::Receiver<Vec<u8>>,
         handler: impl MessageHandler<BinanceInbound> + Send + Sync + 'static,
     ) -> Result<ConnectionSession, EngineError> {
-        debug!("Splitting WebSocket stream into read/write halves...");
-        debug!("Channel status: inbound_tx.is_closed={}, outbound_tx.is_closed={}, ping_tx.is_closed={}",
-            inbound_tx.is_closed(),
-            outbound_tx.is_closed(),
+        debug!("split_stream: Starting to split WebSocket stream...");
+        debug!("Channel status: rpc_request_rx ready, rpc_response_tx.is_closed={}, event_tx.is_closed={}, ping_tx.is_closed={}",
+            rpc_response_tx.is_closed(),
+            event_tx.is_closed(),
             ping_tx.is_closed()
         );
 
         let (ws_write, ws_read) = ws_stream.split();
+        debug!("split_stream: Stream split successful, spawning reader/writer tasks...");
         let ws_write = Arc::new(Mutex::new(ws_write));
 
         debug!("Starting writer and reader tasks...");
-        self.handle_write_stream(outbound_rx, ping_rx, Arc::clone(&ws_write));
-        self.handle_read_stream(ws_read, inbound_tx, ping_tx, handler);
-        debug!("Reader and writer tasks spawned, connection fully established. Returning ConnectionSession with outbound_tx (is_closed={})",
-            outbound_tx.is_closed()
+        // Create ready signal for writer task
+        let (writer_ready_tx, writer_ready_rx) = tokio::sync::oneshot::channel();
+        debug!("Spawning writer task with ready signal...");
+        let writer_handle = self.handle_write_stream(
+            rpc_request_rx,
+            ping_rx,
+            Arc::clone(&ws_write),
+            Some(writer_ready_tx),
         );
+        debug!("Spawning reader task...");
+        let reader_handle = self.handle_read_stream(
+            ws_read,
+            rpc_response_tx.clone(),
+            event_tx.clone(),
+            ping_tx,
+            handler,
+        );
+        debug!("split_stream: Both tasks spawned, returning ConnectionSession");
 
-        Ok(ConnectionSession { outbound_tx })
+        Ok(ConnectionSession {
+            rpc_request_tx,
+            rpc_response_tx,
+            event_tx,
+            reader_handle: Some(reader_handle),
+            writer_handle: Some(writer_handle),
+            writer_ready_rx: Some(writer_ready_rx),
+        })
     }
 }
 

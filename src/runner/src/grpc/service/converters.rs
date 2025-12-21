@@ -74,8 +74,8 @@ pub fn format_quantity_config(quantity: &trading_engine::levels::config::Quantit
 pub fn level_to_proto(level: &Level) -> trading_cli::Level {
     let status = level_state_to_string(&level.state).to_string();
     let symbol = trading_cli::Symbol {
-        base: level.config.symbol.base.as_str().to_string(),
-        quote: level.config.symbol.quote.as_str().to_string(),
+        base: level.pair.base.as_str().to_string(),
+        quote: level.pair.quote.as_str().to_string(),
     };
     let order_type = order_type_to_string(&level.config.order_type).to_string();
     let side = match level.config.side {
@@ -86,8 +86,13 @@ pub fn level_to_proto(level: &Level) -> trading_cli::Level {
     let price_str = format_price_config(&level.config.price);
     let quantity_str = format_quantity_config(&level.config.quantity);
 
+    // Reconstruct the expanded level ID (matching how it's stored in HashMap)
+    // Format: "{base_id}_{PAIR}" e.g., "buy_level_1_ETHUSDC"
+    let pair_str = level.pair.convert_to_smolstr();
+    let expanded_id = format!("{}_{}", level.config.id, pair_str);
+
     let level_config = trading_cli::LevelConfig {
-        id: level.config.id.to_string(),
+        id: level.config.id.to_string(), // Base ID in config
         symbol: Some(symbol),
         side: side.to_string(),
         order_type,
@@ -117,7 +122,7 @@ pub fn level_to_proto(level: &Level) -> trading_cli::Level {
         .collect();
 
     trading_cli::Level {
-        id: level.config.id.to_string(),
+        id: expanded_id, // Use expanded ID so CLI can look it up
         status,
         enabled: level.config.enabled,
         config: Some(level_config),

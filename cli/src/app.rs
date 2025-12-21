@@ -76,7 +76,7 @@ impl App {
             endpoint,
             current_screen: Screen::MainMenu,
             should_quit: false,
-            trading_status: true, // Default to enabled
+            trading_status: false, // Default to disabled until server says otherwise
             monitoring_data: None,
             levels: None,
             strategies: None,
@@ -100,6 +100,13 @@ impl App {
                     self.trading_status = status;
                 }
                 self.client = Some(client);
+
+                // Preload monitoring data so mode (levels/strategies) is accurate on first render
+                // This is critical for showing the correct mode in the footer
+                if let Err(e) = self.refresh_monitoring_data().await {
+                    tracing::warn!("[CLI] Failed to fetch initial monitoring data: {:?}", e);
+                    // Continue anyway - streaming will update it
+                }
             }
             Err(e) => {
                 // Draw error message before returning
@@ -437,8 +444,8 @@ impl App {
 
     pub async fn refresh_monitoring_data(&mut self) -> Result<(), CliError> {
         if let Some(ref mut client) = self.client {
-            // Use timeout to avoid blocking
-            match tokio::time::timeout(Duration::from_secs(2), client.get_monitoring_data()).await {
+            // Use timeout to avoid blocking, but increase timeout for initial fetch
+            match tokio::time::timeout(Duration::from_secs(5), client.get_monitoring_data()).await {
                 Ok(Ok(data)) => {
                     self.monitoring_data = Some(data.clone());
                     // Extract strategies from monitoring data
@@ -447,10 +454,26 @@ impl App {
                     } else {
                         None
                     };
+                    tracing::debug!(
+                        "[CLI] Monitoring data refreshed: {} strategies, {} orders, {} balances",
+                        data.strategies.len(),
+                        data.orders.len(),
+                        data.balances.len()
+                    );
                 }
-                Ok(Err(_)) => {}
-                Err(_) => {}
+                Ok(Err(e)) => {
+                    tracing::warn!("[CLI] Failed to get monitoring data: {:?}", e);
+                    return Err(e);
+                }
+                Err(_) => {
+                    tracing::warn!("[CLI] Timeout waiting for monitoring data");
+                    return Err(CliError::Custom(
+                        "Timeout waiting for monitoring data".to_string(),
+                    ));
+                }
             }
+        } else {
+            return Err(CliError::Custom("Client not initialized".to_string()));
         }
         Ok(())
     }
@@ -912,18 +935,28 @@ impl App {
 
                 // Spawn a task to handle the stream
                 tokio::spawn(async move {
+                    tracing::debug!("[CLI] Stream handler started");
                     loop {
                         match stream.message().await {
                             Ok(Some(update)) => {
                                 if let Some(data) = update.data {
+                                    tracing::debug!(
+                                        "[CLI] Received stream update: {} strategies, {} orders",
+                                        data.strategies.len(),
+                                        data.orders.len()
+                                    );
                                     if tx.send(data).await.is_err() {
                                         // Receiver dropped, stop streaming
+                                        tracing::debug!("[CLI] Stream receiver dropped, stopping");
                                         break;
                                     }
+                                } else {
+                                    tracing::warn!("[CLI] Stream update has no data field");
                                 }
                             }
                             Ok(None) => {
                                 // Stream ended
+                                tracing::debug!("[CLI] Stream ended (None received)");
                                 break;
                             }
                             Err(e) => {
@@ -934,7 +967,9 @@ impl App {
                             }
                         }
                     }
+                    tracing::debug!("[CLI] Stream handler exiting");
                 });
+                tracing::debug!("[CLI] Streaming started successfully");
                 Ok(())
             }
             Err(e) => {

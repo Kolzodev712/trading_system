@@ -1,5 +1,6 @@
 use crate::exchanges::binance::common_types::{
-    BinanceOrderType, BinanceSide, BinanceSymbol, BinanceTimeInForce,
+    BinanceOrderStatus, BinanceOrderType, BinanceSelfTradePreventionMode, BinanceSide,
+    BinanceTimeInForce,
 };
 use trading_core::{
     error::EngineError,
@@ -43,11 +44,28 @@ pub struct BinanceWsOrderReqParams {
     pub side: BinanceSide,
     #[serde(rename = "type", serialize_with = "serialize_enum_as_display")]
     pub order_type: BinanceOrderType,
-    pub time_in_force: BinanceTimeInForce,
-    #[serde(with = "rust_decimal::serde::str")]
-    pub price: Decimal,
-    #[serde(with = "rust_decimal::serde::str")]
-    pub quantity: Decimal,
+    // timeInForce is optional for some order types, but we always set it
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub time_in_force: Option<BinanceTimeInForce>,
+    // price is optional for MARKET orders, but we always set it for LIMIT
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        with = "rust_decimal::serde::str_option"
+    )]
+    pub price: Option<Decimal>,
+    // quantity is optional for MARKET with quoteOrderQty, but we always set it
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        with = "rust_decimal::serde::str_option"
+    )]
+    pub quantity: Option<Decimal>,
+    // quoteOrderQty is alternative to quantity for MARKET orders
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "rust_decimal::serde::str_option"
+    )]
+    pub quote_order_qty: Option<Decimal>,
     #[serde(flatten, default)]
     pub session: SessionLogonParams,
 }
@@ -57,9 +75,9 @@ impl BinanceWsOrderReqParams {
         symbol: SmolStr,
         side: BinanceSide,
         order_type: BinanceOrderType,
-        time_in_force: BinanceTimeInForce,
-        price: Decimal,
-        quantity: Decimal,
+        time_in_force: Option<BinanceTimeInForce>,
+        price: Option<Decimal>,
+        quantity: Option<Decimal>,
     ) -> Self {
         Self {
             symbol,
@@ -68,6 +86,7 @@ impl BinanceWsOrderReqParams {
             time_in_force,
             price,
             quantity,
+            quote_order_qty: None,
             session: SessionLogonParams::default(),
         }
     }
@@ -97,9 +116,10 @@ impl TryFrom<OrderRequest> for BinanceWsOrderReqParams {
             symbol: SmolStr::from(&req.symbol),
             side,
             order_type,
-            time_in_force: tif,
-            price: req.price,
-            quantity: req.amount,
+            time_in_force: Some(tif),
+            price: Some(req.price),
+            quantity: Some(req.amount),
+            quote_order_qty: None,
             session: SessionLogonParams::default(),
         })
     }
@@ -118,8 +138,12 @@ fn parse_tif(s: &str) -> Option<BinanceTimeInForce> {
 #[serde(rename_all = "camelCase")]
 pub struct BinanceWsOrderError {
     pub code: i64,
-    #[serde(default)]
-    pub msg: String,
+    #[serde(
+        default,
+        serialize_with = "serialize_smol_str",
+        deserialize_with = "deserialize_smol_str"
+    )]
+    pub msg: SmolStr,
 }
 
 // https://developers.binance.com/docs/binance-spot-api-docs/websocket-api/trading-requests#place-new-order-trade
@@ -160,14 +184,11 @@ pub fn map_open_order_to_core(
     })?;
 
     Ok(Order {
-        order_id: result
-            .order_id
-            .parse::<u64>()
-            .map(OrderId::from)
-            .map_err(|e| EngineError::new_custom_error(format!("invalid order_id: {e}").into()))?,
-        symbol: result.symbol.convert_to_smolstr().into(),
-        price: params.price,
-        amount: params.quantity,
+        order_id: OrderId::from(result.order_id as u64),
+        client_order_id: Some(result.client_order_id.clone()),
+        symbol: result.symbol.into(),
+        price: params.price.unwrap_or_default(),
+        amount: params.quantity.unwrap_or_default(),
         side: params.side.into(),
         status: trading_core::types::common::OrderStatus::New,
         filled_amount: rust_decimal::Decimal::ZERO,
@@ -179,19 +200,103 @@ pub fn map_open_order_to_core(
 #[derive(Debug, Clone, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BinanceWsOrderResult {
-    pub symbol: BinanceSymbol,
+    // Fields we actually use
     #[serde(
         serialize_with = "serialize_smol_str",
         deserialize_with = "deserialize_smol_str"
     )]
-    pub order_id: SmolStr,
+    pub symbol: SmolStr,
+    pub order_id: i64,
+    pub transact_time: i64,
+    // Fields that are always present in RESULT/FULL response but we don't use
     pub order_list_id: i64,
     #[serde(
         serialize_with = "serialize_smol_str",
         deserialize_with = "deserialize_smol_str"
     )]
     pub client_order_id: SmolStr,
-    pub transact_time: i64,
+    // Optional fields that may appear in RESULT/FULL response (we don't use them)
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "rust_decimal::serde::str_option"
+    )]
+    pub price: Option<Decimal>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "rust_decimal::serde::str_option"
+    )]
+    pub orig_qty: Option<Decimal>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "rust_decimal::serde::str_option"
+    )]
+    pub executed_qty: Option<Decimal>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "rust_decimal::serde::str_option"
+    )]
+    pub orig_quote_order_qty: Option<Decimal>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "rust_decimal::serde::str_option"
+    )]
+    pub cummulative_quote_qty: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<BinanceOrderStatus>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub time_in_force: Option<BinanceTimeInForce>,
+    #[serde(default, skip_serializing_if = "Option::is_none", rename = "type")]
+    pub type_: Option<BinanceOrderType>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub side: Option<BinanceSide>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub working_time: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub self_trade_prevention_mode: Option<BinanceSelfTradePreventionMode>,
+    // Conditional fields (only appear if set in request)
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "rust_decimal::serde::str_option"
+    )]
+    pub stop_price: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trailing_delta: Option<i64>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "rust_decimal::serde::str_option"
+    )]
+    pub iceberg_qty: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub strategy_id: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub strategy_type: Option<i64>,
+    // FULL response only - fills array
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fills: Vec<Fill>,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Fill {
+    #[serde(with = "rust_decimal::serde::str")]
+    pub price: Decimal,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub qty: Decimal,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub commission: Decimal,
+    #[serde(
+        serialize_with = "serialize_smol_str",
+        deserialize_with = "deserialize_smol_str"
+    )]
+    pub commission_asset: SmolStr,
+    pub trade_id: i64,
 }
 
 #[cfg(test)]
@@ -211,9 +316,10 @@ mod tests {
                 symbol: SmolStr::new("BTCUSDT"),
                 side: BinanceSide::Buy,
                 order_type: BinanceOrderType::Limit,
-                time_in_force: BinanceTimeInForce::Gtc,
-                price: Decimal::new(200005, 4),
-                quantity: Decimal::new(1, 2),
+                time_in_force: Some(BinanceTimeInForce::Gtc),
+                price: Some(Decimal::new(200005, 4)),
+                quantity: Some(Decimal::new(1, 2)),
+                quote_order_qty: None,
                 session: SessionLogonParams {
                     api_key: SmolStr::new("api-key"),
                     timestamp: 1234567890,
@@ -233,11 +339,28 @@ mod tests {
             id: SmolStr::new("5678"),
             status: 200,
             result: Some(BinanceWsOrderResult {
-                symbol: BinanceSymbol::new("ETH", "USDT"),
-                order_id: SmolStr::new("78910"),
+                symbol: SmolStr::new("ETHUSDT"),
+                order_id: 78910,
+                transact_time: 1625256000000,
                 order_list_id: 1,
                 client_order_id: SmolStr::new("myorder123"),
-                transact_time: 1625256000000,
+                price: None,
+                orig_qty: None,
+                executed_qty: None,
+                orig_quote_order_qty: None,
+                cummulative_quote_qty: None,
+                status: None,
+                time_in_force: None,
+                type_: None,
+                side: None,
+                working_time: None,
+                self_trade_prevention_mode: None,
+                stop_price: None,
+                trailing_delta: None,
+                iceberg_qty: None,
+                strategy_id: None,
+                strategy_type: None,
+                fills: vec![],
             }),
             error: None,
             rate_limits: Some(vec![BinanceRateLimit {
@@ -272,11 +395,28 @@ mod tests {
     #[test]
     fn test_binance_ws_order_result_ser_deser() {
         let result = BinanceWsOrderResult {
-            symbol: BinanceSymbol::new("ADA", "USDT"),
-            order_id: SmolStr::new("111222333"),
+            symbol: SmolStr::new("ADAUSDT"),
+            order_id: 111222333,
+            transact_time: 1625257000000,
             order_list_id: 0,
             client_order_id: SmolStr::new("order789"),
-            transact_time: 1625257000000,
+            price: None,
+            orig_qty: None,
+            executed_qty: None,
+            orig_quote_order_qty: None,
+            cummulative_quote_qty: None,
+            status: None,
+            time_in_force: None,
+            type_: None,
+            side: None,
+            working_time: None,
+            self_trade_prevention_mode: None,
+            stop_price: None,
+            trailing_delta: None,
+            iceberg_qty: None,
+            strategy_id: None,
+            strategy_type: None,
+            fills: vec![],
         };
 
         let json = serde_json::to_string(&result).unwrap();

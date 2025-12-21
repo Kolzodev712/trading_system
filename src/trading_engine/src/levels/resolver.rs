@@ -52,14 +52,48 @@ impl IndicatorResolver {
                 offset_type,
                 offset_value,
             } => {
-                // Find indicator by name (match any indicator with this name)
+                // Resolve indicator name: if it's pair-agnostic (e.g., "sma_20"),
+                // resolve it to pair-specific (e.g., "sma_20_ETHUSDC")
+                let pair_str = pair.convert_to_smolstr();
+                let resolved_indicator_id = if indicator_name.contains('_')
+                    && !indicator_name.contains(&pair_str.as_str())
+                {
+                    // Template indicator name, resolve with pair
+                    SmolStr::new(&format!("{}_{}", indicator_name, pair_str))
+                } else {
+                    // Already pair-specific or exact match
+                    indicator_name.clone()
+                };
+
+                tracing::debug!(
+                    "Resolving indicator: {} -> {} for pair {}",
+                    indicator_name,
+                    resolved_indicator_id,
+                    pair_str
+                );
+
+                // Find indicator by resolved ID first, then by original name, then by indicator name
                 let indicator = indicators
-                    .values()
-                    .find(|v| v.indicator_name == *indicator_name)
+                    .get(&resolved_indicator_id)
+                    .or_else(|| indicators.get(indicator_name))
+                    .or_else(|| {
+                        indicators.values().find(|v| {
+                            v.indicator_name == *indicator_name || v.indicator_id == *indicator_name
+                        })
+                    })
                     .ok_or_else(|| {
+                        let available: Vec<_> = indicators.keys().map(|k| k.as_str()).collect();
+                        tracing::debug!(
+                            "Indicator not found: {} (resolved as: {}, available: {:?})",
+                            indicator_name,
+                            resolved_indicator_id,
+                            available
+                        );
                         EngineError::CustomError(anyhow::anyhow!(
-                            "Indicator not found: {}",
-                            indicator_name
+                            "Indicator not found: {} (resolved as: {}, available: {:?})",
+                            indicator_name,
+                            resolved_indicator_id,
+                            available
                         ))
                     })?;
 
@@ -146,14 +180,33 @@ impl IndicatorResolver {
                 multiplier,
                 offset,
             } => {
-                // Find indicator by name
+                // Resolve indicator name: if it's pair-agnostic (e.g., "sma_20"),
+                // resolve it to pair-specific (e.g., "sma_20_ETHUSDC")
+                let pair_str = pair.convert_to_smolstr();
+                let resolved_indicator_id = if indicator_name.contains('_')
+                    && !indicator_name.contains(&pair_str.as_str())
+                {
+                    // Template indicator name, resolve with pair
+                    SmolStr::new(&format!("{}_{}", indicator_name, pair_str))
+                } else {
+                    // Already pair-specific or exact match
+                    indicator_name.clone()
+                };
+
+                // Find indicator by resolved ID first, then by original name, then by indicator name
                 let indicator = indicators
-                    .values()
-                    .find(|v| v.indicator_name == *indicator_name)
+                    .get(&resolved_indicator_id)
+                    .or_else(|| indicators.get(indicator_name))
+                    .or_else(|| {
+                        indicators.values().find(|v| {
+                            v.indicator_name == *indicator_name || v.indicator_id == *indicator_name
+                        })
+                    })
                     .ok_or_else(|| {
                         EngineError::CustomError(anyhow::anyhow!(
-                            "Indicator not found: {}",
-                            indicator_name
+                            "Indicator not found: {} (resolved as: {})",
+                            indicator_name,
+                            resolved_indicator_id
                         ))
                     })?;
 

@@ -24,7 +24,6 @@ async fn test_level_workflow_with_risk_checks() {
     let config = LevelConfig {
         id: SmolStr::new("workflow_level"),
         name: None,
-        symbol: Pair::new("BTC", "USDT"),
         side: Side::Buy,
         order_type: OrderTypeConfig::Limit,
         quantity: QuantityConfig::Fixed(dec!(0.001)),
@@ -35,7 +34,8 @@ async fn test_level_workflow_with_risk_checks() {
         group: None,
     };
 
-    level_manager.add_level(config).await.unwrap();
+    let pair = Pair::new("BTC", "USDT");
+    level_manager.add_level(config, pair).await.unwrap();
 
     // Get ready levels
     let ready = level_manager.get_levels_ready_to_post();
@@ -53,7 +53,6 @@ async fn test_level_lifecycle_states() {
     let config = LevelConfig {
         id: SmolStr::new("lifecycle_test"),
         name: None,
-        symbol: Pair::new("BTC", "USDT"),
         side: Side::Buy,
         order_type: OrderTypeConfig::Limit,
         quantity: QuantityConfig::Fixed(dec!(0.001)),
@@ -64,20 +63,19 @@ async fn test_level_lifecycle_states() {
         group: None,
     };
 
-    manager.add_level(config).await.unwrap();
+    let pair = Pair::new("BTC", "USDT");
+    manager.add_level(config, pair).await.unwrap();
 
     // Initial state should be Created
-    let level = manager.get_level(&SmolStr::new("lifecycle_test")).unwrap();
+    let level_id = SmolStr::new("lifecycle_test_BTCUSDT");
+    let level = manager.get_level(&level_id).unwrap();
     assert_eq!(level.state, trading_engine::levels::LevelState::Created);
 
     // Transition to Posted
     manager
-        .update_level_state(
-            &SmolStr::new("lifecycle_test"),
-            trading_engine::levels::LevelState::Posted,
-        )
+        .update_level_state(&level_id, trading_engine::levels::LevelState::Posted)
         .unwrap();
-    let level = manager.get_level(&SmolStr::new("lifecycle_test")).unwrap();
+    let level = manager.get_level(&level_id).unwrap();
     assert_eq!(level.state, trading_engine::levels::LevelState::Posted);
 }
 
@@ -90,7 +88,6 @@ async fn test_multiple_levels_concurrent_operations() {
         let config = LevelConfig {
             id: SmolStr::new(format!("level_{}", i)),
             name: None,
-            symbol: Pair::new("BTC", "USDT"),
             side: Side::Buy,
             order_type: OrderTypeConfig::Limit,
             quantity: QuantityConfig::Fixed(dec!(0.001)),
@@ -100,7 +97,8 @@ async fn test_multiple_levels_concurrent_operations() {
             enabled: i % 2 == 0, // Alternate enabled/disabled
             group: None,
         };
-        manager.add_level(config).await.unwrap();
+        let pair = Pair::new("BTC", "USDT");
+        manager.add_level(config, pair).await.unwrap();
     }
 
     // Check counts

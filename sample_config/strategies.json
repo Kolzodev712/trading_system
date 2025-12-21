@@ -8,8 +8,8 @@
       },
       "position_size": "0.001",
       "max_position": "0.01",
-      "buy_threshold_percent": "0.1",
-      "sell_threshold_percent": "0.1",
+      "buy_threshold_percent": "0.05",
+      "sell_threshold_percent": "0.05",
       "stop_loss_percent": "5.0",
       "take_profit_percent": "10.0",
       "max_active_orders": 2,
@@ -21,24 +21,24 @@
       "min_notional": "5.0"
     },
     {
-      "strategy_type": "BuyLowSellHigh",
-      "symbol": {
+  "strategy_type": "BuyLowSellHigh",
+  "symbol": {
         "base": "SOL",
-        "quote": "USDC"
-      },
-      "position_size": "0.001",
-      "max_position": "0.01",
-      "buy_threshold_percent": "0.1",
-      "sell_threshold_percent": "0.1",
-      "stop_loss_percent": "5.0",
-      "take_profit_percent": "10.0",
-      "max_active_orders": 2,
-      "price_history_size": 100,
-      "min_price_history": 10,
-      "min_order_size": "0.00001",
-      "step_size": "0.00001",
-      "tick_size": "0.01",
-      "min_notional": "5.0"
-    }
+    "quote": "USDC"
+  },
+  "position_size": "0.001",
+  "max_position": "0.01",
+      "buy_threshold_percent": "0.05",
+      "sell_threshold_percent": "0.05",
+  "stop_loss_percent": "5.0",
+  "take_profit_percent": "10.0",
+  "max_active_orders": 2,
+  "price_history_size": 100,
+  "min_price_history": 10,
+  "min_order_size": "0.00001",
+  "step_size": "0.00001",
+  "tick_size": "0.01",
+  "min_notional": "5.0"
+}
   ]
 }

@@ -31,6 +31,9 @@ pub struct OrderRequest {
 pub struct Order {
     /// Exchange's order ID
     pub order_id: OrderId,
+    /// Client order ID (if provided by exchange, used for cancellation fallback)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_order_id: Option<SmolStr>,
     /// Symbol for the open order response
     pub symbol: Symbol,
     /// Side of the book to place the order
@@ -49,6 +52,32 @@ pub struct Order {
     /// Filled amount (for partial fills)
     #[serde(default)]
     pub filled_amount: Decimal,
+}
+
+/// Amended Order - represents an order that was amended (canceled and replaced)
+#[derive(Debug, Clone, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AmendedOrder {
+    /// Original order ID (the one that was canceled)
+    pub original_order_id: OrderId,
+    /// New order ID (the replacement order)
+    pub new_order_id: OrderId,
+    /// Symbol for the order
+    pub symbol: Symbol,
+    /// Side of the book
+    pub side: Side,
+    /// Original price (before amendment)
+    pub original_price: Decimal,
+    /// New price (after amendment)
+    pub new_price: Decimal,
+    /// Original amount (before amendment)
+    pub original_amount: Decimal,
+    /// New amount (after amendment)
+    pub new_amount: Decimal,
+    /// Timestamp when amendment occurred
+    pub amended_at: u64,
+    /// Status of the new order
+    pub new_order_status: OrderStatus,
 }
 
 fn default_order_status() -> OrderStatus {
@@ -154,6 +183,7 @@ mod tests {
     fn test_order_creation() {
         let order = Order {
             order_id: OrderId::new("12345".into()),
+            client_order_id: None,
             symbol: "BTCUSDT".into(),
             side: Side::Buy,
             price: Decimal::new(90000, 0),
@@ -250,6 +280,7 @@ mod tests {
     fn test_order_serialization() {
         let order = Order {
             order_id: OrderId::new("12345".into()),
+            client_order_id: None,
             symbol: "BTCUSDT".into(),
             side: Side::Buy,
             price: Decimal::new(90000, 0),

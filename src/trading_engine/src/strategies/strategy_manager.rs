@@ -10,6 +10,7 @@ use rust_decimal::Decimal;
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use tracing::info;
 use trading_core::{
     error::EngineError,
     types::{common::Pair, exchange::Order, market_data::Orderbook},
@@ -25,6 +26,12 @@ pub struct StrategyManager {
     strategy_enabled: Arc<RwLock<HashMap<StrategyId, bool>>>,
     /// Maps strategy index to strategy identifier
     strategy_ids: Vec<StrategyId>,
+    /// Maps strategy index to trading pair (for efficient symbol matching)
+    strategy_pairs: Vec<Pair>,
+    /// Index: Maps trading pair to strategy indices (for O(1) lookup)
+    pair_to_indices: HashMap<Pair, Vec<usize>>,
+    /// Global trading control - if disabled, all strategies are disabled regardless of individual state
+    trading_control: Option<Arc<tokio::sync::RwLock<bool>>>,
 }
 
 impl StrategyManager {
@@ -33,22 +40,40 @@ impl StrategyManager {
             strategies: Vec::new(),
             strategy_enabled: Arc::new(RwLock::new(HashMap::new())),
             strategy_ids: Vec::new(),
+            strategy_pairs: Vec::new(),
+            pair_to_indices: HashMap::new(),
+            trading_control: None,
         }
     }
 
-    /// Add a strategy with its identifier
+    /// Set global trading control (hierarchical control)
+    pub fn with_trading_control(mut self, trading_control: Arc<tokio::sync::RwLock<bool>>) -> Self {
+        self.trading_control = Some(trading_control);
+        self
+    }
+
+    /// Add a strategy with its identifier and trading pair
     pub async fn add_strategy(
         &mut self,
         strategy: Arc<RwLock<dyn Strategy>>,
         strategy_id: StrategyId,
+        pair: Pair,
     ) {
-        // Default to enabled
+        // Default to disabled
         let mut enabled = self.strategy_enabled.write().await;
-        enabled.insert(strategy_id.clone(), true);
+        enabled.insert(strategy_id.clone(), false);
         drop(enabled);
 
+        let idx = self.strategies.len();
         self.strategy_ids.push(strategy_id);
+        self.strategy_pairs.push(pair.clone());
         self.strategies.push(strategy);
+
+        // Index by pair for efficient lookup
+        self.pair_to_indices
+            .entry(pair)
+            .or_insert_with(Vec::new)
+            .push(idx);
     }
 
     /// Set enabled state for a strategy
@@ -60,7 +85,7 @@ impl StrategyManager {
     /// Get enabled state for a strategy
     pub async fn is_strategy_enabled(&self, strategy_id: &StrategyId) -> bool {
         let enabled_map = self.strategy_enabled.read().await;
-        enabled_map.get(strategy_id).copied().unwrap_or(true) // Default to enabled
+        enabled_map.get(strategy_id).copied().unwrap_or(false) // Default to disabled
     }
 
     /// Get a reference to the enabled map (for direct access to avoid nested locks)
@@ -78,34 +103,125 @@ impl StrategyManager {
         &self,
         orderbook: &Orderbook,
     ) -> Result<Vec<trading_core::types::exchange::OrderRequest>, EngineError> {
+        // Log entry point (periodically)
+        static ENTRY_COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let entry_count = ENTRY_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let should_log_entry = entry_count % 20 == 0;
+
+        if should_log_entry {
+            info!(
+                "[StrategyManager] on_orderbook called for {}",
+                orderbook.pair
+            );
+        }
+
+        // Check global trading control first - if disabled, all strategies are disabled
+        if let Some(ref trading_control) = self.trading_control {
+            let enabled = *trading_control.read().await;
+            if should_log_entry {
+                info!(
+                    "[StrategyManager] Global trading control check: enabled={}",
+                    enabled
+                );
+            }
+            if !enabled {
+                if should_log_entry {
+                    info!("[StrategyManager] Global trading disabled, returning empty");
+                }
+                return Ok(Vec::new()); // Global trading disabled, no orders
+            }
+        } else if should_log_entry {
+            info!("[StrategyManager] No trading control set, proceeding");
+        }
+
         let mut requests = Vec::new();
 
-        // Get enabled states (clone to avoid holding lock during async operations)
-        let enabled_states: Vec<(usize, bool)> = {
-            let enabled_map = self.strategy_enabled.read().await;
-            self.strategy_ids
-                .iter()
-                .enumerate()
-                .map(|(idx, strategy_id)| {
-                    let enabled = enabled_map.get(strategy_id).copied().unwrap_or(true);
-                    (idx, enabled)
-                })
-                .collect()
-        };
+        // Get only strategies that match this orderbook's symbol (O(1) lookup)
+        let matching_indices = self
+            .pair_to_indices
+            .get(&orderbook.pair)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[]);
 
-        for (idx, strategy) in self.strategies.iter().enumerate() {
-            // Check if this strategy is enabled
-            if let Some((_, enabled)) = enabled_states.get(idx) {
-                if !enabled {
-                    continue; // Skip disabled strategies
+        if matching_indices.is_empty() {
+            // No strategies for this symbol - this is fine, just return empty
+            return Ok(requests);
+        }
+
+        // Get enabled states for matching strategies only
+        let enabled_map = self.strategy_enabled.read().await;
+        let enabled_states: Vec<(usize, bool)> = matching_indices
+            .iter()
+            .map(|&idx| {
+                let strategy_id = &self.strategy_ids[idx];
+                let enabled = enabled_map.get(strategy_id).copied().unwrap_or(false);
+                (idx, enabled)
+            })
+            .collect();
+        drop(enabled_map);
+
+        // Log periodically which strategies are being checked
+        static CALL_COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let call_count = CALL_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let should_log = call_count % 20 == 0;
+
+        if should_log {
+            info!(
+                "[StrategyManager] Processing orderbook for {}, found {} matching strategy(ies)",
+                orderbook.pair,
+                matching_indices.len()
+            );
+        }
+
+        // Only process strategies that match this symbol
+        for (idx, enabled) in enabled_states {
+            let strategy_id = self
+                .strategy_ids
+                .get(idx)
+                .map(|s| s.as_str())
+                .unwrap_or("unknown");
+
+            if !enabled {
+                if should_log {
+                    info!(
+                        "[StrategyManager] Strategy {} is disabled, skipping",
+                        strategy_id
+                    );
                 }
+                continue; // Skip disabled strategies
             }
 
+            if should_log {
+                info!(
+                    "[StrategyManager] Calling strategy.on_orderbook() for {}",
+                    strategy_id
+                );
+            }
+
+            let strategy = &self.strategies[idx];
             let mut strat = strategy.write().await;
             let state = strat.get_state().clone();
             if let Some(req) = strat.on_orderbook(orderbook, &state).await? {
+                if should_log {
+                    info!(
+                        "[StrategyManager] Strategy {} returned order request",
+                        strategy_id
+                    );
+                }
                 requests.push(req);
+            } else if should_log {
+                info!(
+                    "[StrategyManager] Strategy {} returned None (no order)",
+                    strategy_id
+                );
             }
+        }
+
+        if should_log {
+            info!(
+                "[StrategyManager] Total requests from matching strategies: {}",
+                requests.len()
+            );
         }
 
         Ok(requests)

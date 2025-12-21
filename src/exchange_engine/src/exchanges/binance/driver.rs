@@ -7,9 +7,10 @@ use super::ws_client::BinanceClient;
 use crate::state::manager::ExchangeStateManager;
 use async_trait::async_trait;
 use std::sync::Arc;
-use tokio::sync::broadcast;
-use tracing::{debug, error, info};
-use trading_core::config::ChannelConfig;
+use std::time::Instant;
+use tokio::sync::{broadcast, oneshot, RwLock};
+use tracing::{debug, info, warn};
+use trading_core::traits::exchange_driver::ConnectionState;
 use trading_core::traits::ExchangeDriver;
 use trading_core::{error::EngineError, traits::TradingClient, types::exchange::OrderRequest};
 
@@ -20,6 +21,9 @@ pub struct BinanceDriver {
     client: BinanceClient,
     state_manager: Arc<ExchangeStateManager>,
     trading_client: Arc<tokio::sync::RwLock<dyn TradingClient<OrderRequest>>>,
+    connection_state: Arc<RwLock<ConnectionState>>,
+    connection_ready_tx: Arc<RwLock<Option<oneshot::Sender<()>>>>,
+    last_session_refresh: Arc<RwLock<Option<Instant>>>,
 }
 
 impl BinanceDriver {
@@ -29,31 +33,25 @@ impl BinanceDriver {
     /// It uses the state manager (created in run.rs) to update state when receiving messages.
     ///
     /// # Arguments
-    /// * `config` - Binance configuration
+    /// * `client` - Binance client instance
     /// * `state_manager` - Pre-configured state manager (created in run.rs)
     /// * `trading_client` - Trading client (same one used in state manager)
-    /// * `channels` - Channel configuration for buffer sizes
     ///
     /// # Returns
     /// The driver instance
     pub fn new(
-        config: super::config::BinanceConfig,
+        client: BinanceClient,
         state_manager: Arc<ExchangeStateManager>,
         trading_client: Arc<tokio::sync::RwLock<dyn TradingClient<OrderRequest>>>,
-        channels: ChannelConfig,
     ) -> Result<Self, EngineError> {
-        let client = BinanceClient::new(
-            config,
-            channels.websocket_inbound_capacity,
-            channels.websocket_ping_capacity,
-            channels.websocket_outbound_rpc_capacity,
-            channels.shutdown_capacity,
-        );
-
+        let (tx, _rx) = oneshot::channel();
         Ok(Self {
             client,
             state_manager,
             trading_client,
+            connection_state: Arc::new(RwLock::new(ConnectionState::Disconnected)),
+            connection_ready_tx: Arc::new(RwLock::new(Some(tx))),
+            last_session_refresh: Arc::new(RwLock::new(None)),
         })
     }
 
@@ -67,33 +65,31 @@ impl BinanceDriver {
         &self.client
     }
 
-    /// Check if the WebSocket connection and RPC channel are ready
-    pub async fn is_ready(&self) -> bool {
-        // Check if connection session exists
-        if self.client.get_connection_session().await.is_none() {
-            return false;
+    /// Set connection state
+    async fn set_connection_state(&self, state: ConnectionState) {
+        let mut guard = self.connection_state.write().await;
+        let old_state = *guard;
+        *guard = state;
+        drop(guard);
+
+        // Signal ready when transitioning to Connected
+        if state == ConnectionState::Connected && old_state != ConnectionState::Connected {
+            if let Some(tx) = self.connection_ready_tx.write().await.take() {
+                let _ = tx.send(());
+            }
         }
-        // Check if RPC channel is ready
-        let guard = self.client.outbound_rpc_tx.lock().await;
-        guard.is_some()
     }
 
-    /// Wait for the WebSocket connection and RPC channel to be ready
-    /// Returns true if ready, false if timeout
-    pub async fn wait_for_ready(&self, timeout_secs: u64) -> bool {
-        let start = std::time::Instant::now();
-        let timeout = tokio::time::Duration::from_secs(timeout_secs);
-
-        loop {
-            if self.is_ready().await {
-                return true;
-            }
-
-            if start.elapsed() > timeout {
-                return false;
-            }
-
-            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    /// Check if session needs refresh (Binance sessions typically last 24 hours)
+    async fn check_session_refresh_needed(&self) -> bool {
+        // Binance sessions don't have a fixed expiration, but we can refresh periodically
+        // Check if it's been more than 12 hours since last refresh
+        if let Some(last_refresh) = *self.last_session_refresh.read().await {
+            last_refresh.elapsed().as_secs() > 12 * 3600
+        } else {
+            // Never refreshed, check if connection has been up for a while
+            // For now, always return false - session refresh is handled by reconnection
+            false
         }
     }
 }
@@ -108,27 +104,48 @@ impl ExchangeDriver for BinanceDriver {
             .set_state_manager(self.state_manager.clone())
             .await;
 
+        // Update state to Connecting
+        self.set_connection_state(ConnectionState::Connecting).await;
+
         // Start WebSocket stream in background
         let mut client = self.client.clone();
+        let state_tracker = self.connection_state.clone();
+        let _ready_tx = Arc::clone(&self.connection_ready_tx);
+
         let ws_handle = tokio::spawn(async move {
+            // Track connection state in the stream loop
+            let mut state_guard = state_tracker.write().await;
+            *state_guard = ConnectionState::Connecting;
+            drop(state_guard);
+
             match client.stream().await {
                 Ok(_) => {
                     debug!("Binance WebSocket stream ended gracefully");
+                    let mut state_guard = state_tracker.write().await;
+                    *state_guard = ConnectionState::Disconnected;
                 }
                 Err(e) => {
-                    error!("Binance WebSocket stream error: {}", e);
+                    warn!("Binance WebSocket stream error: {}", e);
+                    let mut state_guard = state_tracker.write().await;
+                    *state_guard = ConnectionState::Failed;
                 }
             }
         });
+
+        // Don't block on connection readiness - let it happen asynchronously
+        // The connection will signal when ready via set_connection_state
+        info!("Binance driver started, connection will be ready when WebSocket is established");
 
         // Wait for shutdown signal or WebSocket error
         tokio::select! {
             _ = shutdown_rx.recv() => {
                 info!("Shutdown signal received, stopping Binance driver");
+                self.set_connection_state(ConnectionState::Disconnected).await;
             }
             result = ws_handle => {
                 if let Err(e) = result {
-                    error!("Binance WebSocket task error: {}", e);
+                    warn!("Binance WebSocket task error: {}", e);
+                    self.set_connection_state(ConnectionState::Failed).await;
                     return Err(EngineError::CustomError(anyhow::anyhow!(
                         "WebSocket task failed: {}", e
                     )));
@@ -142,5 +159,36 @@ impl ExchangeDriver for BinanceDriver {
 
     fn get_trading_client(&self) -> Arc<tokio::sync::RwLock<dyn TradingClient<OrderRequest>>> {
         self.trading_client.clone()
+    }
+
+    async fn is_connection_ready(&self) -> bool {
+        // Check if RPC channel is ready AND open
+        let rpc_tx = self.client.rpc_client.get_rpc_request_tx().await;
+        if let Some(tx) = rpc_tx {
+            !tx.is_closed()
+        } else {
+            false
+        }
+    }
+
+    async fn get_connection_state(&self) -> ConnectionState {
+        *self.connection_state.read().await
+    }
+
+    async fn needs_session_refresh(&self) -> bool {
+        self.check_session_refresh_needed().await
+    }
+
+    async fn refresh_session(&mut self) -> Result<(), EngineError> {
+        // Binance session refresh is handled by reconnection
+        // This is a no-op for now, but could trigger a reconnection if needed
+        *self.last_session_refresh.write().await = Some(Instant::now());
+        Ok(())
+    }
+
+    fn connection_ready_signal(&self) -> Option<tokio::sync::oneshot::Receiver<()>> {
+        // Return None - we'll use polling instead
+        // The ready signal is sent when connection becomes ready
+        None
     }
 }

@@ -40,7 +40,6 @@ async fn test_live_config_update_level_value() {
     let config = LevelConfig {
         id: SmolStr::new("test_level"),
         name: None,
-        symbol: Pair::new("BTC", "USDT"),
         side: Side::Buy,
         order_type: OrderTypeConfig::Limit,
         quantity: QuantityConfig::Fixed(dec!(0.001)),
@@ -50,7 +49,8 @@ async fn test_live_config_update_level_value() {
         enabled: true,
         group: None,
     };
-    level_manager.add_level(config).await.unwrap();
+    let pair = Pair::new("BTC", "USDT");
+    level_manager.add_level(config, pair).await.unwrap();
 
     let level_manager = Arc::new(RwLock::new(level_manager));
     let limits = RiskLimits::default();

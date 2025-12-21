@@ -35,7 +35,18 @@ impl LevelManager {
     }
 
     /// Load levels from configuration file
-    pub async fn load_from_config(&mut self, path: &Path) -> Result<(), EngineError> {
+    /// Expands pair-agnostic level configs to create Level instances for each pair
+    pub async fn load_from_config(
+        &mut self,
+        path: &Path,
+        pairs: &[trading_core::types::common::Pair],
+    ) -> Result<(), EngineError> {
+        if pairs.is_empty() {
+            return Err(EngineError::CustomError(anyhow::anyhow!(
+                "No pairs provided - cannot expand levels"
+            )));
+        }
+
         let content = fs::read_to_string(path).await.map_err(|e| {
             EngineError::CustomError(anyhow::anyhow!("Failed to read config file: {}", e))
         })?;
@@ -49,10 +60,17 @@ impl LevelManager {
             EngineError::CustomError(anyhow::anyhow!("Failed to parse config: {}", e))
         })?;
 
+        // Expand each level config for each pair
         for level_config in config.levels {
-            let id = level_config.id.clone();
-            let level = Level::new(level_config);
-            self.levels.insert(id, level);
+            for pair in pairs {
+                // Generate pair-specific level ID: "buy_level_1" -> "buy_level_1_ETHUSDC"
+                let pair_str = pair.convert_to_smolstr();
+                let level_id = SmolStr::new(&format!("{}_{}", level_config.id, pair_str));
+
+                // Create level instance for this pair
+                let level = Level::new(level_config.clone(), pair.clone());
+                self.levels.insert(level_id, level);
+            }
         }
 
         self.config_path = Some(path.to_path_buf());
@@ -60,10 +78,18 @@ impl LevelManager {
     }
 
     /// Load levels and risk limits from configuration file
+    /// Expands pair-agnostic level configs to create Level instances for each pair
     pub async fn load_from_config_with_risk_limits(
         &mut self,
         path: &Path,
+        pairs: &[trading_core::types::common::Pair],
     ) -> Result<crate::risk::RiskLimits, EngineError> {
+        if pairs.is_empty() {
+            return Err(EngineError::CustomError(anyhow::anyhow!(
+                "No pairs provided - cannot expand levels"
+            )));
+        }
+
         let content = fs::read_to_string(path).await.map_err(|e| {
             EngineError::CustomError(anyhow::anyhow!("Failed to read config file: {}", e))
         })?;
@@ -79,28 +105,43 @@ impl LevelManager {
             EngineError::CustomError(anyhow::anyhow!("Failed to parse config: {}", e))
         })?;
 
+        // Expand each level config for each pair
         for level_config in config.levels {
-            let id = level_config.id.clone();
-            let level = Level::new(level_config);
-            self.levels.insert(id, level);
+            for pair in pairs {
+                // Generate pair-specific level ID: "buy_level_1" -> "buy_level_1_ETHUSDC"
+                let pair_str = pair.convert_to_smolstr();
+                let level_id = SmolStr::new(&format!("{}_{}", level_config.id, pair_str));
+
+                // Create level instance for this pair
+                let level = Level::new(level_config.clone(), pair.clone());
+                self.levels.insert(level_id, level);
+            }
         }
 
         self.config_path = Some(path.to_path_buf());
         Ok(config.risk_limits)
     }
 
-    /// Add a new level
-    pub async fn add_level(&mut self, config: LevelConfig) -> Result<(), EngineError> {
-        if self.levels.contains_key(&config.id) {
+    /// Add a new level for a specific pair
+    pub async fn add_level(
+        &mut self,
+        config: LevelConfig,
+        pair: trading_core::types::common::Pair,
+    ) -> Result<(), EngineError> {
+        // Generate pair-specific level ID
+        let pair_str = pair.convert_to_smolstr();
+        let level_id = SmolStr::new(&format!("{}_{}", config.id, pair_str));
+
+        if self.levels.contains_key(&level_id) {
             return Err(EngineError::CustomError(anyhow::anyhow!(
-                "Level with ID {} already exists",
-                config.id
+                "Level with ID {} already exists for pair {}",
+                config.id,
+                pair_str
             )));
         }
 
-        let id = config.id.clone();
-        let level = Level::new(config.clone());
-        self.levels.insert(id, level);
+        let level = Level::new(config.clone(), pair);
+        self.levels.insert(level_id, level);
 
         // Persist to MongoDB if enabled
         if let Some(persistence) = &self.persistence {
@@ -306,11 +347,44 @@ impl LevelManager {
     pub async fn save_all_levels(
         &self,
         risk_limits: &crate::risk::RiskLimits,
+        configured_pairs: &[trading_core::types::common::Pair],
     ) -> Result<(), EngineError> {
         if let Some(persistence) = &self.persistence {
-            let levels: Vec<LevelConfig> = self.levels.values().map(|l| l.config.clone()).collect();
+            // Extract unique level configs (deduplicate by config ID since we have multiple instances per pair)
+            let mut seen_configs = std::collections::HashSet::new();
+            let levels: Vec<LevelConfig> = self
+                .levels
+                .values()
+                .filter_map(|l| {
+                    // Only include each unique config once (remove pair suffix from ID)
+                    let base_id = l.config.id.as_str();
+                    // Extract base ID by removing pair suffix (format: "level_id_PAIR")
+                    let base_id = if let Some(underscore_pos) = base_id.rfind('_') {
+                        // Check if the part after last underscore looks like a pair (e.g., "ETHUSDC")
+                        let potential_pair = &base_id[underscore_pos + 1..];
+                        if potential_pair.len() >= 4
+                            && potential_pair
+                                .chars()
+                                .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
+                        {
+                            &base_id[..underscore_pos]
+                        } else {
+                            base_id
+                        }
+                    } else {
+                        base_id
+                    };
+
+                    if seen_configs.insert(base_id.to_string()) {
+                        Some(l.config.clone())
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+
             persistence
-                .save_levels(&levels, risk_limits)
+                .save_levels(&levels, risk_limits, configured_pairs)
                 .await
                 .map_err(|e| {
                     EngineError::CustomError(anyhow::anyhow!(
@@ -323,9 +397,16 @@ impl LevelManager {
     }
 
     /// Load levels from MongoDB (if available)
+    /// Expands pair-agnostic level configs to create Level instances for each pair
     pub async fn load_from_mongo(
         &mut self,
+        pairs: &[trading_core::types::common::Pair],
     ) -> Result<Option<crate::risk::RiskLimits>, EngineError> {
+        if pairs.is_empty() {
+            return Err(EngineError::CustomError(anyhow::anyhow!(
+                "No pairs provided - cannot expand levels"
+            )));
+        }
         if let Some(persistence) = &self.persistence {
             if let Some(bot_config) = persistence.load_levels().await.map_err(|e| {
                 EngineError::CustomError(anyhow::anyhow!(
@@ -340,11 +421,15 @@ impl LevelManager {
                 for level_doc in &bot_config.levels {
                     match persistence.document_to_level_config(level_doc) {
                         Ok(level_config) => {
-                            // Create level and add to manager
-                            let id = level_config.id.clone();
-                            let level = Level::new(level_config);
-                            self.levels.insert(id, level);
-                            loaded_count += 1;
+                            // Expand level config for each pair
+                            for pair in pairs {
+                                let pair_str = pair.convert_to_smolstr();
+                                let level_id =
+                                    SmolStr::new(&format!("{}_{}", level_config.id, pair_str));
+                                let level = Level::new(level_config.clone(), pair.clone());
+                                self.levels.insert(level_id, level);
+                                loaded_count += 1;
+                            }
                         }
                         Err(e) => {
                             tracing::warn!(
@@ -403,7 +488,6 @@ mod tests {
         LevelConfig {
             id: SmolStr::new(id),
             name: None,
-            symbol: Pair::new("BTC", "USDT"),
             side: Side::Buy,
             order_type: OrderTypeConfig::Limit,
             quantity: QuantityConfig::Fixed(dec!(0.001)),
@@ -426,7 +510,8 @@ mod tests {
         let mut manager = LevelManager::new();
         let config = create_test_level_config("test_level");
 
-        let result = manager.add_level(config.clone()).await;
+        let pair = Pair::new("BTC", "USDT");
+        let result = manager.add_level(config.clone(), pair).await;
         assert!(result.is_ok());
 
         let level = manager.get_level(&SmolStr::new("test_level"));
@@ -439,8 +524,12 @@ mod tests {
         let mut manager = LevelManager::new();
         let config = create_test_level_config("test_level");
 
-        manager.add_level(config.clone()).await.unwrap();
-        let result = manager.add_level(config).await;
+        let pair = Pair::new("BTC", "USDT");
+        manager
+            .add_level(config.clone(), pair.clone())
+            .await
+            .unwrap();
+        let result = manager.add_level(config, pair).await;
 
         assert!(result.is_err());
     }
@@ -449,9 +538,12 @@ mod tests {
     async fn test_level_manager_remove_level() {
         let mut manager = LevelManager::new();
         let config = create_test_level_config("test_level");
+        let pair = Pair::new("BTC", "USDT");
 
-        manager.add_level(config).await.unwrap();
-        let result = manager.remove_level(&SmolStr::new("test_level")).await;
+        manager.add_level(config, pair).await.unwrap();
+        let result = manager
+            .remove_level(&SmolStr::new("test_level_BTCUSDT"))
+            .await;
 
         assert!(result.is_ok());
         assert!(manager.get_level(&SmolStr::new("test_level")).is_none());
@@ -469,23 +561,19 @@ mod tests {
     async fn test_level_manager_enable_level() {
         let mut manager = LevelManager::new();
         let config = create_test_level_config("test_level");
+        let pair = Pair::new("BTC", "USDT");
+        let level_id = SmolStr::new("test_level_BTCUSDT");
 
-        manager.add_level(config).await.unwrap();
+        manager.add_level(config, pair).await.unwrap();
 
         // Disable first
-        manager
-            .disable_level(&SmolStr::new("test_level"))
-            .await
-            .unwrap();
-        let level = manager.get_level(&SmolStr::new("test_level")).unwrap();
+        manager.disable_level(&level_id).await.unwrap();
+        let level = manager.get_level(&level_id).unwrap();
         assert!(!level.config.enabled);
 
         // Then enable
-        manager
-            .enable_level(&SmolStr::new("test_level"))
-            .await
-            .unwrap();
-        let level = manager.get_level(&SmolStr::new("test_level")).unwrap();
+        manager.enable_level(&level_id).await.unwrap();
+        let level = manager.get_level(&level_id).unwrap();
         assert!(level.config.enabled);
     }
 
@@ -493,14 +581,13 @@ mod tests {
     async fn test_level_manager_disable_level() {
         let mut manager = LevelManager::new();
         let config = create_test_level_config("test_level");
+        let pair = Pair::new("BTC", "USDT");
+        let level_id = SmolStr::new("test_level_BTCUSDT");
 
-        manager.add_level(config).await.unwrap();
-        manager
-            .disable_level(&SmolStr::new("test_level"))
-            .await
-            .unwrap();
+        manager.add_level(config, pair).await.unwrap();
+        manager.disable_level(&level_id).await.unwrap();
 
-        let level = manager.get_level(&SmolStr::new("test_level")).unwrap();
+        let level = manager.get_level(&level_id).unwrap();
         assert!(!level.config.enabled);
         assert_eq!(level.state, LevelState::Paused);
     }
@@ -509,8 +596,9 @@ mod tests {
     async fn test_level_manager_get_levels_ready_to_post() {
         let mut manager = LevelManager::new();
         let config = create_test_level_config("test_level");
+        let pair = Pair::new("BTC", "USDT");
 
-        manager.add_level(config).await.unwrap();
+        manager.add_level(config, pair).await.unwrap();
 
         let ready = manager.get_levels_ready_to_post();
         assert_eq!(ready.len(), 1);
@@ -520,13 +608,15 @@ mod tests {
     async fn test_level_manager_update_level_state() {
         let mut manager = LevelManager::new();
         let config = create_test_level_config("test_level");
+        let pair = Pair::new("BTC", "USDT");
+        let level_id = SmolStr::new("test_level_BTCUSDT");
 
-        manager.add_level(config).await.unwrap();
+        manager.add_level(config, pair).await.unwrap();
         manager
-            .update_level_state(&SmolStr::new("test_level"), LevelState::Posted)
+            .update_level_state(&level_id, LevelState::Posted)
             .unwrap();
 
-        let level = manager.get_level(&SmolStr::new("test_level")).unwrap();
+        let level = manager.get_level(&level_id).unwrap();
         assert_eq!(level.state, LevelState::Posted);
     }
 
@@ -534,16 +624,18 @@ mod tests {
     async fn test_level_manager_handle_order_filled() {
         let mut manager = LevelManager::new();
         let config = create_test_level_config("test_level");
+        let pair = Pair::new("BTC", "USDT");
+        let level_id = SmolStr::new("test_level_BTCUSDT");
 
-        manager.add_level(config).await.unwrap();
+        manager.add_level(config, pair).await.unwrap();
 
         let order_id = OrderId::new("order123".into());
         manager
-            .handle_order_filled(&SmolStr::new("test_level"), &order_id)
+            .handle_order_filled(&level_id, &order_id)
             .await
             .unwrap();
 
-        let level = manager.get_level(&SmolStr::new("test_level")).unwrap();
+        let level = manager.get_level(&level_id).unwrap();
         assert_eq!(level.state, LevelState::Filled);
         assert!(level.last_filled_at.is_some());
     }
@@ -552,16 +644,18 @@ mod tests {
     async fn test_level_manager_handle_order_cancelled() {
         let mut manager = LevelManager::new();
         let config = create_test_level_config("test_level");
+        let pair = Pair::new("BTC", "USDT");
+        let level_id = SmolStr::new("test_level_BTCUSDT");
 
-        manager.add_level(config).await.unwrap();
+        manager.add_level(config, pair).await.unwrap();
 
         let order_id = OrderId::new("order123".into());
         manager
-            .handle_order_cancelled(&SmolStr::new("test_level"), &order_id)
+            .handle_order_cancelled(&level_id, &order_id)
             .await
             .unwrap();
 
-        let level = manager.get_level(&SmolStr::new("test_level")).unwrap();
+        let level = manager.get_level(&level_id).unwrap();
         assert_eq!(level.state, LevelState::Cancelled);
     }
 
@@ -572,19 +666,21 @@ mod tests {
         config.lifecycle.auto_repost = true;
         config.lifecycle.auto_repost_on_cancel = false;
 
-        manager.add_level(config).await.unwrap();
+        let pair = Pair::new("BTC", "USDT");
+        let level_id = SmolStr::new("test_level_BTCUSDT");
+        manager.add_level(config, pair).await.unwrap();
 
         // Set to filled state
         manager
-            .update_level_state(&SmolStr::new("test_level"), LevelState::Filled)
+            .update_level_state(&level_id, LevelState::Filled)
             .unwrap();
-        assert!(manager.should_repost(&SmolStr::new("test_level")).unwrap());
+        assert!(manager.should_repost(&level_id).unwrap());
 
         // Set to cancelled state
         manager
-            .update_level_state(&SmolStr::new("test_level"), LevelState::Cancelled)
+            .update_level_state(&level_id, LevelState::Cancelled)
             .unwrap();
-        assert!(!manager.should_repost(&SmolStr::new("test_level")).unwrap());
+        assert!(!manager.should_repost(&level_id).unwrap());
     }
 
     #[tokio::test]
@@ -592,16 +688,18 @@ mod tests {
         let mut manager = LevelManager::new();
         let config = create_test_level_config("test_level");
 
-        manager.add_level(config.clone()).await.unwrap();
+        let pair = Pair::new("BTC", "USDT");
+        let level_id = SmolStr::new("test_level_BTCUSDT");
+        manager.add_level(config.clone(), pair).await.unwrap();
 
         let mut new_config = config;
         new_config.enabled = false;
         manager
-            .update_level_config(&SmolStr::new("test_level"), new_config)
+            .update_level_config(&level_id, new_config)
             .await
             .unwrap();
 
-        let level = manager.get_level(&SmolStr::new("test_level")).unwrap();
+        let level = manager.get_level(&level_id).unwrap();
         assert!(!level.config.enabled);
     }
 }

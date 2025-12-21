@@ -176,7 +176,7 @@ pub async fn strategy_runner(
                 pair,
             );
         strategy_manager
-            .add_strategy(strategy, strategy_id.clone())
+            .add_strategy(strategy, strategy_id.clone(), pair.clone())
             .await;
         all_symbols.push(pair.clone());
         strategy_infos.push((
@@ -201,7 +201,12 @@ pub async fn strategy_runner(
         .min_notional
         .unwrap_or_else(|| rust_decimal::Decimal::new(5, 0));
 
-    // Wrap StrategyManager to work with StrategyExecutor
+    // Create TradingControl for enable/disable trading
+    let trading_control = Arc::new(TradingControl::new(services.trading_client.clone()));
+
+    // Wrap StrategyManager and set trading control for hierarchical control
+    let strategy_manager =
+        strategy_manager.with_trading_control(trading_control.enabled_flag().clone());
     let strategy_manager_arc = Arc::new(RwLock::new(strategy_manager));
     let strategy_wrapper = Arc::new(RwLock::new(StrategyManagerWrapper::new(
         strategy_manager_arc.clone(),
@@ -215,9 +220,6 @@ pub async fn strategy_runner(
 
     let trading_reconciliation_interval_secs =
         bot_config.reconciliation.trading_level_interval_ms / 1000;
-
-    // Create TradingControl for enable/disable trading
-    let trading_control = Arc::new(TradingControl::new(services.trading_client.clone()));
 
     // Create a dummy LevelManager for gRPC server (not used in strategies mode, but required by server)
     let dummy_level_manager = Arc::new(RwLock::new(LevelManager::new()));
@@ -403,66 +405,39 @@ pub async fn level_runner(
         LevelManager::new()
     };
 
-    // Try to load from MongoDB first (if enabled)
-    let risk_limits = if level_persistence.is_some() {
-        if let Ok(Some(mongo_risk_limits)) = level_manager.load_from_mongo().await {
-            info!("Loaded levels configuration from MongoDB");
-            mongo_risk_limits
-        } else {
-            // Fall back to file if MongoDB load fails
-            info!(
-                "Loading levels configuration from {}...",
-                levels_config_path
-            );
-            level_manager
-                .load_from_config_with_risk_limits(Path::new(&levels_config_path))
-                .await
-                .map_err(|e| format!("Failed to load levels config: {e}"))?
-        }
-    } else {
-        // Load from file
-        info!(
-            "Loading levels configuration from {}...",
-            levels_config_path
-        );
-        level_manager
-            .load_from_config_with_risk_limits(Path::new(&levels_config_path))
-            .await
-            .map_err(|e| format!("Failed to load levels config: {e}"))?
-    };
-
-    // Save to MongoDB if enabled (after loading from file or MongoDB)
-    if level_persistence.is_some() {
-        if let Err(e) = level_manager.save_all_levels(&risk_limits).await {
-            warn!("Failed to save levels to MongoDB: {}", e);
-        } else {
-            info!("Saved levels configuration to MongoDB");
-        }
-    }
-
-    info!("Loaded {} levels", level_manager.get_all_levels().len());
-
-    // Get pairs from exchange config
+    // Get pairs from exchange config (needed for expanding levels)
     let configured_pairs = bot_config.get_pairs()?;
     if configured_pairs.is_empty() {
         return Err("No pairs configured in bot.json".into());
     }
 
-    // Validate that all level symbols match pairs from bot config
-    let level_manager_guard = level_manager.get_all_levels();
-    for level in level_manager_guard.iter() {
-        let level_symbol = &level.config.symbol;
-        if !configured_pairs
-            .iter()
-            .any(|p| p.base == level_symbol.base && p.quote == level_symbol.quote)
+    // Always load from file first (file is source of truth)
+    info!(
+        "Loading levels configuration from {}...",
+        levels_config_path
+    );
+    let risk_limits = level_manager
+        .load_from_config_with_risk_limits(Path::new(&levels_config_path), &configured_pairs)
+        .await
+        .map_err(|e| format!("Failed to load levels config: {e}"))?;
+
+    // Update MongoDB with file-based config (file is source of truth)
+    if level_persistence.is_some() {
+        if let Err(e) = level_manager
+            .save_all_levels(&risk_limits, &configured_pairs)
+            .await
         {
-            warn!(
-                "Level {} uses symbol {} which is not in bot.json pairs. Available pairs: {:?}",
-                level.config.id, level_symbol, configured_pairs
-            );
+            warn!("Failed to update levels in MongoDB: {}", e);
+        } else {
+            info!("Updated levels configuration in MongoDB with file-based config");
         }
     }
-    drop(level_manager_guard);
+
+    info!(
+        "Loaded {} levels (expanded for {} pairs)",
+        level_manager.get_all_levels().len(),
+        configured_pairs.len()
+    );
 
     // Use all configured pairs for symbol registry (levels can use any of these pairs)
     let symbol_registry = Arc::new(trading_core::registry::symbol::SymbolRegistry::from_pairs(
@@ -562,26 +537,65 @@ pub async fn level_runner(
     // Create cancellation manager (empty conditions for now - can be configured later)
     let cancellation_manager = Arc::new(CancellationManager::new(Vec::new()));
 
-    // Create indicator subscriber using the shared indicator receiver
-    let indicator_subscriber =
-        Arc::new(RwLock::new(IndicatorSubscriber::new(services.indicator_rx)));
+    // Create shared indicators cache (used by both subscriber task and event loop)
+    let indicators_cache = Arc::new(RwLock::new(std::collections::HashMap::new()));
 
-    // Start indicator subscriber task
-    let subscriber_for_task = Arc::clone(&indicator_subscriber);
+    // Start indicator subscriber task - run loop directly without holding write lock on subscriber
+    let subscriber_cache = indicators_cache.clone();
+    let mut indicator_receiver = services.indicator_rx.resubscribe();
     let mut shutdown_rx_subscriber = services.shutdown_manager.subscribe();
     let subscriber_handle = tokio::spawn(async move {
-        let mut subscriber = subscriber_for_task.write().await;
-        tokio::select! {
-            result = subscriber.run() => {
-                if let Err(e) = result {
-                    error!("Indicator subscriber error: {e}");
+        info!("[INDICATOR SUBSCRIBER] Task started, waiting for indicator updates...");
+        loop {
+            tokio::select! {
+                update = indicator_receiver.recv() => {
+                    match update {
+                        Ok(update) => {
+                            let indicator_value = indicator_engine::data::IndicatorValue {
+                                indicator_id: update.indicator_id.clone(),
+                                indicator_name: update.indicator_name.clone(),
+                                pair: update.pair.clone(),
+                                value: update.value,
+                                timestamp: update.timestamp,
+                                period: update.period,
+                                is_composite: update.is_composite,
+                            };
+
+                            let mut indicators = subscriber_cache.write().await;
+                            indicators.insert(update.indicator_id.clone(), indicator_value.clone());
+                            drop(indicators);
+
+                            tracing::debug!(
+                                "[INDICATOR SUBSCRIBER] Updated cache with {}: {} = {}",
+                                update.indicator_id,
+                                update.indicator_name,
+                                update.value
+                            );
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                            tracing::warn!(
+                                "[INDICATOR SUBSCRIBER] Receiver lagged, skipped {skipped} messages. This may indicate slow processing."
+                            );
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                            tracing::warn!("[INDICATOR SUBSCRIBER] Channel closed - shutting down subscriber");
+                            break;
+                        }
+                    }
                 }
-            }
-            _ = shutdown_rx_subscriber.recv() => {
-                info!("Indicator subscriber shutting down");
+                _ = shutdown_rx_subscriber.recv() => {
+                    info!("[INDICATOR SUBSCRIBER] Shutting down");
+                    break;
+                }
             }
         }
     });
+
+    // Create indicator subscriber wrapper (for compatibility with event loop)
+    // Replace the subscriber's internal cache with our shared cache so both tasks use the same cache
+    let mut subscriber = IndicatorSubscriber::new(services.indicator_rx.resubscribe());
+    subscriber.set_cache(indicators_cache.clone());
+    let indicator_subscriber = Arc::new(RwLock::new(subscriber));
 
     // Create level-based event loop
     // Pass all pairs from bot config for reconciliation

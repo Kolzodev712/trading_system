@@ -2,19 +2,17 @@
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use smol_str::SmolStr;
-use trading_core::types::common::{OrderType, Pair, Side};
+use trading_core::types::common::{OrderType, Side};
 
-/// Level configuration - exchange-agnostic
+/// Level configuration - exchange-agnostic and pair-agnostic
+/// Levels are applied to pairs from the bot configuration
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct LevelConfig {
-    /// Unique identifier for this level
+    /// Unique identifier for this level (template, will be expanded per pair)
     pub id: SmolStr,
 
     /// Level name/description
     pub name: Option<SmolStr>,
-
-    /// Trading pair
-    pub symbol: Pair,
 
     /// Side: Buy (bid) or Sell (ask)
     pub side: Side,
@@ -35,6 +33,7 @@ pub struct LevelConfig {
     pub lifecycle: LifecycleConfig,
 
     /// Whether level is enabled
+    #[serde(default = "default_false")]
     pub enabled: bool,
 
     /// Level group (for management)
@@ -174,6 +173,10 @@ fn default_true() -> bool {
     true
 }
 
+fn default_false() -> bool {
+    false
+}
+
 /// Repost condition
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum RepostCondition {
@@ -200,12 +203,11 @@ mod tests {
         let config = LevelConfig {
             id: SmolStr::new("test_level"),
             name: Some(SmolStr::new("Test Level")),
-            symbol: Pair::new("BTC", "USDT"),
             side: Side::Buy,
             order_type: OrderTypeConfig::Limit,
             quantity: QuantityConfig::Fixed(dec!(0.001)),
             price: PriceConfig::Indicator {
-                indicator_name: SmolStr::new("sma_20_btcusdt"),
+                indicator_name: SmolStr::new("sma_20"),
                 offset_type: PriceOffsetType::PercentBelow,
                 offset_value: dec!(2.0),
             },

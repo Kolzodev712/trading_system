@@ -98,11 +98,9 @@ impl RiskManager {
         // Construct OrderRequest from ResolvedLevel for balance check
         let symbol = self
             .symbol_registry
-            .get_symbol(&resolved_level.level.config.symbol)
+            .get_symbol(&resolved_level.level.pair)
             .cloned()
-            .unwrap_or_else(|| {
-                Symbol::from(resolved_level.level.config.symbol.convert_to_smolstr())
-            });
+            .unwrap_or_else(|| Symbol::from(resolved_level.level.pair.convert_to_smolstr()));
 
         let order_request = OrderRequest {
             symbol,

@@ -192,6 +192,7 @@ mod tests {
         let pair = Pair::new("BTC", "USDT");
         let order = Order {
             order_id: OrderId::new("12345".into()),
+            client_order_id: None,
             symbol: pair.convert_to_smolstr().into(),
             side: Side::Buy,
             price: Decimal::new(90000, 0),
@@ -213,6 +214,7 @@ mod tests {
         let mut state = TradingState::new();
         let order = Order {
             order_id: OrderId::new("12345".into()),
+            client_order_id: None,
             symbol: "BTCUSDT".into(),
             side: Side::Buy,
             price: Decimal::new(90000, 0),
@@ -234,6 +236,7 @@ mod tests {
         let order_id = OrderId::new("12345".into());
         let order = Order {
             order_id: order_id.clone(),
+            client_order_id: None,
             symbol: "BTCUSDT".into(),
             side: Side::Buy,
             price: Decimal::new(90000, 0),
@@ -258,6 +261,7 @@ mod tests {
         let order_id = OrderId::new("12345".into());
         let order = Order {
             order_id: order_id.clone(),
+            client_order_id: None,
             symbol: "BTCUSDT".into(),
             side: Side::Buy,
             price: Decimal::new(90000, 0),
@@ -344,6 +348,7 @@ mod tests {
 
         let order1 = Order {
             order_id: OrderId::new("1".into()),
+            client_order_id: None,
             symbol: "BTCUSDT".into(),
             side: Side::Buy,
             price: Decimal::new(90000, 0),
@@ -356,6 +361,7 @@ mod tests {
 
         let order2 = Order {
             order_id: OrderId::new("2".into()),
+            client_order_id: None,
             symbol: "BTCUSDT".into(),
             side: Side::Buy,
             price: Decimal::new(90000, 0),
@@ -368,6 +374,7 @@ mod tests {
 
         let order3 = Order {
             order_id: OrderId::new("3".into()),
+            client_order_id: None,
             symbol: "ETHUSDT".into(), // Different symbol
             side: Side::Buy,
             price: Decimal::new(3000, 0),
@@ -391,6 +398,7 @@ mod tests {
         let order_id = OrderId::new("12345".into());
         let order = Order {
             order_id: order_id.clone(),
+            client_order_id: None,
             symbol: "BTCUSDT".into(),
             side: Side::Buy,
             price: Decimal::new(90000, 0),

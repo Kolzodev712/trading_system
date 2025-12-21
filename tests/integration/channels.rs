@@ -57,6 +57,7 @@ async fn test_exchange_channel() {
 
     let order = Order {
         order_id: OrderId::new("test".into()),
+        client_order_id: None,
         symbol: Symbol::from("BTCUSDT"),
         side: Side::Buy,
         price: dec!(50000),

@@ -99,6 +99,7 @@ pub enum OrderStatus {
     PendingCancel,
     Rejected,
     Expired,
+    Amended,
 }
 
 impl fmt::Display for OrderStatus {
@@ -111,6 +112,7 @@ impl fmt::Display for OrderStatus {
             OrderStatus::PendingCancel => write!(f, "PendingCancel"),
             OrderStatus::Rejected => write!(f, "Rejected"),
             OrderStatus::Expired => write!(f, "Expired"),
+            OrderStatus::Amended => write!(f, "Amended"),
         }
     }
 }
@@ -132,6 +134,12 @@ impl OrderId {
 
     pub fn as_str(&self) -> &str {
         self.0.as_str()
+    }
+
+    /// Try to parse the order ID as a numeric ID (i64)
+    /// Returns Some(i64) if the order ID is numeric, None otherwise
+    pub fn as_numeric_id(&self) -> Option<i64> {
+        self.0.as_str().parse::<i64>().ok()
     }
 }
 
@@ -332,6 +340,7 @@ mod tests {
         assert_eq!(format!("{}", OrderStatus::PendingCancel), "PendingCancel");
         assert_eq!(format!("{}", OrderStatus::Rejected), "Rejected");
         assert_eq!(format!("{}", OrderStatus::Expired), "Expired");
+        assert_eq!(format!("{}", OrderStatus::Amended), "Amended");
     }
 
     #[test]

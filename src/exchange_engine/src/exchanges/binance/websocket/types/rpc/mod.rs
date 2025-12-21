@@ -38,6 +38,7 @@ pub enum BinanceRpcResponse {
     OpenOrder(BinanceWsOrderResponse),
     CancelOrder(BinanceWsCancelOrderResponse),
     CancelAll(BinanceWsCancelAllOrdersResponse),
+    Error(String), // For connection errors
 }
 
 impl ToSmolStr for BinanceRpcResponse {
@@ -48,6 +49,59 @@ impl ToSmolStr for BinanceRpcResponse {
             BinanceRpcResponse::OpenOrder(_resp) => SmolStr::new("order.place"),
             BinanceRpcResponse::CancelOrder(_resp) => SmolStr::new("order.cancel"),
             BinanceRpcResponse::CancelAll(_resp) => SmolStr::new("openOrders.cancelAll"),
+            BinanceRpcResponse::Error(_) => SmolStr::new("error"),
+        }
+    }
+}
+
+impl BinanceRpcRequest {
+    pub fn get_id(&self) -> &SmolStr {
+        match self {
+            BinanceRpcRequest::AccountStatus(r) => &r.id,
+            BinanceRpcRequest::TestOrder(r) => &r.id,
+            BinanceRpcRequest::OpenOrder(r) => &r.id,
+            BinanceRpcRequest::CancelOrder(r) => &r.id,
+            BinanceRpcRequest::CancelAll(r) => &r.id,
+        }
+    }
+
+    pub fn get_method(&self) -> &SmolStr {
+        match self {
+            BinanceRpcRequest::AccountStatus(r) => &r.method,
+            BinanceRpcRequest::TestOrder(r) => &r.method,
+            BinanceRpcRequest::OpenOrder(r) => &r.method,
+            BinanceRpcRequest::CancelOrder(r) => &r.method,
+            BinanceRpcRequest::CancelAll(r) => &r.method,
+        }
+    }
+
+    pub fn to_message(
+        &self,
+    ) -> Result<tokio_tungstenite::tungstenite::protocol::Message, trading_core::error::EngineError>
+    {
+        // Serialize each variant individually (can't use untagged enum serialization)
+        let json = match self {
+            BinanceRpcRequest::AccountStatus(req) => serde_json::to_string(req)?,
+            BinanceRpcRequest::TestOrder(req) => serde_json::to_string(req)?,
+            BinanceRpcRequest::OpenOrder(req) => serde_json::to_string(req)?,
+            BinanceRpcRequest::CancelOrder(req) => serde_json::to_string(req)?,
+            BinanceRpcRequest::CancelAll(req) => serde_json::to_string(req)?,
+        };
+        Ok(tokio_tungstenite::tungstenite::protocol::Message::Text(
+            json,
+        ))
+    }
+}
+
+impl BinanceRpcResponse {
+    pub fn get_id(&self) -> Option<&SmolStr> {
+        match self {
+            BinanceRpcResponse::AccountStatus(r) => Some(&r.id),
+            BinanceRpcResponse::TestOrder(r) => Some(&r.id),
+            BinanceRpcResponse::OpenOrder(r) => Some(&r.id),
+            BinanceRpcResponse::CancelOrder(r) => Some(&r.id),
+            BinanceRpcResponse::CancelAll(r) => Some(&r.id),
+            BinanceRpcResponse::Error(_) => None, // Error responses don't have IDs
         }
     }
 }

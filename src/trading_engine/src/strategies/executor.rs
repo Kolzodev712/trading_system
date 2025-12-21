@@ -211,6 +211,35 @@ impl<S: Strategy> StrategyExecutor<S> {
                         continue;
                     }
 
+                    // Check global trading control first
+                    let global_enabled = if let Some(ref trading_enabled) = self.trading_enabled {
+                        *trading_enabled.read().await
+                    } else {
+                        true // Default to enabled if no control set
+                    };
+
+                    if !global_enabled {
+                        static SKIP_COUNT: std::sync::atomic::AtomicU64 =
+                            std::sync::atomic::AtomicU64::new(0);
+                        let skip_count =
+                            SKIP_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        if skip_count % 100 == 0 {
+                            info!("[StrategyExecutor] Global trading disabled, skipping orderbook (skipped {} so far)", skip_count);
+                        }
+                        continue; // Global trading disabled, skip this orderbook
+                    }
+
+                    // Log that we're processing orderbooks (periodically)
+                    static OB_COUNT: std::sync::atomic::AtomicU64 =
+                        std::sync::atomic::AtomicU64::new(0);
+                    let ob_count = OB_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    if ob_count % 20 == 0 {
+                        info!(
+                            "[StrategyExecutor] Processing orderbook #{} for {}",
+                            ob_count, orderbook.pair
+                        );
+                    }
+
                     // Get strategy decision using TradingStateManager's state
                     let order_request = {
                         let trading_state = self.trading_state_manager.get_state();

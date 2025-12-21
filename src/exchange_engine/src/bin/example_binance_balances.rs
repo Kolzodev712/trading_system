@@ -60,16 +60,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
 
-    // 3) Wait until the session.logon+subscribe dance completes
+    // 3) Wait until the RPC channel is ready
     loop {
-        if binance_client
-            .read()
-            .await
-            .get_connection_session()
-            .await
-            .is_some()
-        {
-            info!("WebSocket session ready, proceeding...");
+        let rpc_ready = {
+            let client = binance_client.read().await;
+            client.rpc_client().get_rpc_request_tx().await.is_some()
+        };
+        if rpc_ready {
+            info!("WebSocket RPC channel ready, proceeding...");
             break;
         }
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;

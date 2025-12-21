@@ -150,7 +150,6 @@ mod tests {
         LevelConfig {
             id: SmolStr::new(id),
             name: None,
-            symbol: Pair::new("BTC", "USDT"),
             side: Side::Buy,
             order_type: OrderTypeConfig::Limit,
             quantity: QuantityConfig::Fixed(dec!(0.001)),
@@ -178,7 +177,8 @@ mod tests {
         {
             let mut lm = level_manager.write().await;
             let config = create_test_level_config("test_level");
-            lm.add_level(config).await.unwrap();
+            let pair = Pair::new("BTC", "USDT");
+            lm.add_level(config, pair).await.unwrap();
         }
 
         // Update enabled field
@@ -222,7 +222,8 @@ mod tests {
         {
             let mut lm = level_manager.write().await;
             let config = create_test_level_config("test_level");
-            lm.add_level(config).await.unwrap();
+            let pair = Pair::new("BTC", "USDT");
+            lm.add_level(config, pair).await.unwrap();
         }
 
         // Try to update with wrong type
@@ -245,7 +246,8 @@ mod tests {
         {
             let mut lm = level_manager.write().await;
             let config = create_test_level_config("test_level");
-            lm.add_level(config).await.unwrap();
+            let pair = Pair::new("BTC", "USDT");
+            lm.add_level(config, pair).await.unwrap();
         }
 
         // Update risk limit

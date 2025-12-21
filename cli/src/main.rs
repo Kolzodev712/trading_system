@@ -113,12 +113,15 @@ struct Args {
 }
 
 fn parse_args(args: &[String]) -> Args {
-    // Simple argument parsing for now
-    // Skip the first arg (program name), get the second (endpoint) or use default
-    let endpoint = args
-        .get(1)
-        .map(|s| s.clone())
-        .unwrap_or_else(|| "http://127.0.0.1:50051".to_string());
+    // Check environment variable first (useful for Docker)
+    let endpoint = if let Ok(env_endpoint) = std::env::var("GRPC_ENDPOINT") {
+        env_endpoint
+    } else {
+        // Then check command line argument
+        args.get(1)
+            .map(|s| s.clone())
+            .unwrap_or_else(|| "http://127.0.0.1:50051".to_string())
+    };
 
     Args { endpoint }
 }
@@ -126,7 +129,9 @@ fn parse_args(args: &[String]) -> Args {
 fn print_help() {
     println!("Trading System CLI (TUI)");
     println!("Usage: trading-cli [endpoint]");
-    println!("Defaults to http://127.0.0.1:50051");
+    println!("Defaults to http://127.0.0.1:50051 (or GRPC_ENDPOINT env var)");
     println!("Options:");
     println!("  -h, --help    Show this help and exit");
+    println!("Environment:");
+    println!("  GRPC_ENDPOINT  Override default endpoint (useful for Docker)");
 }

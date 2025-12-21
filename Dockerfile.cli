@@ -54,8 +54,10 @@ RUN mkdir -p /app/logs && chown -R appuser:appuser /app
 USER appuser
 
 # Note: TUI CLI is interactive and requires terminal
-# It should be run with: docker run -it --rm trading-system-cli [endpoint]
-# Default endpoint: http://trading-system:50051 (when using docker-compose)
+# Usage:
+#   docker run -it --rm trading-system-cli [endpoint]
+#   docker run -it --rm -e GRPC_ENDPOINT=http://trading-system:50051 trading-system-cli
+# Default endpoint: http://trading-system:50051 (when using docker-compose network)
 
 ENTRYPOINT ["/app/trading-cli"]
 

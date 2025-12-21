@@ -13,6 +13,7 @@ use crate::strategies::strategy_manager::StrategyManager;
 use async_trait::async_trait;
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use tracing::info;
 use trading_core::{
     error::EngineError,
     types::{
@@ -53,12 +54,31 @@ impl Strategy for StrategyManagerWrapper {
         orderbook: &Orderbook,
         _state: &TradingState, // StrategyManager gets state from each strategy internally
     ) -> Result<Option<OrderRequest>, EngineError> {
+        // Log entry point (periodically)
+        static WRAPPER_COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let wrapper_count = WRAPPER_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let should_log = wrapper_count % 20 == 0;
+
+        if should_log {
+            info!(
+                "[StrategyManagerWrapper] on_orderbook called for {}",
+                orderbook.pair
+            );
+        }
+
         // Get all requests from StrategyManager
         // StrategyManager::on_orderbook gets state from each strategy internally
         let requests = {
             let manager = self.strategy_manager.read().await;
             manager.on_orderbook(orderbook).await?
         };
+
+        if should_log {
+            info!(
+                "[StrategyManagerWrapper] StrategyManager returned {} requests",
+                requests.len()
+            );
+        }
 
         // Return first request (StrategyExecutor processes one per orderbook update)
         // Other requests will be processed on subsequent orderbook updates

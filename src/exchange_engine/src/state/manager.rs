@@ -223,6 +223,16 @@ impl ExchangeStateManager {
             .collect()
     }
 
+    /// Get open orders for a specific pair (only New and PartiallyFilled orders)
+    pub async fn get_open_orders_for_pair(&self, pair: &Pair) -> Vec<Order> {
+        let state = self.state.read().await;
+        state
+            .get_open_orders_for_pair(pair)
+            .into_iter()
+            .cloned()
+            .collect()
+    }
+
     /// Get an order by ID
     ///
     /// # Arguments
@@ -353,6 +363,7 @@ mod tests {
             use trading_core::types::common::OrderStatus;
             Ok(Order {
                 order_id: OrderId::new(format!("mock_order_{}", req.symbol).into()),
+                client_order_id: None,
                 symbol: req.symbol,
                 side: req.side,
                 price: req.price,
@@ -405,6 +416,30 @@ mod tests {
             // Mock: always succeeds
             Ok(())
         }
+
+        async fn amend_order(
+            &self,
+            _order_id: OrderId,
+            new_request: OrderRequest,
+        ) -> Result<Order, EngineError> {
+            // Mock: cancel old order and create new one
+            use trading_core::types::common::OrderStatus;
+            Ok(Order {
+                order_id: OrderId::new(format!("amended_{}", new_request.symbol).into()),
+                client_order_id: None,
+                symbol: new_request.symbol,
+                side: new_request.side,
+                price: new_request.price,
+                amount: new_request.amount,
+                internal_created_at: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs(),
+                exchange_created_at: None,
+                status: OrderStatus::New,
+                filled_amount: Decimal::ZERO,
+            })
+        }
     }
 
     fn create_test_manager() -> (
@@ -429,6 +464,7 @@ mod tests {
     fn create_test_order() -> Order {
         Order {
             order_id: OrderId::new("12345".into()),
+            client_order_id: None,
             symbol: Symbol::from("BTCUSDT"),
             side: Side::Buy,
             price: Decimal::new(100, 0),

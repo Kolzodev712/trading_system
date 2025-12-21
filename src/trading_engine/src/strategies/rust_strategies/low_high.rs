@@ -97,7 +97,7 @@ impl BuyLowSellHigh {
                 Decimal::new(1, 2), // 0.1% max spread
                 Decimal::new(1, 0), // 1.0 minimum depth
             ),
-            time_filter: TimeFilter::new(true), // Enable time filtering
+            time_filter: TimeFilter::new(false), // Disable time filtering for now (was blocking trades)
             position_sizer: PositionSizer::new(
                 base_position_size,
                 Decimal::from(2),   // Max 2x base size
@@ -189,19 +189,18 @@ impl BuyLowSellHigh {
             return false;
         }
 
-        // RSI filter: only buy when oversold or neutral
+        // RSI filter: only buy when oversold or neutral (relaxed for testing)
         if let Some(rsi_val) = rsi {
-            if rsi_val > Decimal::from(50) {
-                // RSI above 50 = not oversold, skip buy
+            if rsi_val > Decimal::from(60) {
+                // RSI above 60 = not oversold, skip buy (relaxed from 50 for more activity)
                 return false;
             }
         }
 
         // Price threshold check
         let price_diff = (avg_price - current_price) / avg_price * Decimal::from(100);
-        let adaptive_threshold = self
-            .volatility_tracker
-            .get_adaptive_threshold(self.base_buy_threshold);
+        // Temporarily disable adaptive threshold for testing - use base threshold directly
+        let adaptive_threshold = self.base_buy_threshold; // self.volatility_tracker.get_adaptive_threshold(self.base_buy_threshold);
         price_diff >= adaptive_threshold
     }
 
@@ -222,19 +221,18 @@ impl BuyLowSellHigh {
             return false;
         }
 
-        // RSI filter: only sell when overbought or neutral
+        // RSI filter: only sell when overbought or neutral (relaxed for testing)
         if let Some(rsi_val) = rsi {
-            if rsi_val < Decimal::from(50) {
-                // RSI below 50 = not overbought, skip sell
+            if rsi_val < Decimal::from(40) {
+                // RSI below 40 = not overbought, skip sell (relaxed from 50 for more activity)
                 return false;
             }
         }
 
         // Price threshold check
         let price_diff = (current_price - avg_price) / avg_price * Decimal::from(100);
-        let adaptive_threshold = self
-            .volatility_tracker
-            .get_adaptive_threshold(self.base_sell_threshold);
+        // Temporarily disable adaptive threshold for testing - use base threshold directly
+        let adaptive_threshold = self.base_sell_threshold; // self.volatility_tracker.get_adaptive_threshold(self.base_sell_threshold);
         price_diff >= adaptive_threshold
     }
 }
@@ -246,6 +244,16 @@ impl Strategy for BuyLowSellHigh {
         orderbook: &Orderbook,
         state: &TradingState,
     ) -> Result<Option<OrderRequest>, EngineError> {
+        // Log that we're processing orderbooks (every 20th)
+        static CALL_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let call_count = CALL_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        if call_count % 20 == 0 {
+            info!(
+                "[Strategy {}] Processing orderbook #{}",
+                self.symbol, call_count
+            );
+        }
+
         // Performance-based pause check
         if self.performance_tracker.should_pause_trading() {
             debug!("Trading paused due to consecutive losses");
@@ -293,6 +301,26 @@ impl Strategy for BuyLowSellHigh {
             }
             None => return Ok(None),
         };
+
+        // Log price comparison periodically (every 20 orderbooks to see what's happening)
+        static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let count = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let should_log = count % 20 == 0;
+        if should_log {
+            let price_diff_percent = (avg_price - mid_price) / avg_price * Decimal::from(100);
+            // Temporarily disable adaptive threshold for testing - use base threshold directly
+            let adaptive_threshold = self.base_buy_threshold; // self.volatility_tracker.get_adaptive_threshold(self.base_buy_threshold);
+            info!(
+                "[Strategy {}] Price check: current={}, avg={}, diff={:.3}%, threshold={:.3}%, history={}/{}",
+                self.symbol,
+                mid_price,
+                avg_price,
+                price_diff_percent,
+                adaptive_threshold,
+                self.price_history.len(),
+                self.min_price_history
+            );
+        }
 
         // Get trend direction (if EMAs available)
         let trend = if let (Some(fast_ema), Some(slow_ema)) = (
@@ -379,7 +407,29 @@ impl Strategy for BuyLowSellHigh {
         let adjusted_sell_threshold = self.base_sell_threshold * threshold_adjustment;
 
         // Buy logic
-        if self.should_buy(mid_price, avg_price, trend, rsi) {
+        let buy_signal = self.should_buy(mid_price, avg_price, trend, rsi);
+
+        // Log why buy signal failed (periodically)
+        if !buy_signal && should_log {
+            let price_diff = (avg_price - mid_price) / avg_price * Decimal::from(100);
+            // Temporarily disable adaptive threshold for testing
+            let adaptive_threshold = self.base_buy_threshold; // self.volatility_tracker.get_adaptive_threshold(self.base_buy_threshold);
+            let trend_allows = self.trend_detector.should_allow_buy(trend);
+            let rsi_allows = rsi.map(|r| r <= Decimal::from(60)).unwrap_or(true);
+            let price_allows = price_diff >= adaptive_threshold;
+
+            info!(
+                "[Strategy {}] Buy blocked: price_diff={:.3}% (need {:.3}%), trend_ok={}, rsi_ok={}, price_ok={}",
+                self.symbol,
+                price_diff,
+                adaptive_threshold,
+                trend_allows,
+                rsi_allows,
+                price_allows
+            );
+        }
+
+        if buy_signal {
             let signal_strength = (avg_price - mid_price) / avg_price * Decimal::from(100);
 
             // Calculate dynamic position size

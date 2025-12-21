@@ -123,6 +123,8 @@ impl TradingCliServiceImpl {
         levels::LevelService {
             level_manager: self.level_manager.clone(),
             trading_client: self.trading_client.clone(),
+            trading_control: self.trading_control.clone(),
+            exchange_state_manager: self.exchange_state_manager.clone(),
         }
     }
 
@@ -131,6 +133,8 @@ impl TradingCliServiceImpl {
         trading_control::TradingControlService {
             trading_control: self.trading_control.clone(),
             trading_state_manager: self.trading_state_manager.clone(),
+            exchange_state_manager: self.exchange_state_manager.clone(),
+            level_manager: self.level_manager.clone(),
         }
     }
 }
@@ -227,6 +231,14 @@ impl TradingCliService for TradingCliServiceImpl {
         }
         let symbol = trading_core::types::common::Pair::new(parts[0], parts[1]);
         let strategy_id = StrategyManager::make_strategy_id(&req.strategy_name, &symbol);
+
+        // Check global trading control - if disabled, prevent enabling individual strategies
+        let global_trading_enabled = self.trading_control.is_enabled().await;
+        if !global_trading_enabled && req.enabled {
+            return Err(Status::failed_precondition(
+                "Cannot enable individual strategy when global trading is disabled. Enable global trading first."
+            ));
+        }
 
         // Get current enabled state
         let current_enabled = strategy_manager

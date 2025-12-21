@@ -368,6 +368,7 @@ mod tests {
     ) -> Order {
         Order {
             order_id: OrderId::new(order_id.into()),
+            client_order_id: None,
             symbol: Symbol::from(symbol),
             side: Side::Buy,
             price: Decimal::new(100, 0),

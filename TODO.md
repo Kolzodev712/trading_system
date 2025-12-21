@@ -1,6 +1,11 @@
 # Trading System TODO
 
 
+### Exchange engine
+- Implement Rate limit logic:
+    - Add generic types for different kinds of RL algorithms.
+    - Add binance specific RL implementation => https://developers.binance.com/docs/binance-spot-api-docs/websocket-api/rate-limits
+
 ### Make Strategies Work and Post Orders
 - [ ] Ensure strategy event loop processes orders correctly
 - [ ] Fix any issues with strategy order placement

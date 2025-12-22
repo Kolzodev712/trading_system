@@ -29,6 +29,7 @@ A mean reversion strategy that buys when prices drop below the average and sells
 - **RSI/momentum confirmation**: Uses Relative Strength Index for trade confirmation
 - **Smart order type selection**: Dynamically chooses between limit and market orders
 - **Performance tracking**: Adjusts strategy parameters based on recent performance
+- **Automatic order amendments**: Automatically amends existing orders when price/quantity changes instead of canceling and placing new
 
 ## Strategy Configuration
 
@@ -123,6 +124,33 @@ The TUI CLI displays a **Strategy panel** (replaces the Levels panel in strategi
 - The strategy ID format is `strategy_name:symbol` (e.g., "BuyLowSellHigh:ETH/USDC")
 
 ## Strategy Behavior
+
+### Order Amendment Logic
+
+Strategies automatically handle order amendments:
+
+**When Strategy Requests an Order**:
+1. **Check for Existing Order**: System checks if there's an existing order for the same symbol/side
+2. **Compare Values**: Compares existing order price/quantity with new request
+3. **Amend if Changed**: If price or quantity changed significantly, amends the existing order
+4. **Place New if None**: If no existing order or amendment not needed, places new order
+
+**Amendment Conditions**:
+- **Amend is used** when:
+  - Existing order found for same symbol/side
+  - Order status is `New` or `PartiallyFilled` (can be amended)
+  - Price or quantity changed (side unchanged)
+  
+- **Place new order** when:
+  - No existing order found
+  - Order is filled or cancelled (cannot be amended)
+  - Side changed (must place new order)
+  - Amendment fails (fallback to place new)
+
+**Benefits**:
+- **Reduced latency**: Amendments are faster than cancel+place
+- **Better execution**: Maintains order priority and reduces market impact
+- **Automatic**: No manual intervention needed - system decides automatically
 
 ### Buy Low, Sell High Strategy
 

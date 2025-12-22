@@ -41,6 +41,8 @@ The Trading System is a comprehensive, production-ready trading platform that su
 - ✅ **Risk Management**: Circuit breakers, position limits, daily loss limits
 - ✅ **Level Management**: Full CRUD operations via TUI or gRPC
 - ✅ **Indicator Engine**: Real-time technical indicators (SMA, EMA, composite)
+- ✅ **Rate Limiting**: Automatic rate limit enforcement with 429 error handling
+- ✅ **Order Amendments**: Automatic order amendments when price/quantity changes (no cancel+place)
 - ✅ **Comprehensive Testing**: Unit tests and integration tests
 
 ## System Architecture
@@ -244,6 +246,9 @@ For detailed architecture information, see the [Architecture Documentation](#arc
 - State management with reconciliation
 - Broadcast channel publishing
 - Exchange-agnostic design
+- **Rate limiting**: Automatic rate limit enforcement (REQUEST_WEIGHT, ORDERS)
+- **429 handling**: Automatic retry with `retryAfter` support
+- **Order amendments**: Native order modification API (amend instead of cancel+place)
 
 **See**: [Exchange Engine Architecture](architecture/01-exchange-engine.md)
 
@@ -266,6 +271,7 @@ For detailed architecture information, see the [Architecture Documentation](#arc
 - Strategy-based trading
 - State management and reconciliation
 - Risk integration
+- **Automatic order amendments**: Amends existing orders when price/quantity changes instead of canceling and placing new
 
 **See**: [Trading Engine Architecture](architecture/03-trading-engine.md)
 
@@ -1219,6 +1225,19 @@ Error: Authentication failed
 2. Check API key permissions
 3. Verify testnet/production environment
 4. Check rate limits
+
+#### Rate Limit Errors (429)
+
+```
+Error: Rate limited (429) - Request failed
+```
+
+**Solution**:
+1. The system automatically handles 429 errors with `retryAfter` waiting
+2. Check logs for rate limit usage and patterns
+3. Monitor `REQUEST_WEIGHT` and `ORDERS` limits
+4. Reduce request frequency if consistently hitting limits
+5. Check connection count (Binance: 300 connections per 5 minutes per IP)
 
 #### WebSocket Connection Error
 

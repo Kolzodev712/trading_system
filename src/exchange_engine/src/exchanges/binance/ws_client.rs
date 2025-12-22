@@ -12,6 +12,7 @@ use trading_core::{
 };
 
 use super::super::binance::websocket::types::rpc::{
+    amend_order::{map_amend_order_to_core, BinanceWsAmendOrderReqParams},
     cancel_all::BinanceWsCancelAllOrdersReqParams,
     cancel_order::BinanceWsCancelOrderReqParams,
     open_order::{map_open_order_to_core, BinanceWsOrderReqParams},
@@ -347,6 +348,18 @@ impl BinanceClient {
         Ok(resp)
     }
 
+    pub async fn amend_order_rpc(
+        &self,
+        params: BinanceWsAmendOrderReqParams,
+    ) -> Result<BinanceRpcResponse, EngineError> {
+        let req = self
+            .subscription_handler
+            .create_amend_order_request(params)
+            .await?;
+        let resp = self.send_rpc_and_wait(req).await?;
+        Ok(resp)
+    }
+
     pub async fn cancel_all_orders_rpc(
         &self,
         params: BinanceWsCancelAllOrdersReqParams,
@@ -369,6 +382,18 @@ impl BinanceClient {
                 }
             }
             BinanceRpcResponse::TestOrder(r) | BinanceRpcResponse::OpenOrder(r) => {
+                if r.status != 200 {
+                    let error_msg = r
+                        .error
+                        .as_ref()
+                        .map(|e| format!("code={code}, msg={msg}", code = e.code, msg = e.msg))
+                        .unwrap_or_else(|| format!("status={status}", status = r.status));
+                    return Err(EngineError::new_custom_error(
+                        format!("WS RPC error: {error_msg}", error_msg = error_msg).into(),
+                    ));
+                }
+            }
+            BinanceRpcResponse::AmendOrder(r) => {
                 if r.status != 200 {
                     let error_msg = r
                         .error
@@ -733,7 +758,10 @@ impl TradingClient<OrderRequest, Pair> for BinanceClient {
         order_id: OrderId,
         new_request: OrderRequest,
     ) -> Result<Order, EngineError> {
-        // Get original order from state
+        use std::time::Duration;
+        use tracing::warn;
+
+        // Get original order from state to get symbol and determine what changed
         let original_order = if let Some(state_mgr) = self.state_manager.lock().await.as_ref() {
             state_mgr.get_order_by_id(&order_id).await.ok_or_else(|| {
                 EngineError::new_custom_error(
@@ -746,29 +774,100 @@ impl TradingClient<OrderRequest, Pair> for BinanceClient {
             ));
         };
 
-        // 1. Cancel existing order
-        self.cancel_order_by_id(order_id.clone()).await?;
-
-        // 2. Mark original order as Amended in state
-        if let Some(state_mgr) = self.state_manager.lock().await.as_ref() {
-            let mut amended_order = original_order.clone();
-            amended_order.status = OrderStatus::Amended;
-            if let Err(e) = state_mgr.update_order(amended_order).await {
-                warn!("Failed to mark order as amended: {}", e);
-            }
+        // Check if order can be amended (must be NEW or PARTIALLY_FILLED)
+        if !matches!(
+            original_order.status,
+            OrderStatus::New | OrderStatus::PartiallyFilled
+        ) {
+            // Order is filled or cancelled - cannot amend, must cancel and place new
+            warn!(
+                "Order {} has status {:?}, cannot amend. Cancelling and placing new order.",
+                order_id.as_str(),
+                original_order.status
+            );
+            self.cancel_order_by_id(order_id.clone()).await?;
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            return self.open_order(new_request).await;
         }
 
-        // 3. Wait a bit for cancellation to propagate
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        // Check if side changed - if so, must cancel and place new
+        // Note: Order struct doesn't store order_type, so we can't check that
+        // If side changed, we must cancel and place new
+        if original_order.side != new_request.side {
+            warn!(
+                "Order {} has different side, cannot amend. Cancelling and placing new order.",
+                order_id.as_str()
+            );
+            self.cancel_order_by_id(order_id.clone()).await?;
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            return self.open_order(new_request).await;
+        }
 
-        // 4. Place new order
-        let new_order = self.open_order(new_request).await?;
+        // Use native amend - only price and/or quantity changed
+        let symbol: SmolStr = original_order.symbol.as_ref().into();
+        let params = if let Some(numeric_id) = order_id.as_numeric_id() {
+            BinanceWsAmendOrderReqParams::new_with_order_id(
+                symbol,
+                numeric_id,
+                Some(new_request.price),
+                Some(new_request.amount),
+            )
+        } else if let Some(ref client_order_id) = original_order.client_order_id {
+            BinanceWsAmendOrderReqParams::new_with_client_order_id(
+                symbol,
+                client_order_id.clone(),
+                Some(new_request.price),
+                Some(new_request.amount),
+            )
+        } else {
+            // Fallback to cancel+place if we can't identify the order
+            warn!(
+                "Cannot identify order {} for amend (no numeric ID or client_order_id). Cancelling and placing new order.",
+                order_id.as_str()
+            );
+            self.cancel_order_by_id(order_id.clone()).await?;
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            return self.open_order(new_request).await;
+        };
 
-        // 5. Create AmendedOrder record in state (if state manager supports it)
-        // For now, just return the new order
-        // TODO: Add AmendedOrder tracking to ExchangeStateManager if needed
+        let params_for_map = params.clone();
+        let resp = self.amend_order_rpc(params).await?;
+        Self::ensure_ok(&resp)?;
 
-        Ok(new_order)
+        match resp {
+            BinanceRpcResponse::AmendOrder(ws_resp) => {
+                if let Some(result) = ws_resp.result {
+                    let order = map_amend_order_to_core(params_for_map, result)?;
+                    Ok(order)
+                } else if let Some(error) = ws_resp.error {
+                    // If amend fails, fallback to cancel+place
+                    warn!(
+                        "Amend order failed with error: {} (code: {}). Falling back to cancel+place.",
+                        error.msg,
+                        error.code
+                    );
+                    self.cancel_order_by_id(order_id.clone()).await?;
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    self.open_order(new_request).await
+                } else {
+                    Err(EngineError::new_custom_error(
+                        "Amend order response missing result and error".into(),
+                    ))
+                }
+            }
+            BinanceRpcResponse::Error(msg) => {
+                warn!(
+                    "Amend order RPC error: {}. Falling back to cancel+place.",
+                    msg
+                );
+                self.cancel_order_by_id(order_id.clone()).await?;
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                self.open_order(new_request).await
+            }
+            other => Err(EngineError::new_custom_error(
+                format!("unexpected RPC variant in amend_order: {other:?}").into(),
+            )),
+        }
     }
 }
 

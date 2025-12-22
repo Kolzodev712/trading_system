@@ -145,11 +145,13 @@ ExchangeStateManager (via broadcast channel) → Trading Engine
 - **LevelExecutor** (`executor.rs`): Level execution
   - Resolves price and quantity using indicators
   - Places orders via TradingClient
+  - **Amends existing orders** when price/quantity changes (automatic)
   - Handles order fills and state transitions
 
 - **EventLoop** (`event_loop.rs`): Main event loop
   - Processes orderbook updates
   - Executes levels ready to post
+  - **Checks for order amendments** before posting new orders
   - Handles order fills and cancellations
 
 - **IndicatorResolver** (`resolver.rs`): Indicator resolution
@@ -198,9 +200,18 @@ ExchangeStateManager (via broadcast channel) → Trading Engine
 - **StrategyExecutor** (`executor.rs`): Strategy execution loop
   - Subscribes to orderbook updates via channels
   - Executes strategies based on market conditions
+  - **Checks for order amendments** before placing new orders
   - Uses TradingStateManager for state interactions
   - Respects trading control flag (enable/disable trading)
   - Performs risk checks before order placement
+
+**Order Amendment Logic**:
+- When a strategy requests an order:
+  1. System checks if there's an existing order for the same symbol/side
+  2. Compares existing order price/quantity with new request
+  3. If price or quantity changed (side unchanged), amends the existing order
+  4. If no existing order or amendment not needed, places new order
+- **Automatic**: No manual intervention needed - system decides automatically
 
 - **StrategyManager** (`strategy_manager.rs`): Multi-strategy management
   - Manages multiple strategies

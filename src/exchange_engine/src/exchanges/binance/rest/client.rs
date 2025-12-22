@@ -1,14 +1,19 @@
 use super::super::{config::BinanceConfig, utils::deserialize_or_none};
-use crate::exchanges::binance::sign::BinanceAuthenticator;
+use crate::exchanges::binance::{
+    rate_limit::{BinanceRateLimitType, BinanceRateLimiter},
+    sign::BinanceAuthenticator,
+};
 use async_trait::async_trait;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use smol_str::SmolStr;
 use std::{
     collections::{BTreeMap, HashMap},
     fmt::Debug,
+    sync::Arc,
 };
-use tracing::debug;
+use tracing::{debug, warn};
 use trading_core::{
     authenticator::ExchangeAuthenticator,
     error::EngineError,
@@ -23,10 +28,18 @@ pub struct BinanceHttpClient {
     pub handler: BinanceHandler,
     pub authenticator: BinanceAuthenticator,
     pub client: Client,
+    pub rate_limiter: Arc<BinanceRateLimiter>,
 }
 
 impl BinanceHttpClient {
     pub fn new(config: BinanceConfig) -> Self {
+        let rate_limiter = Arc::new(BinanceRateLimiter::new());
+        // Initialize with default limits
+        let limiter_clone = rate_limiter.clone();
+        tokio::spawn(async move {
+            limiter_clone.initialize_defaults().await;
+        });
+
         BinanceHttpClient {
             base_url: BINANCE_SPOT_URL.into(),
             handler: BinanceHandler,
@@ -35,6 +48,7 @@ impl BinanceHttpClient {
                 secret_key: config.rest.secret_key,
             },
             client: Client::new(),
+            rate_limiter,
         }
     }
 
@@ -99,9 +113,54 @@ impl BinanceHttpClient {
             request_builder = request_builder.query(&query_params);
         }
 
+        // Check rate limits before making request
+        // REST API uses REQUEST_WEIGHT (default weight is 1, but can vary by endpoint)
+        let request_weight = self.get_request_weight(endpoint);
+        self.rate_limiter
+            .wait_if_needed(BinanceRateLimitType::RequestWeight, request_weight)
+            .await;
+
         let response = request_builder.send().await?;
         let status = response.status();
+
+        // Extract headers before consuming response body
+        let used_weight_header = response
+            .headers()
+            .get("x-mbx-used-weight-1m")
+            .and_then(|h| h.to_str().ok())
+            .and_then(|s| s.parse::<i64>().ok());
+
         let text = response.text().await?;
+
+        // Handle 429 (Too Many Requests) with retryAfter
+        if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+            // Try to extract retryAfter from response for logging
+            if let Ok(json) = serde_json::from_str::<Value>(&text) {
+                if let Some(retry_after) =
+                    json.get("retryAfter").and_then(|v| v.as_u64()).or_else(|| {
+                        json.get("error")
+                            .and_then(|e| e.get("data"))
+                            .and_then(|d| d.get("retryAfter"))
+                            .and_then(|v| v.as_u64())
+                    })
+                {
+                    warn!(
+                        "Rate limited (429) - Request to {} failed. Retry after {}ms. Body: {}",
+                        endpoint, retry_after, text
+                    );
+                } else {
+                    warn!(
+                        "Rate limited (429) - Request to {} failed. Body: {}",
+                        endpoint, text
+                    );
+                }
+            }
+
+            return Err(EngineError::HttpCustomError(SmolStr::new(format!(
+                "Rate limited (429) - Request to {} failed with body: {}",
+                endpoint, text
+            ))));
+        }
 
         if !status.is_success() {
             return Err(EngineError::HttpCustomError(SmolStr::new(format!(
@@ -110,9 +169,39 @@ impl BinanceHttpClient {
             ))));
         }
 
+        // Record the request after successful response
+        self.rate_limiter
+            .record(BinanceRateLimitType::RequestWeight, request_weight)
+            .await;
+
+        // Log rate limit usage from headers if available
+        if let Some(used_weight) = used_weight_header {
+            // Update rate limiter with current usage (limit is typically 6000)
+            // We don't know the exact limit from headers, so we keep using defaults
+            debug!("Current REQUEST_WEIGHT usage: {}", used_weight);
+        }
+
         let mapped_response = deserialize_or_none::<Res>(&text)?;
 
         Ok(mapped_response)
+    }
+
+    /// Get request weight for an endpoint
+    /// Default is 1, but some endpoints have different weights
+    fn get_request_weight(&self, endpoint: &str) -> u64 {
+        // Binance REST API weights (from documentation)
+        match endpoint {
+            "exchangeInfo" => 10,
+            "klines" => 1,
+            "ticker/24hr" => 40, // per symbol, or 1 if no symbol
+            "ticker/price" => 1,
+            "depth" => {
+                // Weight depends on limit parameter
+                // Default is 1, but can be up to 50 for limit=5000
+                1 // We'll use 1 as default, can be enhanced to parse params
+            }
+            _ => 1, // Default weight
+        }
     }
 }
 

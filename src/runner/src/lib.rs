@@ -154,6 +154,21 @@ pub async fn strategy_runner(
             config.strategy_type.as_str(),
             pair
         );
+        // Get order size configs from first strategy (they should be the same for all)
+        let first_config = &strategy_configs[0];
+        let min_order_size = first_config
+            .min_order_size
+            .unwrap_or_else(|| rust_decimal::Decimal::new(1, 5));
+        let step_size = first_config
+            .step_size
+            .unwrap_or_else(|| rust_decimal::Decimal::new(1, 5));
+        let tick_size = first_config
+            .tick_size
+            .unwrap_or_else(|| rust_decimal::Decimal::new(1, 2));
+        let min_notional = first_config
+            .min_notional
+            .unwrap_or_else(|| rust_decimal::Decimal::new(5, 0));
+
         let strategy = Arc::new(RwLock::new(BuyLowSellHigh::new(
             services.trading_client.clone(),
             pair.clone(),
@@ -167,6 +182,12 @@ pub async fn strategy_runner(
             config.price_history_size,
             config.min_price_history,
             Some(services.indicator_calculator.clone()), // Use calculator directly (read-only, no Mutex)
+            services.asset_service.clone(),
+            bot_config.exchange.exchange.clone(),
+            min_order_size,
+            step_size,
+            tick_size,
+            min_notional,
         )));
 
         // Create strategy ID: "strategy_name:symbol"

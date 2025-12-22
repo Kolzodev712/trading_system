@@ -1,5 +1,5 @@
 //! Level executor - executes levels by resolving indicator values and placing orders
-use super::order_validation::{get_trading_rules, validate_order};
+use super::super::order_validation::{get_trading_rules, validate_order};
 use super::{IndicatorResolver, Level, ResolvedLevel};
 use asset_engine::AssetService;
 use indicator_engine::data::IndicatorValue;
@@ -187,6 +187,74 @@ impl LevelExecutor {
         let client = self.trading_client.write().await;
         let order = client.open_order(order_request).await?;
         Ok(order)
+    }
+
+    /// Amend an existing order for a level if price/quantity changed
+    /// Returns true if order was amended, false if no amendment needed
+    pub async fn amend_level_order_if_needed(
+        &self,
+        level: &Level,
+        resolved: &ResolvedLevel,
+        existing_order: &Order,
+    ) -> Result<Option<Order>, EngineError> {
+        use rust_decimal::Decimal;
+
+        // Check if price or quantity changed significantly (use small epsilon for comparison)
+        let price_changed =
+            (existing_order.price - resolved.resolved_price).abs() > Decimal::new(1, 10); // 0.0000000001 difference threshold
+        let quantity_changed =
+            (existing_order.amount - resolved.resolved_quantity).abs() > Decimal::new(1, 10);
+
+        // Only amend if price or quantity changed (and side/order_type haven't changed)
+        if !price_changed && !quantity_changed {
+            tracing::debug!(
+                "Level {} order {} doesn't need amendment (price={}, qty={} unchanged)",
+                level.config.id,
+                existing_order.order_id.as_str(),
+                existing_order.price,
+                existing_order.amount
+            );
+            return Ok(None);
+        }
+
+        // Check if side changed - if so, cannot amend, must cancel+place
+        if existing_order.side != resolved.level.config.side {
+            tracing::debug!(
+                "Level {} order {} side changed, cannot amend",
+                level.config.id,
+                existing_order.order_id.as_str()
+            );
+            return Ok(None);
+        }
+
+        tracing::info!(
+            "Amending level {} order {}: price {} -> {}, quantity {} -> {}",
+            level.config.id,
+            existing_order.order_id.as_str(),
+            existing_order.price,
+            resolved.resolved_price,
+            existing_order.amount,
+            resolved.resolved_quantity
+        );
+
+        // Create order request with new values
+        let order_request = OrderRequest {
+            symbol: resolved.level.pair.convert_to_smolstr().into(),
+            side: resolved.level.config.side.clone(),
+            order_type: resolved.resolved_order_type.clone(),
+            price: resolved.resolved_price,
+            amount: resolved.resolved_quantity,
+            timestamp: Some(trading_core::utils::current_timestamp()),
+            exchange_params: std::collections::HashMap::new(),
+        };
+
+        // Amend order
+        let client = self.trading_client.write().await;
+        let amended_order = client
+            .amend_order(existing_order.order_id.clone(), order_request)
+            .await?;
+
+        Ok(Some(amended_order))
     }
 
     /// Cancel all orders for a level

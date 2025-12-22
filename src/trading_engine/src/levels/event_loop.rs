@@ -407,28 +407,21 @@ impl LevelBasedEventLoop {
                 continue; // Skip disabled levels
             }
 
-            // CRITICAL: Check state again right before posting to prevent race condition
+            // CRITICAL: Check state again right before posting/amending to prevent race condition
             // Another orderbook update might have already posted this level
             // Use expanded ID to look up the level (matching how it's stored in HashMap)
-            {
-                let expanded_id = {
-                    let pair_str = level.pair.convert_to_smolstr();
-                    SmolStr::new(&format!("{}_{}", level.config.id, pair_str))
-                };
+            let expanded_id = {
+                let pair_str = level.pair.convert_to_smolstr();
+                SmolStr::new(&format!("{}_{}", level.config.id, pair_str))
+            };
+            let current_level = {
                 let manager = self.level_manager.read().await;
-                if let Some(current_level) = manager.get_level(&expanded_id) {
-                    if !current_level.is_ready_to_post() {
-                        tracing::info!(
-                            "Level {} ({}/{}) is no longer ready to post (state={:?}, active_orders={}), skipping",
-                            level.config.id,
-                            level.pair.base,
-                            level.pair.quote,
-                            current_level.state,
-                            current_level.active_orders.len()
-                        );
-                        continue;
-                    }
-                } else {
+                manager.get_level(&expanded_id).cloned()
+            };
+
+            let current_level = match current_level {
+                Some(level) => level,
+                None => {
                     tracing::warn!(
                         "Level {} ({}/{}) no longer exists in manager (expanded_id={}), skipping",
                         level.config.id,
@@ -438,13 +431,107 @@ impl LevelBasedEventLoop {
                     );
                     continue;
                 }
+            };
+
+            // Check if level has active orders - if so, try to amend instead of posting new
+            if !current_level.active_orders.is_empty()
+                && matches!(current_level.state, super::LevelState::Posted)
+            {
+                // Get the first active order (levels typically have one order)
+                if let Some(order_id) = current_level.active_orders.first() {
+                    // Get order from trading state (orders we placed)
+                    let trading_state = self.trading_state_manager.get_state();
+                    let existing_order_opt = {
+                        let state = trading_state.read().await;
+                        state.active_orders.get(order_id).cloned()
+                    };
+
+                    if let Some(existing_order) = existing_order_opt {
+                        // Check if order should be amended
+                        match self
+                            .level_executor
+                            .amend_level_order_if_needed(&current_level, &resolved, &existing_order)
+                            .await
+                        {
+                            Ok(Some(amended_order)) => {
+                                tracing::info!(
+                                    "[SUCCESS] Level {} amended order: {} for {}/{}",
+                                    current_level.config.id,
+                                    amended_order.order_id.as_str(),
+                                    current_level.pair.base,
+                                    current_level.pair.quote
+                                );
+
+                                // Update trading state with amended order
+                                self.trading_state_manager
+                                    .add_order(amended_order.clone())
+                                    .await;
+
+                                // Update level state (order ID might have changed if amend used cancel+place fallback)
+                                {
+                                    let mut manager = self.level_manager.write().await;
+                                    if let Some(level_mut) = manager.get_level_mut(&expanded_id) {
+                                        // If order ID changed, update active_orders
+                                        if amended_order.order_id != *order_id {
+                                            level_mut.active_orders.clear();
+                                            level_mut
+                                                .active_orders
+                                                .push(amended_order.order_id.clone());
+                                        }
+                                        level_mut.last_posted_at =
+                                            Some(trading_core::utils::current_timestamp());
+                                    }
+                                }
+
+                                continue; // Skip posting new order
+                            }
+                            Ok(None) => {
+                                // No amendment needed - order is already correct, skip posting
+                                tracing::debug!(
+                                    "Level {} order {} doesn't need amendment, skipping",
+                                    current_level.config.id,
+                                    order_id.as_str()
+                                );
+                                continue; // Skip posting new order
+                            }
+                            Err(e) => {
+                                tracing::warn!(
+                                    "Failed to amend level {} order {}: {}, will try posting new",
+                                    current_level.config.id,
+                                    order_id.as_str(),
+                                    e
+                                );
+                                // Continue to post new order on amend failure
+                            }
+                        }
+                    } else {
+                        tracing::debug!(
+                            "Level {} has active_order {} but order not found in trading state, will post new",
+                            current_level.config.id,
+                            order_id.as_str()
+                        );
+                    }
+                }
+            }
+
+            // Check if level is ready to post (no active orders)
+            if !current_level.is_ready_to_post() {
+                tracing::info!(
+                    "Level {} ({}/{}) is not ready to post (state={:?}, active_orders={}), skipping",
+                    current_level.config.id,
+                    current_level.pair.base,
+                    current_level.pair.quote,
+                    current_level.state,
+                    current_level.active_orders.len()
+                );
+                continue;
             }
 
             tracing::info!(
                 "Attempting to post level {} ({}/{}) - price={}, quantity={}",
-                level.config.id,
-                level.pair.base,
-                level.pair.quote,
+                current_level.config.id,
+                current_level.pair.base,
+                current_level.pair.quote,
                 resolved.resolved_price,
                 resolved.resolved_quantity
             );
@@ -453,7 +540,12 @@ impl LevelBasedEventLoop {
             // Use fresh indicators for posting as well
             match self
                 .level_executor
-                .post_level(&level, &fresh_indicators, Some(orderbook), &balances)
+                .post_level(
+                    &current_level,
+                    &fresh_indicators,
+                    Some(orderbook),
+                    &balances,
+                )
                 .await
             {
                 Ok(order) => {

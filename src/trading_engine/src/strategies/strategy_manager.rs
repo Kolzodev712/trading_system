@@ -10,7 +10,7 @@ use rust_decimal::Decimal;
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::info;
+use tracing::{error, info};
 use trading_core::{
     error::EngineError,
     types::{common::Pair, exchange::Order, market_data::Orderbook},
@@ -201,19 +201,26 @@ impl StrategyManager {
             let strategy = &self.strategies[idx];
             let mut strat = strategy.write().await;
             let state = strat.get_state().clone();
-            if let Some(req) = strat.on_orderbook(orderbook, &state).await? {
-                if should_log {
+            match strat.on_orderbook(orderbook, &state).await {
+                Ok(Some(req)) => {
                     info!(
-                        "[StrategyManager] Strategy {} returned order request",
-                        strategy_id
+                        "[StrategyManager] ✅ Strategy {} returned order request: {} {} @ {} x {}",
+                        strategy_id, req.side, req.symbol, req.price, req.amount
                     );
+                    requests.push(req);
                 }
-                requests.push(req);
-            } else if should_log {
-                info!(
-                    "[StrategyManager] Strategy {} returned None (no order)",
-                    strategy_id
-                );
+                Ok(None) => {
+                    if should_log {
+                        info!(
+                            "[StrategyManager] Strategy {} returned None (no order)",
+                            strategy_id
+                        );
+                    }
+                }
+                Err(e) => {
+                    error!("[StrategyManager] Strategy {} error: {}", strategy_id, e);
+                    return Err(e);
+                }
             }
         }
 

@@ -3,6 +3,7 @@ use crate::exchanges::binance::sign::BinanceWsAuthenticator;
 use super::types::{
     common::{BinanceInbound, SessionLogonMessage, SessionLogonParams},
     rpc::{
+        amend_order::{BinanceWsAmendOrderReqParams, BinanceWsAmendOrderRequest},
         balance::{
             BinanceAccountStatusParams, BinanceAccountStatusRequest, BinanceAccountStatusResponse,
         },
@@ -52,6 +53,7 @@ pub const OPEN_ORDER: &str = "order.place";
 pub const TEST_ORDER: &str = "order.test";
 pub const CANCEL_ORDER: &str = "order.cancel";
 pub const CANCEL_ALL_ORDERS: &str = "openOrders.cancelAll";
+pub const AMEND_ORDER: &str = "order.modify";
 
 #[derive(Debug, Clone)]
 pub struct BinanceChannel {
@@ -502,6 +504,72 @@ impl BinanceSubscriptionHandler {
 
         Ok(BinanceRpcRequest::CancelAll(request))
     }
+
+    fn build_signed_amend_order_params(
+        &self,
+        params: &BinanceWsAmendOrderReqParams,
+    ) -> Result<SessionLogonParams, EngineError> {
+        let timestamp = chrono::Utc::now().timestamp_millis();
+
+        let mut signed_params = BTreeMap::new();
+        signed_params.insert(
+            "apiKey".into(),
+            self.signer.api_key.expose_smol_str().clone(),
+        );
+        signed_params.insert("timestamp".into(), timestamp.to_string().into());
+        signed_params.insert("symbol".into(), params.symbol.clone());
+        if let Some(order_id) = params.order_id {
+            signed_params.insert("orderId".into(), order_id.to_string().into());
+        }
+        if let Some(orig_client_order_id) = &params.orig_client_order_id {
+            signed_params.insert("origClientOrderId".into(), orig_client_order_id.clone());
+        }
+        if let Some(price) = &params.price {
+            signed_params.insert("price".into(), price.to_string().into());
+        }
+        if let Some(quantity) = &params.quantity {
+            signed_params.insert("quantity".into(), quantity.to_string().into());
+        }
+
+        let signed_params = self.signer.build_signed_params(signed_params)?;
+
+        let api_key = signed_params.get("apiKey").cloned().ok_or_else(|| {
+            EngineError::new_custom_error("Missing apiKey in signed params".into())
+        })?;
+
+        let timestamp = signed_params
+            .get("timestamp")
+            .ok_or_else(|| EngineError::new_custom_error("Missing timestamp".into()))?
+            .parse::<i64>()
+            .map_err(|_| EngineError::new_custom_error("Invalid timestamp format".into()))?;
+
+        let signature = signed_params
+            .get("signature")
+            .cloned()
+            .ok_or_else(|| EngineError::new_custom_error("Missing signature".into()))?;
+
+        Ok(SessionLogonParams {
+            api_key,
+            timestamp,
+            signature,
+        })
+    }
+
+    pub async fn create_amend_order_request(
+        &self,
+        mut params: BinanceWsAmendOrderReqParams,
+    ) -> Result<BinanceRpcRequest, EngineError> {
+        let session = self.build_signed_amend_order_params(&params)?;
+        params.session = session;
+
+        let request = BinanceWsAmendOrderRequest {
+            id: generate_custom_uuid().into(),
+            method: AMEND_ORDER.into(),
+            params,
+        };
+
+        Ok(BinanceRpcRequest::AmendOrder(request))
+    }
 }
 
 impl SubscriptionHandler for BinanceSubscriptionHandler {
@@ -904,6 +972,7 @@ impl BinanceWSClient {
                             BinanceRpcRequest::OpenOrder(req)     => ("OpenOrder", serde_json::to_string(&req)),
                             BinanceRpcRequest::CancelOrder(req)   => ("CancelOrder", serde_json::to_string(&req)),
                             BinanceRpcRequest::CancelAll(req)     => ("CancelAll", serde_json::to_string(&req)),
+                            BinanceRpcRequest::AmendOrder(req)     => ("AmendOrder", serde_json::to_string(&req)),
                         };
                         match json {
                             Ok(payload) => {

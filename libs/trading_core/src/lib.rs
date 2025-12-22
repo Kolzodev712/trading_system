@@ -5,6 +5,7 @@ pub mod config;
 pub mod error;
 pub mod grpc;
 pub mod persistence;
+pub mod rate_limiter;
 pub mod redis;
 pub mod registry;
 pub mod rest;

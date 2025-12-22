@@ -1,6 +1,6 @@
 //! Indicator resolver - resolves indicator values for level configuration
+use super::super::order_validation::{get_trading_rules, round_price, round_quantity};
 use super::config::{PriceConfig, PriceOffsetType, QuantityConfig};
-use super::order_validation::{get_trading_rules, round_price, round_quantity};
 use asset_engine::AssetService;
 use indicator_engine::data::IndicatorValue;
 use rust_decimal::Decimal;

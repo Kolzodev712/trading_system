@@ -27,7 +27,11 @@ src/exchange_engine/
 │   └── exchanges/
 │       └── binance/
 │           ├── driver.rs          # BinanceDriver - exchange-specific driver
-│           └── ws_client.rs      # BinanceClient - WebSocket client
+│           ├── rate_limit.rs      # BinanceRateLimiter - rate limiting
+│           ├── rest/
+│           │   └── client.rs      # BinanceHttpClient - REST client with rate limiting
+│           ├── rpc_client.rs       # BinanceRpcClient - RPC client with rate limiting
+│           └── ws_client.rs       # BinanceClient - WebSocket client
 ```
 
 ### Components
@@ -74,7 +78,28 @@ run.rs (exchange-agnostic)
 - `ExchangeDriver` trait provides a common interface for all exchange drivers
 - Allows exchange-agnostic initialization in `run.rs`
 
-#### 3. State Management (`state/`)
+#### 3. Rate Limiting (`exchanges/{exchange}/rate_limit.rs`)
+
+**Purpose**: Enforces exchange API rate limits to prevent IP bans and ensure compliance.
+
+**Components**:
+- **Generic Rate Limiters** (`trading_core::rate_limiter`):
+  - `FixedWindowRateLimiter`: Fixed window algorithm (used for Binance)
+  - `TokenBucketRateLimiter`: Token bucket algorithm (for future use)
+  
+- **Exchange-Specific Rate Limiter** (`exchanges/binance/rate_limit.rs`):
+  - `BinanceRateLimiter`: Manages multiple rate limit types and intervals
+  - Handles REQUEST_WEIGHT and ORDERS limits
+  - Supports multiple intervals (SECOND, MINUTE, HOUR, DAY)
+  - Updates limits dynamically from API responses
+
+**Integration**:
+- **REST Client**: Checks REQUEST_WEIGHT limits before each REST API call
+- **WebSocket RPC Client**: Checks REQUEST_WEIGHT or ORDERS limits before each RPC request
+- **429 Handling**: Extracts `retryAfter` from 429 responses and waits appropriately
+- **Dynamic Updates**: Updates rate limits from `rateLimits` field in API responses
+
+#### 4. State Management (`state/`)
 
 ##### ExchangeState (`state.rs`)
 
@@ -269,9 +294,153 @@ Channel buffer sizes configured via `ChannelConfig`:
 - **Channel Lag**: Subscribers track lag independently
 - **State Inconsistencies**: Detected and corrected via reconciliation
 
+## Trading Operations API
+
+### TradingClient Trait
+
+The `TradingClient` trait provides exchange-agnostic trading operations:
+
+**Core Methods**:
+- `open_order(req: OrderRequest) -> Result<Order>` - Place a new order
+- `cancel_order_by_id(order_id: OrderId) -> Result<()>` - Cancel an order by ID
+- `cancel_all_orders(pair: &Pair) -> Result<()>` - Cancel all orders for a pair
+- `amend_order(order_id: OrderId, new_request: OrderRequest) -> Result<Order>` - Amend an existing order
+
+### Order Amendment
+
+**Purpose**: Modify existing orders (price/quantity) without canceling and placing new orders.
+
+**Implementation**:
+- **Binance**: Uses native `order.modify` WebSocket API
+- **Automatic Fallback**: Falls back to cancel+place if:
+  - Order is filled or cancelled (cannot be amended)
+  - Side changed (must cancel and place new)
+  - Amendment API call fails
+
+**Amendment Logic**:
+1. **Check Order State**: Verifies order is `New` or `PartiallyFilled` (can be amended)
+2. **Check Changes**: Only amends if price or quantity changed (side unchanged)
+3. **Native Amend**: Uses exchange's native amend API (e.g., Binance `order.modify`)
+4. **Fallback**: If amend fails or not applicable, cancels and places new order
+
+**Benefits**:
+- **Reduced Latency**: Amendments are faster than cancel+place
+- **Better Execution**: Maintains order priority and reduces market impact
+- **Automatic**: Trading engine automatically decides when to use amend vs cancel+place
+
+**Usage in Trading Engine**:
+- **Levels**: Automatically amends orders when resolved price/quantity changes
+- **Strategies**: Automatically amends orders when strategy requests order with changed price/quantity
+
+## Rate Limiting
+
+### Overview
+
+The Exchange Engine implements comprehensive rate limiting to comply with exchange API limits and prevent IP bans. Rate limiting is implemented at both the generic level (in `trading_core`) and exchange-specific level (in `exchange_engine`).
+
+### Generic Rate Limiter (`trading_core::rate_limiter`)
+
+The generic rate limiter module provides reusable rate limiting algorithms:
+
+#### Fixed Window Rate Limiter
+
+- **Algorithm**: Divides time into fixed windows (e.g., 1 minute, 10 seconds)
+- **Behavior**: All requests within a window count towards the limit, count resets at window start
+- **Use Case**: Binance's rate limits (which reset at fixed intervals)
+
+#### Token Bucket Rate Limiter
+
+- **Algorithm**: Maintains a bucket of tokens that refill at a constant rate
+- **Behavior**: Allows burst traffic up to bucket capacity, then steady-state at refill rate
+- **Use Case**: More flexible rate limiting with burst capacity
+
+### Binance Rate Limiter (`exchanges/binance/rate_limit.rs`)
+
+The Binance-specific rate limiter manages multiple rate limit types and intervals:
+
+#### Rate Limit Types
+
+- **REQUEST_WEIGHT**: Weight-based limits (IP-based, shared across connections)
+  - Default: 6000 per minute
+  - Used for: All API requests (REST and WebSocket)
+  
+- **ORDERS**: Order count limits (account-based, shared across API keys)
+  - Default: 50 per 10 seconds, 160000 per day
+  - Used for: Order placement operations
+
+#### Rate Limit Intervals
+
+Binance supports multiple intervals per rate limit type:
+- **SECOND**: Per-second limits (e.g., 50 orders per 10 seconds)
+- **MINUTE**: Per-minute limits (e.g., 6000 weight per minute)
+- **HOUR**: Per-hour limits
+- **DAY**: Per-day limits (e.g., 160000 orders per day)
+
+#### Implementation Details
+
+**Initialization**:
+- Rate limiters are initialized with default Binance limits on client creation
+- Limits are updated dynamically from API responses (`rateLimits` field)
+
+**Rate Limit Checking**:
+- Before each request, the rate limiter checks if the request is allowed
+- If not allowed, the client waits for the required duration (`retryAfter`)
+- The most restrictive limit (across all intervals) is enforced
+
+**Rate Limit Updates**:
+- Rate limits are extracted from API responses (`rateLimits` field in WebSocket responses)
+- Limits are updated dynamically as responses are received
+- REST API responses include rate limit headers (`x-mbx-used-weight-1m`)
+
+**429 Error Handling**:
+- When a 429 (Too Many Requests) error is received:
+  - The `retryAfter` field is extracted from the error response
+  - The client waits for the specified duration before retrying
+  - Error is logged with retry information
+
+### Integration
+
+#### REST Client (`rest/client.rs`)
+
+- **Rate Limiting**: Checks `REQUEST_WEIGHT` limits before each REST API call
+- **Request Weight**: Different endpoints have different weights (e.g., `exchangeInfo` = 10, most endpoints = 1)
+- **429 Handling**: Extracts `retryAfter` from 429 responses and logs appropriately
+- **Header Monitoring**: Tracks `x-mbx-used-weight-1m` header for usage monitoring
+
+#### WebSocket RPC Client (`rpc_client.rs`)
+
+- **Rate Limiting**: Checks appropriate limits (`REQUEST_WEIGHT` or `ORDERS`) before each RPC request
+- **Request Weight**: Most RPC requests cost 1 weight (connection costs 2)
+- **Rate Limit Type**: Order operations use `ORDERS` limit, others use `REQUEST_WEIGHT`
+- **Response Updates**: Extracts `rateLimits` from responses and updates limiters dynamically
+- **429 Handling**: Handles 429 errors with `retryAfter` extraction
+
+### Rate Limit Flow
+
+```
+Request → Rate Limiter Check
+    ├── Allowed? → Send Request → Record Usage → Update Limits from Response
+    └── Blocked? → Wait (retryAfter) → Retry Check
+```
+
+### Configuration
+
+Rate limiters are initialized with default Binance limits:
+- **REQUEST_WEIGHT**: 6000 per minute
+- **ORDERS**: 50 per 10 seconds, 160000 per day
+
+These defaults are updated automatically from API responses.
+
+### Best Practices
+
+1. **Monitor Rate Limits**: Check logs for rate limit usage and 429 errors
+2. **Respect Limits**: The system automatically enforces limits, but monitor for issues
+3. **Connection Limits**: Binance allows 300 connections per 5 minutes per IP
+4. **Weight Management**: Heavier requests (e.g., `exchangeInfo`) consume more weight
+
 ## Security
 
 - **API Keys**: Use `SecretString` wrapper to prevent accidental exposure
 - **TLS/SSL**: All connections use TLS
-- **Rate Limiting**: Handled automatically by exchange clients
+- **Rate Limiting**: Comprehensive rate limiting prevents IP bans and ensures API compliance
 

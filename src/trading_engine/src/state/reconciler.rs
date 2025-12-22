@@ -80,11 +80,17 @@ impl PositionReconciler {
                 pair, trading_position_qty, exchange_balance, discrepancy
             );
             // Update TradingState to match ExchangeStateManager
-            trading_state.update_position(
-                pair.clone(),
-                exchange_balance,
-                Decimal::ZERO, // Price will be updated on trades
-            );
+            // Calculate delta: exchange_balance - current_position
+            let delta = exchange_balance - trading_position_qty;
+            if delta != Decimal::ZERO {
+                // Use a reasonable price for reconciliation (use current price if available, else 0)
+                let reconcile_price = _current_price.unwrap_or(Decimal::ZERO);
+                trading_state.update_position(
+                    pair.clone(),
+                    delta, // Delta, not absolute value
+                    reconcile_price,
+                );
+            }
             reconciled = true;
             tracing::debug!(
                 "TradingState position reconciled for {}: updated to {}",

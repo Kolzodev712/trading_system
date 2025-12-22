@@ -261,8 +261,8 @@ impl<S: Strategy> StrategyExecutor<S> {
                     // Use the orderbook's pair (single source of truth) instead of converting from symbol
                     let orderbook_pair = orderbook.pair.clone();
                     if let Some(mut req) = order_request {
-                        debug!(
-                            "Strategy requested order: side={side}, symbol={symbol}, price={price}, amount={amount}",
+                        info!(
+                            "[StrategyExecutor] Strategy requested order: side={side}, symbol={symbol}, price={price}, amount={amount}",
                             side = req.side,
                             symbol = req.symbol,
                             price = req.price,
@@ -299,6 +299,88 @@ impl<S: Strategy> StrategyExecutor<S> {
                             "Attempting to place order (active_orders={active_count})...",
                             active_count = active_count
                         );
+
+                        // Check if there's an existing order for this symbol/side that should be amended
+                        let trading_state = self.trading_state_manager.get_state();
+                        let existing_order_opt = {
+                            let state = trading_state.read().await;
+                            // Find existing order matching symbol and side
+                            let found = state
+                                .active_orders
+                                .values()
+                                .find(|o| {
+                                    o.symbol == req.symbol && o.side == req.side
+                                        && matches!(
+                                            o.status,
+                                            trading_core::types::common::OrderStatus::New
+                                                | trading_core::types::common::OrderStatus::PartiallyFilled
+                                        )
+                                })
+                                .cloned();
+                            if found.is_some() {
+                                info!(
+                                    "[StrategyExecutor] Found existing order for {side} {symbol}, checking if amendment needed",
+                                    side = req.side,
+                                    symbol = req.symbol
+                                );
+                            }
+                            found
+                        };
+
+                        // If we found an existing order, try to amend it instead of placing new
+                        if let Some(existing_order) = existing_order_opt {
+                            use rust_decimal::Decimal;
+                            // Check if price or quantity changed significantly
+                            let price_changed =
+                                (existing_order.price - req.price).abs() > Decimal::new(1, 10);
+                            let quantity_changed =
+                                (existing_order.amount - req.amount).abs() > Decimal::new(1, 10);
+
+                            if price_changed || quantity_changed {
+                                debug!(
+                                    "Amending existing strategy order {}: price {} -> {}, quantity {} -> {}",
+                                    existing_order.order_id.as_str(),
+                                    existing_order.price,
+                                    req.price,
+                                    existing_order.amount,
+                                    req.amount
+                                );
+
+                                match trading_client
+                                    .write()
+                                    .await
+                                    .amend_order(existing_order.order_id.clone(), req.clone())
+                                    .await
+                                {
+                                    Ok(amended_order) => {
+                                        info!(
+                                            "[SUCCESS] Strategy amended order: {} for {}",
+                                            amended_order.order_id.as_str(),
+                                            orderbook_pair
+                                        );
+                                        // Update trading state with amended order
+                                        self.trading_state_manager.add_order(amended_order).await;
+                                        continue; // Skip placing new order
+                                    }
+                                    Err(e) => {
+                                        warn!(
+                                            "Failed to amend strategy order {}: {}, will place new order",
+                                            existing_order.order_id.as_str(),
+                                            e
+                                        );
+                                        // Continue to place new order on amend failure
+                                    }
+                                }
+                            } else {
+                                debug!(
+                                    "Strategy order {} doesn't need amendment (price={}, qty={} unchanged), skipping",
+                                    existing_order.order_id.as_str(),
+                                    existing_order.price,
+                                    existing_order.amount
+                                );
+                                continue; // Skip placing new order
+                            }
+                        }
 
                         // Check balance before placing order
                         // Use the orderbook's pair (single source of truth)
@@ -376,7 +458,7 @@ impl<S: Strategy> StrategyExecutor<S> {
 
                         // Get trading rules from Asset Engine (with config fallback)
                         // Use the orderbook's pair (single source of truth)
-                        use crate::levels::order_validation::{
+                        use crate::order_validation::{
                             get_trading_rules, round_price, round_quantity, validate_order,
                         };
                         let rules = get_trading_rules(
@@ -426,8 +508,8 @@ impl<S: Strategy> StrategyExecutor<S> {
 
                         // Validate order against trading rules (includes min_notional check)
                         if let Err(e) = validate_order(req.price, req.amount, &rules) {
-                            debug!(
-                                "Order validation failed: {error}. Skipping order. (price={price}, amount={amount})",
+                            warn!(
+                                "[StrategyExecutor] Order validation failed: {error}. Skipping order. (price={price}, amount={amount})",
                                 error = e,
                                 price = req.price,
                                 amount = req.amount
@@ -451,9 +533,13 @@ impl<S: Strategy> StrategyExecutor<S> {
                         // Clone req once for retry closure
                         let req_for_retry = req.clone();
 
-                        debug!(
-                            "Calling open_order with retry (max_attempts={max_attempts})...",
-                            max_attempts = retry_config.max_attempts
+                        info!(
+                            "[StrategyExecutor] Calling open_order with retry (max_attempts={max_attempts}) for {side} {symbol} @ {price} x {amount}",
+                            max_attempts = retry_config.max_attempts,
+                            side = req_for_retry.side,
+                            symbol = req_for_retry.symbol,
+                            price = req_for_retry.price,
+                            amount = req_for_retry.amount
                         );
 
                         // Helper to check if error is insufficient balance (shouldn't retry)
@@ -470,12 +556,12 @@ impl<S: Strategy> StrategyExecutor<S> {
                                 debug!("Retry attempt: calling open_order...");
                                 let result = client.write().await.open_order(req).await;
                                 match &result {
-                                    Ok(_) => debug!("open_order succeeded"),
+                                    Ok(_) => info!("[StrategyExecutor] open_order succeeded"),
                                     Err(e) => {
                                         if is_insufficient_balance(e) {
-                                            debug!("open_order failed: insufficient balance (will not retry): {error}", error = e);
+                                            warn!("[StrategyExecutor] open_order failed: insufficient balance (will not retry): {error}", error = e);
                                         } else {
-                                            debug!("open_order failed: {error}", error = e);
+                                            error!("[StrategyExecutor] open_order failed: {error}", error = e);
                                         }
                                     }
                                 }
@@ -506,7 +592,7 @@ impl<S: Strategy> StrategyExecutor<S> {
                                 order.filled_amount = rust_decimal::Decimal::ZERO;
 
                                 info!(
-                                    "Order placed successfully: id={order_id}, symbol={symbol}, side={side}, price={price}, amount={amount}",
+                                    "[StrategyExecutor] ✅ Order placed successfully: id={order_id}, symbol={symbol}, side={side}, price={price}, amount={amount}",
                                     order_id = order.order_id.as_str(),
                                     symbol = order.symbol,
                                     side = order.side,

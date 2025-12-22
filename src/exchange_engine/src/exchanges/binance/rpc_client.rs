@@ -1,8 +1,12 @@
-use crate::exchanges::binance::config::BinanceConfig;
-use crate::exchanges::binance::sign::BinanceWsAuthenticator;
-use crate::exchanges::binance::websocket::client::BinanceSubscriptionHandler;
-use crate::exchanges::binance::websocket::client::BinanceWSClient;
-use crate::exchanges::binance::websocket::types::rpc::{BinanceRpcRequest, BinanceRpcResponse};
+use crate::exchanges::binance::{
+    config::BinanceConfig,
+    rate_limit::{BinanceRateLimitType, BinanceRateLimiter},
+    sign::BinanceWsAuthenticator,
+    websocket::{
+        client::{BinanceSubscriptionHandler, BinanceWSClient},
+        types::rpc::{BinanceRpcRequest, BinanceRpcResponse},
+    },
+};
 use futures_util::{SinkExt, StreamExt};
 use smol_str::ToSmolStr;
 use std::collections::HashMap;
@@ -35,6 +39,7 @@ pub struct BinanceRpcClient {
     pub(crate) pending_rpc_requests: Arc<Mutex<HashMap<String, PendingRequest>>>,
     outbound_rpc_capacity: usize,
     ping_capacity: usize,
+    rate_limiter: Arc<BinanceRateLimiter>,
 }
 
 impl BinanceRpcClient {
@@ -45,6 +50,13 @@ impl BinanceRpcClient {
         let ws_client = BinanceWSClient::new(signer.clone(), session.clone());
         let subscription_handler = BinanceSubscriptionHandler::new(signer, session);
 
+        let rate_limiter = Arc::new(BinanceRateLimiter::new());
+        // Initialize with default limits
+        let limiter_clone = rate_limiter.clone();
+        tokio::spawn(async move {
+            limiter_clone.initialize_defaults().await;
+        });
+
         let client = Self {
             config,
             ws_client,
@@ -53,6 +65,7 @@ impl BinanceRpcClient {
             pending_rpc_requests: Arc::new(Mutex::new(HashMap::new())),
             outbound_rpc_capacity,
             ping_capacity,
+            rate_limiter,
         };
 
         // Start cleanup task for stale pending requests
@@ -105,6 +118,27 @@ impl BinanceRpcClient {
         let mut response_count = 0u64;
         while let Some(response) = rpc_response_rx.recv().await {
             response_count += 1;
+
+            // Extract and update rate limits from response
+            self.update_rate_limits_from_response(&response).await;
+
+            // Handle 429 errors
+            if let Some(status) = response.get_status() {
+                if status == 429 {
+                    warn!("[RPC HANDLER] Rate limited (429) - handling retry");
+                    // Extract retryAfter if available
+                    if let Some(retry_after) = response.get_retry_after() {
+                        let retry_after_ms = retry_after;
+                        let retry_after_duration = std::time::Duration::from_millis(retry_after_ms);
+                        warn!(
+                            "[RPC HANDLER] Rate limited, waiting {}ms before retry",
+                            retry_after_ms
+                        );
+                        tokio::time::sleep(retry_after_duration).await;
+                    }
+                }
+            }
+
             let request_id_opt = response.get_id().map(|id| id.to_string());
             if let Some(request_id) = request_id_opt {
                 tracing::info!(
@@ -138,6 +172,29 @@ impl BinanceRpcClient {
         }
         info!("[RPC HANDLER] RPC response handler ended (channel closed)");
         Ok(())
+    }
+
+    /// Update rate limits from RPC response
+    async fn update_rate_limits_from_response(&self, response: &BinanceRpcResponse) {
+        let rate_limits = match response {
+            BinanceRpcResponse::OpenOrder(resp) => resp.rate_limits.as_ref(),
+            BinanceRpcResponse::CancelOrder(resp) => resp.rate_limits.as_ref(),
+            BinanceRpcResponse::CancelAll(resp) => resp.rate_limits.as_ref(),
+            BinanceRpcResponse::AmendOrder(resp) => resp.rate_limits.as_ref(),
+            BinanceRpcResponse::AccountStatus(_) => None, // AccountStatus doesn't have rate_limits
+            BinanceRpcResponse::TestOrder(resp) => resp.rate_limits.as_ref(),
+            BinanceRpcResponse::Error(_) => None,
+        };
+
+        if let Some(limits) = rate_limits {
+            if !limits.is_empty() {
+                debug!(
+                    "[RPC] Updating rate limits from response: {} limits",
+                    limits.len()
+                );
+                self.rate_limiter.update_from_response(limits).await;
+            }
+        }
     }
 
     /// Send an RPC request and wait for the response
@@ -224,6 +281,14 @@ impl BinanceRpcClient {
             tokio::time::sleep(Duration::from_millis(RETRY_DELAY_MS)).await;
         };
 
+        // Check rate limits before sending request
+        let request_weight = self.get_request_weight(&req);
+        let rate_limit_type = self.get_rate_limit_type(&req);
+
+        self.rate_limiter
+            .wait_if_needed(rate_limit_type.clone(), request_weight)
+            .await;
+
         // Send request
         tracing::info!("[RPC] Sending request ID={} to RPC channel...", id);
         if rpc_tx.send(req).await.is_err() {
@@ -240,6 +305,11 @@ impl BinanceRpcClient {
             "[RPC] Request ID={} sent successfully, waiting for response (30s timeout)...",
             id
         );
+
+        // Record the request after sending
+        self.rate_limiter
+            .record(rate_limit_type, request_weight)
+            .await;
 
         // Wait for response with timeout
         match tokio::time::timeout(Duration::from_secs(30), rx).await {
@@ -491,5 +561,32 @@ impl BinanceRpcClient {
         let delay = std::cmp::min(base_delay * 2_u32.pow(iteration.min(6)), max_delay);
         warn!("[RPC] Waiting {:?} before reconnecting...", delay);
         tokio::time::sleep(delay).await;
+    }
+
+    /// Get request weight for rate limiting
+    /// WebSocket API: connecting costs 2 weight, most requests cost 1 weight
+    fn get_request_weight(&self, req: &BinanceRpcRequest) -> u64 {
+        match req {
+            BinanceRpcRequest::AccountStatus(_) => 1,
+            BinanceRpcRequest::TestOrder(_) => 1,
+            BinanceRpcRequest::OpenOrder(_) => 1,
+            BinanceRpcRequest::CancelOrder(_) => 1,
+            BinanceRpcRequest::CancelAll(_) => 1,
+            BinanceRpcRequest::AmendOrder(_) => 1,
+        }
+    }
+
+    /// Get rate limit type for a request
+    /// Order operations use ORDERS limit, others use REQUEST_WEIGHT
+    fn get_rate_limit_type(&self, req: &BinanceRpcRequest) -> BinanceRateLimitType {
+        match req {
+            BinanceRpcRequest::OpenOrder(_)
+            | BinanceRpcRequest::TestOrder(_)
+            | BinanceRpcRequest::AmendOrder(_) => BinanceRateLimitType::Orders,
+            BinanceRpcRequest::CancelOrder(_) | BinanceRpcRequest::CancelAll(_) => {
+                BinanceRateLimitType::Orders
+            }
+            BinanceRpcRequest::AccountStatus(_) => BinanceRateLimitType::RequestWeight,
+        }
     }
 }

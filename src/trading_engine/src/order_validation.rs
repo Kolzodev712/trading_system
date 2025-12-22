@@ -1,4 +1,6 @@
-//! Order validation and rounding using Asset Engine data with config fallback
+//! Common order validation and trading rules access
+//! Used by both levels and strategies to get exchange-agnostic trading rules
+
 use asset_engine::AssetService;
 use rust_decimal::Decimal;
 use std::sync::Arc;

@@ -15,6 +15,8 @@ This directory contains detailed architectural documentation for each service an
    - Single point of contact with exchange for account data
    - WebSocket and REST API integration
    - State management and reconciliation
+   - Rate limiting (REQUEST_WEIGHT, ORDERS) with automatic enforcement
+   - Order amendment API (amend instead of cancel+place)
 
 2. **[Market Data Engine](02-market-data-engine.md)**
    - Public market data management (orderbooks, trades)
@@ -25,6 +27,7 @@ This directory contains detailed architectural documentation for each service an
    - Core trading logic and execution
    - Level-based and strategy-based trading
    - State management and risk integration
+   - Automatic order amendments (amend when price/quantity changes)
 
 4. **[Indicator Engine](04-indicator-engine.md)**
    - Technical indicator calculation (SMA, EMA, composite)

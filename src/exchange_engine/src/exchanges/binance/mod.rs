@@ -1,6 +1,7 @@
 pub mod common_types;
 pub mod config;
 pub mod driver;
+pub mod rate_limit;
 pub mod rest;
 pub mod rest_client;
 pub mod rpc_client;

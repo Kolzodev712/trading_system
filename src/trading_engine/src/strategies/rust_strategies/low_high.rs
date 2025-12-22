@@ -405,7 +405,9 @@ impl Strategy for BuyLowSellHigh {
                 // Continue to normal trading logic - skip stop-loss entirely
             } else if position.quantity > Decimal::ZERO {
                 // Additional safety: verify position symbol matches again before using it
-                if position.symbol.base != self.symbol.base || position.symbol.quote != self.symbol.quote {
+                if position.symbol.base != self.symbol.base
+                    || position.symbol.quote != self.symbol.quote
+                {
                     warn!(
                         "[Strategy {}] Position base/quote mismatch: expected {}/{}, got {}/{}. Skipping stop-loss.",
                         self.symbol, self.symbol.base, self.symbol.quote, position.symbol.base, position.symbol.quote
@@ -420,8 +422,9 @@ impl Strategy for BuyLowSellHigh {
                     } else {
                         Decimal::ZERO
                     };
-                    
-                    if price_diff_ratio > Decimal::new(5, 1) { // 0.5 = 50%
+
+                    if price_diff_ratio > Decimal::new(5, 1) {
+                        // 0.5 = 50%
                         warn!(
                             "[Strategy {}] Position entry price ({}) is >50% different from current price ({}). Skipping stop-loss to prevent false triggers.",
                             self.symbol, position.avg_price, mid_price
@@ -460,7 +463,8 @@ impl Strategy for BuyLowSellHigh {
                     // Check take-profit (only if we have a valid position for THIS symbol)
                     if let Some(take_profit) = self.take_profit_percent {
                         if position.avg_price > Decimal::ZERO {
-                            let profit_percent = (mid_price - position.avg_price) / position.avg_price
+                            let profit_percent = (mid_price - position.avg_price)
+                                / position.avg_price
                                 * Decimal::from(100);
                             if profit_percent >= take_profit {
                                 info!("Take-profit triggered: profit={profit_percent:.2}%, threshold={take_profit}%");

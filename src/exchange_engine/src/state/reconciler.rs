@@ -50,6 +50,7 @@ impl StateReconciler {
         &self,
         _configured_pairs: &[Pair],
         exchange_state: Arc<RwLock<ExchangeState>>,
+        trades_fetched: usize,
     ) -> Result<ReconciliationResult, EngineError> {
         if !self.enabled {
             info!("Bootstrap reconciliation skipped (disabled)");
@@ -61,14 +62,13 @@ impl StateReconciler {
         // Count balances in state (already updated by ExchangeStateManager::bootstrap_reconcile)
         let state = exchange_state.read().await;
         let balance_count = state.get_balances().len();
+        let trade_count = state.get_trades().len();
         drop(state);
 
-        // Note: fetch_open_orders and fetch_trades may not be implemented yet
-        // For now, we'll just return the counts we fetched
         let result = ReconciliationResult {
             balances_fetched: balance_count,
             orders_fetched: 0,
-            trades_fetched: 0,
+            trades_fetched: trades_fetched.max(trade_count), // Use the higher of fetched vs actual count
             discrepancies: Vec::new(),
         };
 

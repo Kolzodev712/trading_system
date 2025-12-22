@@ -462,6 +462,17 @@ impl TradingClient<OrderRequest, Pair> for BinanceClient {
         match resp {
             BinanceRpcResponse::OpenOrder(ws_resp) => {
                 let order = map_open_order_to_core(params_for_map.clone(), ws_resp.clone())?;
+
+                // Add order to ExchangeState immediately so execution reports can calculate fill deltas correctly
+                if let Some(state_mgr) = self.state_manager.lock().await.as_ref() {
+                    if let Err(e) = state_mgr.update_order(order.clone()).await {
+                        warn!(
+                            "[BINANCE CLIENT] Failed to add order to ExchangeState after placement: {}",
+                            e
+                        );
+                    }
+                }
+
                 Ok(order)
             }
             BinanceRpcResponse::Error(msg) => Err(EngineError::new_custom_error(msg.into())),

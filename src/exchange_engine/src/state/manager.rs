@@ -270,9 +270,36 @@ impl ExchangeStateManager {
             balances.len()
         );
 
+        // Fetch trades for each configured pair
+        let mut total_trades = 0;
+        let trading_client = self.trading_client.clone();
+        for pair in configured_pairs {
+            match trading_client.read().await.fetch_trades(Some(pair)).await {
+                Ok(trades) => {
+                    if !trades.is_empty() {
+                        let mut state = self.state.write().await;
+                        state.update_trades(pair, trades.clone());
+                        drop(state);
+                        total_trades += trades.len();
+                        info!("Bootstrap: Fetched {} trades for {}", trades.len(), pair);
+                    }
+                }
+                Err(e) => {
+                    warn!("Bootstrap: Failed to fetch trades for {}: {}", pair, e);
+                }
+            }
+        }
+
+        if total_trades > 0 {
+            info!(
+                "Bootstrap: Updated ExchangeStateManager with {} total trades",
+                total_trades
+            );
+        }
+
         // Call reconciler for the result (it will log the counts)
         self.reconciler
-            .bootstrap_reconcile(configured_pairs, self.state.clone())
+            .bootstrap_reconcile(configured_pairs, self.state.clone(), total_trades)
             .await
     }
 

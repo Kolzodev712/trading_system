@@ -275,6 +275,15 @@ impl BinanceStreamingClient {
                             // Delta is the new fill amount in this ExecutionReport
                             let fill_delta = cumulative_filled - previous_filled;
 
+                            debug!(
+                                "[STREAMING] Trade creation: order_id={}, cumulative_filled={}, previous_filled={}, fill_delta={}, status={:?}",
+                                report_for_trade.order_id,
+                                cumulative_filled,
+                                previous_filled,
+                                fill_delta,
+                                order_status
+                            );
+
                             // Only create trade if there's actually a new fill (delta > 0)
                             if fill_delta > rust_decimal::Decimal::ZERO {
                                 // Get pair from symbol registry
@@ -305,8 +314,18 @@ impl BinanceStreamingClient {
                                         fee_currency: Symbol::from("USDT"), // Default, will be updated from REST if needed
                                     };
 
-                                    if let Err(e) = state_mgr.add_trade(trade).await {
+                                    if let Err(e) = state_mgr.add_trade(trade.clone()).await {
                                         warn!("[STREAMING] Failed to add trade from execution report: {}", e);
+                                    } else {
+                                        info!(
+                                            "[STREAMING] ✅ Trade created: order_id={}, trade_id={}, pair={}, side={:?}, price={}, quantity={}",
+                                            report_for_trade.order_id,
+                                            trade.trade_id,
+                                            trade.pair,
+                                            trade.side,
+                                            trade.price,
+                                            trade.quantity
+                                        );
                                     }
                                 } else {
                                     warn!("[STREAMING] Could not find pair for symbol {} when creating trade", report_for_trade.symbol);

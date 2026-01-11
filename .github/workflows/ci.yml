@@ -185,6 +185,15 @@ jobs:
       
       - name: Cargo check
         run: cargo check --all-targets --all-features
+      
+      # Note: Python config generation will be added when implemented
+      # This would generate indicators.json before Rust build
+      # - name: Generate indicator configs (if Python code exists)
+      #   working-directory: python
+      #   run: |
+      #     if [ -f "indicator_config_generator/src/cli.py" ]; then
+      #       uv run indicator-generate --pairs BTCUSDT --output ../config/indicators.json || true
+      #     fi
 
   # Build Docker images (optional, for validation)
   docker-build:
@@ -215,4 +224,65 @@ jobs:
           tags: trading-system-cli:test
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  # Python workspace validation
+  python-check:
+    name: Python Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      
+      - name: Cache Python dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            python/.venv
+            ~/.cache/uv
+          key: ${{ runner.os }}-python-${{ hashFiles('python/**/pyproject.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-python-
+      
+      - name: Install Python dependencies
+        working-directory: python
+        run: uv sync --dev
+      
+      - name: Check Python workspace structure
+        working-directory: python
+        run: |
+          # Verify workspace packages exist
+          test -d indicator_config_generator || exit 1
+          test -d strategy_dsl || exit 1
+          test -f pyproject.toml || exit 1
+      
+      - name: Verify uv.lock is up to date (if exists)
+        working-directory: python
+        run: |
+          if [ -f "uv.lock" ]; then
+            uv lock --check || (echo "Error: uv.lock is out of date. Run 'uv lock' to update." && exit 1)
+          else
+            echo "Note: uv.lock not found. This is expected if dependencies haven't been added yet."
+          fi
+      
+      # Note: Linting/tests will be added when Python code is implemented
+      # - name: Lint Python code
+      #   working-directory: python
+      #   run: uv run ruff check .
+      #
+      # - name: Type check Python code
+      #   working-directory: python
+      #   run: uv run mypy .
+      #
+      # - name: Run Python tests
+      #   working-directory: python
+      #   run: uv run pytest
 

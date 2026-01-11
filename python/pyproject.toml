@@ -1,0 +1,36 @@
+[project]
+name = "trading-system-python"
+version = "0.1.0"
+description = "Python tooling for trading system (indicator generation, strategy DSL)"
+requires-python = ">=3.11"
+dependencies = []
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+# Workspace packages
+[tool.uv.workspace]
+members = [
+    "indicator_config_generator",
+    "strategy_dsl",
+]
+
+# Shared dependencies (similar to workspace.dependencies in Cargo.toml)
+[tool.uv.sources]
+# Define shared dependency versions here
+
+# Tool configuration
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP"]
+ignore = []
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+

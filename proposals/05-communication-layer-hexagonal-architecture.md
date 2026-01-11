@@ -1216,7 +1216,7 @@ This ensures zero downtime migration.
 4. **Mobile App**: Add WebSocket transport for mobile
 5. **Analytics Pipeline**: Pub/Sub → Data warehouse
 6. **Alerting**: Pub/Sub → Alerting system
-7. **HFT Daemon**: IPC transport for ultra-low latency (see Proposal 06)
+7. **HFT Daemon**: IPC transport for ultra-low latency (see Proposal 10)
 8. **Multi-tenant**: Gateway handles multiple tenants/clients
 9. **Observability Enhancements**:
    - Prometheus metrics integration

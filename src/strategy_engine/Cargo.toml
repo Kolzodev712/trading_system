@@ -1,0 +1,37 @@
+[package]
+name = "strategy_engine"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+trading_core = { path = "../../libs/trading_core" }
+indicator_engine = { path = "../indicator_engine" }
+
+# Logging
+tracing = { workspace = true }
+
+# SerDe
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Async
+tokio = { workspace = true }
+async-trait = { workspace = true }
+
+# Errors
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+
+# Utils
+rust_decimal = { workspace = true }
+rust_decimal_macros = { workspace = true }
+smol_str = { workspace = true }
+chrono = { workspace = true }
+parking_lot = { workspace = true }
+
+# MongoDB (for persistence)
+mongodb = { workspace = true }
+
+# Testing
+tokio-test = { workspace = true }
+

@@ -109,6 +109,7 @@ impl RiskManager {
             amount: resolved_level.resolved_quantity,
             price: resolved_level.resolved_price,
             timestamp: None,
+            instrument_type: trading_core::types::common::InstrumentType::Spot,
             exchange_params: std::collections::HashMap::new(),
         };
 

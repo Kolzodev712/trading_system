@@ -180,6 +180,7 @@ impl LevelExecutor {
             price: resolved.resolved_price,
             amount: resolved.resolved_quantity,
             timestamp: Some(trading_core::utils::current_timestamp()),
+            instrument_type: trading_core::types::common::InstrumentType::Spot,
             exchange_params: std::collections::HashMap::new(),
         };
 
@@ -245,6 +246,7 @@ impl LevelExecutor {
             price: resolved.resolved_price,
             amount: resolved.resolved_quantity,
             timestamp: Some(trading_core::utils::current_timestamp()),
+            instrument_type: trading_core::types::common::InstrumentType::Spot,
             exchange_params: std::collections::HashMap::new(),
         };
 

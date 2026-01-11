@@ -106,10 +106,11 @@ async fn test_multiple_levels_concurrent_operations() {
     let ready = manager.get_levels_ready_to_post();
     assert_eq!(ready.len(), 5); // Half enabled
 
-    // Disable all
+    // Disable all (level IDs are stored as {config.id}_{pair})
+    let pair_str = Pair::new("BTC", "USDT").convert_to_smolstr();
     for i in 0..10 {
         manager
-            .disable_level(&SmolStr::new(format!("level_{}", i)))
+            .disable_level(&SmolStr::new(format!("level_{}_{}", i, pair_str)))
             .await
             .unwrap();
     }

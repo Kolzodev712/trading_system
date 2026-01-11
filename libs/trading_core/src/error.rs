@@ -82,6 +82,9 @@ pub enum EngineError {
     #[error("Unsupported Exchange")]
     UnsupportedExchange,
 
+    #[error("Feature not supported: {0}")]
+    NotSupported(SmolStr),
+
     #[error("Custom error: {0}")]
     CustomError(Error),
 }

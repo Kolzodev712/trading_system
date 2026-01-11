@@ -46,8 +46,10 @@ pub struct Instrument {
 }
 
 /// Instrument type
-#[derive(Debug, Deserialize, Serialize, Clone, Eq, PartialEq)]
+#[derive(Debug, Deserialize, Serialize, Clone, Eq, PartialEq, Default)]
+#[serde(rename_all = "PascalCase")]
 pub enum InstrumentType {
+    #[default]
     Spot,
     Futures,
     Derivitives,
@@ -270,6 +272,8 @@ pub struct MillisecondTimestamp(pub u64);
 #[derive(Debug, Deserialize, Serialize, Clone, Eq, PartialEq, Hash)]
 pub enum Exchange {
     Binance,
+    BinanceFutures,
+    Bybit,
     Unsupported,
 }
 

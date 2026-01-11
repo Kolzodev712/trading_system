@@ -280,6 +280,7 @@ mod tests {
             exchange_created_at: None,
             status,
             filled_amount: Decimal::ZERO,
+            instrument_type: trading_core::types::common::InstrumentType::Spot,
         }
     }
 

@@ -194,6 +194,7 @@ pub fn map_open_order_to_core(
         filled_amount: rust_decimal::Decimal::ZERO,
         internal_created_at: chrono::Utc::now().timestamp_millis() as u64,
         exchange_created_at: Some(result.transact_time as u64),
+        instrument_type: trading_core::types::common::InstrumentType::Spot,
     })
 }
 

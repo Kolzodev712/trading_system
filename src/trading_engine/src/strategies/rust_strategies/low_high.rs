@@ -454,6 +454,8 @@ impl Strategy for BuyLowSellHigh {
                                     price: sell_price,
                                     amount: position.quantity,
                                     timestamp: None,
+                                    instrument_type:
+                                        trading_core::types::common::InstrumentType::Spot,
                                     exchange_params: Default::default(),
                                 }));
                             }
@@ -476,6 +478,8 @@ impl Strategy for BuyLowSellHigh {
                                     price: sell_price,
                                     amount: position.quantity,
                                     timestamp: None,
+                                    instrument_type:
+                                        trading_core::types::common::InstrumentType::Spot,
                                     exchange_params: Default::default(),
                                 }));
                             }
@@ -640,6 +644,7 @@ impl Strategy for BuyLowSellHigh {
                     price: buy_price,
                     amount: final_amount_rounded,
                     timestamp: None,
+                    instrument_type: trading_core::types::common::InstrumentType::Spot,
                     exchange_params: Default::default(),
                 };
                 info!(
@@ -747,6 +752,7 @@ impl Strategy for BuyLowSellHigh {
                 price: sell_price,
                 amount: final_sell_qty_rounded,
                 timestamp: None,
+                instrument_type: trading_core::types::common::InstrumentType::Spot,
                 exchange_params: Default::default(),
             }));
         }

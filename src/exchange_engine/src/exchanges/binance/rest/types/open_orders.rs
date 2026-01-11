@@ -82,6 +82,7 @@ impl From<BinanceOrderResponse> for Order {
             internal_created_at: binance_res.working_time.unwrap_or_default(),
             status,
             filled_amount,
+            instrument_type: trading_core::types::common::InstrumentType::Spot,
         }
     }
 }

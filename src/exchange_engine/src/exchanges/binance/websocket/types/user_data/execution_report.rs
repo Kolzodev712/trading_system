@@ -86,6 +86,7 @@ impl From<ExecutionReport> for Order {
             exchange_created_at: Some(report.transaction_time),
             status: status.clone(),
             filled_amount,
+            instrument_type: trading_core::types::common::InstrumentType::Spot,
         }
     }
 }

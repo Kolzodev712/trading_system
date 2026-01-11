@@ -399,6 +399,7 @@ mod tests {
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap()
                     .as_secs(),
+                instrument_type: req.instrument_type,
                 exchange_created_at: None,
                 status: OrderStatus::New,
                 filled_amount: Decimal::ZERO,
@@ -462,6 +463,7 @@ mod tests {
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap()
                     .as_secs(),
+                instrument_type: new_request.instrument_type,
                 exchange_created_at: None,
                 status: OrderStatus::New,
                 filled_amount: Decimal::ZERO,
@@ -500,6 +502,7 @@ mod tests {
             exchange_created_at: None,
             status: OrderStatus::New,
             filled_amount: Decimal::ZERO,
+            instrument_type: trading_core::types::common::InstrumentType::Spot,
         }
     }
 

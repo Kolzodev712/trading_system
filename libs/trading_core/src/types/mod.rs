@@ -1,6 +1,7 @@
 pub mod asset;
 pub mod common;
 pub mod exchange;
+pub mod futures;
 pub mod market_data;
 
 // Re-export commonly used types from common
@@ -19,3 +20,9 @@ pub use exchange::{
 
 // Re-export market_data types
 pub use market_data::{Orderbook, PublicTrade, StructuredOrderbook, StructuredPublicTrade, Trade};
+
+// Re-export futures types
+pub use futures::{
+    FundingRate, FuturesBalance, FuturesOrderRequest, LeverageInfo, MarginInfo, MarginType,
+    PositionMode, PositionSide, WorkingType,
+};

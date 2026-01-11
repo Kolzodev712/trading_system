@@ -30,6 +30,7 @@ async fn test_exchange_state_order_management() {
         exchange_created_at: None,
         status: OrderStatus::New,
         filled_amount: dec!(0),
+        instrument_type: trading_core::types::common::InstrumentType::Spot,
     };
 
     manager.update_order(order.clone()).await.unwrap();

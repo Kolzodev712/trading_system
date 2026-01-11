@@ -66,6 +66,7 @@ async fn test_exchange_channel() {
         exchange_created_at: None,
         status: OrderStatus::New,
         filled_amount: dec!(0),
+        instrument_type: trading_core::types::common::InstrumentType::Spot,
     };
 
     tx.send(trading_core::channels::exchange::ExchangeUpdate::Order(

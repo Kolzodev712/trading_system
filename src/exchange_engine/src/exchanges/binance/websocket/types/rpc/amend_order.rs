@@ -180,6 +180,7 @@ pub fn map_amend_order_to_core(
         filled_amount: resp.executed_qty,
         internal_created_at: chrono::Utc::now().timestamp_millis() as u64,
         exchange_created_at: Some(resp.update_time as u64),
+        instrument_type: trading_core::types::common::InstrumentType::Spot,
     })
 }
 

@@ -53,6 +53,7 @@ pub fn create_test_order(
         exchange_created_at: None,
         status: trading_core::types::common::OrderStatus::New,
         filled_amount: dec!(0),
+        instrument_type: trading_core::types::common::InstrumentType::Spot,
     }
 }
 
@@ -68,6 +69,7 @@ pub fn create_test_order_request(
         price,
         amount,
         timestamp: None,
+        instrument_type: trading_core::types::common::InstrumentType::Spot,
         exchange_params: std::collections::HashMap::new(),
     }
 }

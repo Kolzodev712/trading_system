@@ -50,6 +50,7 @@ async fn test_live_config_update_level_value() {
         group: None,
     };
     let pair = Pair::new("BTC", "USDT");
+    let pair_str = pair.convert_to_smolstr();
     level_manager.add_level(config, pair).await.unwrap();
 
     let level_manager = Arc::new(RwLock::new(level_manager));
@@ -64,8 +65,11 @@ async fn test_live_config_update_level_value() {
         "/tmp/test_audit.log".to_string(),
     );
 
+    // Level IDs are stored as {config.id}_{pair}
+    let full_level_id = SmolStr::new(format!("test_level_{}", pair_str));
+
     let request = LevelUpdateRequest {
-        level_id: SmolStr::new("test_level"),
+        level_id: full_level_id.clone(),
         field: LevelField::Enabled,
         value: LevelValue::Boolean(false),
     };
@@ -75,7 +79,7 @@ async fn test_live_config_update_level_value() {
 
     // Verify update
     let lm = level_manager.read().await;
-    let level = lm.get_level(&SmolStr::new("test_level")).unwrap();
+    let level = lm.get_level(&full_level_id).unwrap();
     assert!(!level.config.enabled);
 }
 

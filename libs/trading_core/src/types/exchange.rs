@@ -21,6 +21,10 @@ pub struct OrderRequest {
     pub amount: Decimal,
     /// Exchange's timestamp of the order
     pub timestamp: Option<u64>,
+    /// Instrument type (Spot or Futures)
+    /// Defaults to Spot for backward compatibility
+    #[serde(default)]
+    pub instrument_type: crate::types::common::InstrumentType,
     /// Custom params specific to exchanges:
     pub exchange_params: HashMap<SmolStr, SmolStr>,
 }
@@ -52,6 +56,10 @@ pub struct Order {
     /// Filled amount (for partial fills)
     #[serde(default)]
     pub filled_amount: Decimal,
+    /// Instrument type (Spot or Futures)
+    /// Defaults to Spot for backward compatibility
+    #[serde(default)]
+    pub instrument_type: crate::types::common::InstrumentType,
 }
 
 /// Amended Order - represents an order that was amended (canceled and replaced)
@@ -110,7 +118,7 @@ pub struct Balance {
     pub total: Decimal,
 }
 
-/// Position
+/// Position (unified for both spot and futures)
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Position {
@@ -120,12 +128,67 @@ pub struct Position {
     pub quantity: Decimal,
     /// Average entry price
     pub avg_price: Decimal,
-    /// Current market price
+    /// Current market price (spot) or last trade price (futures)
     pub current_price: Decimal,
     /// Unrealized P&L
     pub unrealized_pnl: Decimal,
     /// Last update timestamp
     pub last_update: u64,
+    /// Instrument type (Spot or Futures)
+    #[serde(default)]
+    pub instrument_type: crate::types::common::InstrumentType,
+
+    // Futures-specific fields (optional, None for spot positions)
+    /// Mark price (futures only, for accurate P&L calculation)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mark_price: Option<Decimal>,
+    /// Index price (futures only, for funding rate calculation)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub index_price: Option<Decimal>,
+    /// Realized P&L (futures only, cumulative)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub realized_pnl: Option<Decimal>,
+    /// Initial margin (futures only)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub initial_margin: Option<Decimal>,
+    /// Maintenance margin (futures only)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub maintenance_margin: Option<Decimal>,
+    /// Leverage used (futures only)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub leverage: Option<u32>,
+    /// Position mode (futures only: one-way or hedge)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub position_mode: Option<crate::types::futures::PositionMode>,
+    /// Margin type (futures only: isolated or cross)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub margin_type: Option<crate::types::futures::MarginType>,
+    /// Liquidation price (futures only, estimated)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub liquidation_price: Option<Decimal>,
+}
+
+impl Position {
+    /// Check if this is a futures position
+    pub fn is_futures(&self) -> bool {
+        matches!(
+            self.instrument_type,
+            crate::types::common::InstrumentType::Futures
+        )
+    }
+
+    /// Check if this is a spot position
+    pub fn is_spot(&self) -> bool {
+        matches!(
+            self.instrument_type,
+            crate::types::common::InstrumentType::Spot
+        )
+    }
+
+    /// Get mark price (returns current_price for spot, mark_price for futures)
+    pub fn effective_mark_price(&self) -> Decimal {
+        self.mark_price.unwrap_or(self.current_price)
+    }
 }
 
 /// Trade (private trade from execution reports)
@@ -170,6 +233,7 @@ mod tests {
             price: Decimal::new(90000, 0),
             amount: Decimal::new(10, 2),
             timestamp: Some(1734819696263),
+            instrument_type: crate::types::common::InstrumentType::Spot,
             exchange_params,
         };
 
@@ -192,6 +256,7 @@ mod tests {
             exchange_created_at: Some(1734819696263),
             status: OrderStatus::New,
             filled_amount: Decimal::ZERO,
+            instrument_type: crate::types::common::InstrumentType::Spot,
         };
 
         assert_eq!(order.order_id.as_str(), "12345");
@@ -234,6 +299,16 @@ mod tests {
             current_price: Decimal::new(91000, 0),
             unrealized_pnl: Decimal::new(1000, 0),
             last_update: 1734819696263,
+            instrument_type: crate::types::common::InstrumentType::Spot,
+            mark_price: None,
+            index_price: None,
+            realized_pnl: None,
+            initial_margin: None,
+            maintenance_margin: None,
+            leverage: None,
+            position_mode: None,
+            margin_type: None,
+            liquidation_price: None,
         };
 
         assert_eq!(position.pair.base, "BTC");
@@ -289,6 +364,7 @@ mod tests {
             exchange_created_at: Some(1734819696263),
             status: OrderStatus::New,
             filled_amount: Decimal::ZERO,
+            instrument_type: crate::types::common::InstrumentType::Spot,
         };
 
         let serialized = serde_json::to_string(&order).unwrap();

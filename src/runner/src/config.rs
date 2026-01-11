@@ -321,6 +321,10 @@ impl BotConfig {
                         .map_err(|e| format!("Failed to deserialize Binance config: {e}"))?;
                 Ok(binance_config.pairs)
             }
+            Exchange::BinanceFutures => {
+                Err("Binance Futures config parsing not yet implemented".into())
+            }
+            Exchange::Bybit => Err("Bybit config parsing not yet implemented".into()),
             Exchange::Unsupported => Err("Unsupported exchange".into()),
         }
     }

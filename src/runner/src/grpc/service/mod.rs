@@ -4,8 +4,8 @@ mod levels;
 mod monitoring;
 mod trading_control;
 
-// Re-export StrategyInfo for use in other modules
-pub use monitoring::StrategyInfo;
+// Re-export StrategyInfo and MonitoringService for use in other modules
+pub use monitoring::{MonitoringService, StrategyInfo};
 
 use async_trait::async_trait;
 use exchange_engine::state::manager::ExchangeStateManager;

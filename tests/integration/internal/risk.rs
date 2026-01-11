@@ -1,6 +1,6 @@
 //! Risk management system tests
 
-use super::helpers::{
+use crate::helpers::internal::{
     create_test_balance, create_test_order, create_test_order_request, create_test_risk_manager,
 };
 use rust_decimal_macros::dec;

@@ -176,7 +176,7 @@ pub trait Strategy: Send + Sync {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use trading_core::types::common::Side;
+    use trading_core::types::common::{InstrumentType, Side};
 
     #[test]
     fn test_trading_state_new() {
@@ -192,6 +192,7 @@ mod tests {
         let pair = Pair::new("BTC", "USDT");
         let order = Order {
             order_id: OrderId::new("12345".into()),
+            instrument_type: InstrumentType::Spot,
             client_order_id: None,
             symbol: pair.convert_to_smolstr().into(),
             side: Side::Buy,
@@ -214,6 +215,7 @@ mod tests {
         let mut state = TradingState::new();
         let order = Order {
             order_id: OrderId::new("12345".into()),
+            instrument_type: InstrumentType::Spot,
             client_order_id: None,
             symbol: "BTCUSDT".into(),
             side: Side::Buy,
@@ -236,6 +238,7 @@ mod tests {
         let order_id = OrderId::new("12345".into());
         let order = Order {
             order_id: order_id.clone(),
+            instrument_type: InstrumentType::Spot,
             client_order_id: None,
             symbol: "BTCUSDT".into(),
             side: Side::Buy,
@@ -261,6 +264,7 @@ mod tests {
         let order_id = OrderId::new("12345".into());
         let order = Order {
             order_id: order_id.clone(),
+            instrument_type: InstrumentType::Spot,
             client_order_id: None,
             symbol: "BTCUSDT".into(),
             side: Side::Buy,
@@ -348,6 +352,7 @@ mod tests {
 
         let order1 = Order {
             order_id: OrderId::new("1".into()),
+            instrument_type: InstrumentType::Spot,
             client_order_id: None,
             symbol: "BTCUSDT".into(),
             side: Side::Buy,
@@ -361,6 +366,7 @@ mod tests {
 
         let order2 = Order {
             order_id: OrderId::new("2".into()),
+            instrument_type: InstrumentType::Spot,
             client_order_id: None,
             symbol: "BTCUSDT".into(),
             side: Side::Buy,
@@ -374,6 +380,7 @@ mod tests {
 
         let order3 = Order {
             order_id: OrderId::new("3".into()),
+            instrument_type: InstrumentType::Spot,
             client_order_id: None,
             symbol: "ETHUSDT".into(), // Different symbol
             side: Side::Buy,
@@ -398,6 +405,7 @@ mod tests {
         let order_id = OrderId::new("12345".into());
         let order = Order {
             order_id: order_id.clone(),
+            instrument_type: InstrumentType::Spot,
             client_order_id: None,
             symbol: "BTCUSDT".into(),
             side: Side::Buy,

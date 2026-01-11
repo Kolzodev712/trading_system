@@ -100,3 +100,4 @@ smol_str = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }
 tokio-test = { workspace = true }
+async-trait = { workspace = true }

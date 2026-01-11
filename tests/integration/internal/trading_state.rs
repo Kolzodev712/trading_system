@@ -1,6 +1,6 @@
 //! Trading state management tests
 
-use super::helpers::create_test_order;
+use crate::helpers::internal::create_test_order;
 use rust_decimal_macros::dec;
 use trading_core::types::common::{OrderId, OrderStatus, Pair};
 use trading_engine::state::TradingState;

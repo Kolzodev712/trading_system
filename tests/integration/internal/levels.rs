@@ -1,6 +1,6 @@
 //! Level management system tests
 
-use super::helpers::create_test_level_config;
+use crate::helpers::internal::create_test_level_config;
 use smol_str::SmolStr;
 use trading_core::types::common::OrderId;
 use trading_engine::levels::LevelManager;

@@ -1,25 +1,30 @@
-//! Comprehensive integration tests for the full trading system
+//! Integration Tests
 //!
-//! These tests verify that all components work together correctly in a monolith setup.
-//! Tests are organized by functionality area but run against the full system.
+//! Split into two categories:
 //!
-//! Tests that require external API calls (exchange, network) are marked with #[ignore]
-//! and can be run with: cargo test --test integration -- --ignored
+//! ## External Integration Tests (`integration/external/`)
+//! Tests that verify external connections work correctly:
+//! - Asset Engine: Exchange info fetching, market data retrieval
+//! - Market Data Engine: WebSocket connections, data streaming
+//! - Exchange Engine: Trading API calls, order management
+//!
+//! These tests may require actual exchange API access (marked with #[ignore])
+//! Run with: cargo test --test integration integration::external -- --ignored
+//!
+//! ## Internal Integration Tests (`integration/internal/`)
+//! Tests that verify internal system interactions:
+//! - Risk management, indicators, trading state
+//! - Level management, workflows, live config
+//! - Strategy execution, channel communication
+//!
+//! These tests do NOT require external connections and test internal component integration.
+//! Run with: cargo test --test integration integration::internal
 
 mod integration {
-    pub mod asset;
-    pub mod channels;
-    pub mod circuit_breaker;
-    pub mod config;
-    pub mod exchange;
+    pub mod external;
     pub mod helpers;
-    pub mod indicator;
-    pub mod level_execution;
-    pub mod levels;
-    pub mod live_config;
-    pub mod market_data;
-    pub mod risk;
-    pub mod risk_metrics;
-    pub mod trading_state;
-    pub mod workflows;
+    pub mod internal;
 }
+
+// Re-export for easier access
+pub use integration::*;

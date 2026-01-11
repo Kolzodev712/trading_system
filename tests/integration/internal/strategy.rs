@@ -69,7 +69,7 @@ async fn test_strategy_monitoring_with_position() {
     let strategy_status = &monitoring_data.strategies[0];
 
     assert_eq!(strategy_status.strategy_name, "BuyLowSellHigh");
-    assert_eq!(strategy_status.symbol, "BTCUSDC");
+    assert_eq!(strategy_status.symbol, "BTC/USDC");
     assert_eq!(strategy_status.position_quantity, "0.0015");
     assert_eq!(strategy_status.position_avg_price, "50000");
     assert_eq!(strategy_status.active_orders, 0);
@@ -136,8 +136,9 @@ async fn test_strategy_monitoring_with_active_orders() {
     let mut trading_state = TradingState::new();
     let pair = Pair::new("BTC", "USDC");
 
-    // Add an active order
-    let order = create_test_order("order1", dec!(50000), dec!(0.001));
+    // Add an active order with matching symbol (BTCUSDC to match the pair)
+    let mut order = create_test_order("order1", dec!(50000), dec!(0.001));
+    order.symbol = trading_core::types::common::Symbol::from("BTCUSDC");
     trading_state.add_order(order);
 
     // Create exchange state manager first

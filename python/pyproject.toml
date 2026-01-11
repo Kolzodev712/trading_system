@@ -10,7 +10,10 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = []
+# This is a workspace root package with no direct code
+# Only sub-packages (indicator_config_generator, strategy_dsl) contain actual code
+# Include the minimal package directory
+packages = ["trading_system_python"]
 
 # Workspace packages
 [tool.uv.workspace]

@@ -95,10 +95,10 @@ impl BinanceRpcClient {
                 for id in to_remove {
                     if let Some(pending_req) = guard.remove(&id) {
                         debug!("Cleaning up stale pending request: {}", id);
-                        let _ = pending_req.sender.send(BinanceRpcResponse::Error(
-                            format!("Request timeout (cleaned up after {}s)", timeout.as_secs())
-                                .into(),
-                        ));
+                        let _ = pending_req.sender.send(BinanceRpcResponse::Error(format!(
+                            "Request timeout (cleaned up after {}s)",
+                            timeout.as_secs()
+                        )));
                     }
                 }
             }

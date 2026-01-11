@@ -339,7 +339,7 @@ mod tests {
         state.remove_order(&order_id);
         assert_eq!(state.orders.len(), 0);
         assert!(
-            state.orders_by_pair.get(&pair).is_none()
+            !state.orders_by_pair.contains_key(&pair)
                 || state.orders_by_pair.get(&pair).unwrap().is_empty()
         );
     }

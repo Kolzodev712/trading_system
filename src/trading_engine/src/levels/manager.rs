@@ -65,7 +65,7 @@ impl LevelManager {
             for pair in pairs {
                 // Generate pair-specific level ID: "buy_level_1" -> "buy_level_1_ETHUSDC"
                 let pair_str = pair.convert_to_smolstr();
-                let level_id = SmolStr::new(&format!("{}_{}", level_config.id, pair_str));
+                let level_id = SmolStr::new(format!("{}_{}", level_config.id, pair_str));
 
                 // Create level instance for this pair
                 let level = Level::new(level_config.clone(), pair.clone());
@@ -110,7 +110,7 @@ impl LevelManager {
             for pair in pairs {
                 // Generate pair-specific level ID: "buy_level_1" -> "buy_level_1_ETHUSDC"
                 let pair_str = pair.convert_to_smolstr();
-                let level_id = SmolStr::new(&format!("{}_{}", level_config.id, pair_str));
+                let level_id = SmolStr::new(format!("{}_{}", level_config.id, pair_str));
 
                 // Create level instance for this pair
                 let level = Level::new(level_config.clone(), pair.clone());
@@ -130,7 +130,7 @@ impl LevelManager {
     ) -> Result<(), EngineError> {
         // Generate pair-specific level ID
         let pair_str = pair.convert_to_smolstr();
-        let level_id = SmolStr::new(&format!("{}_{}", config.id, pair_str));
+        let level_id = SmolStr::new(format!("{}_{}", config.id, pair_str));
 
         if self.levels.contains_key(&level_id) {
             return Err(EngineError::CustomError(anyhow::anyhow!(
@@ -425,7 +425,7 @@ impl LevelManager {
                             for pair in pairs {
                                 let pair_str = pair.convert_to_smolstr();
                                 let level_id =
-                                    SmolStr::new(&format!("{}_{}", level_config.id, pair_str));
+                                    SmolStr::new(format!("{}_{}", level_config.id, pair_str));
                                 let level = Level::new(level_config.clone(), pair.clone());
                                 self.levels.insert(level_id, level);
                                 loaded_count += 1;

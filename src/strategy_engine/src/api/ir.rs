@@ -18,23 +18,23 @@ use smol_str::SmolStr;
 pub struct StrategyIR {
     /// Unique identifier for this strategy
     pub id: SmolStr,
-    
+
     /// Strategy name
     pub name: SmolStr,
-    
+
     /// Trading pair this strategy operates on
     pub pair: SmolStr,
-    
+
     /// Indicators required by this strategy
     /// Can reference system-wide indicators OR define new ones
     pub indicators: StrategyIndicators,
-    
+
     /// Strategy logic (conditions, order generation)
     pub logic: StrategyLogic,
-    
+
     /// Runtime-updateable parameters
     pub parameters: StrategyParameters,
-    
+
     /// Metadata
     pub metadata: StrategyMetadata,
 }
@@ -44,7 +44,7 @@ pub struct StrategyIR {
 pub struct StrategyIndicators {
     /// Indicator IDs that reference system-wide indicators
     pub system_indicator_ids: Vec<SmolStr>,
-    
+
     /// Strategy-specific indicator definitions
     pub strategy_indicators: Vec<StrategyIndicatorDef>,
 }
@@ -80,13 +80,13 @@ pub struct StrategyParameters {
 pub struct StrategyMetadata {
     /// Strategy version
     pub version: SmolStr,
-    
+
     /// Created timestamp
     pub created_at: u64,
-    
+
     /// Updated timestamp
     pub updated_at: u64,
-    
+
     /// Whether strategy is active
     pub active: bool,
 }
@@ -106,4 +106,3 @@ impl StrategyIR {
 pub enum IRValidationError {
     // TODO: Define validation errors
 }
-

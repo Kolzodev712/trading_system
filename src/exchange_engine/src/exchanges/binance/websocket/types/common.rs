@@ -6,7 +6,7 @@ use trading_core::utils::{deserialize_smol_str, serialize_smol_str};
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum BinanceInbound {
     Event(ParsedBinanceMessage),
-    Rpc(BinanceRpcResponse),
+    Rpc(Box<BinanceRpcResponse>),
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Deserialize, Serialize)]

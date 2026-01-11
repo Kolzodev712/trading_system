@@ -223,7 +223,7 @@ impl<S: Strategy> StrategyExecutor<S> {
                             std::sync::atomic::AtomicU64::new(0);
                         let skip_count =
                             SKIP_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                        if skip_count % 100 == 0 {
+                        if skip_count.is_multiple_of(100) {
                             info!("[StrategyExecutor] Global trading disabled, skipping orderbook (skipped {} so far)", skip_count);
                         }
                         continue; // Global trading disabled, skip this orderbook
@@ -233,7 +233,7 @@ impl<S: Strategy> StrategyExecutor<S> {
                     static OB_COUNT: std::sync::atomic::AtomicU64 =
                         std::sync::atomic::AtomicU64::new(0);
                     let ob_count = OB_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    if ob_count % 20 == 0 {
+                    if ob_count.is_multiple_of(20) {
                         info!(
                             "[StrategyExecutor] Processing orderbook #{} for {}",
                             ob_count, orderbook.pair

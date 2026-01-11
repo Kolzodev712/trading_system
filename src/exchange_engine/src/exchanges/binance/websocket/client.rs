@@ -70,13 +70,17 @@ impl MessageHandler<BinanceInbound> for InboundHandler {
         // Try parsing as RPC responses first
         if let Ok(resp) = serde_json::from_str::<BinanceAccountStatusResponse>(&text) {
             tracing::debug!("[InboundHandler] Parsed as AccountStatus RPC response");
-            return Ok(BinanceInbound::Rpc(BinanceRpcResponse::AccountStatus(resp)));
+            return Ok(BinanceInbound::Rpc(Box::new(
+                BinanceRpcResponse::AccountStatus(resp),
+            )));
         }
 
         // Try CancelAll first (has array result) before OpenOrder (has object result)
         if let Ok(resp) = serde_json::from_str::<BinanceWsCancelAllOrdersResponse>(&text) {
             tracing::info!("[InboundHandler] Successfully parsed as CancelAll RPC response (id={}, status={}, cancelled {} orders)", resp.id, resp.status, resp.result.len());
-            return Ok(BinanceInbound::Rpc(BinanceRpcResponse::CancelAll(resp)));
+            return Ok(BinanceInbound::Rpc(Box::new(
+                BinanceRpcResponse::CancelAll(resp),
+            )));
         }
 
         if let Ok(resp) = serde_json::from_str::<BinanceWsCancelOrderResponse>(&text) {
@@ -89,7 +93,9 @@ impl MessageHandler<BinanceInbound> for InboundHandler {
             } else {
                 tracing::info!("[InboundHandler] Parsed as CancelOrder RPC error response (id={}, status={}, error={:?})", resp.id, resp.status, resp.error);
             }
-            return Ok(BinanceInbound::Rpc(BinanceRpcResponse::CancelOrder(resp)));
+            return Ok(BinanceInbound::Rpc(Box::new(
+                BinanceRpcResponse::CancelOrder(resp),
+            )));
         }
 
         if let Ok(resp) = serde_json::from_str::<BinanceWsOrderResponse>(&text) {
@@ -98,7 +104,9 @@ impl MessageHandler<BinanceInbound> for InboundHandler {
                 resp.id,
                 resp.status
             );
-            return Ok(BinanceInbound::Rpc(BinanceRpcResponse::OpenOrder(resp)));
+            return Ok(BinanceInbound::Rpc(Box::new(
+                BinanceRpcResponse::OpenOrder(resp),
+            )));
         } else if text.contains("\"id\"")
             && text.contains("\"status\"")
             && text.contains("\"result\"")
@@ -840,7 +848,7 @@ impl BinanceWSClient {
                         match handler.handle_text_message(txt.into()) {
                             Ok(BinanceInbound::Rpc(rpc)) => {
                                 tracing::info!("[READER {}] Parsed as RPC response (message #{count}), forwarding to rpc_response_tx...", reader_id, count = message_count);
-                                if rpc_response_tx.send(rpc).await.is_err() {
+                                if rpc_response_tx.send(*rpc).await.is_err() {
                                     warn!("[READER {}] Failed to send RPC to rpc_response_tx (channel closed) - reader task exiting", reader_id);
                                     break;
                                 }
@@ -1035,6 +1043,7 @@ impl BinanceWSClient {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn split_stream(
         &self,
         ws_stream: WebSocketStream<MaybeTlsStream<TcpStream>>,

@@ -57,7 +57,7 @@ impl Strategy for StrategyManagerWrapper {
         // Log entry point (periodically)
         static WRAPPER_COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let wrapper_count = WRAPPER_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let should_log = wrapper_count % 20 == 0;
+        let should_log = wrapper_count.is_multiple_of(20);
 
         if should_log {
             info!(

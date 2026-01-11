@@ -70,10 +70,7 @@ impl StrategyManager {
         self.strategies.push(strategy);
 
         // Index by pair for efficient lookup
-        self.pair_to_indices
-            .entry(pair)
-            .or_insert_with(Vec::new)
-            .push(idx);
+        self.pair_to_indices.entry(pair).or_default().push(idx);
     }
 
     /// Set enabled state for a strategy
@@ -106,7 +103,7 @@ impl StrategyManager {
         // Log entry point (periodically)
         static ENTRY_COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let entry_count = ENTRY_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let should_log_entry = entry_count % 20 == 0;
+        let should_log_entry = entry_count.is_multiple_of(20);
 
         if should_log_entry {
             info!(
@@ -163,7 +160,7 @@ impl StrategyManager {
         // Log periodically which strategies are being checked
         static CALL_COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let call_count = CALL_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let should_log = call_count % 20 == 0;
+        let should_log = call_count.is_multiple_of(20);
 
         if should_log {
             info!(

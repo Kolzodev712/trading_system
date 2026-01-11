@@ -199,9 +199,9 @@ mod tests {
         assert_eq!(trade_response.commission, Decimal::new(1, 3));
         assert_eq!(trade_response.commission_asset, "BTC");
         assert_eq!(trade_response.time, 1734819696263);
-        assert_eq!(trade_response.is_buyer, true);
-        assert_eq!(trade_response.is_maker, false);
-        assert_eq!(trade_response.is_best_match, true);
+        assert!(trade_response.is_buyer);
+        assert!(!trade_response.is_maker);
+        assert!(trade_response.is_best_match);
     }
 
     /// Test BinanceTradeResponse to Trade conversion (buy order)
@@ -334,8 +334,8 @@ mod tests {
 
         assert_eq!(trades.len(), 2);
         assert_eq!(trades[0].id, 1);
-        assert_eq!(trades[0].is_buyer, true);
+        assert!(trades[0].is_buyer);
         assert_eq!(trades[1].id, 2);
-        assert_eq!(trades[1].is_buyer, false);
+        assert!(!trades[1].is_buyer);
     }
 }

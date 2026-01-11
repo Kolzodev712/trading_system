@@ -9,6 +9,7 @@ use trading_core::{
         common::{OrderId, OrderStatus, Pair},
         exchange::{Balance, Order, OrderRequest, Trade},
     },
+    utils::hours_ago_from,
 };
 
 use super::super::binance::websocket::types::rpc::{
@@ -726,11 +727,11 @@ impl TradingClient<OrderRequest, Pair> for BinanceClient {
             })?
             .server_time;
 
-        // Request trades for the symbol (last 500 trades)
+        // Request trades for the symbol (trades from past 24 hours, max 500)
         let params = BinanceTradesRequest {
             symbol,
-            start_time: None,
-            end_time: None,
+            start_time: Some(hours_ago_from(server_time, 24)),
+            end_time: None, // Use server_time implicitly
             from_id: None,
             limit: Some(500), // Max 1000, but 500 is reasonable
             timestamp: server_time,

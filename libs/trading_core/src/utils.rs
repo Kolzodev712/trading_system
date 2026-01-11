@@ -13,6 +13,26 @@ pub fn current_timestamp() -> u64 {
         .as_millis() as u64
 }
 
+/// Calculate a timestamp that is N hours ago from now
+/// Returns the timestamp in milliseconds
+pub fn hours_ago(hours: u64) -> u64 {
+    let now = current_timestamp();
+    let hours_in_ms = hours * 60 * 60 * 1000;
+    now.saturating_sub(hours_in_ms)
+}
+
+/// Calculate a timestamp that is N milliseconds ago from a given timestamp
+/// Returns the timestamp in milliseconds
+pub fn milliseconds_ago(from_timestamp: u64, milliseconds: u64) -> u64 {
+    from_timestamp.saturating_sub(milliseconds)
+}
+
+/// Calculate a timestamp that is N hours ago from a given timestamp
+/// Returns the timestamp in milliseconds
+pub fn hours_ago_from(timestamp: u64, hours: u64) -> u64 {
+    milliseconds_ago(timestamp, hours * 60 * 60 * 1000)
+}
+
 pub fn generate_custom_uuid() -> String {
     Uuid::new_v4().to_string()
 }
@@ -177,5 +197,39 @@ mod tests {
         let mut params = HashMap::new();
         let string_params = generate_string_params(&mut params);
         assert!(string_params.is_empty());
+    }
+
+    #[test]
+    fn test_hours_ago() {
+        let now = current_timestamp();
+        let twenty_four_hours_ago = hours_ago(24);
+
+        // Should be approximately 24 hours (86,400,000 ms) less
+        // Allow for some time to pass during test execution (up to 100ms)
+        let diff = now - twenty_four_hours_ago;
+        assert!(diff >= 24 * 60 * 60 * 1000);
+        assert!(diff <= 24 * 60 * 60 * 1000 + 100);
+    }
+
+    #[test]
+    fn test_milliseconds_ago() {
+        let timestamp = 1000000000;
+        let result = milliseconds_ago(timestamp, 1000);
+        assert_eq!(result, 999999000);
+    }
+
+    #[test]
+    fn test_hours_ago_from() {
+        let timestamp = 1000000000;
+        let one_hour = 60 * 60 * 1000; // 1 hour in milliseconds
+        let result = hours_ago_from(timestamp, 1);
+        assert_eq!(result, timestamp - one_hour);
+    }
+
+    #[test]
+    fn test_saturating_sub() {
+        // Test that it doesn't panic when subtracting more than available
+        let result = milliseconds_ago(1000, 2000);
+        assert_eq!(result, 0); // Saturates at 0
     }
 }

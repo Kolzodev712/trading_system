@@ -17,6 +17,12 @@ pub struct ConnectionStateManager {
     state: Arc<RwLock<ConnectionState>>,
 }
 
+impl Default for ConnectionStateManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ConnectionStateManager {
     pub fn new() -> Self {
         Self {

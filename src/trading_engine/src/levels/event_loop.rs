@@ -262,7 +262,7 @@ impl LevelBasedEventLoop {
             for level in ready_levels {
                 // Reconstruct the expanded ID: "buy_level_1" -> "buy_level_1_ETHUSDC"
                 let pair_str = level.pair.convert_to_smolstr();
-                let expanded_id = SmolStr::new(&format!("{}_{}", level.config.id, pair_str));
+                let expanded_id = SmolStr::new(format!("{}_{}", level.config.id, pair_str));
                 matching_level_ids.push(expanded_id);
             }
             matching_level_ids
@@ -412,7 +412,7 @@ impl LevelBasedEventLoop {
             // Use expanded ID to look up the level (matching how it's stored in HashMap)
             let expanded_id = {
                 let pair_str = level.pair.convert_to_smolstr();
-                SmolStr::new(&format!("{}_{}", level.config.id, pair_str))
+                SmolStr::new(format!("{}_{}", level.config.id, pair_str))
             };
             let current_level = {
                 let manager = self.level_manager.read().await;
@@ -562,7 +562,7 @@ impl LevelBasedEventLoop {
                         // Use expanded ID to look up the level
                         let expanded_id = {
                             let pair_str = level.pair.convert_to_smolstr();
-                            SmolStr::new(&format!("{}_{}", level.config.id, pair_str))
+                            SmolStr::new(format!("{}_{}", level.config.id, pair_str))
                         };
                         let mut manager = self.level_manager.write().await;
                         if let Some(level_mut) = manager.get_level_mut(&expanded_id) {

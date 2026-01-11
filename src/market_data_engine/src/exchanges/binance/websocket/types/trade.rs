@@ -100,6 +100,6 @@ mod tests {
         assert_eq!(trade.price, Decimal::new(30000000000, 7));
         assert_eq!(trade.quantity, Decimal::new(1000000000, 8));
         assert_eq!(trade.trade_time, 1625158399000);
-        assert_eq!(trade.is_market_maker, true);
+        assert!(trade.is_market_maker);
     }
 }

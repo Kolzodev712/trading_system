@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tonic::Status;
+use trading_core::utils::hours_ago;
 use trading_engine::levels::LevelManager;
 use trading_engine::state::manager::TradingStateManager;
 use trading_engine::strategies::strategy_manager::StrategyManager;
@@ -63,10 +64,16 @@ impl MonitoringService {
                 }
                 drop(level_manager); // Release lock before continuing
 
-                // Get open orders (active orders from exchange)
                 let orders: Vec<trading_cli::Order> = exchange_state
                     .get_open_orders()
                     .iter()
+                    .filter(|order| {
+                        // Use exchange_created_at if available, otherwise fallback to internal_created_at
+                        let order_timestamp = order
+                            .exchange_created_at
+                            .unwrap_or(order.internal_created_at);
+                        order_timestamp >= hours_ago(24)
+                    })
                     .map(|order| {
                         let order_id_str = order.order_id.as_str().to_string();
                         let (level_id, order_type) = order_to_level
@@ -83,7 +90,10 @@ impl MonitoringService {
                             quantity: order.amount.to_string(),
                             status: format!("{:?}", order.status),
                             level_id,
-                            timestamp: order.internal_created_at as i64,
+                            timestamp: order
+                                .exchange_created_at
+                                .unwrap_or(order.internal_created_at)
+                                as i64,
                         }
                     })
                     .collect();
@@ -203,15 +213,20 @@ impl MonitoringService {
     }
 
     /// Get recent trades from ExchangeStateManager (already populated via WebSocket)
+    /// Only returns trades from the past 24 hours
     pub async fn get_trades(&self) -> Result<Vec<trading_cli::Trade>, Status> {
+        // Only show trades from the past 24 hours
+        let twenty_four_hours_ago = hours_ago(24);
+
         // Get trades directly from ExchangeStateManager - they're already there from WebSocket updates
         let state_arc = self.exchange_state_manager.get_state();
         let trades: Vec<trading_core::types::exchange::Trade> = {
             let exchange_state = state_arc.read().await;
-            // Clone the trades to own them before dropping the lock
+            // Clone and filter trades from the past 24 hours
             exchange_state
                 .get_trades()
                 .iter()
+                .filter(|t| t.timestamp >= twenty_four_hours_ago)
                 .map(|t| (*t).clone())
                 .collect()
         };
@@ -233,7 +248,7 @@ impl MonitoringService {
         // Sort by timestamp descending (most recent first)
         converted.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
 
-        // Limit to most recent 100 trades for display
+        // Limit to most recent 100 trades for display (after time filtering)
         converted.truncate(100);
 
         Ok(converted)

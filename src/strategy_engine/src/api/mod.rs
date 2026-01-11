@@ -35,4 +35,3 @@ pub mod manager {
     // - Registration
     // - Updates
 }
-

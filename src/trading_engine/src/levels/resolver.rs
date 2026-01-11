@@ -56,10 +56,10 @@ impl IndicatorResolver {
                 // resolve it to pair-specific (e.g., "sma_20_ETHUSDC")
                 let pair_str = pair.convert_to_smolstr();
                 let resolved_indicator_id = if indicator_name.contains('_')
-                    && !indicator_name.contains(&pair_str.as_str())
+                    && !indicator_name.contains(pair_str.as_str())
                 {
                     // Template indicator name, resolve with pair
-                    SmolStr::new(&format!("{}_{}", indicator_name, pair_str))
+                    SmolStr::new(format!("{}_{}", indicator_name, pair_str))
                 } else {
                     // Already pair-specific or exact match
                     indicator_name.clone()
@@ -184,10 +184,10 @@ impl IndicatorResolver {
                 // resolve it to pair-specific (e.g., "sma_20_ETHUSDC")
                 let pair_str = pair.convert_to_smolstr();
                 let resolved_indicator_id = if indicator_name.contains('_')
-                    && !indicator_name.contains(&pair_str.as_str())
+                    && !indicator_name.contains(pair_str.as_str())
                 {
                     // Template indicator name, resolve with pair
-                    SmolStr::new(&format!("{}_{}", indicator_name, pair_str))
+                    SmolStr::new(format!("{}_{}", indicator_name, pair_str))
                 } else {
                     // Already pair-specific or exact match
                     indicator_name.clone()

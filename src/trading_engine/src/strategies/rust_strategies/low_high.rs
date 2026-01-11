@@ -270,7 +270,7 @@ impl Strategy for BuyLowSellHigh {
         // Log that we're processing orderbooks (every 20th)
         static CALL_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let call_count = CALL_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let should_log = call_count % 20 == 0;
+        let should_log = call_count.is_multiple_of(20);
         if should_log {
             info!(
                 "[Strategy {}] Processing orderbook #{}",
@@ -344,7 +344,7 @@ impl Strategy for BuyLowSellHigh {
         // Log price comparison periodically (every 20 orderbooks to see what's happening)
         static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let count = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let should_log = count % 20 == 0;
+        let should_log = count.is_multiple_of(20);
         if should_log {
             let price_diff_percent = (avg_price - mid_price) / avg_price * Decimal::from(100);
             // Temporarily disable adaptive threshold for testing - use base threshold directly
@@ -651,16 +651,14 @@ impl Strategy for BuyLowSellHigh {
                     order_req.amount
                 );
                 return Ok(Some(order_req));
-            } else {
-                if should_log {
-                    warn!(
-                        "[Strategy {}] Buy signal blocked: position would exceed max (current={}, size={}, max={})",
-                        self.symbol,
-                        current_qty,
-                        position_size,
-                        self.max_position
-                    );
-                }
+            } else if should_log {
+                warn!(
+                    "[Strategy {}] Buy signal blocked: position would exceed max (current={}, size={}, max={})",
+                    self.symbol,
+                    current_qty,
+                    position_size,
+                    self.max_position
+                );
             }
         }
         // Sell logic

@@ -18,6 +18,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       
+      - name: Install just
+        uses: extractions/setup-just@v1
+      
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -25,7 +28,7 @@ jobs:
           components: rustfmt
       
       - name: Check formatting
-        run: cargo fmt --all -- --check
+        run: just fmt-check
 
   # Lint with clippy
   clippy:
@@ -33,6 +36,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      
+      - name: Install just
+        uses: extractions/setup-just@v1
       
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -55,7 +61,7 @@ jobs:
             ${{ runner.os }}-cargo-
       
       - name: Run clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        run: just clippy-strict
 
   # Build all packages
   build:
@@ -71,6 +77,9 @@ jobs:
           - strategies
     steps:
       - uses: actions/checkout@v4
+      
+      - name: Install just
+        uses: extractions/setup-just@v1
       
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -94,9 +103,9 @@ jobs:
       - name: Build package
         run: |
           if [ "${{ matrix.package }}" = "runner" ]; then
-            cargo build --release --package runner
+            just build-runner
           elif [ "${{ matrix.package }}" = "trading-cli" ]; then
-            cargo build --release --package cli --bin trading-cli
+            just build-cli
           fi
 
   # Run unit tests
@@ -105,6 +114,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      
+      - name: Install just
+        uses: extractions/setup-just@v1
       
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -126,7 +138,7 @@ jobs:
             ${{ runner.os }}-cargo-
       
       - name: Run unit tests
-        run: cargo test --lib --all-features
+        run: just test
 
   # Run integration tests (excluding ignored tests)
   integration-test:
@@ -134,6 +146,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      
+      - name: Install just
+        uses: extractions/setup-just@v1
       
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -155,7 +170,7 @@ jobs:
             ${{ runner.os }}-cargo-
       
       - name: Run integration tests (excluding ignored)
-        run: cargo test --test integration -- --test-threads=1
+        run: just test-integration
 
   # Check that all packages compile
   check:
@@ -163,6 +178,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      
+      - name: Install just
+        uses: extractions/setup-just@v1
       
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -184,7 +202,7 @@ jobs:
             ${{ runner.os }}-cargo-
       
       - name: Cargo check
-        run: cargo check --all-targets --all-features
+        run: just check
       
       # Note: Python config generation will be added when implemented
       # This would generate indicators.json before Rust build

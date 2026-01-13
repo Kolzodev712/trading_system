@@ -194,7 +194,7 @@ impl App {
             // Start streaming if we're in Trading Monitor and not already streaming
             if matches!(self.current_screen, Screen::TradingMonitor) && !self.streaming_active {
                 // Refresh levels immediately when entering
-                if let Err(_) = self.refresh_levels().await {
+                if self.refresh_levels().await.is_err() {
                     // Ignore errors, will retry next cycle
                 }
                 if let Err(e) = self.start_streaming(stream_tx.clone()).await {
@@ -303,7 +303,7 @@ impl App {
 
                 // Periodic level refresh (only when in Trading Monitor)
                 _ = level_refresh_interval.tick(), if matches!(self.current_screen, Screen::TradingMonitor) => {
-                    if let Err(_) = self.refresh_levels().await {
+                    if self.refresh_levels().await.is_err() {
                         // Ignore errors, will retry next cycle
                     } else {
                         needs_redraw = true; // Levels updated, need redraw
@@ -546,15 +546,11 @@ impl App {
     pub async fn toggle_selected_level(&mut self) -> Result<(), CliError> {
         if let Some(idx) = self.selected_level_index {
             // Get level_id before making async call
-            let level_id = if let Some(levels) = &self.levels {
-                if let Some(level) = levels.get(idx) {
-                    Some((level.id.clone(), !level.enabled))
-                } else {
-                    None
-                }
-            } else {
-                None
-            };
+            let level_id = self
+                .levels
+                .as_ref()
+                .and_then(|levels| levels.get(idx))
+                .map(|level| (level.id.clone(), !level.enabled));
 
             if let Some((level_id, new_enabled)) = level_id {
                 if let Some(ref mut client) = self.client {

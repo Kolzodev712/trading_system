@@ -1,12 +1,6 @@
-pub mod common_types;
+pub mod common;
 pub mod config;
 pub mod driver;
-pub mod rate_limit;
+pub mod event_loop;
 pub mod rest;
-pub mod rest_client;
-pub mod rpc_client;
-pub mod sign;
-pub mod streaming_client;
-pub mod utils;
 pub mod websocket;
-pub mod ws_client;

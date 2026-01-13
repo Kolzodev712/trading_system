@@ -192,16 +192,17 @@ mod tests {
         let validator = ConfigValidator::new(level_manager.clone(), risk_manager);
 
         // Add a level
+        let pair = Pair::new("BTC", "USDT");
         {
             let mut lm = level_manager.write().await;
             let config = create_test_level_config("test_level");
-            let pair = Pair::new("BTC", "USDT");
-            lm.add_level(config, pair).await.unwrap();
+            lm.add_level(config, pair.clone()).await.unwrap();
         }
 
-        // Try to update with wrong type (boolean for decimal field)
+        // Try to update with wrong type (boolean for decimal field) - use pair-suffixed ID
+        let level_id = format!("test_level_{}", pair.convert_to_smolstr());
         let result = validator
-            .validate_level_update("test_level", &LevelField::Price, &LevelValue::Boolean(true))
+            .validate_level_update(&level_id, &LevelField::Price, &LevelValue::Boolean(true))
             .await;
 
         assert!(result.is_err());
@@ -218,20 +219,17 @@ mod tests {
         let validator = ConfigValidator::new(level_manager.clone(), risk_manager);
 
         // Add a level
+        let pair = Pair::new("BTC", "USDT");
         {
             let mut lm = level_manager.write().await;
             let config = create_test_level_config("test_level");
-            let pair = Pair::new("BTC", "USDT");
-            lm.add_level(config, pair).await.unwrap();
+            lm.add_level(config, pair.clone()).await.unwrap();
         }
 
-        // Valid update
+        // Valid update - use pair-suffixed ID
+        let level_id = format!("test_level_{}", pair.convert_to_smolstr());
         let result = validator
-            .validate_level_update(
-                "test_level",
-                &LevelField::Enabled,
-                &LevelValue::Boolean(true),
-            )
+            .validate_level_update(&level_id, &LevelField::Enabled, &LevelValue::Boolean(true))
             .await;
 
         assert!(result.is_ok());

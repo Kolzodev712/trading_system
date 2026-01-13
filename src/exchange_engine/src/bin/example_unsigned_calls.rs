@@ -8,7 +8,8 @@
 //! **Note**: Orderbook data should come from Market Data Engine via WebSocket, not REST API
 
 use exchange_engine::exchanges::binance::{
-    config::BinanceConfig, rest::client::BinanceHttpClient, rest_client::BinanceRestClient,
+    config::BinanceConfig,
+    rest::{client::BinanceHttpClient, rest_client::BinanceRestClient},
 };
 use std::fs;
 

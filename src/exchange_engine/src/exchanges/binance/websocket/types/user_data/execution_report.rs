@@ -1,4 +1,4 @@
-use crate::exchanges::binance::common_types::{
+use crate::exchanges::binance::common::types::{
     BinanceOrderStatus, BinanceOrderType, BinanceSide, BinanceTimeInForce,
 };
 use trading_core::types::{common::OrderStatus, exchange::Order};

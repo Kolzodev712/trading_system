@@ -44,3 +44,16 @@ These items are planned but not yet detailed in proposals. They can be added as 
 
 **Last Updated**: December 2024  
 **Status**: Superseded by proposal documents
+
+
+
+
+
+
+
+
+
+
+
+for binance_futures integration:
+https://developers.binance.com/docs/derivatives/Introduction

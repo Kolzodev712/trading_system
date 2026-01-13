@@ -1,11 +1,11 @@
-use crate::exchanges::binance::{
-    config::BinanceConfig,
-    rate_limit::{BinanceRateLimitType, BinanceRateLimiter},
+use super::types::rpc::{BinanceRpcRequest, BinanceRpcResponse};
+use super::{
+    client::{BinanceSubscriptionHandler, BinanceWSClient},
     sign::BinanceWsAuthenticator,
-    websocket::{
-        client::{BinanceSubscriptionHandler, BinanceWSClient},
-        types::rpc::{BinanceRpcRequest, BinanceRpcResponse},
-    },
+};
+use crate::exchanges::binance::{
+    common::rate_limit::{BinanceRateLimitType, BinanceRateLimiter},
+    config::BinanceConfig,
 };
 use futures_util::{SinkExt, StreamExt};
 use smol_str::ToSmolStr;
@@ -286,7 +286,7 @@ impl BinanceRpcClient {
         let rate_limit_type = self.get_rate_limit_type(&req);
 
         self.rate_limiter
-            .wait_if_needed(rate_limit_type.clone(), request_weight)
+            .wait_if_needed(rate_limit_type, request_weight)
             .await;
 
         // Send request

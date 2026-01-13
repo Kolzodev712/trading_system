@@ -3,7 +3,7 @@
 //! This driver manages the Binance WebSocket connection and event loop.
 //! It integrates with the state manager to update and publish exchange state.
 
-use super::ws_client::BinanceClient;
+use super::websocket::ws_client::BinanceClient;
 use crate::state::manager::ExchangeStateManager;
 use async_trait::async_trait;
 use std::sync::Arc;
@@ -99,33 +99,42 @@ impl ExchangeDriver for BinanceDriver {
     async fn run(&mut self, mut shutdown_rx: broadcast::Receiver<()>) -> Result<(), EngineError> {
         info!("Starting Binance exchange driver...");
 
-        // Set state manager on client before starting stream
+        // Create event loop for coordinating RPC and streaming clients
+        let state_manager_for_event_loop =
+            Arc::new(tokio::sync::RwLock::new(Some(self.state_manager.clone())));
+        let mut event_loop = self.client.create_event_loop(state_manager_for_event_loop);
+
+        // Set state manager on client (for TradingClient methods)
         self.client
+            .set_state_manager(self.state_manager.clone())
+            .await;
+
+        // Set state manager on event loop
+        event_loop
             .set_state_manager(self.state_manager.clone())
             .await;
 
         // Update state to Connecting
         self.set_connection_state(ConnectionState::Connecting).await;
 
-        // Start WebSocket stream in background
-        let mut client = self.client.clone();
+        // Start event loop in background
         let state_tracker = self.connection_state.clone();
         let _ready_tx = Arc::clone(&self.connection_ready_tx);
 
         let ws_handle = tokio::spawn(async move {
-            // Track connection state in the stream loop
+            // Track connection state in the event loop
             let mut state_guard = state_tracker.write().await;
             *state_guard = ConnectionState::Connecting;
             drop(state_guard);
 
-            match client.stream().await {
+            match event_loop.run().await {
                 Ok(_) => {
-                    debug!("Binance WebSocket stream ended gracefully");
+                    debug!("Binance event loop ended gracefully");
                     let mut state_guard = state_tracker.write().await;
                     *state_guard = ConnectionState::Disconnected;
                 }
                 Err(e) => {
-                    warn!("Binance WebSocket stream error: {}", e);
+                    warn!("Binance event loop error: {}", e);
                     let mut state_guard = state_tracker.write().await;
                     *state_guard = ConnectionState::Failed;
                 }

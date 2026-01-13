@@ -18,7 +18,7 @@ use trading_core::{
 };
 
 use exchange_engine::{
-    exchanges::binance::{config::BinanceConfig, ws_client::BinanceClient},
+    exchanges::binance::{config::BinanceConfig, websocket::ws_client::BinanceClient},
     state::manager::ExchangeStateManager,
 };
 

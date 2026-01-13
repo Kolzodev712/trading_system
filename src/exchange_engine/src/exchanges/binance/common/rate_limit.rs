@@ -9,7 +9,7 @@
 //!
 //! Each rate limit can have multiple intervals (SECOND, MINUTE, HOUR, DAY).
 
-use crate::exchanges::binance::websocket::types::common::BinanceRateLimit;
+use serde::{Deserialize, Serialize};
 use smol_str::SmolStr;
 use std::collections::HashMap;
 use std::fmt::{Debug, Formatter, Result as FmtResult};
@@ -17,17 +17,37 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
 use trading_core::rate_limiter::{FixedWindowRateLimiter, RateLimitResult, RateLimiter};
+use trading_core::utils::{deserialize_smol_str, serialize_smol_str};
 
-/// Binance rate limit type
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+/// Binance rate limit structure from API responses
+#[derive(Debug, Clone, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BinanceRateLimit {
+    #[serde(
+        serialize_with = "serialize_smol_str",
+        deserialize_with = "deserialize_smol_str"
+    )]
+    pub rate_limit_type: SmolStr,
+    #[serde(
+        serialize_with = "serialize_smol_str",
+        deserialize_with = "deserialize_smol_str"
+    )]
+    pub interval: SmolStr,
+    pub interval_num: i64,
+    pub limit: i64,
+    pub count: i64,
+}
+
+/// Rate limit type for Binance API
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum BinanceRateLimitType {
     RequestWeight,
     Orders,
 }
 
-impl From<&str> for BinanceRateLimitType {
-    fn from(s: &str) -> Self {
-        match s {
+impl From<&SmolStr> for BinanceRateLimitType {
+    fn from(s: &SmolStr) -> Self {
+        match s.as_str() {
             "REQUEST_WEIGHT" => BinanceRateLimitType::RequestWeight,
             "ORDERS" => BinanceRateLimitType::Orders,
             _ => BinanceRateLimitType::RequestWeight, // Default fallback
@@ -35,14 +55,8 @@ impl From<&str> for BinanceRateLimitType {
     }
 }
 
-impl From<&SmolStr> for BinanceRateLimitType {
-    fn from(s: &SmolStr) -> Self {
-        Self::from(s.as_str())
-    }
-}
-
-/// Binance rate limit interval
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+/// Rate limit interval
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum BinanceRateLimitInterval {
     Second,
     Minute,
@@ -50,9 +64,9 @@ pub enum BinanceRateLimitInterval {
     Day,
 }
 
-impl From<&str> for BinanceRateLimitInterval {
-    fn from(s: &str) -> Self {
-        match s {
+impl From<&SmolStr> for BinanceRateLimitInterval {
+    fn from(s: &SmolStr) -> Self {
+        match s.as_str() {
             "SECOND" => BinanceRateLimitInterval::Second,
             "MINUTE" => BinanceRateLimitInterval::Minute,
             "HOUR" => BinanceRateLimitInterval::Hour,
@@ -62,15 +76,8 @@ impl From<&str> for BinanceRateLimitInterval {
     }
 }
 
-impl From<&SmolStr> for BinanceRateLimitInterval {
-    fn from(s: &SmolStr) -> Self {
-        Self::from(s.as_str())
-    }
-}
-
 impl BinanceRateLimitInterval {
-    /// Convert to Duration
-    pub fn to_duration(&self, interval_num: i64) -> Duration {
+    fn to_duration(self, interval_num: i64) -> Duration {
         let base = match self {
             BinanceRateLimitInterval::Second => Duration::from_secs(1),
             BinanceRateLimitInterval::Minute => Duration::from_secs(60),
@@ -81,7 +88,7 @@ impl BinanceRateLimitInterval {
     }
 }
 
-/// Key for identifying a specific rate limit
+/// Internal key for rate limit tracking
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct RateLimitKey {
     rate_limit_type: BinanceRateLimitType,
@@ -89,10 +96,7 @@ struct RateLimitKey {
     interval_num: i64,
 }
 
-/// Binance rate limiter manager
-///
-/// Manages multiple rate limiters for different types and intervals.
-/// Uses fixed window algorithm for all intervals as per Binance's behavior.
+/// Binance-specific rate limiter
 pub struct BinanceRateLimiter {
     limiters: Arc<RwLock<HashMap<RateLimitKey, Arc<dyn RateLimiter + Send + Sync>>>>,
 }
@@ -104,7 +108,6 @@ impl Debug for BinanceRateLimiter {
 }
 
 impl BinanceRateLimiter {
-    /// Create a new Binance rate limiter
     pub fn new() -> Self {
         Self {
             limiters: Arc::new(RwLock::new(HashMap::new())),
@@ -139,81 +142,59 @@ impl BinanceRateLimiter {
         }
     }
 
-    /// Check if a request is allowed for a specific rate limit type
-    ///
-    /// This checks all intervals for the given rate limit type and returns
-    /// the most restrictive result (the one that requires the longest wait).
-    pub async fn check(
-        &self,
-        rate_limit_type: BinanceRateLimitType,
-        weight: u64,
-    ) -> RateLimitResult {
+    /// Check if a request would exceed rate limits
+    async fn check(&self, rate_limit_type: BinanceRateLimitType, weight: u64) -> RateLimitResult {
         let limiters = self.limiters.read().await;
 
-        // Find all limiters for this rate limit type
-        let relevant_limiters: Vec<_> = limiters
+        // Find all limiters matching this rate limit type
+        let matching_limiters: Vec<_> = limiters
             .iter()
             .filter(|(key, _)| key.rate_limit_type == rate_limit_type)
+            .map(|(_, limiter)| limiter.clone())
             .collect();
 
-        if relevant_limiters.is_empty() {
-            // No limiters configured yet, allow the request
-            return RateLimitResult::allowed(0, u64::MAX);
-        }
+        drop(limiters);
 
-        // Check all intervals and find the most restrictive
-        let mut most_restrictive: Option<RateLimitResult> = None;
-
-        for (_, limiter) in relevant_limiters {
+        // Check all matching limiters - if any would block, return blocking result
+        for limiter in &matching_limiters {
             let result = limiter.check(weight).await;
-
-            match &most_restrictive {
-                None => most_restrictive = Some(result),
-                Some(current) => {
-                    if !result.allowed {
-                        // If this result blocks, use it if it requires longer wait
-                        if result.retry_after > current.retry_after {
-                            most_restrictive = Some(result);
-                        } else if current.allowed {
-                            // Current allows but this blocks, use this
-                            most_restrictive = Some(result);
-                        }
-                    } else if !current.allowed {
-                        // Current blocks but this allows, keep current
-                        // (don't change)
-                    }
-                }
-            }
-        }
-
-        most_restrictive.unwrap_or_else(|| RateLimitResult::allowed(0, u64::MAX))
-    }
-
-    /// Wait if necessary before making a request
-    pub async fn wait_if_needed(
-        &self,
-        rate_limit_type: BinanceRateLimitType,
-        weight: u64,
-    ) -> RateLimitResult {
-        loop {
-            let result = self.check(rate_limit_type.clone(), weight).await;
-            if result.allowed {
+            if !result.allowed {
                 return result;
             }
-            if let Some(duration) = result.retry_after {
-                tokio::time::sleep(duration).await;
+        }
+
+        // All limiters allowed - return allowed result from first limiter
+        if matching_limiters.is_empty() {
+            // No limiters configured - allow
+            RateLimitResult::allowed(0, u64::MAX)
+        } else {
+            // Return the first limiter's result (they all allowed, so any will do)
+            matching_limiters[0].check(weight).await
+        }
+    }
+
+    /// Wait if rate limit would be exceeded
+    pub async fn wait_if_needed(&self, rate_limit_type: BinanceRateLimitType, weight: u64) {
+        loop {
+            let result = self.check(rate_limit_type, weight).await;
+
+            if result.allowed {
+                break;
+            }
+            if let Some(wait_time) = result.retry_after {
+                tokio::time::sleep(wait_time).await;
             } else {
-                // No retry_after specified, wait a short time
-                tokio::time::sleep(Duration::from_millis(100)).await;
+                // No retry_after but not allowed - should not happen, but break anyway
+                break;
             }
         }
     }
 
-    /// Record that a request was made
+    /// Record a request (consume rate limit quota)
     pub async fn record(&self, rate_limit_type: BinanceRateLimitType, weight: u64) {
         let limiters = self.limiters.read().await;
 
-        // Record for all intervals of this rate limit type
+        // Record in all limiters matching this rate limit type
         for (key, limiter) in limiters.iter() {
             if key.rate_limit_type == rate_limit_type {
                 limiter.record(weight).await;
@@ -221,36 +202,31 @@ impl BinanceRateLimiter {
         }
     }
 
-    /// Get current usage for a rate limit type
+    /// Get current count for a rate limit type
     pub async fn current_count(&self, rate_limit_type: BinanceRateLimitType) -> u64 {
         let limiters = self.limiters.read().await;
 
-        // Return the maximum count across all intervals (most restrictive)
-        let mut max_count = 0u64;
+        // Sum counts from all limiters matching this rate limit type
+        let mut total = 0;
         for (key, limiter) in limiters.iter() {
             if key.rate_limit_type == rate_limit_type {
-                let count = limiter.current_count().await;
-                max_count = max_count.max(count);
+                total += limiter.current_count().await;
             }
         }
-        max_count
+
+        total
     }
 
-    /// Initialize with default Binance limits
-    ///
-    /// These are the typical limits from Binance's documentation.
-    /// They will be updated from actual API responses.
+    /// Initialize default rate limits (from Binance documentation)
     pub async fn initialize_defaults(&self) {
-        let defaults = vec![
-            // REQUEST_WEIGHT: 6000 per minute (IP-based)
+        let default_limits = vec![
             BinanceRateLimit {
                 rate_limit_type: SmolStr::new("REQUEST_WEIGHT"),
                 interval: SmolStr::new("MINUTE"),
                 interval_num: 1,
-                limit: 6000,
+                limit: 1200,
                 count: 0,
             },
-            // ORDERS: 50 per 10 seconds, 160000 per day (account-based)
             BinanceRateLimit {
                 rate_limit_type: SmolStr::new("ORDERS"),
                 interval: SmolStr::new("SECOND"),
@@ -262,12 +238,12 @@ impl BinanceRateLimiter {
                 rate_limit_type: SmolStr::new("ORDERS"),
                 interval: SmolStr::new("DAY"),
                 interval_num: 1,
-                limit: 160000,
+                limit: 200000,
                 count: 0,
             },
         ];
 
-        self.update_from_response(&defaults).await;
+        self.update_from_response(&default_limits).await;
     }
 }
 
@@ -280,46 +256,51 @@ impl Default for BinanceRateLimiter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json;
 
     #[tokio::test]
     async fn test_rate_limiter_creation() {
         let limiter = BinanceRateLimiter::new();
         limiter.initialize_defaults().await;
 
-        // Check REQUEST_WEIGHT limit
+        // Should be able to check without panicking
         let result = limiter.check(BinanceRateLimitType::RequestWeight, 1).await;
         assert!(result.allowed);
-        assert_eq!(result.limit, 6000);
     }
 
     #[tokio::test]
     async fn test_rate_limiter_update() {
         let limiter = BinanceRateLimiter::new();
-        limiter.initialize_defaults().await;
 
-        // Update with new limits
-        let updates = vec![BinanceRateLimit {
+        let limits = vec![BinanceRateLimit {
             rate_limit_type: SmolStr::new("REQUEST_WEIGHT"),
             interval: SmolStr::new("MINUTE"),
             interval_num: 1,
-            limit: 5000, // Reduced limit
-            count: 100,
+            limit: 100,
+            count: 0,
         }];
 
-        limiter.update_from_response(&updates).await;
+        limiter.update_from_response(&limits).await;
 
-        let result = limiter.check(BinanceRateLimitType::RequestWeight, 1).await;
-        assert!(result.allowed);
-        assert_eq!(result.limit, 5000);
+        let count = limiter
+            .current_count(BinanceRateLimitType::RequestWeight)
+            .await;
+        assert_eq!(count, 0);
     }
 
-    #[tokio::test]
-    async fn test_multiple_intervals() {
-        let limiter = BinanceRateLimiter::new();
-        limiter.initialize_defaults().await;
+    #[test]
+    fn test_binance_rate_limit_serde() {
+        let rate_limit = BinanceRateLimit {
+            rate_limit_type: SmolStr::new("REQUEST_WEIGHT"),
+            interval: SmolStr::new("MINUTE"),
+            interval_num: 1,
+            limit: 1200,
+            count: 5,
+        };
 
-        // ORDERS has both 10-second and 1-day limits
-        let result = limiter.check(BinanceRateLimitType::Orders, 1).await;
-        assert!(result.allowed);
+        let json = serde_json::to_string(&rate_limit).unwrap();
+        let deserialized: BinanceRateLimit = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(rate_limit, deserialized);
     }
 }

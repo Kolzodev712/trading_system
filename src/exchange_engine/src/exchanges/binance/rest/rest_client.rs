@@ -1,5 +1,5 @@
 // End goal here is to implement the `TradingClient` trait on the binance client
-use super::rest::{
+use super::{
     client::BinanceHttpClient,
     types::{
         balance::{BinanceAccountInfo, BinanceBalanceRequest},

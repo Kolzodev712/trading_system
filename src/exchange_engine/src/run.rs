@@ -75,7 +75,7 @@ pub async fn run(
     let (trading_client, binance_client_for_driver, _binance_config_for_driver) =
         match &config.exchange_config {
             ExchangeConfig::Binance(binance_config) => {
-                let client = crate::exchanges::binance::ws_client::BinanceClient::new(
+                let client = crate::exchanges::binance::websocket::ws_client::BinanceClient::new(
                     binance_config.clone(),
                     channels.websocket_inbound_capacity,
                     channels.websocket_ping_capacity,

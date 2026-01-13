@@ -7,8 +7,11 @@
 //! **Note**: This requires valid Binance API keys in `config/binance_config.json`
 
 use exchange_engine::exchanges::binance::{
-    common_types::BinanceSymbol, config::BinanceConfig,
-    websocket::types::rpc::cancel_order::BinanceWsCancelOrderReqParams, ws_client::BinanceClient,
+    common::types::BinanceSymbol,
+    config::BinanceConfig,
+    websocket::{
+        types::rpc::cancel_order::BinanceWsCancelOrderReqParams, ws_client::BinanceClient,
+    },
 };
 use smol_str::ToSmolStr;
 use std::{fs, sync::Arc};

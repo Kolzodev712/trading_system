@@ -12,32 +12,22 @@ use trading_core::{
     utils::hours_ago_from,
 };
 
-use super::super::binance::websocket::types::rpc::{
+use super::types::rpc::{
     amend_order::{map_amend_order_to_core, BinanceWsAmendOrderReqParams},
     cancel_all::BinanceWsCancelAllOrdersReqParams,
     cancel_order::BinanceWsCancelOrderReqParams,
     open_order::{map_open_order_to_core, BinanceWsOrderReqParams},
+    BinanceRpcRequest, BinanceRpcResponse,
 };
-use super::rpc_client::BinanceRpcClient;
-use super::streaming_client::BinanceStreamingClient;
 use super::{
-    config::BinanceConfig,
-    websocket::{
-        client::BinanceSubscriptionHandler,
-        types::{
-            rpc::{BinanceRpcRequest, BinanceRpcResponse},
-            user_data::events::ParsedBinanceMessage,
-        },
-    },
+    client::BinanceSubscriptionHandler, rpc_client::BinanceRpcClient, sign::BinanceWsAuthenticator,
+    streaming_client::BinanceStreamingClient,
 };
-use crate::exchanges::binance::sign::BinanceWsAuthenticator;
+use crate::exchanges::binance::config::BinanceConfig;
 use async_trait::async_trait;
 use std::{fmt::Debug, sync::Arc};
-use tokio::{
-    sync::{mpsc, RwLock},
-    time::{sleep, Duration},
-};
-use tracing::{error, info, warn};
+use tokio::sync::RwLock;
+use tracing::{error, warn};
 use trading_core::{traits::PrivateDataClient, types::common::Exchange};
 
 #[derive(Debug, Clone)]
@@ -111,188 +101,27 @@ impl BinanceClient {
         &self.rpc_client
     }
 
-    pub async fn stream(&mut self) -> Result<(), EngineError> {
-        info!(
-            "[BINANCE CLIENT] Starting stream - using single connection for both streaming and RPC"
-        );
-
-        // Use ONE authenticated connection for both streaming and RPC
-        // This is the correct approach for Binance - RPC requests work on the same connection as userDataStream
-        let mut backoff_iter = 0u32;
-        let mut connection_id = 0u64;
-
-        loop {
-            connection_id += 1;
-            info!(
-                "[BINANCE CLIENT {}] Connection attempt {} (backoff_iter={})",
-                connection_id, connection_id, backoff_iter
-            );
-
-            match self.connect_and_run_unified().await {
-                Ok(_) => {
-                    info!(
-                        "[BINANCE CLIENT {}] Connection ended, reconnecting...",
-                        connection_id
-                    );
-                }
-                Err(e) => {
-                    warn!(
-                        "[BINANCE CLIENT {}] Connection error: {:?}, reconnecting...",
-                        connection_id, e
-                    );
-                }
-            }
-
-            // Reset RPC channel on disconnect
-            {
-                let mut guard = self.rpc_client.rpc_request_tx.lock().await;
-                if guard.is_some() {
-                    warn!("[BINANCE CLIENT {}] ========== Resetting RPC channel (connection dropped) ==========", connection_id);
-                }
-                *guard = None;
-            }
-
-            // Exponential backoff
-            self.exponential_backoff_wait(backoff_iter).await;
-            backoff_iter = backoff_iter.saturating_add(1);
-        }
+    /// Create an event loop for coordinating WebSocket connections
+    ///
+    /// This method creates an event loop that coordinates the RPC client and streaming client.
+    /// The event loop handles connection management, reconnection, and event distribution.
+    pub fn create_event_loop(
+        &self,
+        state_manager: Arc<tokio::sync::RwLock<Option<Arc<ExchangeStateManager>>>>,
+    ) -> crate::exchanges::binance::event_loop::BinanceEventLoop {
+        use crate::exchanges::binance::event_loop::BinanceEventLoop;
+        BinanceEventLoop::new(
+            self.config.clone(),
+            Arc::clone(&self.rpc_client),
+            Arc::clone(&self.streaming_client),
+            state_manager,
+            self.inbound_capacity,
+            self.ping_capacity,
+            self.outbound_rpc_capacity,
+        )
     }
 
-    async fn connect_and_run_unified(&mut self) -> Result<(), EngineError> {
-        info!("[BINANCE CLIENT] Starting unified connection...");
-
-        // Create channels for unified connection
-        let (rpc_request_tx, rpc_request_rx) =
-            mpsc::channel::<BinanceRpcRequest>(self.outbound_rpc_capacity);
-        let (rpc_response_tx, rpc_response_rx) =
-            mpsc::channel::<BinanceRpcResponse>(self.outbound_rpc_capacity);
-        let (event_tx, event_rx) = mpsc::channel::<ParsedBinanceMessage>(self.inbound_capacity);
-        let (ping_tx, ping_rx) = mpsc::channel::<Vec<u8>>(self.ping_capacity);
-
-        // DO NOT set RPC channel yet - wait until writer task is spawned
-
-        // Connect and authenticate ONCE - use streaming client's ws_client
-        info!("[BINANCE CLIENT] Connecting and authenticating...");
-        let mut ws = self
-            .streaming_client
-            .ws_client
-            .connect_and_authenticate()
-            .await?;
-        info!("[BINANCE CLIENT] Authentication successful");
-
-        // Subscribe to user stream
-        info!("[BINANCE CLIENT] Subscribing to userDataStream...");
-        self.streaming_client
-            .ws_client
-            .subscribe_to_user_stream(&mut ws)
-            .await?;
-        info!("[BINANCE CLIENT] User stream subscription successful");
-
-        // Now split the stream and handle both RPC and events
-        info!("[BINANCE CLIENT] Splitting stream for unified handling...");
-        use crate::exchanges::binance::websocket::client::InboundHandler;
-        let mut session = self
-            .streaming_client
-            .ws_client
-            .split_stream(
-                ws,
-                rpc_request_tx.clone(),
-                rpc_request_rx,
-                rpc_response_tx.clone(),
-                event_tx.clone(),
-                ping_tx,
-                ping_rx,
-                InboundHandler,
-            )
-            .await?;
-        info!("[BINANCE CLIENT] Stream split successful - writer task spawned");
-
-        // Wait for writer task to be ready (proper signaling instead of arbitrary sleep)
-        if let Some(writer_ready_rx) = session.writer_ready_rx.take() {
-            match tokio::time::timeout(tokio::time::Duration::from_secs(5), writer_ready_rx).await {
-                Ok(Ok(_)) => {
-                    info!("[BINANCE CLIENT] Writer task is ready");
-                }
-                Ok(Err(_)) => {
-                    warn!("[BINANCE CLIENT] Writer ready signal channel closed");
-                }
-                Err(_) => {
-                    warn!("[BINANCE CLIENT] Timeout waiting for writer ready signal (5s)");
-                }
-            }
-        }
-
-        // Mark RPC channel as ready (writer task is confirmed running)
-        {
-            let mut guard = self.rpc_client.rpc_request_tx.lock().await;
-            *guard = Some(rpc_request_tx.clone());
-            info!("[BINANCE CLIENT] RPC channel marked as ready");
-        }
-
-        // Spawn event handler
-        let state_manager_clone = self.state_manager.clone();
-        let event_handler_handle = tokio::spawn(async move {
-            BinanceStreamingClient::run_event_handler(event_rx, state_manager_clone).await;
-        });
-
-        // Spawn RPC response handler
-        let rpc_client_clone = Arc::clone(&self.rpc_client);
-        let rpc_handler_handle = tokio::spawn(async move {
-            if let Err(e) = rpc_client_clone
-                .run_rpc_response_handler(rpc_response_rx)
-                .await
-            {
-                warn!("[BINANCE CLIENT] RPC response handler error: {:?}", e);
-            }
-        });
-
-        // Extract handles from session
-        let mut reader_handle = session.reader_handle.take().expect("Reader handle missing");
-        let mut writer_handle = session.writer_handle.take().expect("Writer handle missing");
-
-        info!("[BINANCE CLIENT] All handlers spawned, monitoring connection...");
-
-        // Wait for reader or writer to exit (connection dropped)
-        tokio::select! {
-            result = &mut reader_handle => {
-                warn!("[BINANCE CLIENT] Reader task exited: {:?}", result);
-            }
-            result = &mut writer_handle => {
-                warn!("[BINANCE CLIENT] Writer task exited: {:?}", result);
-            }
-            _ = event_handler_handle => {
-                warn!("[BINANCE CLIENT] Event handler task exited");
-            }
-            _ = rpc_handler_handle => {
-                warn!("[BINANCE CLIENT] RPC handler task exited");
-            }
-        }
-
-        info!("[BINANCE CLIENT] Connection dropped, exiting unified connection");
-        // Channel will be reset by the caller (stream() loop)
-        Ok(())
-    }
-
-    async fn exponential_backoff_wait(&self, iter: u32) {
-        let base = Duration::from_secs(self.config.base_delay.unwrap_or(2));
-        let max = Duration::from_secs(self.config.max_delay.unwrap_or(60));
-        let delay = (base * 2u32.saturating_pow(iter)).min(max);
-        // Simple jitter using system time
-        let jitter_ms = (std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_millis()
-            % 1000) as u64;
-        let jitter = Duration::from_millis(jitter_ms);
-        let to_sleep = (delay + jitter).min(max);
-        info!(
-            "[BINANCE CLIENT] Waiting {:?} before reconnecting...",
-            to_sleep
-        );
-        sleep(to_sleep).await;
-    }
-
-    // Old event loop code removed - now using separate streaming and RPC clients
+    // Stream coordination moved to event_loop.rs
 
     async fn send_rpc_and_wait(
         &self,

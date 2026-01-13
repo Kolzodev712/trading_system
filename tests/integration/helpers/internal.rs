@@ -117,7 +117,7 @@ pub async fn create_test_exchange_state_manager() -> (
     exchange_engine::state::manager::ExchangeStateManager,
     trading_core::channels::exchange::ExchangeUpdateReceiver,
 ) {
-    use exchange_engine::exchanges::binance::ws_client::BinanceClient;
+    use exchange_engine::exchanges::binance::websocket::ws_client::BinanceClient;
     use trading_core::channels::exchange::exchange_update_channel;
     use trading_core::config::ChannelConfig;
     use trading_core::registry::symbol::SymbolRegistry;

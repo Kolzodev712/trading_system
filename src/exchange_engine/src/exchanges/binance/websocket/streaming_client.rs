@@ -1,8 +1,9 @@
+use super::types::user_data::events::ParsedBinanceMessage;
+use super::{
+    client::{BinanceSubscriptionHandler, BinanceWSClient},
+    sign::BinanceWsAuthenticator,
+};
 use crate::exchanges::binance::config::BinanceConfig;
-use crate::exchanges::binance::sign::BinanceWsAuthenticator;
-use crate::exchanges::binance::websocket::client::BinanceSubscriptionHandler;
-use crate::exchanges::binance::websocket::client::BinanceWSClient;
-use crate::exchanges::binance::websocket::types::user_data::events::ParsedBinanceMessage;
 use crate::state::manager::ExchangeStateManager;
 use futures_util::{SinkExt, StreamExt};
 use std::sync::Arc;

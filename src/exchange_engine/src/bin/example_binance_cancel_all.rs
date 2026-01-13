@@ -8,8 +8,11 @@
 //! **Warning**: This will cancel ALL open orders for the configured trading pair
 
 use exchange_engine::exchanges::binance::{
-    common_types::BinanceSymbol, config::BinanceConfig,
-    websocket::types::rpc::cancel_all::BinanceWsCancelAllOrdersReqParams, ws_client::BinanceClient,
+    common::types::BinanceSymbol,
+    config::BinanceConfig,
+    websocket::{
+        types::rpc::cancel_all::BinanceWsCancelAllOrdersReqParams, ws_client::BinanceClient,
+    },
 };
 use std::{fs, sync::Arc};
 use tokio::sync::RwLock;

@@ -114,23 +114,8 @@ pub struct TimeResponse {
     server_time: u64,
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct BinanceRateLimit {
-    #[serde(
-        serialize_with = "serialize_smol_str",
-        deserialize_with = "deserialize_smol_str"
-    )]
-    pub rate_limit_type: SmolStr,
-    #[serde(
-        serialize_with = "serialize_smol_str",
-        deserialize_with = "deserialize_smol_str"
-    )]
-    pub interval: SmolStr,
-    pub interval_num: i64,
-    pub limit: i64,
-    pub count: i64,
-}
+// BinanceRateLimit is now in common::rate_limit (used by both REST and WebSocket)
+pub use crate::exchanges::binance::common::rate_limit::BinanceRateLimit;
 
 #[cfg(test)]
 mod tests {
@@ -262,38 +247,5 @@ mod tests {
         assert_eq!(msg.result.server_time, 987654321);
     }
 
-    #[test]
-    fn test_serialize_binance_rate_limit() {
-        let rate_limit = BinanceRateLimit {
-            rate_limit_type: SmolStr::new("REQUEST_WEIGHT"),
-            interval: SmolStr::new("MINUTE"),
-            interval_num: 1,
-            limit: 1200,
-            count: 5,
-        };
-
-        let json = serde_json::to_string(&rate_limit).unwrap();
-        let expected = r#"{"rateLimitType":"REQUEST_WEIGHT","interval":"MINUTE","intervalNum":1,"limit":1200,"count":5}"#;
-        assert_eq!(json, expected);
-    }
-
-    #[test]
-    fn test_deserialize_binance_rate_limit() {
-        let json = r#"
-        {
-            "rateLimitType": "ORDERS",
-            "interval": "SECOND",
-            "intervalNum": 10,
-            "limit": 50,
-            "count": 2
-        }
-        "#;
-
-        let rate_limit: BinanceRateLimit = serde_json::from_str(json).unwrap();
-        assert_eq!(rate_limit.rate_limit_type, "ORDERS");
-        assert_eq!(rate_limit.interval, "SECOND");
-        assert_eq!(rate_limit.interval_num, 10);
-        assert_eq!(rate_limit.limit, 50);
-        assert_eq!(rate_limit.count, 2);
-    }
+    // BinanceRateLimit tests are now in common::rate_limit
 }

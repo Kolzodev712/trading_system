@@ -1,7 +1,7 @@
-use super::super::{config::BinanceConfig, utils::deserialize_or_none};
+use super::{sign::BinanceAuthenticator, utils::deserialize_or_none};
 use crate::exchanges::binance::{
-    rate_limit::{BinanceRateLimitType, BinanceRateLimiter},
-    sign::BinanceAuthenticator,
+    common::rate_limit::{BinanceRateLimitType, BinanceRateLimiter},
+    config::BinanceConfig,
 };
 use async_trait::async_trait;
 use reqwest::Client;

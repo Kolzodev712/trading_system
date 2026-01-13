@@ -1,9 +1,22 @@
 # Proposal: Binance USD Futures Integration
 
-**Version**: 1.0  
+**Version**: 1.1  
 **Date**: December 2024  
-**Status**: Draft  
-**Prerequisites**: Proposal 02 (Futures Integration) must be completed first
+**Status**: Structure Complete (Implementation Pending)  
+**Prerequisites**: Proposal 01 (Futures Integration) must be completed first
+
+## Current Status
+
+**Directory structure has been created** to match Binance Spot structure:
+- ✅ All directories and module files in place
+- ✅ `common/` directory with `endpoints.rs`, `rate_limit.rs`, `types.rs`
+- ✅ `rest/` directory with `client.rs`, `sign.rs`, `utils.rs`, `types/`
+- ✅ `websocket/` directory with `client.rs`, `streaming_client.rs`, `ws_client.rs`, `sign.rs`, `types/`
+- ✅ `event_loop.rs` created (placeholder - simpler than Spot since no RPC)
+- ✅ `driver.rs` and `config.rs` created
+- ✅ All `mod.rs` files updated
+
+**Note**: Binance Futures does **NOT** support RPC WebSocket trading. All trading operations must be done via REST API. WebSocket is only used for streaming user data updates (positions, balances, order fills).
 
 ## Executive Summary
 
@@ -25,7 +38,7 @@ This proposal details the implementation of Binance USD Futures support in the E
 | Aspect | Binance Spot | Binance USD Futures |
 |--------|--------------|-------------------|
 | REST Base URL | `https://api.binance.com/api/v3/` | `https://fapi.binance.com/fapi/v1/` |
-| WebSocket RPC URL | `wss://ws-api.binance.com:443/ws-api/v3` | `wss://fstream.binance.com/ws` (different protocol) |
+| WebSocket RPC URL | `wss://ws-api.binance.com:443/ws-api/v3` | **NOT SUPPORTED** - No RPC WebSocket |
 | Market Data WS | `wss://stream.binance.com:9443/ws` | `wss://fstream.binance.com/stream` |
 | API Version | v3 | v1/v2 (mixed) |
 | Authentication | HMAC-SHA256 | HMAC-SHA256 (same) |
@@ -82,35 +95,60 @@ This proposal details the implementation of Binance USD Futures support in the E
 
 ### 1.1 Directory Structure
 
+**Note**: Structure mirrors Binance Spot exactly, but **Binance Futures does NOT support RPC WebSocket** - all trading operations are via REST API. WebSocket is only used for streaming user data.
+
 ```
 src/exchange_engine/src/exchanges/
 ├── binance/              # Existing spot driver
-│   └── ...
-└── binance_futures/      # New futures driver
-    ├── mod.rs
+│   ├── common/           # Shared types, rate_limit
+│   ├── config.rs
+│   ├── driver.rs
+│   ├── event_loop.rs     # WebSocket coordination (RPC + streaming)
+│   ├── rest/             # REST client, sign, utils
+│   └── websocket/        # WebSocket client (RPC + streaming)
+│
+└── binance_futures/      # New futures driver (same structure)
+    ├── common/           # Shared types, rate_limit
+    │   ├── rate_limit.rs # Reuses BinanceRateLimiter
+    │   ├── types.rs      # Common futures types
+    │   └── mod.rs
     ├── config.rs
     ├── driver.rs
+    ├── event_loop.rs     # WebSocket coordination (streaming only, no RPC)
     ├── rest/
-    │   ├── client.rs
-    │   └── types/
-    │       ├── position.rs
-    │       ├── balance.rs
-    │       ├── leverage.rs
-    │       ├── order.rs
-    │       ├── common.rs
-    │       └── mod.rs
-    ├── websocket/
-    │   ├── client.rs
-    │   └── types/
-    │       ├── user_data.rs
-    │       ├── position_update.rs
-    │       ├── balance_update.rs
-    │       ├── order_update.rs
-    │       └── mod.rs
-    ├── rate_limit.rs
-    ├── sign.rs
-    └── utils.rs
+    │   ├── client.rs     # BinanceFuturesHttpClient
+    │   ├── rest_client.rs
+    │   ├── sign.rs       # HMAC-SHA256 authentication
+    │   ├── utils.rs
+    │   ├── types/
+    │   │   ├── position.rs
+    │   │   ├── balance.rs
+    │   │   ├── leverage.rs
+    │   │   ├── order.rs
+    │   │   ├── account.rs
+    │   │   ├── common.rs
+    │   │   ├── error.rs
+    │   │   └── mod.rs
+    │   └── mod.rs
+    └── websocket/
+        ├── client.rs           # Basic WebSocket client
+        ├── sign.rs             # WebSocket auth (listenKey-based)
+        ├── streaming_client.rs # User data stream handler
+        ├── ws_client.rs        # High-level WebSocket wrapper
+        ├── types/
+        │   ├── common.rs
+        │   ├── user_data/
+        │   │   └── mod.rs
+        │   └── mod.rs
+        └── mod.rs
 ```
+
+**Key Differences from Spot**:
+- **No RPC WebSocket**: Futures does not support RPC-style WebSocket trading
+- **No stream splitting**: WebSocket is simpler - only handles user data streams
+- **All trading via REST**: Order placement, cancellation, position management all via REST API
+- **ListenKey-based auth**: User data streams use listenKey (created via REST), not session.logon
+- **Same structure otherwise**: Reuses same patterns, types, and organization
 
 ### 1.2 Configuration
 
@@ -194,38 +232,39 @@ const BINANCE_FUTURES_TESTNET_URL: &str = "https://testnet.binancefuture.com/fap
 
 ### 1.4 WebSocket Client Implementation
 
-**Location**: `src/exchange_engine/src/exchanges/binance_futures/websocket/client.rs`
+**Location**: `src/exchange_engine/src/exchanges/binance_futures/websocket/`
+
+**Important**: Binance Futures does **NOT** support RPC WebSocket like Spot. All trading operations (order placement, cancellation) are done via REST API. WebSocket is **only** used for streaming user data updates.
 
 #### WebSocket URLs
 
 - **User Data Stream**: `wss://fstream.binance.com/ws/<listenKey>`
-- **Combined Streams**: `wss://fstream.binance.com/stream?streams=<stream1>/<stream2>`
+  - ListenKey is created/renewed via REST API (`POST /fapi/v1/listenKey`, `PUT /fapi/v1/listenKey`)
+  - No authentication on WebSocket connection itself (auth is via listenKey)
 
-#### Key WebSocket Streams
+#### Key WebSocket Streams (User Data Only)
 
-1. **User Data Stream** (authenticated):
+1. **User Data Stream** (authenticated via listenKey):
    - `ACCOUNT_UPDATE` - Balance and position updates
    - `ORDER_TRADE_UPDATE` - Order and trade updates
    - `MARGIN_CALL` - Margin call warnings
 
-2. **Mark Price Stream** (public):
-   - `markPrice` - Mark price updates (1s or 3s interval)
-
-3. **Funding Rate Stream** (public):
-   - `fundingRate` - Funding rate updates
+**Note**: Mark price and funding rate streams are handled by Market Data Engine, not Exchange Engine.
 
 #### Implementation Checklist
 
-- [ ] Create `BinanceFuturesWsClient` struct
-- [ ] Implement `ExchangeDriver` trait
-- [ ] Implement user data stream connection
+- [ ] Create `BinanceFuturesWsClient` struct (in `websocket/ws_client.rs`)
+- [ ] Create `BinanceFuturesStreamingClient` struct (in `websocket/streaming_client.rs`)
+- [ ] Create `BinanceFuturesEventLoop` struct (in `event_loop.rs`) - simpler than Spot (no RPC coordination)
+- [ ] Implement user data stream connection using listenKey
 - [ ] Handle `ACCOUNT_UPDATE` events (balance, position updates)
 - [ ] Handle `ORDER_TRADE_UPDATE` events (order fills, position changes)
-- [ ] Handle `MARGIN_CALL` events
-- [ ] Implement listen key management (create, renew, delete)
+- [ ] Handle `MARGIN_CALL` events (optional, for monitoring)
+- [ ] Implement listen key management (create, renew every 60min, delete)
 - [ ] Add reconnection logic with exponential backoff
 - [ ] Add heartbeat/ping-pong handling
 - [ ] Parse and convert Binance Futures messages to core types
+- [ ] Update `ExchangeStateManager` on position/balance/order updates
 
 ### 1.5 Type Definitions
 
@@ -526,9 +565,30 @@ The publisher should already support futures events (from Proposal 02). The Bina
 - Initialize futures market data client
 - Initialize futures asset service client
 
-## Implementation Phases
+## Implementation Phases & User Action Items
 
 ### Phase 1: REST Client (Week 1-2)
+
+**Developer Tasks:**
+- [ ] Create `binance_futures` module structure
+- [ ] Implement configuration
+- [ ] Implement REST client base
+- [ ] Implement order placement and cancellation
+- [ ] Implement position and balance fetching
+- [ ] Implement leverage and margin management
+- [ ] Add integration tests with testnet
+
+**User Action Items:**
+- [ ] **Provide Binance Futures Testnet API Credentials**
+  - Create testnet account at https://testnet.binancefuture.com/
+  - Generate API key and secret key
+  - Provide credentials to developer (store securely, never commit to git)
+  - Ensure API key has trading permissions enabled
+- [ ] **Review Phase 1 Implementation**
+  - Review REST client implementation
+  - Test order placement/cancellation via testnet
+  - Verify position and balance fetching works correctly
+  - Approve before moving to Phase 2
 - [ ] Create `binance_futures` module structure
 - [ ] Implement configuration
 - [ ] Implement REST client base
@@ -538,35 +598,99 @@ The publisher should already support futures events (from Proposal 02). The Bina
 - [ ] Add integration tests with testnet
 
 ### Phase 2: WebSocket Client (Week 2-3)
-- [ ] Implement WebSocket client base
+
+**Developer Tasks:**
+- [ ] Implement WebSocket client base (no RPC - simpler than Spot)
+- [ ] Implement listen key management (REST API calls)
 - [ ] Implement user data stream connection
-- [ ] Handle position and balance updates
-- [ ] Handle order and trade updates
-- [ ] Implement listen key management
+- [ ] Handle position and balance updates (`ACCOUNT_UPDATE`)
+- [ ] Handle order and trade updates (`ORDER_TRADE_UPDATE`)
+- [ ] Implement event loop (streaming only, no RPC coordination needed)
 - [ ] Add reconnection logic
 - [ ] Add integration tests
 
+**User Action Items:**
+- [ ] **Test WebSocket Connectivity**
+  - Verify user data stream connects successfully
+  - Monitor logs for `ACCOUNT_UPDATE` and `ORDER_TRADE_UPDATE` events
+  - Confirm position and balance updates are received in real-time
+  - Test reconnection after network interruption
+- [ ] **Review Phase 2 Implementation**
+  - Verify event loop handles streaming correctly
+  - Confirm no RPC dependencies (as expected for Futures)
+  - Approve before moving to Phase 3
+
 ### Phase 3: Market Data Integration (Week 3-4)
+
+**Developer Tasks:**
 - [ ] Create Binance Futures market data client
 - [ ] Implement mark price stream
 - [ ] Implement funding rate stream
 - [ ] Update market data state manager
 - [ ] Add integration tests
 
+**User Action Items:**
+- [ ] **Verify Market Data Streams**
+  - Confirm mark price updates are received (should update every 1-3 seconds)
+  - Verify funding rate data is correct (updates every 8 hours or on change)
+  - Check that market data appears in Market Data Engine state
+  - Test with multiple symbols/pairs simultaneously
+- [ ] **Review Phase 3 Implementation**
+  - Verify mark price and funding rate streams integrate correctly
+  - Check that data is available to trading strategies
+  - Approve before moving to Phase 4
+
 ### Phase 4: Asset Engine Integration (Week 4-5)
+
+**Developer Tasks:**
 - [ ] Create Binance Futures public client
 - [ ] Implement trading rules fetching
 - [ ] Implement leverage bracket fetching
 - [ ] Integrate with AssetService
 - [ ] Add caching and refresh logic
 
+**User Action Items:**
+- [ ] **Verify Asset Engine Integration**
+  - Confirm trading rules are fetched correctly (symbol info, filters, limits)
+  - Verify leverage brackets are retrieved and cached
+  - Check that AssetService enforces leverage and margin requirements
+  - Test rule refresh logic (rules should update when changed on exchange)
+- [ ] **Review Phase 4 Implementation**
+  - Verify asset rules are correctly enforced
+  - Confirm caching reduces unnecessary API calls
+  - Approve before moving to Phase 5
+
 ### Phase 5: Testing & Documentation (Week 5-6)
+
+**Developer Tasks:**
 - [ ] End-to-end testing with Binance testnet
 - [ ] Test all futures operations
 - [ ] Test reconciliation
 - [ ] Test error handling
 - [ ] Update documentation
 - [ ] Performance testing
+
+**User Action Items:**
+- [ ] **Comprehensive Testing**
+  - Execute end-to-end trading flow: place order → fill → position update
+  - Test multiple simultaneous positions
+  - Test leverage changes and margin type changes
+  - Test position mode changes (one-way vs hedge mode)
+  - Verify reconciliation works correctly (state matches exchange)
+  - Test error recovery (network failures, rate limits, etc.)
+- [ ] **Review Documentation**
+  - Review all updated documentation
+  - Verify examples are correct
+  - Check configuration documentation is complete
+- [ ] **Production Preparation**
+  - Decide on production API credentials (when ready for live trading)
+  - Review security considerations (API key storage, listen key rotation)
+  - Set up monitoring and alerting for production
+  - Define rollback plan if issues arise
+- [ ] **Final Approval**
+  - Sign off on complete implementation
+  - Approve for testnet deployment
+  - Approve for production deployment (when ready)
 
 ## Testing Strategy
 

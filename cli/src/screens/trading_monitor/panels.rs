@@ -292,7 +292,7 @@ pub fn render_strategy(frame: &mut Frame, area: Rect, app: &App) -> Result<(), C
                         ))
                         .style(row_style),
                         Cell::from(if strat.position_quantity != "0" {
-                            format!("{}", strat.position_quantity)
+                            strat.position_quantity.to_string()
                         } else {
                             "0".to_string()
                         })
@@ -333,7 +333,7 @@ pub fn render_strategy_details(frame: &mut Frame, area: Rect, app: &App) -> Resu
     let strategy = app.selected_strategy();
     let trading_status = app.trading_status();
 
-    let rows = if let Some(strat) = strategy {
+    let rows: Vec<_> = if let Some(strat) = strategy {
         vec![
             Row::new(vec![
                 Cell::from("Strategy:"),

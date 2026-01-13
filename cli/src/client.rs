@@ -43,7 +43,7 @@ impl TradingCliClient {
         )
         .await
         .map_err(|_| CliError::Custom("gRPC call timed out".to_string()))?
-        .map_err(|e| CliError::Grpc(e))?;
+        .map_err(CliError::Grpc)?;
 
         Ok(response.into_inner().enabled)
     }
@@ -57,7 +57,7 @@ impl TradingCliClient {
         )
         .await
         .map_err(|_| CliError::Custom("gRPC call timed out".to_string()))?
-        .map_err(|e| CliError::Grpc(e))?;
+        .map_err(CliError::Grpc)?;
 
         Ok(response.into_inner().cancelled_orders)
     }
@@ -85,7 +85,7 @@ impl TradingCliClient {
             tokio::time::timeout(Duration::from_secs(5), self.client.get_levels(request))
                 .await
                 .map_err(|_| CliError::Custom("gRPC call timed out".to_string()))?
-                .map_err(|e| CliError::Grpc(e))?;
+                .map_err(CliError::Grpc)?;
 
         Ok(response.into_inner().levels)
     }
@@ -100,7 +100,7 @@ impl TradingCliClient {
             tokio::time::timeout(Duration::from_secs(5), self.client.toggle_level(request))
                 .await
                 .map_err(|_| CliError::Custom("gRPC call timed out".to_string()))?
-                .map_err(|e| CliError::Grpc(e))?;
+                .map_err(CliError::Grpc)?;
 
         Ok(response.into_inner().success)
     }
@@ -121,7 +121,7 @@ impl TradingCliClient {
             tokio::time::timeout(Duration::from_secs(5), self.client.toggle_strategy(request))
                 .await
                 .map_err(|_| CliError::Custom("gRPC call timed out".to_string()))?
-                .map_err(|e| CliError::Grpc(e))?;
+                .map_err(CliError::Grpc)?;
 
         Ok(response.into_inner().cancelled_orders)
     }
@@ -134,7 +134,7 @@ impl TradingCliClient {
         let response = tokio::time::timeout(Duration::from_secs(5), self.client.get_level(request))
             .await
             .map_err(|_| CliError::Custom("gRPC call timed out".to_string()))?
-            .map_err(|e| CliError::Grpc(e))?;
+            .map_err(CliError::Grpc)?;
 
         response
             .into_inner()
@@ -156,7 +156,7 @@ impl TradingCliClient {
             tokio::time::timeout(Duration::from_secs(5), self.client.update_level(request))
                 .await
                 .map_err(|_| CliError::Custom("gRPC call timed out".to_string()))?
-                .map_err(|e| CliError::Grpc(e))?;
+                .map_err(CliError::Grpc)?;
 
         Ok(response.into_inner().success)
     }
@@ -173,7 +173,7 @@ impl TradingCliClient {
             tokio::time::timeout(Duration::from_secs(5), self.client.create_level(request))
                 .await
                 .map_err(|_| CliError::Custom("gRPC call timed out".to_string()))?
-                .map_err(|e| CliError::Grpc(e))?;
+                .map_err(CliError::Grpc)?;
 
         Ok(response.into_inner().level_id)
     }

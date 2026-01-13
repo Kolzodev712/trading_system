@@ -1,4 +1,4 @@
-use crate::exchanges::binance::sign::BinanceWsAuthenticator;
+use super::sign::BinanceWsAuthenticator;
 
 use super::types::{
     common::{BinanceInbound, SessionLogonMessage, SessionLogonParams},

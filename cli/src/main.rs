@@ -1,4 +1,7 @@
 //! Trading System CLI - Terminal User Interface
+// Allow large error types - CliError is acceptable for CLI application
+#![allow(clippy::result_large_err)]
+
 mod app;
 mod client;
 mod error;
@@ -119,7 +122,7 @@ fn parse_args(args: &[String]) -> Args {
     } else {
         // Then check command line argument
         args.get(1)
-            .map(|s| s.clone())
+            .cloned()
             .unwrap_or_else(|| "http://127.0.0.1:50051".to_string())
     };
 

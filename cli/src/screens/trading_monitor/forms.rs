@@ -77,7 +77,7 @@ pub fn render_edit_form(frame: &mut Frame, app: &App) -> Result<(), CliError> {
         frame.render_widget(header, chunks[0]);
 
         // Content - form fields
-        let field_names = vec![
+        let field_names = [
             "Enabled",
             "Price (Fixed only)",
             "Quantity (Fixed only)",
@@ -87,7 +87,8 @@ pub fn render_edit_form(frame: &mut Frame, app: &App) -> Result<(), CliError> {
             "Repost on Cancel",
         ];
 
-        let field_values = vec![
+        // field_values needs to be Vec because elements are conditionally computed
+        let field_values = [
             if form.enabled { "✓ Yes" } else { "✗ No" }.to_string(),
             if form.editing && form.selected_field == 1 {
                 format!("{}_", form.input_buffer)
@@ -252,7 +253,7 @@ pub fn render_create_form(frame: &mut Frame, app: &App) -> Result<(), CliError> 
         frame.render_widget(header, chunks[0]);
 
         // Content - form fields
-        let field_names = vec![
+        let field_names = [
             "Level ID",
             "Symbol Base",
             "Symbol Quote",
@@ -267,7 +268,8 @@ pub fn render_create_form(frame: &mut Frame, app: &App) -> Result<(), CliError> 
             "Repost on Cancel",
         ];
 
-        let field_values = vec![
+        // field_values needs to be Vec because elements are conditionally computed
+        let field_values = [
             if form.editing && form.selected_field == 0 {
                 format!("{}_", form.input_buffer)
             } else {
@@ -348,19 +350,17 @@ pub fn render_create_form(frame: &mut Frame, app: &App) -> Result<(), CliError> 
         }
 
         // Show available symbols hint if on symbol fields
-        if form.selected_field == 1 || form.selected_field == 2 {
-            if !form.available_symbols.is_empty() {
-                form_lines.push(Line::from(""));
+        if (1..=2).contains(&form.selected_field) && !form.available_symbols.is_empty() {
+            form_lines.push(Line::from(""));
+            form_lines.push(Line::from(Span::styled(
+                "Available symbols:",
+                Style::default().fg(Color::DarkGray),
+            )));
+            for (base, quote) in &form.available_symbols {
                 form_lines.push(Line::from(Span::styled(
-                    "Available symbols:",
+                    format!("  {}/{}", base, quote),
                     Style::default().fg(Color::DarkGray),
                 )));
-                for (base, quote) in &form.available_symbols {
-                    form_lines.push(Line::from(Span::styled(
-                        format!("  {}/{}", base, quote),
-                        Style::default().fg(Color::DarkGray),
-                    )));
-                }
             }
         }
 

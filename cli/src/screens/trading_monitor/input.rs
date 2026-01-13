@@ -229,18 +229,15 @@ async fn handle_edit_form_input(app: &mut App, key: KeyCode) -> Result<(), CliEr
             }
             KeyCode::Char(c) => {
                 // Handle text input
-                match form.selected_field {
-                    1 | 2 | 3 | 4 => {
-                        // Text fields
-                        if !form.editing {
-                            form.editing = true;
-                            form.input_buffer.clear();
-                        }
-                        if c.is_ascii_digit() || c == '.' || c == '-' {
-                            form.input_buffer.push(c);
-                        }
+                if (1..=4).contains(&form.selected_field) {
+                    // Text fields
+                    if !form.editing {
+                        form.editing = true;
+                        form.input_buffer.clear();
                     }
-                    _ => {}
+                    if c.is_ascii_digit() || c == '.' || c == '-' {
+                        form.input_buffer.push(c);
+                    }
                 }
             }
             KeyCode::Backspace => {

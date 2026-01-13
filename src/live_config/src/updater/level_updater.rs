@@ -174,26 +174,23 @@ mod tests {
         let updater = LevelUpdater::new(level_manager.clone());
 
         // Add a level
+        let pair = Pair::new("BTC", "USDT");
         {
             let mut lm = level_manager.write().await;
             let config = create_test_level_config("test_level");
-            let pair = Pair::new("BTC", "USDT");
-            lm.add_level(config, pair).await.unwrap();
+            lm.add_level(config, pair.clone()).await.unwrap();
         }
 
-        // Update enabled field
+        // Update enabled field - use pair-suffixed ID
+        let level_id = format!("test_level_{}", pair.convert_to_smolstr());
         let result = updater
-            .update_field(
-                "test_level",
-                LevelField::Enabled,
-                LevelValue::Boolean(false),
-            )
+            .update_field(&level_id, LevelField::Enabled, LevelValue::Boolean(false))
             .await;
         assert!(result.is_ok());
 
-        // Verify update
+        // Verify update - use pair-suffixed ID
         let lm = level_manager.read().await;
-        let level = lm.get_level(&SmolStr::new("test_level")).unwrap();
+        let level = lm.get_level(&SmolStr::new(&level_id)).unwrap();
         assert!(!level.config.enabled);
     }
 
@@ -219,17 +216,18 @@ mod tests {
         let updater = LevelUpdater::new(level_manager.clone());
 
         // Add a level
+        let pair = Pair::new("BTC", "USDT");
         {
             let mut lm = level_manager.write().await;
             let config = create_test_level_config("test_level");
-            let pair = Pair::new("BTC", "USDT");
-            lm.add_level(config, pair).await.unwrap();
+            lm.add_level(config, pair.clone()).await.unwrap();
         }
 
-        // Try to update with wrong type
+        // Try to update with wrong type - use pair-suffixed ID
+        let level_id = format!("test_level_{}", pair.convert_to_smolstr());
         let result = updater
             .update_field(
-                "test_level",
+                &level_id,
                 LevelField::Enabled,
                 LevelValue::Decimal(dec!(100)),
             )
@@ -243,26 +241,27 @@ mod tests {
         let updater = LevelUpdater::new(level_manager.clone());
 
         // Add a level
+        let pair = Pair::new("BTC", "USDT");
         {
             let mut lm = level_manager.write().await;
             let config = create_test_level_config("test_level");
-            let pair = Pair::new("BTC", "USDT");
-            lm.add_level(config, pair).await.unwrap();
+            lm.add_level(config, pair.clone()).await.unwrap();
         }
 
-        // Update risk limit
+        // Update risk limit - use pair-suffixed ID
+        let level_id = format!("test_level_{}", pair.convert_to_smolstr());
         let result = updater
             .update_field(
-                "test_level",
+                &level_id,
                 LevelField::RiskLimit,
                 LevelValue::Decimal(dec!(1000)),
             )
             .await;
         assert!(result.is_ok());
 
-        // Verify update
+        // Verify update - use pair-suffixed ID
         let lm = level_manager.read().await;
-        let level = lm.get_level(&SmolStr::new("test_level")).unwrap();
+        let level = lm.get_level(&SmolStr::new(&level_id)).unwrap();
         assert_eq!(level.config.risk.daily_loss_limit, Some(dec!(1000)));
     }
 }

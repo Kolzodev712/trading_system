@@ -95,7 +95,10 @@ impl MarketDataStateManager {
         // Note: Publishing failures are logged but don't fail the state update
         // In tests, channels may be closed (no consumers), which is fine
         if let Err(e) = self.publisher.publish_orderbook(&orderbook).await {
-            warn!("Failed to publish orderbook update (channel may have no consumers): {}", e);
+            warn!(
+                "Failed to publish orderbook update (channel may have no consumers): {}",
+                e
+            );
             // Don't fail - state is still updated correctly
         }
 
@@ -144,7 +147,10 @@ impl MarketDataStateManager {
         // Note: Publishing failures are logged but don't fail the state update
         // In tests, channels may be closed (no consumers), which is fine
         if let Err(e) = self.publisher.publish_trade(&trade).await {
-            warn!("Failed to publish trade update (channel may have no consumers): {}", e);
+            warn!(
+                "Failed to publish trade update (channel may have no consumers): {}",
+                e
+            );
             // Don't fail - state is still updated correctly
         }
 

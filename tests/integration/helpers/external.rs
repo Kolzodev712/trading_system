@@ -74,8 +74,8 @@ impl ExchangeClientBuilder {
                     self.channels.shutdown_capacity,
                 )))
             }
-            Exchange::BinanceFutures | Exchange::Bybit => {
-                todo!("Futures exchange clients not yet implemented in tests")
+            Exchange::Bybit => {
+                todo!("Bybit exchange clients not yet implemented in tests")
             }
             Exchange::Unsupported => {
                 panic!("Unsupported exchange cannot be used in tests")
@@ -161,8 +161,8 @@ impl MarketDataClientBuilder {
 
                 Box::new(BinanceClient::new(config, self.buffer_size, None, vec![]))
             }
-            Exchange::BinanceFutures | Exchange::Bybit => {
-                todo!("Futures market data clients not yet implemented in tests")
+            Exchange::Bybit => {
+                todo!("Bybit market data clients not yet implemented in tests")
             }
             Exchange::Unsupported => {
                 panic!("Unsupported exchange cannot be used in tests")
@@ -191,8 +191,8 @@ impl MarketDataClientBuilder {
                 let client = BinanceClient::new(config, self.buffer_size, handler, vec![]);
                 Box::new(client)
             }
-            Exchange::BinanceFutures | Exchange::Bybit => {
-                todo!("Futures market data clients not yet implemented in tests")
+            Exchange::Bybit => {
+                todo!("Bybit market data clients not yet implemented in tests")
             }
             Exchange::Unsupported => {
                 panic!("Unsupported exchange cannot be used in tests")
@@ -220,8 +220,8 @@ impl AssetDataClientBuilder {
                     "https://api.binance.com".to_string(),
                 ))
             }
-            Exchange::BinanceFutures | Exchange::Bybit => {
-                todo!("Futures asset clients not yet implemented in tests")
+            Exchange::Bybit => {
+                todo!("Bybit asset clients not yet implemented in tests")
             }
             Exchange::Unsupported => {
                 panic!("Unsupported exchange cannot be used in tests")

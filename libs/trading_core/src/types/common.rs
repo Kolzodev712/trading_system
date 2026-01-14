@@ -272,7 +272,6 @@ pub struct MillisecondTimestamp(pub u64);
 #[derive(Debug, Deserialize, Serialize, Clone, Eq, PartialEq, Hash)]
 pub enum Exchange {
     Binance,
-    BinanceFutures,
     Bybit,
     Unsupported,
 }

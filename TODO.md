@@ -55,5 +55,5 @@ These items are planned but not yet detailed in proposals. They can be added as 
 
 
 
-for binance_futures integration:
-https://developers.binance.com/docs/derivatives/Introduction
+for bybit spot & futures integration:
+https://bybit-exchange.github.io/docs/v5/guide

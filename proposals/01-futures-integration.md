@@ -6,43 +6,36 @@
 
 ## Executive Summary
 
-This proposal outlines the integration of futures trading capabilities into the trading system. The design ensures that futures support is **optional** and **non-breaking** for existing spot trading functionality. The architecture will support multiple futures exchanges (Binance USD Futures, Bybit) with a unified interface while maintaining exchange-specific drivers.
+This proposal outlines the integration of futures trading capabilities into the trading system. The design ensures that futures support is **optional** and **non-breaking** for existing spot trading functionality. The architecture will support futures exchanges (Bybit) with a unified interface while maintaining exchange-specific drivers.
 
 ## Objectives
 
 1. **Add futures-specific data types** to `trading_core` types
 2. **Extend traits** with optional futures methods (using trait extensions/default implementations)
-3. **Create Binance USD Futures driver** (separate from spot, different API endpoints)
-4. **Design for future Bybit integration** (same patterns, different driver)
-5. **Maintain backward compatibility** - all futures methods are optional
-6. **Support futures in all components** - Exchange Engine, Market Data Engine, Trading Engine, Asset Engine
+3. **Design for Bybit integration** (unified API supporting both spot and futures)
+4. **Maintain backward compatibility** - all futures methods are optional
+5. **Support futures in all components** - Exchange Engine, Market Data Engine, Trading Engine, Asset Engine
 
 ## Key Design Principles
 
 1. **Unified TradingClient**: Futures methods are added directly to `TradingClient` with default "not supported" implementations
-2. **Single Driver Per Exchange**: One driver handles both spot and futures (unless API is separate like Binance)
+2. **Single Driver Per Exchange**: One driver handles both spot and futures (unified API pattern like Bybit)
 3. **Differentiation by InstrumentType**: Spot vs futures differentiated by `OrderRequest.instrument_type` field
 4. **Optional Support**: Exchanges that don't support futures simply return "not supported" from default implementations
 5. **Type Safety**: Futures-specific types are clearly distinguished from spot types
 6. **Exchange Agnostic**: Core types and traits are exchange-agnostic; exchange-specific logic lives in drivers
 7. **Incremental Implementation**: Can be implemented phase-by-phase without breaking existing functionality
-8. **Exception for Separate APIs**: Binance is an exception (separate API URLs) and requires separate drivers
 
 ## Design Rationale
 
 ### Why Unified Client Instead of Separate Traits?
 
 **Benefits of Unified Approach:**
-1. **Simpler Architecture**: One client, one driver per exchange (unless API forces separation)
+1. **Simpler Architecture**: One client, one driver per exchange
 2. **Less Code Duplication**: Shared authentication, rate limiting, connection management
 3. **More Flexible**: Can trade both spot and futures with same client, same connection
 4. **Easier Maintenance**: Single codebase to maintain per exchange
 5. **Natural Pattern**: Most exchanges (Bybit, OKX, etc.) use unified APIs
-
-**When Separate Drivers Are Needed:**
-- **Binance Exception**: Separate API URLs (`api.binance.com` vs `fapi.binance.com`)
-- **Different Protocols**: If authentication or protocol differs significantly
-- **Independent Scaling**: If spot and futures need completely independent scaling (rare)
 
 **Differentiation Strategy:**
 - `OrderRequest.instrument_type` field determines spot vs futures
@@ -50,7 +43,7 @@ This proposal outlines the integration of futures trading capabilities into the 
 - Futures-specific methods (`fetch_positions`, `set_leverage`) are optional
 - Default implementations return "not supported" for exchanges without futures
 
-This design follows the principle: **"One driver per exchange, unless the API forces separation"**
+This design follows the principle: **"One driver per exchange with unified API support"**
 
 ## Architecture Overview
 
@@ -82,11 +75,10 @@ This design follows the principle: **"One driver per exchange, unless the API fo
                             ▼
 ┌─────────────────────────────────────────────────────────────┐
 │              Exchange-Specific Drivers                       │
-│  ┌──────────────────┐  ┌──────────────────┐              │
-│  │ Binance Spot     │  │ Binance Futures  │              │
-│  │ (existing)       │  │ (separate API)    │              │
-│  │                   │  │ (exception)      │              │
-│  └──────────────────┘  └──────────────────┘              │
+│  ┌──────────────────┐                                     │
+│  │ Binance Spot     │                                     │
+│  │ (existing)       │                                     │
+│  └──────────────────┘                                     │
 │  ┌──────────────────┐                                     │
 │  │ Bybit Unified    │                                     │
 │  │ (spot + futures) │                                     │
@@ -362,8 +354,7 @@ pub struct Order {
 #[derive(Debug, Deserialize, Serialize, Clone, Eq, PartialEq, Hash)]
 pub enum Exchange {
     Binance,
-    BinanceFutures,  // New
-    Bybit,           // New (for future)
+    Bybit,           // New (supports both spot and futures)
     Unsupported,
 }
 ```
@@ -787,7 +778,7 @@ Futures exchanges can be configured alongside spot exchanges. The exact configur
 - Type conversions and serialization
 
 ### Integration Tests
-- Binance Futures testnet connection
+- Bybit testnet connection (spot + futures)
 - Order placement and cancellation
 - Position management
 - Leverage and margin operations
@@ -807,9 +798,9 @@ Futures exchanges can be configured alongside spot exchanges. The exact configur
 
 ## Risk Mitigation
 
-1. **Testnet First**: All development on Binance testnet
+1. **Testnet First**: All development on Bybit testnet
 2. **Feature Flags**: Futures features behind configuration flags
-3. **Separate Drivers**: Futures bugs don't affect spot trading
+3. **Unified Drivers**: Single driver for both spot and futures (simpler, less duplication)
 4. **Comprehensive Testing**: Extensive test coverage before production
 5. **Gradual Rollout**: Enable futures for one pair at a time
 
@@ -827,7 +818,7 @@ Futures exchanges can be configured alongside spot exchanges. The exact configur
 
 ## Future Enhancements
 
-1. **Exchange-Specific Implementations**: Binance USD Futures, Bybit Futures, etc. (see separate proposals)
+1. **Exchange-Specific Implementations**: Bybit (see separate proposal)
 2. **Futures-Specific Strategies**: Strategies optimized for futures (funding rate arbitrage, etc.)
 3. **Advanced Order Types**: 
    - OCO (One-Cancels-Other) orders

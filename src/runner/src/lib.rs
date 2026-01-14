@@ -787,7 +787,6 @@ pub async fn initialize_asset_service(
 
     let base_url = match exchange {
         Exchange::Binance => "https://api.binance.com",
-        Exchange::BinanceFutures => "https://fapi.binance.com",
         Exchange::Bybit => {
             return Err("Bybit Asset Engine not yet implemented".into());
         }
@@ -884,9 +883,6 @@ pub fn initialize_market_data_engine(
                     max_delay: binance_config.max_delay,
                 }),
             }
-        }
-        Exchange::BinanceFutures => {
-            return Err("Binance Futures Market Data Engine not yet implemented".into());
         }
         Exchange::Bybit => {
             return Err("Bybit Market Data Engine not yet implemented".into());
@@ -1168,9 +1164,6 @@ pub async fn initialize_exchange_engine(
             };
 
             (exchange_config, pairs)
-        }
-        Exchange::BinanceFutures => {
-            return Err("Binance Futures Exchange Engine not yet implemented".into());
         }
         Exchange::Bybit => {
             return Err("Bybit Exchange Engine not yet implemented".into());

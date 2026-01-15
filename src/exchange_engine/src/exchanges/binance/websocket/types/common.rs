@@ -115,7 +115,7 @@ pub struct TimeResponse {
 }
 
 // BinanceRateLimit is now in common::rate_limit (used by both REST and WebSocket)
-pub use crate::exchanges::binance::common::rate_limit::BinanceRateLimit;
+pub use crate::exchanges::binance::rate_limit::BinanceRateLimit;
 
 #[cfg(test)]
 mod tests {

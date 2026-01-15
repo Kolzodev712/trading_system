@@ -9,7 +9,7 @@
 //! **Warning**: This will place a real test order on Binance testnet
 
 use exchange_engine::exchanges::binance::{
-    common::types::{BinanceOrderType, BinanceSide, BinanceSymbol, BinanceTimeInForce},
+    types::{BinanceOrderType, BinanceSide, BinanceSymbol, BinanceTimeInForce},
     config::BinanceConfig,
     websocket::{types::rpc::open_order::BinanceWsOrderReqParams, ws_client::BinanceClient},
 };

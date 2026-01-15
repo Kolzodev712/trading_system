@@ -1,4 +1,4 @@
-use crate::exchanges::binance::common::types::{BinanceOrderStatus, BinanceSide};
+use crate::exchanges::binance::types::{BinanceOrderStatus, BinanceSide};
 use trading_core::{
     error::EngineError,
     types::{common::OrderId, exchange::Order},

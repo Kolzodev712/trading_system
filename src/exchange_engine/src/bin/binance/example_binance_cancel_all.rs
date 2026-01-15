@@ -8,7 +8,7 @@
 //! **Warning**: This will cancel ALL open orders for the configured trading pair
 
 use exchange_engine::exchanges::binance::{
-    common::types::BinanceSymbol,
+    types::BinanceSymbol,
     config::BinanceConfig,
     websocket::{
         types::rpc::cancel_all::BinanceWsCancelAllOrdersReqParams, ws_client::BinanceClient,

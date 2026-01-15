@@ -4,8 +4,8 @@ use super::{
     sign::BinanceWsAuthenticator,
 };
 use crate::exchanges::binance::{
-    common::rate_limit::{BinanceRateLimitType, BinanceRateLimiter},
     config::BinanceConfig,
+    rate_limit::{BinanceRateLimitType, BinanceRateLimiter},
 };
 use futures_util::{SinkExt, StreamExt};
 use smol_str::ToSmolStr;

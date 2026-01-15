@@ -1,4 +1,4 @@
-use crate::exchanges::binance::common::types::{
+use crate::exchanges::binance::types::{
     BinanceOrderStatus, BinanceOrderType, BinanceSide, BinanceTimeInForce,
 };
 use rust_decimal::Decimal;

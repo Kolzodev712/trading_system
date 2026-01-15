@@ -3,6 +3,8 @@
 //! This module provides generic rate limiting algorithms that can be used
 //! by exchange-specific implementations.
 
+use std::collections::VecDeque;
+use std::fmt::Debug;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 use tokio::time::sleep;
@@ -42,7 +44,7 @@ impl RateLimitResult {
 
 /// Generic rate limiter trait
 #[async_trait::async_trait]
-pub trait RateLimiter: Send + Sync {
+pub trait RateLimiter: Send + Sync + Debug {
     /// Check if a request with the given weight is allowed
     /// Returns the result and whether to wait before retrying
     async fn check(&self, weight: u64) -> RateLimitResult;
@@ -299,6 +301,96 @@ impl RateLimiter for TokenBucketRateLimiter {
     }
 }
 
+/// Rolling window rate limiter
+///
+/// This algorithm uses a sliding time window. It tracks individual request timestamps
+/// and only counts requests within the window duration. As time progresses, old requests
+/// automatically fall out of the window.
+///
+/// Example: 10 requests per second
+/// - At 00:00:00.500, requests from 00:00:00.000 onwards count
+/// - At 00:00:01.200, requests from 00:00:00.200 onwards count (old ones expired)
+#[derive(Debug)]
+pub struct RollingWindowRateLimiter {
+    limit: RwLock<u64>,
+    window_duration: Duration,
+    requests: RwLock<VecDeque<Instant>>,
+}
+
+impl RollingWindowRateLimiter {
+    pub fn new(limit: u64, window_duration: Duration) -> Self {
+        Self {
+            limit: RwLock::new(limit),
+            window_duration,
+            requests: RwLock::new(VecDeque::new()),
+        }
+    }
+
+    fn cleanup_old_requests(&self, requests: &mut VecDeque<Instant>, now: Instant) {
+        let cutoff = now - self.window_duration;
+        while let Some(&front) = requests.front() {
+            if front < cutoff {
+                requests.pop_front();
+            } else {
+                break;
+            }
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl RateLimiter for RollingWindowRateLimiter {
+    async fn check(&self, weight: u64) -> RateLimitResult {
+        let now = Instant::now();
+        let mut requests = self.requests.write().await;
+        self.cleanup_old_requests(&mut requests, now);
+
+        let limit = *self.limit.read().await;
+        let count = requests.len() as u64;
+
+        if count + weight <= limit {
+            RateLimitResult::allowed(count, limit)
+        } else {
+            let retry_after = if let Some(oldest) = requests.front() {
+                let elapsed = now.duration_since(*oldest);
+                if elapsed < self.window_duration {
+                    self.window_duration - elapsed
+                } else {
+                    Duration::from_millis(1)
+                }
+            } else {
+                Duration::from_millis(1)
+            };
+            RateLimitResult::blocked(count, limit, retry_after)
+        }
+    }
+
+    async fn record(&self, weight: u64) {
+        let now = Instant::now();
+        let mut requests = self.requests.write().await;
+        self.cleanup_old_requests(&mut requests, now);
+
+        for _ in 0..weight {
+            requests.push_back(now);
+        }
+    }
+
+    async fn update_limit(&self, limit: u64) {
+        *self.limit.write().await = limit;
+    }
+
+    async fn current_count(&self) -> u64 {
+        let now = Instant::now();
+        let mut requests = self.requests.write().await;
+        self.cleanup_old_requests(&mut requests, now);
+        requests.len() as u64
+    }
+
+    async fn current_limit(&self) -> u64 {
+        *self.limit.read().await
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -387,5 +479,33 @@ mod tests {
             assert!(result.allowed);
             limiter.record(1).await;
         }
+    }
+
+    #[tokio::test]
+    async fn test_rolling_window_basic() {
+        let limiter = RollingWindowRateLimiter::new(5, Duration::from_secs(1));
+
+        for i in 0..5 {
+            let result = limiter.check(1).await;
+            assert!(result.allowed, "Request {} should be allowed", i);
+            limiter.record(1).await;
+        }
+
+        let result = limiter.check(1).await;
+        assert!(!result.allowed, "6th request should be blocked");
+    }
+
+    #[tokio::test]
+    async fn test_rolling_window_expiry() {
+        let limiter = RollingWindowRateLimiter::new(3, Duration::from_millis(100));
+
+        for _ in 0..3 {
+            limiter.record(1).await;
+        }
+
+        sleep(Duration::from_millis(110)).await;
+
+        let result = limiter.check(1).await;
+        assert!(result.allowed, "Should allow after old requests expired");
     }
 }

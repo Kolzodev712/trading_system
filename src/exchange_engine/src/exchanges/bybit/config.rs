@@ -1,6 +1,7 @@
 //! Bybit exchange configuration
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use trading_core::secret::SecretString;
 use trading_core::types::common::Pair;
 
@@ -14,6 +15,48 @@ pub struct BybitConfig {
     /// Testnet mode
     #[serde(default)]
     pub testnet: bool,
+    /// Rate limiter configuration
+    #[serde(default)]
+    pub rate_limiter: BybitRateLimiterConfig,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BybitRateLimiterConfig {
+    #[serde(default)]
+    pub endpoint_limits: HashMap<String, u64>,
+
+    #[serde(default = "default_endpoint_limit")]
+    pub default_endpoint_limit: u64,
+
+    #[serde(default = "default_ip_limit")]
+    pub ip_limit: u64,
+
+    #[serde(default = "default_ip_window_seconds")]
+    pub ip_window_seconds: u64,
+}
+
+fn default_endpoint_limit() -> u64 {
+    10
+}
+
+fn default_ip_limit() -> u64 {
+    600
+}
+
+fn default_ip_window_seconds() -> u64 {
+    5
+}
+
+impl Default for BybitRateLimiterConfig {
+    fn default() -> Self {
+        Self {
+            endpoint_limits: HashMap::new(),
+            default_endpoint_limit: default_endpoint_limit(),
+            ip_limit: default_ip_limit(),
+            ip_window_seconds: default_ip_window_seconds(),
+        }
+    }
 }
 
 #[derive(Debug, PartialEq, Eq, Deserialize, Serialize, Clone)]
@@ -55,6 +98,7 @@ mod tests {
                 api_secret: SecretString::new("api_secret"),
             },
             testnet: false,
+            rate_limiter: BybitRateLimiterConfig::default(),
         };
 
         let serialized = serde_json::to_string(&config).expect("Serialization failed");

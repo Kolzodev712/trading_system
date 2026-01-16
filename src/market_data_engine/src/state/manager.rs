@@ -68,17 +68,34 @@ impl MarketDataStateManager {
         orderbook: StructuredOrderbook,
     ) -> Result<(), EngineError> {
         // Validate that symbol matches orderbook pair
-        let expected_pair = self.symbol_registry.get_pair(symbol).ok_or_else(|| {
-            EngineError::CustomError(anyhow::anyhow!("Symbol {} not found in registry", symbol))
-        })?;
+        // First try registry lookup, then fall back to parsing if not found
+        let expected_pair = self
+            .symbol_registry
+            .get_pair(symbol)
+            .map(|p| p.clone())
+            .unwrap_or_else(|| {
+                // Symbol not in registry - try parsing it (handles case sensitivity)
+                debug!("Symbol {} not in registry, parsing it to get pair", symbol);
+                self.symbol_registry.get_or_parse_pair(symbol.as_ref())
+            });
 
-        if orderbook.pair != *expected_pair {
+        if orderbook.pair != expected_pair {
+            warn!(
+                "Orderbook validation failed: symbol={}, orderbook_pair={}, expected_pair={}",
+                symbol, orderbook.pair, expected_pair
+            );
             return Err(EngineError::CustomError(anyhow::anyhow!(
-                "Symbol {} does not match orderbook pair {}",
+                "Symbol {} does not match orderbook pair {} (expected {})",
                 symbol,
-                orderbook.pair
+                orderbook.pair,
+                expected_pair
             )));
         }
+
+        debug!(
+            "Orderbook validation passed: symbol={}, pair={}/{}",
+            symbol, orderbook.pair.base, orderbook.pair.quote
+        );
 
         // Clone before lock to minimize lock time
         let pair_for_log = orderbook.pair.clone();

@@ -86,6 +86,7 @@ pub struct SharedServices {
     pub indicator_handle: JoinHandle<()>,
     pub trading_state_manager: Arc<trading_engine::state::manager::TradingStateManager>,
     pub exchange_state_manager: Arc<exchange_engine::state::manager::ExchangeStateManager>,
+    pub market_data_state_manager: Arc<market_data_engine::state::manager::MarketDataStateManager>,
     pub asset_service: Option<Arc<AssetService>>,
     pub trading_control: Option<Arc<trading_core::grpc::TradingControl>>,
 }
@@ -279,6 +280,7 @@ pub async fn strategy_runner(
         services.trading_state_manager.clone(),
         services.trading_client.clone(),
         services.exchange_state_manager.clone(),
+        services.market_data_state_manager.clone(),
         services.indicator_service.clone(),
         services.indicator_calculator.clone(),
         trading_control.clone(),
@@ -504,6 +506,7 @@ pub async fn level_runner(
         services.trading_state_manager.clone(),
         services.trading_client.clone(),
         services.exchange_state_manager.clone(),
+        services.market_data_state_manager.clone(),
         services.indicator_service.clone(),
         services.indicator_calculator.clone(),
         trading_control.clone(), // Pass the same TradingControl instance
@@ -856,6 +859,7 @@ pub fn initialize_market_data_engine(
         trading_core::channels::market_data::MarketDataUpdateSender,
         trading_core::channels::market_data::MarketDataUpdateReceiver,
         JoinHandle<()>,
+        Arc<market_data_engine::state::manager::MarketDataStateManager>,
     ),
     Box<dyn std::error::Error>,
 > {
@@ -951,6 +955,9 @@ pub fn initialize_market_data_engine(
         pairs.clone(),
     )?;
 
+    // Get state manager before moving driver into task
+    let state_manager = market_data_driver.get_state_manager();
+
     let mut shutdown_rx = shutdown_manager.subscribe();
     let handle = tokio::spawn(async move {
         tokio::select! {
@@ -965,7 +972,7 @@ pub fn initialize_market_data_engine(
         }
     });
 
-    Ok((market_data_tx, market_data_rx, handle))
+    Ok((market_data_tx, market_data_rx, handle, state_manager))
 }
 
 /// Initialize Indicator Service

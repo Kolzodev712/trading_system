@@ -56,9 +56,9 @@ impl StateManagerMessageHandler {
 #[async_trait]
 impl WSMessageHandler for StateManagerMessageHandler {
     async fn handle_orderbook(&self, orderbook: StructuredOrderbook) -> Result<(), EngineError> {
-        // Extract symbol from pair for validation
-        let symbol = orderbook.pair.convert_to_smolstr();
-        let symbol: trading_core::types::common::Symbol = symbol.into();
+        // Extract symbol from pair for validation (use uppercase to match registry)
+        let symbol_str = orderbook.pair.convert_to_smolstr();
+        let symbol: trading_core::types::common::Symbol = symbol_str.into();
         self.state_manager
             .update_orderbook(&symbol, orderbook)
             .await

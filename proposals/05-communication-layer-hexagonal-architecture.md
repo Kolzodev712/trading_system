@@ -727,14 +727,13 @@ impl EventGateway {
         }
     }
     
-    fn serialize_event(&self, event: &Event) -> Result<SerializedEvent, GatewayError> {
-        // Serialize to protobuf/JSON based on transport
-        // ...
-    }
+    // Serialization now handled by DTP Serializer
+    // Gateway wraps events in DTP envelope before publishing
 }
 
 pub trait EventTransport: Send + Sync {
-    async fn publish(&mut self, event: &SerializedEvent) -> Result<(), GatewayError>;
+    /// Publish DTP envelope (transport handles wire format)
+    async fn publish_dtp(&mut self, envelope: &DtpEnvelope) -> Result<(), GatewayError>;
 }
 ```
 
@@ -899,6 +898,269 @@ pub enum PubSubProvider {
 
 ---
 
+## Phase 3.5: Data Transfer Protocol (DTP)
+
+### Overview
+
+A **Data Transfer Protocol (DTP)** provides a standardized message envelope that wraps all events and commands crossing the Gateway boundary. This enables versioning, observability, event sourcing, and unified handling across all transports while maintaining zero-copy performance for internal communication.
+
+### Why DTP?
+
+**Current Approach Issues**:
+- No standardized message envelope
+- No versioning mechanism
+- No correlation IDs for tracing
+- No metadata (source, destination, routing hints)
+- Each transport handles serialization differently
+- No event sourcing/replay support
+- Difficult to add new transports without duplicating serialization logic
+
+**DTP Benefits**:
+- ✅ **Unified Message Format**: Same envelope structure across all transports
+- ✅ **Versioning**: Protocol version enables evolution without breaking changes
+- ✅ **Observability**: Correlation IDs, message IDs, source/destination metadata
+- ✅ **Event Sourcing Ready**: Self-contained messages can be persisted and replayed
+- ✅ **Transport Agnostic**: Same envelope, different wire formats
+- ✅ **Performance**: Internal bus remains zero-copy (< 1μs); DTP only at Gateway boundary
+
+### DTP Message Envelope
+
+**Location**: `libs/trading_core/src/dtp/mod.rs` (new module)
+
+```rust
+/// Data Transfer Protocol Message Envelope
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DtpEnvelope {
+    /// Protocol version (for backward compatibility)
+    pub version: u8,
+    
+    /// Message type (Event or Command)
+    pub message_type: MessageType,
+    
+    /// Message ID (unique identifier)
+    pub message_id: String,
+    
+    /// Correlation ID (for request/response tracking)
+    pub correlation_id: Option<String>,
+    
+    /// Source component
+    pub source: String,
+    
+    /// Destination/routing hint (optional)
+    pub destination: Option<String>,
+    
+    /// Timestamp (nanoseconds since epoch)
+    pub timestamp: u64,
+    
+    /// Serialization format (protobuf, json, msgpack)
+    pub format: SerializationFormat,
+    
+    /// Payload (serialized event or command)
+    pub payload: Vec<u8>,
+    
+    /// Metadata (key-value pairs for extensibility)
+    pub metadata: HashMap<String, String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MessageType {
+    Event,
+    Command,
+    Response,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SerializationFormat {
+    Protobuf,
+    Json,
+    MessagePack,
+}
+
+/// DTP Serializer (creates envelope from internal types)
+pub struct DtpSerializer {
+    version: u8,
+    source: String,
+}
+
+impl DtpSerializer {
+    pub fn serialize_event(
+        &self,
+        event: &Event,
+        format: SerializationFormat,
+    ) -> Result<DtpEnvelope, DtpError> {
+        // Serialize event to payload
+        let payload = match format {
+            SerializationFormat::Protobuf => self.serialize_protobuf(event)?,
+            SerializationFormat::Json => self.serialize_json(event)?,
+            SerializationFormat::MessagePack => self.serialize_msgpack(event)?,
+        };
+        
+        // Create envelope
+        Ok(DtpEnvelope {
+            version: self.version,
+            message_type: MessageType::Event,
+            message_id: generate_message_id(),
+            correlation_id: None,
+            source: self.source.clone(),
+            destination: None,
+            timestamp: current_timestamp_nanos(),
+            format,
+            payload,
+            metadata: HashMap::new(),
+        })
+    }
+    
+    pub fn serialize_command(
+        &self,
+        command: &Command,
+        format: SerializationFormat,
+    ) -> Result<DtpEnvelope, DtpError> {
+        // Similar implementation for commands
+        // ...
+    }
+}
+
+/// DTP Deserializer (extracts internal types from envelope)
+pub struct DtpDeserializer;
+
+impl DtpDeserializer {
+    pub fn deserialize_event(
+        &self,
+        envelope: &DtpEnvelope,
+    ) -> Result<Event, DtpError> {
+        match envelope.format {
+            SerializationFormat::Protobuf => self.deserialize_protobuf(&envelope.payload),
+            SerializationFormat::Json => self.deserialize_json(&envelope.payload),
+            SerializationFormat::MessagePack => self.deserialize_msgpack(&envelope.payload),
+        }
+    }
+}
+```
+
+### Updated Architecture with DTP
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    Core Runtime (UI-Agnostic)                │
+│  ┌────────────────────────────────────────────────────┐    │
+│  │ Event Bus (Internal)                              │    │
+│  │  - Zero-copy Rust types                           │    │
+│  │  - < 1μs latency                                  │    │
+│  └────────────────────────────────────────────────────┘    │
+└─────────────────────────────────────────────────────────────┘
+                            │
+                            ▼
+┌─────────────────────────────────────────────────────────────┐
+│              External Gateway Layer                           │
+│  ┌────────────────────────────────────────────────────┐    │
+│  │ DTP Serializer                                    │    │
+│  │  - Wraps Event in DTP envelope                   │    │
+│  │  - Adds metadata (version, correlation ID, etc.)  │    │
+│  │  - Serializes payload (protobuf/JSON/msgpack)    │    │
+│  └────────────────────────────────────────────────────┘    │
+│  ┌────────────────────────────────────────────────────┐    │
+│  │ Event Gateway                                     │    │
+│  │  - Subscribes to Event Bus                       │    │
+│  │  - Filters, aggregates                           │    │
+│  │  - Wraps in DTP envelope                         │    │
+│  │  - Publishes to transports                       │    │
+│  └────────────────────────────────────────────────────┘    │
+└─────────────────────────────────────────────────────────────┘
+         │              │              │              │
+         ▼              ▼              ▼              ▼
+    ┌────────┐    ┌────────┐    ┌────────┐    ┌────────┐
+    │  gRPC  │    │ PubSub │    │  IPC   │    │  HTTP  │
+    │ (DTP)  │    │ (DTP)  │    │ (DTP)  │    │ (DTP)  │
+    └────────┘    └────────┘    └────────┘    └────────┘
+```
+
+### Key Design Principles
+
+1. **Internal Bus Remains Zero-Copy**: DTP envelope is only created at Gateway boundary
+2. **Gateway Creates DTP Envelope**: Adds metadata, version, correlation IDs
+3. **Transports Handle Wire Format**: gRPC uses Protobuf, Pub/Sub uses JSON, IPC uses MessagePack
+4. **Consumers Deserialize DTP**: Extract envelope, deserialize payload based on format
+
+### Updated Event Gateway with DTP
+
+**Location**: `src/gateway/src/event_gateway.rs`
+
+```rust
+use trading_core::dtp::{DtpSerializer, DtpEnvelope, SerializationFormat};
+
+pub struct EventGateway {
+    event_bus: Arc<dyn EventBus>,
+    dtp_serializer: DtpSerializer,
+    transports: Vec<Box<dyn EventTransport>>,
+}
+
+impl EventGateway {
+    pub fn new(
+        event_bus: Arc<dyn EventBus>,
+        config: GatewayConfig,
+    ) -> Self {
+        Self {
+            event_bus,
+            dtp_serializer: DtpSerializer::new(
+                1, // version
+                "trading_system".to_string(),
+            ),
+            transports: Vec::new(),
+        }
+    }
+    
+    pub async fn start(&mut self) -> Result<(), GatewayError> {
+        let mut rx = self.event_bus.subscribe();
+        
+        loop {
+            match rx.recv().await {
+                Ok(event) => {
+                    if self.should_export(&event) {
+                        // Wrap in DTP envelope
+                        let dtp_message = self.dtp_serializer.serialize_event(
+                            &event,
+                            SerializationFormat::Json, // or based on transport
+                        )?;
+                        
+                        // Publish to all transports
+                        for transport in &mut self.transports {
+                            transport.publish_dtp(&dtp_message).await?;
+                        }
+                    }
+                }
+                Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                    warn!("Event gateway lagged, skipped {} events", skipped);
+                }
+                Err(broadcast::error::RecvError::Closed) => {
+                    error!("Event bus closed, gateway shutting down");
+                    break;
+                }
+            }
+        }
+        
+        Ok(())
+    }
+}
+
+pub trait EventTransport: Send + Sync {
+    /// Publish DTP envelope (transport handles wire format)
+    async fn publish_dtp(&mut self, envelope: &DtpEnvelope) -> Result<(), GatewayError>;
+}
+```
+
+### Potential Concerns & Mitigations
+
+**Concern 1: Overhead**
+- **Mitigation**: Envelope only created at Gateway boundary (not internal). Internal bus remains zero-copy. Overhead is minimal compared to network latency.
+
+**Concern 2: Complexity**
+- **Mitigation**: DTP is simple (just an envelope). Benefits outweigh complexity. Makes adding new transports easier.
+
+**Concern 3: Serialization Performance**
+- **Mitigation**: Choose format based on transport needs. Protobuf for gRPC, JSON for Pub/Sub, MessagePack for IPC. Internal bus doesn't serialize.
+
+---
+
 ## Phase 4: Transport Implementations
 
 ### 4.1 gRPC Transport
@@ -916,12 +1178,12 @@ pub struct GrpcEventTransport {
 }
 
 impl EventTransport for GrpcEventTransport {
-    async fn publish(&mut self, event: &SerializedEvent) -> Result<(), GatewayError> {
-        // Convert to gRPC message
-        let grpc_event = self.serialize_to_grpc(event)?;
+    async fn publish_dtp(&mut self, envelope: &DtpEnvelope) -> Result<(), GatewayError> {
+        // Convert DTP envelope to gRPC message
+        let grpc_msg = DtpToGrpcConverter::convert(envelope)?;
         
         // Stream to connected clients
-        self.stream_to_clients(grpc_event).await?;
+        self.stream_to_clients(grpc_msg).await?;
         
         Ok(())
     }
@@ -958,10 +1220,13 @@ pub struct NatsEventTransport {
 }
 
 impl EventTransport for NatsEventTransport {
-    async fn publish(&mut self, event: &SerializedEvent) -> Result<(), GatewayError> {
-        // Publish to NATS topics
+    async fn publish_dtp(&mut self, envelope: &DtpEnvelope) -> Result<(), GatewayError> {
+        // Serialize DTP envelope to JSON
+        let json = serde_json::to_vec(envelope)?;
+        
+        // Publish to NATS (envelope is self-contained)
         for topic in &self.topics {
-            self.client.publish(topic, event.data()).await?;
+            self.client.publish(topic, json).await?;
         }
         Ok(())
     }
@@ -981,9 +1246,13 @@ pub struct IpcEventTransport {
 }
 
 impl EventTransport for IpcEventTransport {
-    async fn publish(&mut self, event: &SerializedEvent) -> Result<(), GatewayError> {
+    async fn publish_dtp(&mut self, envelope: &DtpEnvelope) -> Result<(), GatewayError> {
+        // Serialize DTP envelope to MessagePack (compact, fast)
+        let msgpack = rmp_serde::to_vec(envelope)?;
+        
         // Write to Unix socket
-        // ...
+        self.socket.write_all(&msgpack).await?;
+        Ok(())
     }
 }
 ```
@@ -1160,23 +1429,27 @@ This ensures zero downtime migration.
 
 ### Phase 3: Gateway Layer (Week 3-5)
 - [ ] Create `gateway` crate
-- [ ] Implement `EventGateway`
-- [ ] Implement `CommandGateway`
+- [ ] Implement DTP core library (`libs/trading_core/src/dtp/`)
+  - [ ] Define `DtpEnvelope` structure
+  - [ ] Implement `DtpSerializer` and `DtpDeserializer`
+  - [ ] Add versioning support
+- [ ] Implement `EventGateway` (with DTP integration)
+- [ ] Implement `CommandGateway` (with DTP integration)
 - [ ] Add authentication and validation
 - [ ] Add configuration
 - [ ] Add integration tests
 
 ### Phase 4: gRPC Transport (Week 5-6)
-- [ ] Implement `GrpcEventTransport`
-- [ ] Implement `GrpcCommandTransport`
-- [ ] Update gRPC proto definitions
+- [ ] Implement `GrpcEventTransport` (with DTP support)
+- [ ] Implement `GrpcCommandTransport` (with DTP support)
+- [ ] Update gRPC proto definitions (include DTP envelope)
 - [ ] Migrate existing gRPC service to Gateway
 - [ ] Test with existing TUI
 
 ### Phase 5: Additional Transports (Week 6-7)
-- [ ] Implement `NatsEventTransport` (Pub/Sub)
-- [ ] Implement `IpcEventTransport` (Unix sockets)
-- [ ] Add HTTP transport (optional)
+- [ ] Implement `NatsEventTransport` (Pub/Sub with DTP)
+- [ ] Implement `IpcEventTransport` (Unix sockets with DTP/MessagePack)
+- [ ] Add HTTP transport (optional, with DTP)
 - [ ] Test all transports
 
 ### Phase 6: Integration & Testing (Week 7-8)
@@ -1191,13 +1464,15 @@ This ensures zero downtime migration.
 ## Success Criteria
 
 - [ ] Core runtime has zero UI/transport dependencies
-- [ ] Event Bus and Command Bus fully functional
-- [ ] Gateway layer working with gRPC
+- [ ] Event Bus and Command Bus fully functional (zero-copy, <1μs)
+- [ ] DTP core library implemented and tested
+- [ ] Gateway layer working with DTP and gRPC
 - [ ] Existing TUI works without changes
 - [ ] Can add new transports without modifying core
 - [ ] Internal latency remains <1μs
 - [ ] Multiple consumers can connect simultaneously
 - [ ] Authentication and validation working
+- [ ] DTP enables versioning, observability, and event sourcing
 - [ ] Documentation complete
 - [ ] Ready for additional UIs/consumers
 

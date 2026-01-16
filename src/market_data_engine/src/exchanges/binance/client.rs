@@ -132,7 +132,8 @@ impl BinanceClient {
             match message {
                 ParsedBinanceMessage::OrderBook { orderbook } => {
                     // Extract symbol from pair for backward compatibility with handler interface
-                    let symbol = orderbook.pair.convert_to_smolstr();
+                    // Use uppercase to ensure it matches registry
+                    let symbol = orderbook.pair.convert_to_smolstr().to_uppercase();
                     handler
                         .handle_orderbook_with_symbol(&symbol, orderbook)
                         .await?

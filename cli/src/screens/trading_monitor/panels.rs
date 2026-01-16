@@ -472,3 +472,157 @@ pub fn render_trades(frame: &mut Frame, area: Rect, app: &App) -> Result<(), Cli
     frame.render_widget(table, area);
     Ok(())
 }
+
+/// Render the orderbook panel with multi-pair support
+pub fn render_orderbook(frame: &mut Frame, area: Rect, app: &App) -> Result<(), CliError> {
+    let data = app.monitoring_data();
+    let orderbooks = data.map(|md| md.orderbooks.as_slice()).unwrap_or(&[]);
+
+    if orderbooks.is_empty() {
+        let empty_text = vec![ratatui::text::Line::from("No orderbook data available")];
+        let paragraph = ratatui::widgets::Paragraph::new(empty_text).block(
+            ratatui::widgets::Block::default()
+                .borders(ratatui::widgets::Borders::ALL)
+                .title("Orderbooks"),
+        );
+        frame.render_widget(paragraph, area);
+        return Ok(());
+    }
+
+    let selected_idx = app.selected_orderbook_pair_index().unwrap_or(0);
+    let selected_idx = selected_idx.min(orderbooks.len().saturating_sub(1));
+
+    // Split area: top for pair tabs, bottom for orderbook content
+    let chunks = ratatui::layout::Layout::default()
+        .direction(ratatui::layout::Direction::Vertical)
+        .constraints([
+            ratatui::layout::Constraint::Length(3), // Pair tabs
+            ratatui::layout::Constraint::Min(0),    // Orderbook content
+        ])
+        .split(area);
+
+    let mut tab_spans = Vec::new();
+    for (idx, ob) in orderbooks.iter().enumerate() {
+        let is_selected = idx == selected_idx;
+        let style = if is_selected {
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::Cyan)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+        };
+        tab_spans.push(ratatui::text::Span::styled(format!(" {} ", ob.pair), style));
+    }
+
+    let tabs_line = ratatui::text::Line::from(tab_spans);
+    let tabs_paragraph = ratatui::widgets::Paragraph::new(tabs_line).block(
+        ratatui::widgets::Block::default()
+            .borders(ratatui::widgets::Borders::ALL)
+            .title("Pairs"),
+    );
+    frame.render_widget(tabs_paragraph, chunks[0]);
+
+    // Render orderbook for selected pair
+    if let Some(orderbook) = orderbooks.get(selected_idx) {
+        // Split orderbook area: left for bids, right for asks
+        let ob_chunks = ratatui::layout::Layout::default()
+            .direction(ratatui::layout::Direction::Horizontal)
+            .constraints([
+                ratatui::layout::Constraint::Percentage(50), // Bids
+                ratatui::layout::Constraint::Percentage(50), // Asks
+            ])
+            .split(chunks[1]);
+
+        // Render bids (left side)
+        let bid_rows: Vec<Row> = orderbook
+            .bids
+            .iter()
+            .map(|level| {
+                Row::new(vec![
+                    Cell::from(level.price.as_str()),
+                    Cell::from(level.quantity.as_str()),
+                ])
+            })
+            .collect();
+
+        let bid_table = Table::new(
+            bid_rows,
+            [
+                ratatui::layout::Constraint::Percentage(50),
+                ratatui::layout::Constraint::Percentage(50),
+            ],
+        )
+        .header(Row::new(vec![
+            Cell::from("Price").style(
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Cell::from("Qty").style(
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ]))
+        .block(Block::default().borders(Borders::ALL).title(format!(
+            "Bids - {} (Best: {})",
+            orderbook.pair, orderbook.best_bid
+        )));
+        frame.render_widget(bid_table, ob_chunks[0]);
+
+        // Render asks (right side)
+        let ask_rows: Vec<Row> = orderbook
+            .asks
+            .iter()
+            .map(|level| {
+                Row::new(vec![
+                    Cell::from(level.price.as_str()),
+                    Cell::from(level.quantity.as_str()),
+                ])
+            })
+            .collect();
+
+        let ask_table = Table::new(
+            ask_rows,
+            [
+                ratatui::layout::Constraint::Percentage(50),
+                ratatui::layout::Constraint::Percentage(50),
+            ],
+        )
+        .header(Row::new(vec![
+            Cell::from("Price").style(Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),
+            Cell::from("Qty").style(Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),
+        ]))
+        .block(Block::default().borders(Borders::ALL).title(format!(
+            "Asks - {} (Best: {})",
+            orderbook.pair, orderbook.best_ask
+        )));
+        frame.render_widget(ask_table, ob_chunks[1]);
+
+        // Render summary info at bottom if space allows
+        if chunks[1].height > 15 {
+            let summary_text = vec![ratatui::text::Line::from(vec![
+                ratatui::text::Span::styled("Mid: ", Style::default()),
+                ratatui::text::Span::styled(
+                    &orderbook.mid_price,
+                    Style::default().fg(Color::Yellow),
+                ),
+                ratatui::text::Span::from("  │  "),
+                ratatui::text::Span::styled("Spread: ", Style::default()),
+                ratatui::text::Span::styled(&orderbook.spread, Style::default().fg(Color::Magenta)),
+            ])];
+            let summary_paragraph = ratatui::widgets::Paragraph::new(summary_text)
+                .block(ratatui::widgets::Block::default().borders(ratatui::widgets::Borders::ALL));
+            let summary_area = Rect {
+                x: area.x,
+                y: area.y + area.height - 3,
+                width: area.width,
+                height: 3,
+            };
+            frame.render_widget(summary_paragraph, summary_area);
+        }
+    }
+
+    Ok(())
+}

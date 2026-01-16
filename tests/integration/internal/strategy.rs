@@ -5,6 +5,7 @@ use crate::helpers::internal::*;
 use rust_decimal_macros::dec;
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use trading_core::channels::market_data::market_data_update_channel;
 use trading_core::registry::symbol::SymbolRegistry;
 use trading_core::types::common::Pair;
 use trading_engine::state::{manager::TradingStateManager, TradingState};
@@ -48,10 +49,22 @@ async fn test_strategy_monitoring_with_position() {
     }
 
     let indicator_calculator = Arc::new(indicator_engine::calculator::IndicatorCalculator::new());
+
+    // Create market data state manager for orderbooks
+    let (market_data_tx, _market_data_rx) = market_data_update_channel(100);
+    let market_data_symbol_registry = Arc::new(SymbolRegistry::from_pairs(vec![pair.clone()]));
+    let market_data_state_manager = Arc::new(
+        market_data_engine::state::manager::MarketDataStateManager::new(
+            market_data_tx,
+            market_data_symbol_registry,
+        ),
+    );
+
     let monitoring_service = runner::grpc::service::MonitoringService {
         level_manager: Arc::new(RwLock::new(trading_engine::levels::LevelManager::new())),
         trading_state_manager: trading_state_manager.clone(),
         exchange_state_manager,
+        market_data_state_manager,
         indicator_calculator: indicator_calculator.clone(),
         strategy_infos: vec![runner::grpc::service::StrategyInfo {
             strategy_name: "BuyLowSellHigh".to_string(),
@@ -104,10 +117,22 @@ async fn test_strategy_monitoring_without_position() {
 
     let pair = Pair::new("BTC", "USDC");
     let indicator_calculator = Arc::new(indicator_engine::calculator::IndicatorCalculator::new());
+
+    // Create market data state manager for orderbooks
+    let (market_data_tx, _market_data_rx) = market_data_update_channel(100);
+    let market_data_symbol_registry = Arc::new(SymbolRegistry::from_pairs(vec![pair.clone()]));
+    let market_data_state_manager = Arc::new(
+        market_data_engine::state::manager::MarketDataStateManager::new(
+            market_data_tx,
+            market_data_symbol_registry,
+        ),
+    );
+
     let monitoring_service = runner::grpc::service::MonitoringService {
         level_manager: Arc::new(RwLock::new(trading_engine::levels::LevelManager::new())),
         trading_state_manager: trading_state_manager.clone(),
         exchange_state_manager,
+        market_data_state_manager,
         indicator_calculator: indicator_calculator.clone(),
         strategy_infos: vec![runner::grpc::service::StrategyInfo {
             strategy_name: "BuyLowSellHigh".to_string(),
@@ -171,10 +196,22 @@ async fn test_strategy_monitoring_with_active_orders() {
     }
 
     let indicator_calculator = Arc::new(indicator_engine::calculator::IndicatorCalculator::new());
+
+    // Create market data state manager for orderbooks
+    let (market_data_tx, _market_data_rx) = market_data_update_channel(100);
+    let market_data_symbol_registry = Arc::new(SymbolRegistry::from_pairs(vec![pair.clone()]));
+    let market_data_state_manager = Arc::new(
+        market_data_engine::state::manager::MarketDataStateManager::new(
+            market_data_tx,
+            market_data_symbol_registry,
+        ),
+    );
+
     let monitoring_service = runner::grpc::service::MonitoringService {
         level_manager: Arc::new(RwLock::new(trading_engine::levels::LevelManager::new())),
         trading_state_manager: trading_state_manager.clone(),
         exchange_state_manager,
+        market_data_state_manager,
         indicator_calculator: indicator_calculator.clone(),
         strategy_infos: vec![runner::grpc::service::StrategyInfo {
             strategy_name: "BuyLowSellHigh".to_string(),

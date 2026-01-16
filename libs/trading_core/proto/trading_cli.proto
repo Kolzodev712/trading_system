@@ -151,6 +151,7 @@ message MonitoringData {
     repeated IndicatorValue indicators = 5;
     AggregatedData aggregated = 6;
     repeated StrategyStatus strategies = 7; // Strategy info (only present in strategies mode, supports multiple)
+    repeated Orderbook orderbooks = 8; // Orderbook data for all pairs
 }
 
 message Order {
@@ -244,6 +245,22 @@ message StrategyStatus {
     int32 max_active_orders = 10;      // Maximum allowed active orders
     string last_signal = 11;           // "Buy", "Sell", or "None"
     string signal_strength = 12;     // Signal strength percentage (if available)
+}
+
+message Orderbook {
+    string pair = 1;                  // Trading pair (e.g., "BTC/USDT")
+    int64 timestamp = 2;               // Last update timestamp
+    repeated OrderbookLevel bids = 3;  // Bid levels (top 10)
+    repeated OrderbookLevel asks = 4;  // Ask levels (top 10)
+    string best_bid = 5;               // Best bid price
+    string best_ask = 6;               // Best ask price
+    string mid_price = 7;              // Mid price (average of best bid/ask)
+    string spread = 8;                 // Spread (best_ask - best_bid)
+}
+
+message OrderbookLevel {
+    string price = 1;                  // Price level
+    string quantity = 2;               // Quantity at this price
 }
 
 

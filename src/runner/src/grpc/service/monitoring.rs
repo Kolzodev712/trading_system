@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tonic::Status;
+use tracing::debug;
 use trading_core::utils::hours_ago;
 use trading_engine::levels::LevelManager;
 use trading_engine::state::manager::TradingStateManager;
@@ -17,6 +18,7 @@ pub struct MonitoringService {
     pub level_manager: Arc<RwLock<LevelManager>>,
     pub trading_state_manager: Arc<TradingStateManager>,
     pub exchange_state_manager: Arc<ExchangeStateManager>,
+    pub market_data_state_manager: Arc<market_data_engine::state::manager::MarketDataStateManager>,
     pub indicator_calculator: Arc<indicator_engine::calculator::IndicatorCalculator>,
     /// Strategy info (only set in strategies mode, supports multiple)
     pub strategy_infos: Vec<StrategyInfo>,
@@ -36,12 +38,12 @@ impl MonitoringService {
     /// Collect monitoring data from all sources
     pub async fn collect_monitoring_data(&self) -> Result<trading_cli::MonitoringData, Status> {
         let start = std::time::Instant::now();
-        tracing::debug!(
+        debug!(
             "[gRPC] collect_monitoring_data: Starting collection ({} strategy infos)",
             self.strategy_infos.len()
         );
         // Collect all data in parallel to avoid sequential blocking
-        let ((orders, balances), positions, indicators, trades) = tokio::join!(
+        let ((orders, balances), positions, indicators, trades, orderbooks) = tokio::join!(
             // Get orders and balances from ExchangeStateManager
             async {
                 let exchange_state_arc = self.exchange_state_manager.get_state();
@@ -139,7 +141,9 @@ impl MonitoringService {
             // Get indicators
             async { self.get_indicators().await.unwrap_or_default() },
             // Get trades
-            async { self.get_trades().await.unwrap_or_default() }
+            async { self.get_trades().await.unwrap_or_default() },
+            // Get orderbooks
+            async { self.get_orderbooks().await.unwrap_or_default() }
         );
 
         // Aggregated data
@@ -206,6 +210,7 @@ impl MonitoringService {
             indicators,
             aggregated: Some(aggregated),
             strategies: strategy_statuses,
+            orderbooks,
         };
 
         tracing::debug!("[gRPC] collect_monitoring_data: Returning data successfully");
@@ -369,5 +374,139 @@ impl MonitoringService {
             last_signal: "None".to_string(), // TODO: Track last signal from strategy
             signal_strength: String::new(),  // TODO: Get from strategy if available
         })
+    }
+
+    /// Get orderbooks from MarketDataStateManager
+    pub async fn get_orderbooks(&self) -> Result<Vec<trading_cli::Orderbook>, Status> {
+        let state_arc = self.market_data_state_manager.get_state();
+        let state = state_arc.read().await;
+
+        // Get all configured pairs from symbol registry (not just pairs with orderbooks)
+        // This ensures we show all pairs even if they haven't received updates yet
+        let symbol_registry = self.market_data_state_manager.symbol_registry();
+        let configured_pairs: Vec<trading_core::types::common::Pair> =
+            symbol_registry.all_pairs().into_iter().cloned().collect();
+
+        let pairs_with_data = state.get_pairs_with_orderbooks();
+
+        debug!(
+            "[gRPC] get_orderbooks: Registry has {} pairs: {:?}, State has {} pairs with data: {:?}",
+            configured_pairs.len(),
+            configured_pairs.iter().map(|p| format!("{}/{}", p.base, p.quote)).collect::<Vec<_>>(),
+            pairs_with_data.len(),
+            pairs_with_data.iter().map(|p| format!("{}/{}", p.base, p.quote)).collect::<Vec<_>>()
+        );
+
+        // Use configured pairs instead of just pairs with orderbooks
+        let pairs = if configured_pairs.is_empty() {
+            // Fallback to pairs with orderbooks if registry is empty
+            pairs_with_data
+        } else {
+            configured_pairs
+        };
+
+        let mut orderbooks = Vec::new();
+
+        for pair in pairs {
+            // Get orderbook if available, otherwise create empty one
+            let orderbook_opt = state.get_orderbook(&pair);
+
+            let (bids, asks, best_bid, best_ask, mid_price, spread, timestamp) =
+                if let Some(orderbook) = orderbook_opt {
+                    // Get top 10 bids and asks
+                    let bids: Vec<trading_cli::OrderbookLevel> = orderbook
+                        .bids
+                        .iter()
+                        .take(10)
+                        .map(|(price, qty)| trading_cli::OrderbookLevel {
+                            price: price.to_string(),
+                            quantity: qty.to_string(),
+                        })
+                        .collect();
+
+                    let asks: Vec<trading_cli::OrderbookLevel> = orderbook
+                        .asks
+                        .iter()
+                        .take(10)
+                        .map(|(price, qty)| trading_cli::OrderbookLevel {
+                            price: price.to_string(),
+                            quantity: qty.to_string(),
+                        })
+                        .collect();
+
+                    // Calculate best bid/ask and spread
+                    let best_bid = orderbook
+                        .best_bid_price()
+                        .map(|p| p.to_string())
+                        .unwrap_or_default();
+                    let best_ask = orderbook
+                        .best_ask_price()
+                        .map(|p| p.to_string())
+                        .unwrap_or_default();
+                    let mid_price = orderbook
+                        .mid_price()
+                        .map(|p| p.to_string())
+                        .unwrap_or_default();
+                    let spread = if let (Some(bid), Some(ask)) =
+                        (orderbook.best_bid_price(), orderbook.best_ask_price())
+                    {
+                        (ask - bid).to_string()
+                    } else {
+                        String::new()
+                    };
+
+                    (
+                        bids,
+                        asks,
+                        best_bid,
+                        best_ask,
+                        mid_price,
+                        spread,
+                        orderbook.timestamp as i64,
+                    )
+                } else {
+                    // No orderbook data yet - return empty
+                    (
+                        Vec::new(),
+                        Vec::new(),
+                        String::new(),
+                        String::new(),
+                        String::new(),
+                        String::new(),
+                        0,
+                    )
+                };
+
+            let ob = trading_cli::Orderbook {
+                pair: format!("{}/{}", pair.base, pair.quote),
+                timestamp,
+                bids,
+                asks,
+                best_bid,
+                best_ask,
+                mid_price,
+                spread,
+            };
+
+            debug!(
+                "[gRPC] get_orderbooks: Adding orderbook for {}/{}: {} bids, {} asks",
+                pair.base,
+                pair.quote,
+                ob.bids.len(),
+                ob.asks.len()
+            );
+
+            orderbooks.push(ob);
+        }
+
+        debug!(
+            "[gRPC] get_orderbooks: Returning {} orderbooks total",
+            orderbooks.len()
+        );
+
+        // Sort by pair name for consistent ordering
+        orderbooks.sort_by(|a, b| a.pair.cmp(&b.pair));
+
+        Ok(orderbooks)
     }
 }

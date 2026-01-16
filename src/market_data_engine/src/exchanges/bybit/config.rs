@@ -16,6 +16,8 @@ pub enum BybitCategory {
     Spot,
     #[serde(rename = "linear")]
     Linear,
+    #[serde(rename = "inverse")]
+    Inverse,
 }
 
 impl Default for BybitCategory {
@@ -67,6 +69,29 @@ mod tests {
         match config.category {
             BybitCategory::Linear => {}
             _ => panic!("Expected Linear category"),
+        }
+    }
+
+    #[test]
+    fn test_deserialize_bybit_config_inverse() {
+        let json = r#"
+        {
+            "pairs": [{ "base": "BTC", "quote": "USD" }],
+            "limit": 1,
+            "base_delay": 2,
+            "max_delay": 60,
+            "category": "inverse"
+        }
+        "#;
+
+        let config: BybitConfig = serde_json::from_str(json).unwrap();
+
+        assert_eq!(config.pairs.len(), 1);
+        assert_eq!(config.pairs[0].base, "BTC");
+        assert_eq!(config.pairs[0].quote, "USD");
+        match config.category {
+            BybitCategory::Inverse => {}
+            _ => panic!("Expected Inverse category"),
         }
     }
 }

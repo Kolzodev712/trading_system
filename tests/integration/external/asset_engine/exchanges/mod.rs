@@ -2,9 +2,11 @@
 //!
 //! Each exchange implements the same test suite to ensure consistent behavior
 //! across all exchange integrations.
+//!
+//! Run all exchange tests together:
+//!   cargo test --test integration integration::external::asset_engine::exchanges -- --ignored
+//!
+//! This will run all tests from both Binance and Bybit modules.
 
-#[cfg(test)]
 pub mod binance;
-
-// Future exchanges will be added here:
-// pub mod bybit;
+pub mod bybit;

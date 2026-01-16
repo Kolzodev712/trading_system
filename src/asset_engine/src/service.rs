@@ -7,21 +7,18 @@ use tracing::info;
 use trading_core::{
     error::EngineError,
     types::{
-        asset::{ExchangeLimits, ExchangeMarketData, SymbolInfo, SymbolStatus, TradingRules},
+        asset::{ExchangeMarketData, SymbolInfo, TradingRules},
         common::{Exchange, Pair},
     },
 };
 
 use crate::cache::AssetDataCache;
-use crate::exchanges;
-use crate::exchanges::binance::BinancePublicClient;
 
 #[async_trait]
 pub trait AssetDataClient: Send + Sync + std::fmt::Debug {
-    /// Fetch exchange info (symbols, trading rules)
-    async fn fetch_exchange_info(
-        &self,
-    ) -> Result<exchanges::binance::types::BinanceExchangeInfo, EngineError>;
+    /// Fetch and parse market data for the specified pairs
+    /// Each exchange client handles its own parsing logic
+    async fn fetch_market_data(&self, pairs: &[Pair]) -> Result<ExchangeMarketData, EngineError>;
 }
 
 /// Asset Service - orchestrates asset data fetching and caching
@@ -79,20 +76,8 @@ impl AssetService {
                 .clone()
         };
 
-        let exchange_info = client.fetch_exchange_info().await?;
-
-        // Parse exchange info into our types
-        let (symbol_info, trading_rules) = Self::parse_exchange_info(&exchange_info, pairs)?;
-        let exchange_limits = Self::parse_exchange_limits(&exchange_info);
-
-        // Build market data
-        let market_data = ExchangeMarketData {
-            symbol_info,
-            trading_rules,
-            current_prices: HashMap::new(), // Will be populated by separate call if needed
-            exchange_limits,
-            last_updated: exchange_info.server_time,
-        };
+        // Each exchange client handles its own parsing
+        let market_data = client.fetch_market_data(pairs).await?;
 
         // Update cache
         self.cache.update(exchange, market_data.clone()).await;
@@ -123,209 +108,10 @@ impl AssetService {
             None
         }
     }
-
-    /// Parse Binance exchange info into our types
-    #[allow(clippy::type_complexity)]
-    fn parse_exchange_info(
-        exchange_info: &exchanges::binance::types::BinanceExchangeInfo,
-        pairs: &[Pair],
-    ) -> Result<(HashMap<Pair, SymbolInfo>, HashMap<Pair, TradingRules>), EngineError> {
-        let mut symbol_info_map = HashMap::new();
-        let mut trading_rules_map = HashMap::new();
-
-        // Create a set of pairs we're interested in (for filtering)
-        let pair_set: std::collections::HashSet<_> = pairs.iter().collect();
-
-        for symbol in &exchange_info.symbols {
-            // Convert symbol to Pair
-            let pair = Pair::new(symbol.base_asset.as_str(), symbol.quote_asset.as_str());
-
-            // Only process pairs we're interested in
-            if !pair_set.contains(&pair) {
-                continue;
-            }
-
-            // Parse symbol status
-            let status = match symbol.status.as_ref() {
-                "PRE_TRADING" => SymbolStatus::PreTrading,
-                "TRADING" => SymbolStatus::Trading,
-                "POST_TRADING" => SymbolStatus::PostTrading,
-                "END_OF_DAY" => SymbolStatus::EndOfDay,
-                "HALT" => SymbolStatus::Halt,
-                "AUCTION_MATCH" => SymbolStatus::AuctionMatch,
-                "BREAK" => SymbolStatus::Break,
-                "PENDING_TRADING" => SymbolStatus::PendingTrading,
-                _ => SymbolStatus::Halt, // Default to halt for unknown status
-            };
-
-            let trading_allowed = status == SymbolStatus::Trading;
-            let is_active = trading_allowed && symbol.is_spot_trading_allowed;
-
-            // Create symbol info (clone pair for SymbolInfo)
-            let symbol_info = SymbolInfo {
-                pair: pair.clone(),
-                status,
-                base_asset: symbol.base_asset.clone(),
-                quote_asset: symbol.quote_asset.clone(),
-                exchange_symbol: symbol.symbol.clone(),
-                trading_allowed,
-                is_active,
-            };
-
-            // Parse trading rules from filters (clone pair for TradingRules)
-            let trading_rules = Self::parse_trading_rules(symbol, &pair)?;
-
-            // Insert both (pair is moved on first insert, so we need to clone)
-            symbol_info_map.insert(pair.clone(), symbol_info);
-            trading_rules_map.insert(pair, trading_rules);
-        }
-
-        Ok((symbol_info_map, trading_rules_map))
-    }
-
-    /// Parse trading rules from Binance symbol filters
-    /// Returns TradingRules with Option fields - None if value not available from exchange
-    /// The caller should fall back to config values for None fields
-    fn parse_trading_rules(
-        symbol: &exchanges::binance::types::BinanceSymbolInfo,
-        pair: &Pair,
-    ) -> Result<TradingRules, EngineError> {
-        use rust_decimal::Decimal;
-
-        let mut min_order_size = None;
-        let mut max_order_size = None;
-        let mut step_size = None;
-        let mut min_price = None;
-        let mut max_price = None;
-        let mut tick_size = None;
-        let mut min_notional = None;
-
-        // Parse filters - only set values if they exist in the exchange response
-        for filter in &symbol.filters {
-            match filter {
-                exchanges::binance::types::BinanceFilter::LotSize {
-                    min_qty,
-                    max_qty,
-                    step_size: step,
-                } => {
-                    min_order_size = Some(*min_qty);
-                    if *max_qty != Decimal::ZERO {
-                        max_order_size = Some(*max_qty);
-                    }
-                    step_size = Some(*step);
-                }
-                exchanges::binance::types::BinanceFilter::PriceFilter {
-                    min_price: min,
-                    max_price: max,
-                    tick_size: tick,
-                } => {
-                    min_price = *min;
-                    max_price = *max;
-                    tick_size = *tick;
-                }
-                exchanges::binance::types::BinanceFilter::MinNotional {
-                    min_notional: min_not,
-                } => {
-                    min_notional = Some(*min_not);
-                }
-                exchanges::binance::types::BinanceFilter::Other => {
-                    // Other filters not used for trading rules - ignore
-                }
-            }
-        }
-
-        Ok(TradingRules {
-            pair: pair.clone(),
-            min_order_size,
-            max_order_size,
-            step_size,
-            min_price,
-            max_price,
-            tick_size,
-            min_notional,
-            max_notional: None, // Not provided by Binance
-            price_precision: Some(symbol.quote_precision),
-            quantity_precision: Some(symbol.base_asset_precision),
-        })
-    }
-
-    /// Parse exchange limits
-    fn parse_exchange_limits(
-        exchange_info: &exchanges::binance::types::BinanceExchangeInfo,
-    ) -> ExchangeLimits {
-        let rate_limits = BinancePublicClient::parse_rate_limits(&exchange_info.rate_limits);
-
-        ExchangeLimits {
-            rate_limits,
-            max_position_size: None, // Not provided by Binance exchangeInfo
-            max_open_orders: None,   // Not provided by Binance exchangeInfo
-            other_limits: HashMap::new(),
-        }
-    }
 }
 
 impl Default for AssetService {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-// Implement AssetDataClient for BinancePublicClient
-#[async_trait]
-impl AssetDataClient for BinancePublicClient {
-    async fn fetch_exchange_info(
-        &self,
-    ) -> Result<exchanges::binance::types::BinanceExchangeInfo, EngineError> {
-        self.fetch_exchange_info().await
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use rust_decimal_macros::dec;
-    use trading_core::types::common::Pair;
-
-    #[test]
-    fn test_parse_trading_rules() {
-        use exchanges::binance::types::{BinanceFilter, BinanceSymbolInfo};
-        use smol_str::SmolStr;
-
-        let symbol = BinanceSymbolInfo {
-            symbol: SmolStr::new("BTCUSDT"),
-            status: SmolStr::new("TRADING"),
-            base_asset: SmolStr::new("BTC"),
-            base_asset_precision: 8,
-            quote_asset: SmolStr::new("USDT"),
-            quote_precision: 8,
-            is_spot_trading_allowed: true,
-            filters: vec![
-                BinanceFilter::LotSize {
-                    min_qty: dec!(0.00001),
-                    max_qty: dec!(9000),
-                    step_size: dec!(0.00001),
-                },
-                BinanceFilter::PriceFilter {
-                    min_price: Some(dec!(0.01)),
-                    max_price: Some(dec!(1000000)),
-                    tick_size: Some(dec!(0.01)),
-                },
-                BinanceFilter::MinNotional {
-                    min_notional: dec!(10),
-                },
-            ],
-        };
-
-        let pair = Pair::new("BTC", "USDT");
-        let rules = AssetService::parse_trading_rules(&symbol, &pair).unwrap();
-
-        assert_eq!(rules.pair, pair);
-        assert_eq!(rules.min_order_size, Some(dec!(0.00001)));
-        assert_eq!(rules.max_order_size, Some(dec!(9000)));
-        assert_eq!(rules.step_size, Some(dec!(0.00001)));
-        assert_eq!(rules.tick_size, Some(dec!(0.01)));
-        assert_eq!(rules.min_notional, Some(dec!(10)));
-        assert_eq!(rules.price_precision, Some(8));
-        assert_eq!(rules.quantity_precision, Some(8));
     }
 }

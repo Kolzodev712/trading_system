@@ -4,8 +4,9 @@
 >
 > **Current Proposals**:
 > - **01-futures-integration.md** - Futures types, traits, and infrastructure
-> - **02-binance-usd-futures-integration.md** - Binance USD Futures implementation
 > - **03-bybit-integration.md** - Bybit unified driver (spot + futures)
+
+
 > - **04.01-dex-preparation.md** - DEX foundational infrastructure
 > - **04.02-solana-integration.md** - Solana DEX implementation
 > - **05-communication-layer-hexagonal-architecture.md** - UI-agnostic architecture, Gateway layer
@@ -44,16 +45,3 @@ These items are planned but not yet detailed in proposals. They can be added as 
 
 **Last Updated**: December 2024  
 **Status**: Superseded by proposal documents
-
-
-
-
-
-
-
-
-
-
-
-for bybit spot & futures integration:
-https://bybit-exchange.github.io/docs/v5/guide

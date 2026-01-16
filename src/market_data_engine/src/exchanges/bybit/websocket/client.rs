@@ -27,6 +27,7 @@ pub fn get_bybit_ws_url(category: &BybitCategory) -> &'static str {
     match category {
         BybitCategory::Spot => "wss://stream.bybit.com/v5/public/spot",
         BybitCategory::Linear => "wss://stream.bybit.com/v5/public/linear",
+        BybitCategory::Inverse => "wss://stream.bybit.com/v5/public/inverse",
     }
 }
 

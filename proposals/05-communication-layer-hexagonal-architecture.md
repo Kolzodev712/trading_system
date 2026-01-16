@@ -1,8 +1,8 @@
 # Proposal: Communication Layer & Hexagonal Architecture
 
-**Version**: 1.0  
+**Version**: 2.0  
 **Date**: December 2024  
-**Status**: Draft  
+**Status**: Revised (Based on Low-Latency Feedback)  
 **Prerequisites**: None (can be implemented independently)
 
 ## Executive Summary
@@ -15,8 +15,9 @@ This proposal outlines the transformation of the trading system to a **UI-agnost
 2. **Formalize Event/Command buses** - Internal communication via stable, well-defined contracts
 3. **Introduce External Gateway** - Single boundary for all external communication
 4. **Support multiple transports** - gRPC, Pub/Sub, IPC simultaneously
-5. **Maintain ultra-low latency** - Internal channels remain <1μs
+5. **Maintain ultra-low latency** - Hot path channels optimized for <1μs, cold path <10μs
 6. **Enable horizontal scaling** - Multiple consumers, multiple strategies, no tight coupling
+7. **Allocation discipline** - Minimize heap allocations on hot path, use Arc for cold path
 
 ### Why This Architecture?
 
@@ -79,20 +80,23 @@ This proposal outlines the transformation of the trading system to a **UI-agnost
 ┌─────────────────────────────────────────────────────────────┐
 │                    Core Runtime (UI-Agnostic)                │
 │  ┌────────────────────────────────────────────────────┐    │
-│  │ Event Bus (Internal)                              │    │
-│  │  - MarketDataEvent                                 │    │
-│  │  - OrderEvent                                      │    │
-│  │  - PositionEvent                                   │    │
-│  │  - RiskEvent                                       │    │
-│  │  - StrategyEvent                                   │    │
-│  │  - Zero-copy, < 1μs latency                       │    │
+│  │ Hot Lane (Market Data)                           │    │
+│  │  - SPSC/Bounded MPSC channels                    │    │
+│  │  - Compact structs (IDs + deltas)                 │    │
+│  │  - Arc<Bytes> or pre-allocated buffers            │    │
+│  │  - < 1μs latency (allocation-free)               │    │
 │  └────────────────────────────────────────────────────┘    │
 │  ┌────────────────────────────────────────────────────┐    │
-│  │ Command Bus (Internal)                             │    │
-│  │  - TradeCommand                                    │    │
-│  │  - StrategyCommand                                 │    │
-│  │  - ConfigCommand                                   │    │
-│  │  - ControlCommand                                  │    │
+│  │ Cold Lane (Orders/Fills/Positions/Risk/Health)   │    │
+│  │  - broadcast::Sender<Arc<Event>>                  │    │
+│  │  - Lean events (IDs + key fields + timestamps)   │    │
+│  │  - < 10μs latency                                 │    │
+│  └────────────────────────────────────────────────────┘    │
+│  ┌────────────────────────────────────────────────────┐    │
+│  │ Command Router (Single-Consumer)                  │    │
+│  │  - Routes to specific handlers                    │    │
+│  │  - Includes oneshot::Sender for replies          │    │
+│  │  - Correlation IDs (u64)                         │    │
 │  └────────────────────────────────────────────────────┘    │
 └─────────────────────────────────────────────────────────────┘
                             │
@@ -100,23 +104,31 @@ This proposal outlines the transformation of the trading system to a **UI-agnost
 ┌─────────────────────────────────────────────────────────────┐
 │              External Gateway Layer                           │
 │  ┌────────────────────────────────────────────────────┐    │
-│  │ Event Gateway                                     │    │
-│  │  - Subscribes to Event Bus                        │    │
-│  │  - Filters, aggregates, serializes                │    │
-│  │  - Publishes to external transports               │    │
+│  │ Event Gateway Router                              │    │
+│  │  - Subscribes to Hot/Cold lanes                   │    │
+│  │  - Converts to DTP (once)                         │    │
+│  │  - try_send to per-transport bounded queues       │    │
+│  │  - Non-blocking (never stalls on slow transport)   │    │
+│  └────────────────────────────────────────────────────┘    │
+│  ┌────────────────────────────────────────────────────┐    │
+│  │ Per-Transport Workers                             │    │
+│  │  - Each transport has own task + queue           │    │
+│  │  - Pulls from queue, sends to network            │    │
+│  │  - Drop/sample policy when queue full             │    │
 │  └────────────────────────────────────────────────────┘    │
 │  ┌────────────────────────────────────────────────────┐    │
 │  │ Command Gateway                                   │    │
 │  │  - Receives external commands                     │    │
 │  │  - Authenticates, validates                       │    │
-│  │  - Injects into Command Bus                       │    │
+│  │  - Routes to Command Router                       │    │
+│  │  - Awaits reply via oneshot                       │    │
 │  └────────────────────────────────────────────────────┘    │
 └─────────────────────────────────────────────────────────────┘
          │              │              │              │
          ▼              ▼              ▼              ▼
     ┌────────┐    ┌────────┐    ┌────────┐    ┌────────┐
     │  gRPC  │    │ PubSub │    │  IPC   │    │  HTTP  │
-    │ (TUI)  │    │(Analytics)│ │ (HFT)  │    │ (Web)  │
+    │ (DTP)  │    │ (DTP)  │    │ (DTP)  │    │ (DTP)  │
     └────────┘    └────────┘    └────────┘    └────────┘
 ```
 
@@ -127,27 +139,82 @@ This proposal outlines the transformation of the trading system to a **UI-agnost
 3. **Gateway is the boundary** - Only place where serialization, networking, auth exist
 4. **Multiple transports** - All can run simultaneously
 5. **Event sourcing ready** - Events can be persisted for replay
+6. **Hot/Cold lane separation** - Market data on hot path (allocation-free), state changes on cold path (Arc-wrapped)
+7. **Allocation discipline** - Hot path avoids heap allocations, cold path uses Arc to share
+8. **Non-blocking gateway** - Per-transport queues prevent head-of-line blocking
+9. **Single canonical encoding** - Protobuf for DTP payload (JSON only as derived stream)
 
 ---
 
-## Phase 1: Formalize Event Bus
+## Phase 1: Formalize Event Bus (Hot/Cold Lane Split)
 
-### 1.1 Event Type Definitions
+### 1.1 Hot Lane Event Types (Market Data)
 
-**Location**: `libs/trading_core/src/events/mod.rs` (new module)
+**Location**: `libs/trading_core/src/events/hot.rs` (new module)
 
-**Purpose**: Define stable, versioned event types that represent facts about the system state.
+**Purpose**: Ultra-low latency market data events with minimal allocations.
+
+**Key Design**: Compact structs with IDs and deltas, not full objects. Use references to pre-allocated buffers when possible.
 
 **Implementation**:
 ```rust
-/// Core event types (facts about system state)
-/// These are internal events - zero-copy, ultra-low latency
+use bytes::Bytes;
+use std::sync::Arc;
+
+/// Hot lane market data event (allocation-light, compact)
 #[derive(Debug, Clone)]
-pub enum Event {
-    // Market Data Events
-    MarketData(MarketDataEvent),
-    
-    // Exchange Events
+pub enum HotEvent {
+    /// Orderbook snapshot (compact representation)
+    /// For high-frequency updates, consider using Arc<Bytes> with pre-serialized data
+    Orderbook {
+        pair_id: u32,  // Numeric ID, not String
+        best_bid: Decimal,
+        best_ask: Decimal,
+        bid_qty: Decimal,
+        ask_qty: Decimal,
+        timestamp: u64,
+        // Full orderbook only if needed (rare) - use Arc<Bytes> for pre-serialized
+        full_snapshot: Option<Arc<Bytes>>,
+    },
+    /// Trade tick (minimal data)
+    Trade {
+        pair_id: u32,
+        price: Decimal,
+        quantity: Decimal,
+        side: Side,
+        timestamp: u64,
+    },
+    /// Mark price (futures)
+    MarkPrice {
+        pair_id: u32,
+        price: Decimal,
+        timestamp: u64,
+    },
+    /// Funding rate (futures)
+    FundingRate {
+        pair_id: u32,
+        rate: Decimal,
+        timestamp: u64,
+    },
+}
+```
+
+### 1.2 Cold Lane Event Types (State Changes)
+
+**Location**: `libs/trading_core/src/events/cold.rs` (new module)
+
+**Purpose**: State change events (orders, fills, positions, risk). Lean payloads with IDs and deltas.
+
+**Key Design**: Events carry identifiers + key fields, not full objects. Consumers query state stores for full state if needed.
+
+**Implementation**:
+```rust
+use std::sync::Arc;
+
+/// Cold lane event (state changes, wrapped in Arc for sharing)
+#[derive(Debug, Clone)]
+pub enum ColdEvent {
+    // Exchange Events (IDs + deltas only)
     Order(OrderEvent),
     Fill(FillEvent),
     Position(PositionEvent),
@@ -166,56 +233,43 @@ pub enum Event {
     Error(ErrorEvent),
 }
 
-/// Market data event
-#[derive(Debug, Clone)]
-pub enum MarketDataEvent {
-    Orderbook {
-        pair: Pair,
-        bids: Vec<(Decimal, Decimal)>,
-        asks: Vec<(Decimal, Decimal)>,
-        timestamp: u64,
-    },
-    Trade {
-        pair: Pair,
-        price: Decimal,
-        quantity: Decimal,
-        side: Side,
-        timestamp: u64,
-    },
-    // Futures-specific
-    MarkPrice { pair: Pair, price: Decimal, timestamp: u64 },
-    FundingRate { pair: Pair, rate: Decimal, timestamp: u64 },
-}
-
-/// Order event
+/// Order event (lean - IDs + key fields, not full Order object)
 #[derive(Debug, Clone)]
 pub enum OrderEvent {
     Placed {
-        order: Order,
+        order_id: OrderId,
+        pair_id: u32,
+        side: Side,
+        price: Decimal,
+        quantity: Decimal,
+        order_type: OrderType,
         timestamp: u64,
+        // Full order only if needed - query state store instead
     },
     Updated {
-        order: Order,
+        order_id: OrderId,
+        status: OrderStatus,
+        filled_amount: Decimal,
         timestamp: u64,
     },
     Filled {
-        order: Order,
+        order_id: OrderId,
         fill_price: Decimal,
         fill_quantity: Decimal,
         timestamp: u64,
     },
     Cancelled {
         order_id: OrderId,
-        reason: String,
+        reason_code: u16,  // Numeric code, not String
         timestamp: u64,
     },
 }
 
-/// Fill event (separate from order for clarity)
+/// Fill event (lean)
 #[derive(Debug, Clone)]
 pub struct FillEvent {
     pub order_id: OrderId,
-    pub pair: Pair,
+    pub pair_id: u32,
     pub side: Side,
     pub price: Decimal,
     pub quantity: Decimal,
@@ -223,80 +277,80 @@ pub struct FillEvent {
     pub timestamp: u64,
 }
 
-/// Position event
+/// Position event (lean)
 #[derive(Debug, Clone)]
 pub enum PositionEvent {
     Opened {
-        pair: Pair,
+        pair_id: u32,
         quantity: Decimal,
         entry_price: Decimal,
         timestamp: u64,
     },
     Updated {
-        pair: Pair,
+        pair_id: u32,
         quantity: Decimal,
         avg_price: Decimal,
         unrealized_pnl: Decimal,
         timestamp: u64,
     },
     Closed {
-        pair: Pair,
+        pair_id: u32,
         realized_pnl: Decimal,
         timestamp: u64,
     },
 }
 
-/// Balance event
+/// Balance event (lean)
 #[derive(Debug, Clone)]
 pub struct BalanceEvent {
-    pub asset: Symbol,
+    pub asset_id: u16,  // Numeric ID
     pub free: Decimal,
     pub used: Decimal,
     pub total: Decimal,
     pub timestamp: u64,
 }
 
-/// Strategy event
+/// Strategy event (lean)
 #[derive(Debug, Clone)]
 pub enum StrategyEvent {
     Started {
-        strategy_id: String,
-        symbol: Pair,
+        strategy_id: u64,  // Numeric ID
+        pair_id: u32,
         timestamp: u64,
     },
     Stopped {
-        strategy_id: String,
-        reason: String,
+        strategy_id: u64,
+        reason_code: u16,  // Numeric code
         timestamp: u64,
     },
     Signal {
-        strategy_id: String,
-        signal: Signal,
+        strategy_id: u64,
+        signal_type: u8,  // Numeric signal type
         timestamp: u64,
     },
 }
 
-/// Level event
+/// Level event (lean)
 #[derive(Debug, Clone)]
 pub enum LevelEvent {
-    Created { level_id: String, pair: Pair, timestamp: u64 },
-    Updated { level_id: String, timestamp: u64 },
-    Deleted { level_id: String, timestamp: u64 },
-    Filled { level_id: String, timestamp: u64 },
+    Created { level_id: u64, pair_id: u32, timestamp: u64 },
+    Updated { level_id: u64, timestamp: u64 },
+    Deleted { level_id: u64, timestamp: u64 },
+    Filled { level_id: u64, timestamp: u64 },
 }
 
-/// Risk event
+/// Risk event (lean)
 #[derive(Debug, Clone)]
 pub enum RiskEvent {
     LimitExceeded {
-        limit_type: String,
+        limit_type: u8,  // Numeric type
         current: Decimal,
         limit: Decimal,
         timestamp: u64,
     },
     CircuitBreaker {
-        action: String,
-        reason: String,
+        action: u8,  // Numeric action code
+        reason_code: u16,
         timestamp: u64,
     },
 }
@@ -304,14 +358,14 @@ pub enum RiskEvent {
 /// Config event
 #[derive(Debug, Clone)]
 pub enum ConfigEvent {
-    Updated { path: String, value: String, timestamp: u64 },
+    Updated { path_hash: u64, timestamp: u64 },  // Hash path, not String
     Reloaded { timestamp: u64 },
 }
 
 /// Health event
 #[derive(Debug, Clone)]
 pub struct HealthEvent {
-    pub component: String,
+    pub component_id: u8,  // Numeric component ID
     pub status: HealthStatus,
     pub timestamp: u64,
 }
@@ -323,11 +377,11 @@ pub enum HealthStatus {
     Unhealthy,
 }
 
-/// Error event
+/// Error event (lean)
 #[derive(Debug, Clone)]
 pub struct ErrorEvent {
-    pub component: String,
-    pub error: String,
+    pub component_id: u8,
+    pub error_code: u16,  // Numeric error code
     pub severity: ErrorSeverity,
     pub timestamp: u64,
 }
@@ -340,55 +394,103 @@ pub enum ErrorSeverity {
 }
 ```
 
-### 1.2 Event Bus Trait
 
-**Location**: `libs/trading_core/src/events/bus.rs` (new file)
+### 1.3 Hot Lane Bus (Market Data)
 
-**Purpose**: Abstract interface for event bus (allows different implementations).
+**Location**: `libs/trading_core/src/events/hot_bus.rs` (new file)
+
+**Purpose**: Ultra-low latency channel for market data. Uses SPSC ring buffer or bounded MPSC.
+
+**Key Design**: Single-consumer hot lane. Receiver is created at construction and passed directly to the consumer (typically TradingEngine). No trait needed.
+
+**Implementation**:
+```rust
+use tokio::sync::mpsc;
+
+/// Hot lane sender (multiple producers, single consumer)
+pub struct HotEventTx {
+    tx: mpsc::Sender<HotEvent>,
+}
+
+impl HotEventTx {
+    /// Publish a hot event (non-blocking, may drop if full)
+    pub fn try_publish(&self, event: HotEvent) -> Result<(), HotEventBusError> {
+        self.tx.try_send(event)
+            .map_err(|_| HotEventBusError::ChannelFull)?;
+        Ok(())
+    }
+}
+
+/// Hot lane receiver (single consumer)
+pub type HotEventRx = mpsc::Receiver<HotEvent>;
+
+/// Create hot lane channel (returns sender and receiver)
+pub fn hot_event_channel(capacity: usize) -> (HotEventTx, HotEventRx) {
+    let (tx, rx) = mpsc::channel(capacity);
+    (HotEventTx { tx }, rx)
+}
+
+#[derive(Debug)]
+pub enum HotEventBusError {
+    ChannelFull,
+    ChannelClosed,
+}
+```
+
+**Usage**: Receiver is passed directly to the consumer (e.g., TradingEngine). No trait abstraction needed for single-consumer pattern.
+
+**Note**: For ultra-low latency, consider implementing SPSC ring buffer using `ringbuf` crate or similar.
+
+### 1.4 Cold Lane Bus (State Changes)
+
+**Location**: `libs/trading_core/src/events/cold_bus.rs` (new file)
+
+**Purpose**: Broadcast channel for state change events. Uses Arc to avoid clones.
 
 **Implementation**:
 ```rust
 use tokio::sync::broadcast;
+use std::sync::Arc;
 
-/// Event bus trait (allows different implementations)
-pub trait EventBus: Send + Sync + 'static {
-    /// Publish an event
-    fn publish(&self, event: Event) -> Result<(), EventBusError>;
+/// Cold lane bus trait (for state changes)
+pub trait ColdEventBus: Send + Sync + 'static {
+    /// Publish a cold event (wrapped in Arc for sharing)
+    fn publish(&self, event: Arc<ColdEvent>) -> Result<(), ColdEventBusError>;
     
-    /// Subscribe to all events
-    fn subscribe(&self) -> broadcast::Receiver<Event>;
+    /// Subscribe to all cold events
+    fn subscribe(&self) -> broadcast::Receiver<Arc<ColdEvent>>;
     
     /// Subscribe to specific event types
-    fn subscribe_filtered<F>(&self, filter: F) -> FilteredReceiver<Event>
+    fn subscribe_filtered<F>(&self, filter: F) -> FilteredReceiver<Arc<ColdEvent>>
     where
-        F: Fn(&Event) -> bool + Send + Sync + 'static;
+        F: Fn(&ColdEvent) -> bool + Send + Sync + 'static;
 }
 
-/// Default implementation using broadcast channels
-pub struct BroadcastEventBus {
-    tx: broadcast::Sender<Event>,
+/// Broadcast implementation using Arc-wrapped events
+pub struct BroadcastColdEventBus {
+    tx: broadcast::Sender<Arc<ColdEvent>>,
 }
 
-impl BroadcastEventBus {
-    pub fn new(capacity: usize) -> (Self, broadcast::Receiver<Event>) {
+impl BroadcastColdEventBus {
+    pub fn new(capacity: usize) -> (Self, broadcast::Receiver<Arc<ColdEvent>>) {
         let (tx, rx) = broadcast::channel(capacity);
         (Self { tx }, rx)
     }
 }
 
-impl EventBus for BroadcastEventBus {
-    fn publish(&self, event: Event) -> Result<(), EventBusError> {
-        self.tx.send(event).map_err(|_| EventBusError::ChannelClosed)?;
+impl ColdEventBus for BroadcastColdEventBus {
+    fn publish(&self, event: Arc<ColdEvent>) -> Result<(), ColdEventBusError> {
+        self.tx.send(event).map_err(|_| ColdEventBusError::ChannelClosed)?;
         Ok(())
     }
     
-    fn subscribe(&self) -> broadcast::Receiver<Event> {
+    fn subscribe(&self) -> broadcast::Receiver<Arc<ColdEvent>> {
         self.tx.subscribe()
     }
     
-    fn subscribe_filtered<F>(&self, filter: F) -> FilteredReceiver<Event>
+    fn subscribe_filtered<F>(&self, filter: F) -> FilteredReceiver<Arc<ColdEvent>>
     where
-        F: Fn(&Event) -> bool + Send + Sync + 'static,
+        F: Fn(&ColdEvent) -> bool + Send + Sync + 'static,
     {
         // Implementation filters events
         // ...
@@ -396,41 +498,94 @@ impl EventBus for BroadcastEventBus {
 }
 
 #[derive(Debug)]
-pub enum EventBusError {
+pub enum ColdEventBusError {
     ChannelClosed,
     CapacityExceeded,
 }
 ```
 
-### 1.3 Update Existing Publishers
+### 1.5 Update Existing Publishers
 
 **Location**: `src/exchange_engine/src/state/publisher.rs` (extend existing)
 
-**Changes**: Instead of publishing `ExchangeUpdate`, publish `Event::Order`, `Event::Balance`, etc.
+**Changes**: Publish to cold lane bus with lean events (IDs + deltas, not full objects).
 
 ```rust
+use std::sync::Arc;
+use trading_core::events::cold::{ColdEvent, OrderEvent, FillEvent, BalanceEvent};
+
 impl ExchangeStatePublisher {
     // ... existing methods ...
     
-    /// Publish order event (new)
-    pub async fn publish_order_event(&self, order: &Order) -> Result<(), EngineError> {
-        use trading_core::events::{Event, OrderEvent};
+    /// Publish order event (lean - IDs + key fields only)
+    pub fn publish_order_placed(&self, order: &Order) -> Result<(), EngineError> {
+        use trading_core::events::cold::ColdEvent;
         
-        let event = Event::Order(OrderEvent::Placed {
-            order: order.clone(),
+        // Convert pair to numeric ID (use registry)
+        let pair_id = self.pair_registry.get_id(&order.symbol)?;
+        
+        let event = Arc::new(ColdEvent::Order(OrderEvent::Placed {
+            order_id: order.order_id.clone(),
+            pair_id,
+            side: order.side,
+            price: order.price,
+            quantity: order.amount,
+            order_type: order.order_type,
             timestamp: order.internal_created_at,
-        });
+        }));
         
-        self.event_bus.publish(event)?;
+        self.cold_event_bus.publish(event)?;
         Ok(())
     }
     
-    /// Publish fill event (new)
-    pub async fn publish_fill_event(&self, fill: &FillEvent) -> Result<(), EngineError> {
-        use trading_core::events::Event;
+    /// Publish fill event (lean)
+    pub fn publish_fill(&self, fill: &Fill) -> Result<(), EngineError> {
+        let pair_id = self.pair_registry.get_id(&fill.pair)?;
         
-        let event = Event::Fill(fill.clone());
-        self.event_bus.publish(event)?;
+        let event = Arc::new(ColdEvent::Fill(FillEvent {
+            order_id: fill.order_id.clone(),
+            pair_id,
+            side: fill.side,
+            price: fill.price,
+            quantity: fill.quantity,
+            fee: fill.fee,
+            timestamp: fill.timestamp,
+        }));
+        
+        self.cold_event_bus.publish(event)?;
+        Ok(())
+    }
+}
+```
+
+**Location**: `src/market_data_engine/src/state/publisher.rs` (extend existing)
+
+**Changes**: Publish to hot lane bus with compact market data events.
+
+```rust
+use trading_core::events::hot::{HotEvent, HotEventTx};
+
+impl MarketDataStatePublisher {
+    /// Publish orderbook update (compact - best bid/ask only)
+    pub fn publish_orderbook(&self, orderbook: &Orderbook) -> Result<(), EngineError> {
+        let pair_id = self.pair_registry.get_id(&orderbook.pair)?;
+        
+        let best_bid = orderbook.bids.first().map(|(p, _)| *p).unwrap_or_default();
+        let best_ask = orderbook.asks.first().map(|(p, _)| *p).unwrap_or_default();
+        let bid_qty = orderbook.bids.first().map(|(_, q)| *q).unwrap_or_default();
+        let ask_qty = orderbook.asks.first().map(|(_, q)| *q).unwrap_or_default();
+        
+        let event = HotEvent::Orderbook {
+            pair_id,
+            best_bid,
+            best_ask,
+            bid_qty,
+            ask_qty,
+            timestamp: orderbook.timestamp,
+            full_snapshot: None,  // Only include if specifically needed
+        };
+        
+        self.hot_event_tx.try_publish(event)?;
         Ok(())
     }
 }
@@ -438,19 +593,36 @@ impl ExchangeStatePublisher {
 
 ---
 
-## Phase 2: Formalize Command Bus
+## Phase 2: Formalize Command Router (Single-Consumer)
 
 ### 2.1 Command Type Definitions
 
 **Location**: `libs/trading_core/src/commands/mod.rs` (new module)
 
-**Purpose**: Define command types that represent intent to change system state.
+**Purpose**: Define command types with correlation IDs and reply channels for request/response.
+
+**Key Design**: Commands are single-consumer, routed to specific handlers. Include oneshot::Sender for replies.
 
 **Implementation**:
 ```rust
-/// Command types (intent to change system state)
+use tokio::sync::oneshot;
+
+/// Command with correlation ID and reply channel
+#[derive(Debug)]
+pub struct Command {
+    /// Correlation ID (u64, 0 = none)
+    pub correlation_id: u64,
+    
+    /// Command payload
+    pub payload: CommandPayload,
+    
+    /// Reply channel (None for fire-and-forget)
+    pub reply: Option<oneshot::Sender<CommandResult>>,
+}
+
+/// Command payload types
 #[derive(Debug, Clone)]
-pub enum Command {
+pub enum CommandPayload {
     // Trading Commands
     Trade(TradeCommand),
     
@@ -471,52 +643,52 @@ pub enum Command {
 /// Re-export from types::common for backward compatibility
 pub use trading_core::types::common::TradeCommand;
 
-/// Strategy command
+/// Strategy command (lean - numeric IDs)
 #[derive(Debug, Clone)]
 pub enum StrategyCommand {
     Start {
-        strategy_id: String,
-        symbol: Pair,
-        config: serde_json::Value,
+        strategy_id: u64,
+        pair_id: u32,
+        config_hash: u64,  // Hash of config, not full JSON
     },
     Stop {
-        strategy_id: String,
-        reason: String,
+        strategy_id: u64,
+        reason_code: u16,  // Numeric code
     },
     Update {
-        strategy_id: String,
-        config: serde_json::Value,
+        strategy_id: u64,
+        config_hash: u64,
     },
 }
 
-/// Level command
+/// Level command (lean)
 #[derive(Debug, Clone)]
 pub enum LevelCommand {
     Create {
-        level: LevelConfig,
+        level_config: LevelConfig,  // Keep full config for creation
     },
     Update {
-        level_id: String,
+        level_id: u64,
         updates: LevelUpdates,
     },
     Delete {
-        level_id: String,
+        level_id: u64,
     },
     Toggle {
-        level_id: String,
+        level_id: u64,
         enabled: bool,
     },
 }
 
-/// Config command
+/// Config command (lean)
 #[derive(Debug, Clone)]
 pub enum ConfigCommand {
     Update {
-        path: String,
-        value: serde_json::Value,
+        path_hash: u64,  // Hash path, not String
+        value_hash: u64,  // Hash value, not full JSON
     },
     Reload {
-        component: Option<String>, // None = reload all
+        component_id: Option<u8>,  // Numeric component ID
     },
 }
 
@@ -526,89 +698,150 @@ pub enum ControlCommand {
     EnableTrading,
     DisableTrading,
     FlattenPositions {
-        pair: Option<Pair>, // None = all pairs
+        pair_id: Option<u32>,  // Numeric ID
     },
     KillSwitch, // Emergency stop
     Pause {
-        component: String,
+        component_id: u8,
     },
     Resume {
-        component: String,
+        component_id: u8,
     },
 }
 ```
 
-### 2.2 Command Bus Trait
+### 2.2 Command Router Trait
 
-**Location**: `libs/trading_core/src/commands/bus.rs` (new file)
+**Location**: `libs/trading_core/src/commands/router.rs` (new file)
 
-**Purpose**: Abstract interface for command bus.
+**Purpose**: Single-consumer command router that dispatches commands to specific handlers.
+
+**Key Design**: Commands are routed to exactly one handler. Request/response via oneshot channels.
 
 **Implementation**:
 ```rust
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 
-/// Command bus trait
-pub trait CommandBus: Send + Sync + 'static {
-    /// Submit a command (non-blocking)
-    fn submit(&self, command: Command) -> Result<(), CommandBusError>;
+/// Command router trait (single-consumer, routes to handlers)
+pub trait CommandRouter: Send + Sync + 'static {
+    /// Submit a command (non-blocking, fire-and-forget)
+    fn submit(&self, command: Command) -> Result<(), CommandRouterError>;
     
-    /// Submit a command and wait for result
+    /// Submit a command and wait for result (request/response)
     async fn submit_and_wait(
         &self,
-        command: Command,
-    ) -> Result<CommandResult, CommandBusError>;
-    
-    /// Subscribe to commands
-    fn subscribe(&self) -> mpsc::Receiver<Command>;
+        payload: CommandPayload,
+        correlation_id: u64,
+    ) -> Result<CommandResult, CommandRouterError>;
 }
 
 /// Command result
 #[derive(Debug)]
 pub struct CommandResult {
     pub success: bool,
-    pub message: String,
-    pub data: Option<serde_json::Value>,
+    pub error_code: Option<u16>,  // Numeric error code
+    pub data: Option<bytes::Bytes>,  // Binary data, not JSON
 }
 
-/// Default implementation using mpsc channel
-pub struct MpscCommandBus {
+/// Command router implementation
+pub struct MpscCommandRouter {
     tx: mpsc::Sender<Command>,
 }
 
-impl MpscCommandBus {
+impl MpscCommandRouter {
     pub fn new(capacity: usize) -> (Self, mpsc::Receiver<Command>) {
         let (tx, rx) = mpsc::channel(capacity);
         (Self { tx }, rx)
     }
 }
 
-impl CommandBus for MpscCommandBus {
-    fn submit(&self, command: Command) -> Result<(), CommandBusError> {
+impl CommandRouter for MpscCommandRouter {
+    fn submit(&self, command: Command) -> Result<(), CommandRouterError> {
         self.tx.try_send(command)
-            .map_err(|_| CommandBusError::ChannelFull)?;
+            .map_err(|_| CommandRouterError::ChannelFull)?;
         Ok(())
     }
     
     async fn submit_and_wait(
         &self,
-        command: Command,
-    ) -> Result<CommandResult, CommandBusError> {
-        // Implementation with response channel
-        // ...
-    }
-    
-    fn subscribe(&self) -> mpsc::Receiver<Command> {
-        // Create new receiver (each subscriber gets own copy)
-        // ...
+        payload: CommandPayload,
+        correlation_id: u64,
+    ) -> Result<CommandResult, CommandRouterError> {
+        let (reply_tx, reply_rx) = oneshot::channel();
+        
+        let command = Command {
+            correlation_id,
+            payload,
+            reply: Some(reply_tx),
+        };
+        
+        self.tx.send(command)
+            .await
+            .map_err(|_| CommandRouterError::ChannelClosed)?;
+        
+        reply_rx.await
+            .map_err(|_| CommandRouterError::HandlerDropped)?
+            .map_err(|e| CommandRouterError::ExecutionFailed(e))
     }
 }
 
 #[derive(Debug)]
-pub enum CommandBusError {
+pub enum CommandRouterError {
     ChannelFull,
     ChannelClosed,
+    HandlerDropped,
+    ExecutionFailed(String),
     Timeout,
+}
+```
+
+### 2.3 Command Dispatcher
+
+**Location**: `libs/trading_core/src/commands/dispatcher.rs` (new file)
+
+**Purpose**: Routes commands to specific handlers based on command type.
+
+**Implementation**:
+```rust
+use tokio::sync::mpsc;
+
+pub struct CommandDispatcher {
+    command_rx: mpsc::Receiver<Command>,
+    trade_handler: Box<dyn TradeCommandHandler>,
+    strategy_handler: Box<dyn StrategyCommandHandler>,
+    level_handler: Box<dyn LevelCommandHandler>,
+    config_handler: Box<dyn ConfigCommandHandler>,
+    control_handler: Box<dyn ControlCommandHandler>,
+}
+
+impl CommandDispatcher {
+    pub async fn run(&mut self) -> Result<(), DispatcherError> {
+        while let Some(command) = self.command_rx.recv().await {
+            let result = match &command.payload {
+                CommandPayload::Trade(cmd) => {
+                    self.trade_handler.handle(cmd).await
+                }
+                CommandPayload::Strategy(cmd) => {
+                    self.strategy_handler.handle(cmd).await
+                }
+                CommandPayload::Level(cmd) => {
+                    self.level_handler.handle(cmd).await
+                }
+                CommandPayload::Config(cmd) => {
+                    self.config_handler.handle(cmd).await
+                }
+                CommandPayload::Control(cmd) => {
+                    self.control_handler.handle(cmd).await
+                }
+            };
+            
+            // Send reply if requested
+            if let Some(reply_tx) = command.reply {
+                let _ = reply_tx.send(result);
+            }
+        }
+        Ok(())
+    }
 }
 ```
 
@@ -644,98 +877,7 @@ src/gateway/
 
 ### 3.2 Event Gateway
 
-**Location**: `src/gateway/src/event_gateway.rs`
-
-**Purpose**: Subscribe to internal Event Bus, filter/aggregate, serialize, publish to external transports.
-
-**Implementation**:
-```rust
-use trading_core::events::{Event, EventBus};
-use std::sync::Arc;
-use tokio::sync::broadcast;
-
-pub struct EventGateway {
-    event_bus: Arc<dyn EventBus>,
-    config: GatewayConfig,
-    transports: Vec<Box<dyn EventTransport>>,
-}
-
-impl EventGateway {
-    pub fn new(
-        event_bus: Arc<dyn EventBus>,
-        config: GatewayConfig,
-    ) -> Self {
-        Self {
-            event_bus,
-            config,
-            transports: Vec::new(),
-        }
-    }
-    
-    /// Add a transport (gRPC, Pub/Sub, IPC, etc.)
-    pub fn add_transport(&mut self, transport: Box<dyn EventTransport>) {
-        self.transports.push(transport);
-    }
-    
-    /// Start gateway (subscribes to Event Bus, publishes to transports)
-    pub async fn start(&mut self) -> Result<(), GatewayError> {
-        let mut rx = self.event_bus.subscribe();
-        
-        loop {
-            match rx.recv().await {
-                Ok(event) => {
-                    // Filter events based on config
-                    if self.should_export(&event) {
-                        // Serialize event
-                        let serialized = self.serialize_event(&event)?;
-                        
-                        // Publish to all transports
-                        for transport in &mut self.transports {
-                            transport.publish(&serialized).await?;
-                        }
-                    }
-                }
-                Err(broadcast::error::RecvError::Lagged(skipped)) => {
-                    warn!("Event gateway lagged, skipped {} events", skipped);
-                }
-                Err(broadcast::error::RecvError::Closed) => {
-                    error!("Event bus closed, gateway shutting down");
-                    break;
-                }
-            }
-        }
-        
-        Ok(())
-    }
-    
-    fn should_export(&self, event: &Event) -> bool {
-        match event {
-            // Always export important events
-            Event::Order(_) | Event::Fill(_) | Event::Position(_) => true,
-            Event::Error(_) | Event::Risk(_) => true,
-            
-            // Sample high-frequency events
-            Event::MarketData(_) => {
-                // Sample based on config
-                // ...
-            }
-            
-            // Always export slow events
-            Event::Config(_) | Event::Health(_) => true,
-            
-            _ => true,
-        }
-    }
-    
-    // Serialization now handled by DTP Serializer
-    // Gateway wraps events in DTP envelope before publishing
-}
-
-pub trait EventTransport: Send + Sync {
-    /// Publish DTP envelope (transport handles wire format)
-    async fn publish_dtp(&mut self, envelope: &DtpEnvelope) -> Result<(), GatewayError>;
-}
-```
+**See**: Updated Event Gateway with DTP (Non-Blocking) section below (Phase 3.5).
 
 ### 3.3 Command Gateway
 
@@ -923,13 +1065,17 @@ A **Data Transfer Protocol (DTP)** provides a standardized message envelope that
 - ✅ **Transport Agnostic**: Same envelope, different wire formats
 - ✅ **Performance**: Internal bus remains zero-copy (< 1μs); DTP only at Gateway boundary
 
-### DTP Message Envelope
+### DTP Message Envelope (Fixed-Header, Allocation-Light)
 
 **Location**: `libs/trading_core/src/dtp/mod.rs` (new module)
 
+**Key Design**: Fixed-size header with numeric IDs, TLV metadata, payload as Bytes.
+
 ```rust
-/// Data Transfer Protocol Message Envelope
-#[derive(Debug, Clone, Serialize, Deserialize)]
+use bytes::Bytes;
+
+/// Data Transfer Protocol Message Envelope (fixed-header, allocation-light)
+#[derive(Debug, Clone)]
 pub struct DtpEnvelope {
     /// Protocol version (for backward compatibility)
     pub version: u8,
@@ -937,102 +1083,225 @@ pub struct DtpEnvelope {
     /// Message type (Event or Command)
     pub message_type: MessageType,
     
-    /// Message ID (unique identifier)
-    pub message_id: String,
+    /// Message ID (u64 - monotonic counter + node id)
+    pub message_id: u64,
     
-    /// Correlation ID (for request/response tracking)
-    pub correlation_id: Option<String>,
+    /// Correlation ID (u64, 0 = none)
+    pub correlation_id: u64,
     
-    /// Source component
-    pub source: String,
+    /// Source component ID (u8)
+    pub source_id: u8,
     
-    /// Destination/routing hint (optional)
-    pub destination: Option<String>,
+    /// Destination/routing hint (u8, 0 = broadcast)
+    pub destination_id: u8,
     
     /// Timestamp (nanoseconds since epoch)
     pub timestamp: u64,
     
-    /// Serialization format (protobuf, json, msgpack)
-    pub format: SerializationFormat,
+    /// Payload (serialized event or command as Bytes)
+    pub payload: Bytes,
     
-    /// Payload (serialized event or command)
-    pub payload: Vec<u8>,
-    
-    /// Metadata (key-value pairs for extensibility)
-    pub metadata: HashMap<String, String>,
+    /// Metadata (TLV format - Vec<(tag: u16, value: Bytes)>)
+    pub metadata: Vec<(u16, Bytes)>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// Fixed-size header (for efficient parsing)
+/// Header is fixed layout and serialized/deserialized using bytes Buf/BufMut (no unsafe casts).
+/// Do not use repr(C, packed) to avoid unaligned access bugs.
+pub struct DtpHeader {
+    pub version: u8,
+    pub message_type: u8,  // MessageType as u8
+    pub message_id: u64,
+    pub correlation_id: u64,
+    pub source_id: u8,
+    pub destination_id: u8,
+    pub timestamp: u64,
+    pub metadata_count: u16,
+    pub payload_length: u32,
+}
+
+impl DtpHeader {
+    /// Serialize header to bytes using BufMut
+    pub fn serialize<B: bytes::BufMut>(&self, buf: &mut B) {
+        buf.put_u8(self.version);
+        buf.put_u8(self.message_type);
+        buf.put_u64(self.message_id);
+        buf.put_u64(self.correlation_id);
+        buf.put_u8(self.source_id);
+        buf.put_u8(self.destination_id);
+        buf.put_u64(self.timestamp);
+        buf.put_u16(self.metadata_count);
+        buf.put_u32(self.payload_length);
+    }
+    
+    /// Deserialize header from bytes using Buf
+    pub fn deserialize<B: bytes::Buf>(buf: &mut B) -> Result<Self, DtpError> {
+        Ok(Self {
+            version: buf.get_u8(),
+            message_type: buf.get_u8(),
+            message_id: buf.get_u64(),
+            correlation_id: buf.get_u64(),
+            source_id: buf.get_u8(),
+            destination_id: buf.get_u8(),
+            timestamp: buf.get_u64(),
+            metadata_count: buf.get_u16(),
+            payload_length: buf.get_u32(),
+        })
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MessageType {
-    Event,
-    Command,
-    Response,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum SerializationFormat {
-    Protobuf,
-    Json,
-    MessagePack,
+    Event = 1,
+    Command = 2,
+    Response = 3,
 }
 
 /// DTP Serializer (creates envelope from internal types)
+/// Uses Protobuf as canonical encoding
 pub struct DtpSerializer {
     version: u8,
-    source: String,
+    source_id: u8,
+    message_id_generator: MessageIdGenerator,
 }
 
 impl DtpSerializer {
-    pub fn serialize_event(
+    pub fn new(version: u8, source_id: u8) -> Self {
+        Self {
+            version,
+            source_id,
+            message_id_generator: MessageIdGenerator::new(),
+        }
+    }
+    
+    /// Serialize hot event to DTP (Protobuf only)
+    pub fn serialize_hot_event(
         &self,
-        event: &Event,
-        format: SerializationFormat,
+        event: &HotEvent,
     ) -> Result<DtpEnvelope, DtpError> {
-        // Serialize event to payload
-        let payload = match format {
-            SerializationFormat::Protobuf => self.serialize_protobuf(event)?,
-            SerializationFormat::Json => self.serialize_json(event)?,
-            SerializationFormat::MessagePack => self.serialize_msgpack(event)?,
-        };
+        // Serialize to Protobuf
+        let payload = self.serialize_protobuf(event)?;
         
-        // Create envelope
         Ok(DtpEnvelope {
             version: self.version,
             message_type: MessageType::Event,
-            message_id: generate_message_id(),
-            correlation_id: None,
-            source: self.source.clone(),
-            destination: None,
+            message_id: self.message_id_generator.next(),
+            correlation_id: 0,
+            source_id: self.source_id,
+            destination_id: 0,  // Broadcast
             timestamp: current_timestamp_nanos(),
-            format,
-            payload,
-            metadata: HashMap::new(),
+            payload: Bytes::from(payload),
+            metadata: Vec::new(),
         })
     }
     
+    /// Serialize cold event to DTP (Protobuf only)
+    pub fn serialize_cold_event(
+        &self,
+        event: &Arc<ColdEvent>,
+    ) -> Result<DtpEnvelope, DtpError> {
+        let payload = self.serialize_protobuf(event.as_ref())?;
+        
+        Ok(DtpEnvelope {
+            version: self.version,
+            message_type: MessageType::Event,
+            message_id: self.message_id_generator.next(),
+            correlation_id: 0,
+            source_id: self.source_id,
+            destination_id: 0,
+            timestamp: current_timestamp_nanos(),
+            payload: Bytes::from(payload),
+            metadata: Vec::new(),
+        })
+    }
+    
+    /// Serialize command to DTP (Protobuf only)
     pub fn serialize_command(
         &self,
-        command: &Command,
-        format: SerializationFormat,
+        command: &CommandPayload,
+        correlation_id: u64,
     ) -> Result<DtpEnvelope, DtpError> {
-        // Similar implementation for commands
-        // ...
+        let payload = self.serialize_protobuf(command)?;
+        
+        Ok(DtpEnvelope {
+            version: self.version,
+            message_type: MessageType::Command,
+            message_id: self.message_id_generator.next(),
+            correlation_id,
+            source_id: self.source_id,
+            destination_id: 0,
+            timestamp: current_timestamp_nanos(),
+            payload: Bytes::from(payload),
+            metadata: Vec::new(),
+        })
+    }
+    
+    fn serialize_protobuf<T>(&self, value: &T) -> Result<Vec<u8>, DtpError>
+    where
+        T: prost::Message,
+    {
+        let mut buf = Vec::new();
+        prost::Message::encode(value, &mut buf)
+            .map_err(|e| DtpError::SerializationFailed(e.to_string()))?;
+        Ok(buf)
+    }
+}
+
+/// Message ID generator (monotonic counter + node id)
+struct MessageIdGenerator {
+    counter: std::sync::atomic::AtomicU64,
+    node_id: u16,
+}
+
+impl MessageIdGenerator {
+    fn new() -> Self {
+        Self {
+            counter: std::sync::atomic::AtomicU64::new(0),
+            node_id: 1,  // TODO: Get from config
+        }
+    }
+    
+    fn next(&self) -> u64 {
+        let counter = self.counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        (u64::from(self.node_id) << 48) | (counter & 0x0000_FFFF_FFFF_FFFF)
     }
 }
 
 /// DTP Deserializer (extracts internal types from envelope)
+/// Protobuf only - single canonical encoding
 pub struct DtpDeserializer;
 
 impl DtpDeserializer {
-    pub fn deserialize_event(
+    /// Deserialize hot event from DTP envelope (Protobuf only)
+    pub fn deserialize_hot_event(
         &self,
         envelope: &DtpEnvelope,
-    ) -> Result<Event, DtpError> {
-        match envelope.format {
-            SerializationFormat::Protobuf => self.deserialize_protobuf(&envelope.payload),
-            SerializationFormat::Json => self.deserialize_json(&envelope.payload),
-            SerializationFormat::MessagePack => self.deserialize_msgpack(&envelope.payload),
-        }
+    ) -> Result<HotEvent, DtpError> {
+        self.deserialize_protobuf(&envelope.payload)
+    }
+    
+    /// Deserialize cold event from DTP envelope (Protobuf only)
+    pub fn deserialize_cold_event(
+        &self,
+        envelope: &DtpEnvelope,
+    ) -> Result<ColdEvent, DtpError> {
+        self.deserialize_protobuf(&envelope.payload)
+    }
+    
+    /// Deserialize command from DTP envelope (Protobuf only)
+    pub fn deserialize_command(
+        &self,
+        envelope: &DtpEnvelope,
+    ) -> Result<CommandPayload, DtpError> {
+        self.deserialize_protobuf(&envelope.payload)
+    }
+    
+    fn deserialize_protobuf<T>(&self, payload: &Bytes) -> Result<T, DtpError>
+    where
+        T: prost::Message + Default,
+    {
+        prost::Message::decode(payload.as_ref())
+            .map_err(|e| DtpError::DeserializationFailed(e.to_string()))
     }
 }
 ```
@@ -1076,74 +1345,159 @@ impl DtpDeserializer {
 
 ### Key Design Principles
 
-1. **Internal Bus Remains Zero-Copy**: DTP envelope is only created at Gateway boundary
-2. **Gateway Creates DTP Envelope**: Adds metadata, version, correlation IDs
-3. **Transports Handle Wire Format**: gRPC uses Protobuf, Pub/Sub uses JSON, IPC uses MessagePack
-4. **Consumers Deserialize DTP**: Extract envelope, deserialize payload based on format
+1. **Internal Bus Remains Low-Allocation**: DTP envelope is only created at Gateway boundary
+2. **Gateway Creates DTP Envelope**: Adds metadata, version, correlation IDs (numeric, not Strings)
+3. **Single Canonical Encoding**: Protobuf for all DTP payloads (JSON only as derived stream for tooling)
+4. **Consumers Deserialize DTP**: Extract envelope, deserialize Protobuf payload
+5. **Fixed-Header Format**: DTP header is fixed-size for efficient parsing
 
-### Updated Event Gateway with DTP
+### Updated Event Gateway with DTP (Non-Blocking)
 
 **Location**: `src/gateway/src/event_gateway.rs`
 
+**Key Design**: Non-blocking fanout with per-transport bounded queues. Each transport runs its own task.
+
 ```rust
-use trading_core::dtp::{DtpSerializer, DtpEnvelope, SerializationFormat};
+use trading_core::dtp::{DtpSerializer, DtpEnvelope};
+use trading_core::events::{HotEventRx, ColdEvent};
+use tokio::sync::{mpsc, broadcast};
+use std::sync::Arc;
 
 pub struct EventGateway {
-    event_bus: Arc<dyn EventBus>,
     dtp_serializer: DtpSerializer,
-    transports: Vec<Box<dyn EventTransport>>,
+    transport_queues: Vec<TransportQueue>,
+}
+
+struct TransportQueue {
+    name: String,
+    queue: mpsc::Sender<DtpEnvelope>,
+    handle: tokio::task::JoinHandle<()>,
 }
 
 impl EventGateway {
-    pub fn new(
-        event_bus: Arc<dyn EventBus>,
-        config: GatewayConfig,
-    ) -> Self {
+    pub fn new(config: GatewayConfig) -> Self {
         Self {
-            event_bus,
-            dtp_serializer: DtpSerializer::new(
-                1, // version
-                "trading_system".to_string(),
-            ),
-            transports: Vec::new(),
+            dtp_serializer: DtpSerializer::new(1, 1), // version, source_id
+            transport_queues: Vec::new(),
         }
     }
     
-    pub async fn start(&mut self) -> Result<(), GatewayError> {
-        let mut rx = self.event_bus.subscribe();
+    /// Add a transport with bounded queue
+    pub fn add_transport(
+        &mut self,
+        name: String,
+        transport: Box<dyn EventTransport>,
+        queue_capacity: usize,
+    ) {
+        let (tx, mut rx) = mpsc::channel(queue_capacity);
         
+        // Spawn worker task for this transport
+        let handle = tokio::spawn(async move {
+            while let Some(envelope) = rx.recv().await {
+                if let Err(e) = transport.publish_dtp(&envelope).await {
+                    warn!("Transport {} failed: {}", name, e);
+                    // Continue - don't crash on transport errors
+                }
+            }
+        });
+        
+        self.transport_queues.push(TransportQueue {
+            name,
+            queue: tx,
+            handle,
+        });
+    }
+    
+    /// Start gateway (receives hot and cold receivers)
+    pub async fn start(
+        &mut self,
+        mut hot_rx: HotEventRx,
+        mut cold_rx: broadcast::Receiver<Arc<ColdEvent>>,
+    ) -> Result<(), GatewayError> {
         loop {
-            match rx.recv().await {
-                Ok(event) => {
-                    if self.should_export(&event) {
-                        // Wrap in DTP envelope
-                        let dtp_message = self.dtp_serializer.serialize_event(
-                            &event,
-                            SerializationFormat::Json, // or based on transport
-                        )?;
-                        
-                        // Publish to all transports
-                        for transport in &mut self.transports {
-                            transport.publish_dtp(&dtp_message).await?;
+            tokio::select! {
+                // Handle hot events (mpsc returns Option, not Result)
+                event = hot_rx.recv() => {
+                    match event {
+                        Some(event) => {
+                            if self.should_export_hot(&event) {
+                                if let Ok(dtp) = self.dtp_serializer.serialize_hot_event(&event) {
+                                    self.fanout_dtp(dtp).await;
+                                }
+                            }
+                        }
+                        None => {
+                            // Channel closed
+                            error!("Hot event channel closed");
+                            break;
                         }
                     }
                 }
-                Err(broadcast::error::RecvError::Lagged(skipped)) => {
-                    warn!("Event gateway lagged, skipped {} events", skipped);
-                }
-                Err(broadcast::error::RecvError::Closed) => {
-                    error!("Event bus closed, gateway shutting down");
-                    break;
+                
+                // Handle cold events (broadcast returns Result, can be Lagged)
+                result = cold_rx.recv() => {
+                    match result {
+                        Ok(event) => {
+                            if self.should_export_cold(&event) {
+                                if let Ok(dtp) = self.dtp_serializer.serialize_cold_event(&event) {
+                                    self.fanout_dtp(dtp).await;
+                                }
+                            }
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                            warn!("Cold event gateway lagged, skipped {} events", skipped);
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                            error!("Cold event bus closed");
+                            break;
+                        }
+                    }
                 }
             }
         }
         
         Ok(())
     }
+    
+    /// Fanout DTP to all transports (non-blocking)
+    /// Note: DtpEnvelope.payload is Bytes (shared), so cloning the envelope is cheap
+    async fn fanout_dtp(&self, envelope: DtpEnvelope) {
+        for transport_queue in &self.transport_queues {
+            // Try to send - if queue is full, drop for this transport only
+            // Cloning envelope is cheap because payload is Bytes (shared reference)
+            match transport_queue.queue.try_send(envelope.clone()) {
+                Ok(()) => {}
+                Err(mpsc::error::TrySendError::Full(_)) => {
+                    // Queue full - drop or sample based on policy
+                    // For now, just drop (could implement sampling)
+                    warn!("Transport {} queue full, dropping event", transport_queue.name);
+                }
+                Err(mpsc::error::TrySendError::Closed(_)) => {
+                    warn!("Transport {} queue closed", transport_queue.name);
+                }
+            }
+        }
+    }
+    
+    fn should_export_hot(&self, event: &HotEvent) -> bool {
+        // Always export hot events (or implement sampling)
+        true
+    }
+    
+    fn should_export_cold(&self, event: &Arc<ColdEvent>) -> bool {
+        match event.as_ref() {
+            // Always export important events
+            ColdEvent::Order(_) | ColdEvent::Fill(_) | ColdEvent::Position(_) => true,
+            ColdEvent::Error(_) | ColdEvent::Risk(_) => true,
+            // Always export slow events
+            ColdEvent::Config(_) | ColdEvent::Health(_) => true,
+            _ => true,
+        }
+    }
 }
 
 pub trait EventTransport: Send + Sync {
-    /// Publish DTP envelope (transport handles wire format)
+    /// Publish DTP envelope (transport sends to network)
     async fn publish_dtp(&mut self, envelope: &DtpEnvelope) -> Result<(), GatewayError>;
 }
 ```
@@ -1151,13 +1505,16 @@ pub trait EventTransport: Send + Sync {
 ### Potential Concerns & Mitigations
 
 **Concern 1: Overhead**
-- **Mitigation**: Envelope only created at Gateway boundary (not internal). Internal bus remains zero-copy. Overhead is minimal compared to network latency.
+- **Mitigation**: Envelope only created at Gateway boundary (not internal). Internal buses remain low-allocation. Fixed-header format minimizes parsing overhead.
 
 **Concern 2: Complexity**
-- **Mitigation**: DTP is simple (just an envelope). Benefits outweigh complexity. Makes adding new transports easier.
+- **Mitigation**: DTP is simple (fixed header + TLV metadata). Benefits outweigh complexity. Makes adding new transports easier.
 
 **Concern 3: Serialization Performance**
-- **Mitigation**: Choose format based on transport needs. Protobuf for gRPC, JSON for Pub/Sub, MessagePack for IPC. Internal bus doesn't serialize.
+- **Mitigation**: Single canonical format (Protobuf) eliminates format selection overhead. Protobuf is fast and compact. JSON only generated as derived stream for tooling.
+
+**Concern 4: Gateway Blocking**
+- **Mitigation**: Per-transport bounded queues with independent worker tasks. `try_send` prevents blocking. Drop/sample policy when queues are full.
 
 ---
 
@@ -1221,12 +1578,12 @@ pub struct NatsEventTransport {
 
 impl EventTransport for NatsEventTransport {
     async fn publish_dtp(&mut self, envelope: &DtpEnvelope) -> Result<(), GatewayError> {
-        // Serialize DTP envelope to JSON
-        let json = serde_json::to_vec(envelope)?;
+        // Serialize DTP envelope to Protobuf (canonical format)
+        let bytes = envelope.serialize_to_protobuf()?;
         
         // Publish to NATS (envelope is self-contained)
         for topic in &self.topics {
-            self.client.publish(topic, json).await?;
+            self.client.publish(topic, bytes.clone()).await?;
         }
         Ok(())
     }
@@ -1247,11 +1604,11 @@ pub struct IpcEventTransport {
 
 impl EventTransport for IpcEventTransport {
     async fn publish_dtp(&mut self, envelope: &DtpEnvelope) -> Result<(), GatewayError> {
-        // Serialize DTP envelope to MessagePack (compact, fast)
-        let msgpack = rmp_serde::to_vec(envelope)?;
+        // Serialize DTP envelope to Protobuf (canonical format)
+        let bytes = envelope.serialize_to_protobuf()?;
         
         // Write to Unix socket
-        self.socket.write_all(&msgpack).await?;
+        self.socket.write_all(&bytes).await?;
         Ok(())
     }
 }
@@ -1271,24 +1628,30 @@ impl EventTransport for IpcEventTransport {
 impl ExchangeStatePublisher {
     pub fn new(
         exchange_update_tx: ExchangeUpdateSender,
-        event_bus: Arc<dyn EventBus>, // NEW
+        cold_event_bus: Arc<dyn ColdEventBus>, // NEW
     ) -> Self {
         Self {
             exchange_update_tx,
-            event_bus, // NEW
+            cold_event_bus, // NEW
         }
     }
     
-    pub async fn publish_order(&self, order: &Order) -> Result<(), EngineError> {
+    pub fn publish_order_placed(&self, order: &Order) -> Result<(), EngineError> {
         // Existing: publish to broadcast channel (for backward compatibility)
         self.exchange_update_tx.send(ExchangeUpdate::Order(order.clone()))?;
         
-        // NEW: publish to Event Bus
-        let event = Event::Order(OrderEvent::Placed {
-            order: order.clone(),
+        // NEW: publish to Cold Event Bus (lean event)
+        let pair_id = self.pair_registry.get_id(&order.symbol)?;
+        let event = Arc::new(ColdEvent::Order(OrderEvent::Placed {
+            order_id: order.order_id.clone(),
+            pair_id,
+            side: order.side,
+            price: order.price,
+            quantity: order.amount,
+            order_type: order.order_type,
             timestamp: order.internal_created_at,
-        });
-        self.event_bus.publish(event)?;
+        }));
+        self.cold_event_bus.publish(event)?;
         
         Ok(())
     }
@@ -1305,7 +1668,7 @@ impl ExchangeStatePublisher {
 pub struct StrategyExecutor {
     executor: Arc<dyn ExecutionInterface>,
     command_rx: mpsc::Receiver<Command>, // NEW
-    event_bus: Arc<dyn EventBus>, // NEW
+    cold_event_bus: Arc<dyn ColdEventBus>, // NEW
     // ... existing fields
 }
 
@@ -1313,10 +1676,14 @@ impl StrategyExecutor {
     pub async fn run(&mut self) -> Result<(), EngineError> {
         loop {
             tokio::select! {
-                // NEW: Handle commands from Command Bus
+                // NEW: Handle commands from Command Router
                 cmd = self.command_rx.recv() => {
                     if let Some(command) = cmd {
-                        self.handle_command(command).await?;
+                        let result = self.handle_command(command).await;
+                        // Send reply if requested
+                        if let Some(reply_tx) = command.reply {
+                            let _ = reply_tx.send(result);
+                        }
                     }
                 }
                 // ... existing event handling
@@ -1324,23 +1691,25 @@ impl StrategyExecutor {
         }
     }
     
-    async fn handle_command(&self, cmd: Command) -> Result<(), EngineError> {
-        match cmd {
-            Command::Trade(trade_cmd) => {
+    async fn handle_command(&self, cmd: Command) -> Result<CommandResult, EngineError> {
+        match cmd.payload {
+            CommandPayload::Trade(trade_cmd) => {
                 // Execute trade
                 let result = self.executor.execute_trade_command(trade_cmd).await?;
                 
-                // Publish event
-                let event = Event::Order(OrderEvent::Placed { ... });
-                self.event_bus.publish(event)?;
+                // Publish event (lean)
+                let event = Arc::new(ColdEvent::Order(OrderEvent::Placed { ... }));
+                self.cold_event_bus.publish(event)?;
+                
+                Ok(CommandResult { success: true, error_code: None, data: None })
             }
-            Command::Strategy(strategy_cmd) => {
+            CommandPayload::Strategy(strategy_cmd) => {
                 // Handle strategy command
                 // ...
+                Ok(CommandResult { success: true, error_code: None, data: None })
             }
-            _ => {}
+            _ => Ok(CommandResult { success: false, error_code: Some(1), data: None })
         }
-        Ok(())
     }
 }
 ```
@@ -1355,17 +1724,28 @@ impl StrategyExecutor {
 pub async fn strategy_runner(...) -> Result<(), EngineError> {
     // ... existing initialization ...
     
-    // NEW: Create Event Bus and Command Bus
-    let (event_bus, _) = BroadcastEventBus::new(10000);
-    let (command_bus, command_rx) = MpscCommandBus::new(1000);
+    // NEW: Create Hot and Cold Event Buses
+    let (hot_event_tx, hot_rx) = hot_event_channel(10000);
+    let (cold_event_bus, _) = BroadcastColdEventBus::new(10000);
+    
+    // NEW: Create Command Router
+    let (command_router, command_rx) = MpscCommandRouter::new(1000);
     
     // NEW: Create Gateway
-    let mut gateway = EventGateway::new(Arc::new(event_bus.clone()), gateway_config);
-    gateway.add_transport(Box::new(GrpcEventTransport::new(...)));
-    gateway.add_transport(Box::new(NatsEventTransport::new(...)));
+    let mut gateway = EventGateway::new(gateway_config);
+    gateway.add_transport("grpc".to_string(), Box::new(GrpcEventTransport::new(...)), 1000);
+    gateway.add_transport("nats".to_string(), Box::new(NatsEventTransport::new(...)), 1000);
+    
+    // Subscribe to cold lane
+    let cold_rx = cold_event_bus.subscribe();
+    
+    // Start gateway with receivers
+    tokio::spawn(async move {
+        gateway.start(hot_rx, cold_rx).await;
+    });
     
     let mut command_gateway = CommandGateway::new(
-        Arc::new(command_bus.clone()),
+        Arc::new(command_router.clone()),
         authenticator,
         validator,
     );
@@ -1374,10 +1754,7 @@ pub async fn strategy_runner(...) -> Result<(), EngineError> {
     // Pass Event Bus and Command Bus to engines
     // ...
     
-    // Start Gateway
-    tokio::spawn(async move {
-        gateway.start().await;
-    });
+    // Gateway already started above with receivers
     
     tokio::spawn(async move {
         command_gateway.start().await;
@@ -1412,44 +1789,50 @@ This ensures zero downtime migration.
 
 ## Implementation Phases
 
-### Phase 1: Event Bus Foundation (Week 1-2)
-- [ ] Create `trading_core::events` module
-- [ ] Define all event types
-- [ ] Implement `EventBus` trait and `BroadcastEventBus`
-- [ ] Update `ExchangeStatePublisher` to publish events
-- [ ] Update `MarketDataStatePublisher` to publish events
+### Phase 1: Event Bus Foundation (Hot/Cold Split) (Week 1-2)
+- [ ] Create `trading_core::events::hot` module (hot lane events)
+- [ ] Create `trading_core::events::cold` module (cold lane events)
+- [ ] Implement `hot_event_channel()` function returning `(HotEventTx, HotEventRx)` (or SPSC ring buffer)
+- [ ] Implement `ColdEventBus` trait and `BroadcastColdEventBus` (Arc-wrapped)
+- [ ] Update `ExchangeStatePublisher` to publish lean cold events
+- [ ] Update `MarketDataStatePublisher` to publish compact hot events (using HotEventTx)
+- [ ] Add numeric ID registries (pair_id, asset_id, component_id mappings)
 - [ ] Add unit tests
 
-### Phase 2: Command Bus Foundation (Week 2-3)
+### Phase 2: Command Router Foundation (Week 2-3)
 - [ ] Create `trading_core::commands` module
-- [ ] Define all command types
-- [ ] Implement `CommandBus` trait and `MpscCommandBus`
-- [ ] Update `StrategyExecutor` to subscribe to commands
+- [ ] Define command types with correlation IDs and oneshot replies
+- [ ] Implement `CommandRouter` trait and `MpscCommandRouter`
+- [ ] Implement `CommandDispatcher` for routing to handlers
+- [ ] Update `StrategyExecutor` to handle commands via dispatcher
 - [ ] Add unit tests
 
 ### Phase 3: Gateway Layer (Week 3-5)
 - [ ] Create `gateway` crate
 - [ ] Implement DTP core library (`libs/trading_core/src/dtp/`)
-  - [ ] Define `DtpEnvelope` structure
-  - [ ] Implement `DtpSerializer` and `DtpDeserializer`
+  - [ ] Define `DtpEnvelope` with fixed header (numeric IDs, TLV metadata)
+  - [ ] Implement `DtpSerializer` (Protobuf only)
+  - [ ] Implement `DtpDeserializer`
+  - [ ] Add message ID generator (monotonic counter + node id)
   - [ ] Add versioning support
-- [ ] Implement `EventGateway` (with DTP integration)
-- [ ] Implement `CommandGateway` (with DTP integration)
+- [ ] Implement `EventGateway` (non-blocking, per-transport queues)
+- [ ] Implement `CommandGateway` (with DTP integration, oneshot replies)
 - [ ] Add authentication and validation
 - [ ] Add configuration
 - [ ] Add integration tests
 
 ### Phase 4: gRPC Transport (Week 5-6)
-- [ ] Implement `GrpcEventTransport` (with DTP support)
-- [ ] Implement `GrpcCommandTransport` (with DTP support)
-- [ ] Update gRPC proto definitions (include DTP envelope)
+- [ ] Implement `GrpcEventTransport` (with DTP Protobuf support)
+- [ ] Implement `GrpcCommandTransport` (with DTP support, oneshot replies)
+- [ ] Update gRPC proto definitions (DTP envelope as Protobuf)
 - [ ] Migrate existing gRPC service to Gateway
 - [ ] Test with existing TUI
 
 ### Phase 5: Additional Transports (Week 6-7)
-- [ ] Implement `NatsEventTransport` (Pub/Sub with DTP)
-- [ ] Implement `IpcEventTransport` (Unix sockets with DTP/MessagePack)
-- [ ] Add HTTP transport (optional, with DTP)
+- [ ] Implement `NatsEventTransport` (Pub/Sub with DTP Protobuf)
+- [ ] Implement `IpcEventTransport` (Unix sockets with DTP Protobuf)
+- [ ] Add HTTP transport (optional, with DTP Protobuf)
+- [ ] Add JSON derived stream for tooling (optional, separate from canonical)
 - [ ] Test all transports
 
 ### Phase 6: Integration & Testing (Week 7-8)
@@ -1464,12 +1847,15 @@ This ensures zero downtime migration.
 ## Success Criteria
 
 - [ ] Core runtime has zero UI/transport dependencies
-- [ ] Event Bus and Command Bus fully functional (zero-copy, <1μs)
-- [ ] DTP core library implemented and tested
-- [ ] Gateway layer working with DTP and gRPC
+- [ ] Hot lane bus functional (target <1μs under expected load, allocation-free)
+- [ ] Cold lane bus functional (target <10μs under expected load, Arc-wrapped)
+- [ ] Command router functional (single-consumer, oneshot replies)
+- [ ] DTP core library implemented with fixed-header format
+- [ ] Gateway layer working with non-blocking per-transport queues
 - [ ] Existing TUI works without changes
 - [ ] Can add new transports without modifying core
-- [ ] Internal latency remains <1μs
+- [ ] Hot path latency targets met (measured via benchmarks)
+- [ ] Cold path latency targets met (measured via benchmarks)
 - [ ] Multiple consumers can connect simultaneously
 - [ ] Authentication and validation working
 - [ ] DTP enables versioning, observability, and event sourcing
@@ -1507,5 +1893,58 @@ This ensures zero downtime migration.
 
 ---
 
-**Next Steps**: Review proposal, approve architecture, begin Phase 1 implementation.
+## Revision Summary (v2.0)
+
+This proposal has been revised based on low-latency system feedback. Key changes:
+
+### 1. Hot/Cold Lane Separation
+- **Hot Lane**: Market data events use SPSC/bounded MPSC channels with compact structs (IDs + deltas)
+- **Cold Lane**: State change events use `broadcast::Sender<Arc<ColdEvent>>` for sharing without clones
+- **Rationale**: Market data is ultra-high frequency and needs allocation-free path; state changes are lower frequency and can use Arc
+
+### 2. Fixed-Header DTP Envelope
+- **Numeric IDs**: `message_id: u64`, `correlation_id: u64` (not Strings)
+- **TLV Metadata**: `Vec<(u16, Bytes)>` instead of `HashMap<String, String>`
+- **Fixed Header**: Packed struct for efficient parsing
+- **Rationale**: Eliminates heap allocations per message, reduces cache misses
+
+### 3. Command Router (Single-Consumer)
+- **Routing**: Commands routed to specific handlers, not pub-sub
+- **Request/Response**: Uses `oneshot::Sender<CommandResult>` for replies
+- **Correlation IDs**: `u64` for tracking request/response pairs
+- **Rationale**: Commands should have single execution point, not broadcast
+
+### 4. Lean Event Payloads
+- **Hot Events**: Best bid/ask only (not full orderbook Vec)
+- **Cold Events**: IDs + key fields only (not full Order objects)
+- **Numeric Codes**: Error codes, reason codes as `u16`/`u8`, not Strings
+- **Rationale**: Reduces allocation overhead, consumers query state stores for full objects
+
+### 5. Non-Blocking Gateway Fanout
+- **Per-Transport Queues**: Each transport has bounded `mpsc::channel`
+- **Independent Workers**: Each transport runs its own task
+- **Try-Send**: `try_send()` prevents blocking; drop/sample when full
+- **Rationale**: Prevents head-of-line blocking when one transport is slow
+
+### 6. Single Canonical Encoding
+- **Protobuf Only**: All DTP payloads use Protobuf
+- **JSON as Derived**: JSON only generated as separate stream for tooling
+- **Rationale**: Eliminates format selection overhead, reduces maintenance burden
+
+### Performance Characteristics
+
+- **Hot Lane**: Target <1μs latency under expected load (allocation-free, compact structs, measured via benchmarks)
+- **Cold Lane**: Target <10μs latency under expected load (Arc-wrapped, lean payloads, measured via benchmarks)
+- **Gateway**: Non-blocking, per-transport queues prevent head-of-line blocking
+- **DTP**: Fixed-header format minimizes parsing overhead
+
+### Migration Notes
+
+- Existing code continues to work (dual publishing during migration)
+- Numeric ID registries needed (pair_id, asset_id, component_id mappings)
+- State stores may be needed for consumers that need full objects (not just event deltas)
+
+---
+
+**Next Steps**: Review revised proposal, approve architecture, begin Phase 1 implementation.
 

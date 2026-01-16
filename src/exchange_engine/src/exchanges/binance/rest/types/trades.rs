@@ -2,6 +2,7 @@ use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use smol_str::{SmolStr, ToSmolStr};
 use trading_core::{
+    registry::symbol::SymbolRegistry,
     types::{common::Side, exchange::Trade},
     utils::{deserialize_smol_str, serialize_smol_str},
 };
@@ -63,19 +64,11 @@ pub struct BinanceTradeResponse {
 
 impl From<BinanceTradeResponse> for Trade {
     fn from(binance_trade: BinanceTradeResponse) -> Self {
-        // Convert symbol to Pair (assuming format like "BTCUSDT")
-        // This is a simplified approach - in production, use proper symbol mapping
+        // Use SymbolRegistry to convert symbol to Pair with parsing fallback
+        // This uses the centralized symbol parsing logic from trading_core
         let symbol_str = binance_trade.symbol.as_str();
-        let pair = if symbol_str.len() >= 6 {
-            // Try to split - common pattern: base + "USDT" or "USDC"
-            let base_len = symbol_str.len() - 4; // Assume 4-char quote like "USDT"
-            let base = &symbol_str[..base_len];
-            let quote = &symbol_str[base_len..];
-            trading_core::types::common::Pair::new(base, quote)
-        } else {
-            // Fallback - use symbol as base, empty quote
-            trading_core::types::common::Pair::new(symbol_str, "")
-        };
+        let registry = SymbolRegistry::default(); // Empty registry, will use parsing fallback
+        let pair = registry.get_or_parse_pair(symbol_str);
 
         Trade {
             trade_id: binance_trade.id.to_smolstr(),
@@ -288,8 +281,10 @@ mod tests {
 
         let trade: Trade = binance_trade.into();
 
-        // Should handle short symbol gracefully
-        assert_eq!(trade.pair.base, "BTC");
+        // Short symbol "BTC" cannot be parsed (no quote currency), so should fallback to UNKNOWN
+        // This is more correct than the old behavior which would create an invalid pair with empty quote
+        assert_eq!(trade.pair.base, "UNKNOWN");
+        assert_eq!(trade.pair.quote, "UNKNOWN");
         assert_eq!(trade.trade_id, "11111");
     }
 

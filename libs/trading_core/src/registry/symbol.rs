@@ -13,7 +13,7 @@ use std::collections::HashMap;
 ///
 /// Provides efficient bidirectional lookups between Symbol and Pair.
 /// This is a shared registry that can be used across multiple components.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct SymbolRegistry {
     /// Symbol -> Pair mapping
     symbol_to_pair: HashMap<Symbol, Pair>,
@@ -101,11 +101,45 @@ impl SymbolRegistry {
     pub fn is_empty(&self) -> bool {
         self.symbol_to_pair.is_empty()
     }
-}
 
-impl Default for SymbolRegistry {
-    fn default() -> Self {
-        Self::new()
+    /// Get or parse a symbol string into a Pair
+    ///
+    /// First tries to get from registry, then attempts to parse by trying common quote currencies.
+    /// If both fail, returns a fallback Pair with "UNKNOWN" values.
+    ///
+    /// # Arguments
+    /// * `symbol_str` - The raw symbol string (e.g., "BTCUSDT")
+    ///
+    /// # Returns
+    /// * `Pair` - Either from registry, parsed, or fallback
+    pub fn get_or_parse_pair(&self, symbol_str: &str) -> Pair {
+        // First try registry lookup
+        let symbol = Symbol::from(symbol_str);
+        if let Some(pair) = self.get_pair(&symbol) {
+            return pair.clone();
+        }
+
+        // Try to parse by attempting common quote currencies
+        // Order matters: try longer quotes first to avoid partial matches
+        // This list is derived from actual symbols on Binance and Bybit exchanges
+        // Sorted by length (longest first) to prevent partial matches (e.g., "USDT" before "USD")
+        let common_quotes = [
+            "USDT", "USDC", "BUSD", "TUSD", "DUSD", "IDRT", "USDP", "USDS", "EURI", "DAI", "BTC",
+            "ETH", "BNB", "EUR", "GBP", "JPY", "TRY", "BRL", "AUD", "RUB", "KRW", "IDR", "NGN",
+            "UAH", "PLN", "RON", "USD", "ARS", "MXN", "ZAR", "UST", "MNT",
+        ];
+
+        let symbol_upper = symbol_str.to_uppercase();
+        for quote in &common_quotes {
+            if let Some(base) = symbol_upper.strip_suffix(quote) {
+                if !base.is_empty() {
+                    return Pair::new(base, quote);
+                }
+            }
+        }
+
+        // Fallback to UNKNOWN
+        Pair::new("UNKNOWN", "UNKNOWN")
     }
 }
 
@@ -171,5 +205,61 @@ mod tests {
         assert_eq!(registry.get_symbol(&pair), None);
         assert!(!registry.has_symbol(&symbol));
         assert!(!registry.has_pair(&pair));
+    }
+
+    #[test]
+    fn test_get_or_parse_pair() {
+        let mut registry = SymbolRegistry::new();
+
+        // Registered pair
+        let pair = Pair::new("BTC", "USDT");
+        let symbol = Symbol::from("BTCUSDT");
+        registry.register(symbol, pair.clone());
+        assert_eq!(registry.get_or_parse_pair("BTCUSDT"), pair);
+        assert_eq!(
+            registry.get_or_parse_pair("btcusdt"),
+            Pair::new("BTC", "USDT")
+        ); // Case insensitive
+
+        // Parsed pair (not registered) - common quotes
+        assert_eq!(
+            registry.get_or_parse_pair("ETHUSDC"),
+            Pair::new("ETH", "USDC")
+        );
+        assert_eq!(
+            registry.get_or_parse_pair("BNBBTC"),
+            Pair::new("BNB", "BTC")
+        );
+
+        // Test expanded quote currencies from Binance/Bybit
+        assert_eq!(
+            registry.get_or_parse_pair("BTCBUSD"),
+            Pair::new("BTC", "BUSD")
+        );
+        assert_eq!(
+            registry.get_or_parse_pair("ETHTRY"),
+            Pair::new("ETH", "TRY")
+        );
+        assert_eq!(
+            registry.get_or_parse_pair("ADABRL"),
+            Pair::new("ADA", "BRL")
+        );
+        assert_eq!(
+            registry.get_or_parse_pair("SOLAUD"),
+            Pair::new("SOL", "AUD")
+        );
+        assert_eq!(
+            registry.get_or_parse_pair("DOTRUB"),
+            Pair::new("DOT", "RUB")
+        );
+        assert_eq!(
+            registry.get_or_parse_pair("MATICDUSD"),
+            Pair::new("MATIC", "DUSD")
+        );
+
+        // Fallback for unparseable symbols
+        let fallback = registry.get_or_parse_pair("INVALID");
+        assert_eq!(fallback.base, "UNKNOWN");
+        assert_eq!(fallback.quote, "UNKNOWN");
     }
 }

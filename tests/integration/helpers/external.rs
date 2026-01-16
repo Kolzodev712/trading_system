@@ -162,7 +162,19 @@ impl MarketDataClientBuilder {
                 Box::new(BinanceClient::new(config, self.buffer_size, None, vec![]))
             }
             Exchange::Bybit => {
-                todo!("Bybit market data clients not yet implemented in tests")
+                use market_data_engine::exchanges::bybit::{
+                    client::BybitClient, config::BybitCategory, config::BybitConfig,
+                };
+
+                let config = BybitConfig {
+                    pairs: self.config.pairs.clone(),
+                    limit: 1,
+                    base_delay: None,
+                    max_delay: None,
+                    category: BybitCategory::Spot,
+                };
+
+                Box::new(BybitClient::new(config, self.buffer_size, None, vec![]))
             }
             Exchange::Unsupported => {
                 panic!("Unsupported exchange cannot be used in tests")
@@ -192,7 +204,20 @@ impl MarketDataClientBuilder {
                 Box::new(client)
             }
             Exchange::Bybit => {
-                todo!("Bybit market data clients not yet implemented in tests")
+                use market_data_engine::exchanges::bybit::{
+                    client::BybitClient, config::BybitCategory, config::BybitConfig,
+                };
+
+                let config = BybitConfig {
+                    pairs: self.config.pairs.clone(),
+                    limit: 1,
+                    base_delay: None,
+                    max_delay: None,
+                    category: BybitCategory::Spot,
+                };
+
+                let client = BybitClient::new(config, self.buffer_size, handler, vec![]);
+                Box::new(client)
             }
             Exchange::Unsupported => {
                 panic!("Unsupported exchange cannot be used in tests")

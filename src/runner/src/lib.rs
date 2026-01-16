@@ -859,7 +859,10 @@ pub fn initialize_market_data_engine(
     ),
     Box<dyn std::error::Error>,
 > {
-    use market_data_engine::exchanges::binance::config::BinanceConfig as MDBinanceConfig;
+    use market_data_engine::exchanges::{
+        binance::config::BinanceConfig as MDBinanceConfig,
+        bybit::{config::BybitCategory, config::BybitConfig as MDBybitConfig},
+    };
 
     info!(
         "Starting Market Data Engine (exchange: {:?})...",
@@ -897,7 +900,39 @@ pub fn initialize_market_data_engine(
             }
         }
         Exchange::Bybit => {
-            return Err("Bybit Market Data Engine not yet implemented".into());
+            let bybit_config_json = bot_config
+                .exchange
+                .exchange_specific
+                .get("bybit")
+                .ok_or("Bybit exchange configuration is required")?;
+            let _bybit_config: exchange_engine::exchanges::bybit::config::BybitConfig =
+                serde_json::from_value(bybit_config_json.clone())
+                    .map_err(|e| format!("Failed to deserialize Bybit config: {e}"))?;
+
+            // Extract category from exchange_specific if present, default to Spot
+            let category = bybit_config_json
+                .get("category")
+                .and_then(|v| v.as_str())
+                .map(|s| match s {
+                    "linear" => BybitCategory::Linear,
+                    _ => BybitCategory::Spot,
+                })
+                .unwrap_or(BybitCategory::Spot);
+
+            MarketDataConfig {
+                redis_url: None,
+                exchange: bot_config.exchange.exchange.clone(),
+                exchange_config: MDExchangeConfig::Bybit(MDBybitConfig {
+                    pairs: pairs.clone(), // Single source of truth from bot.json
+                    limit: bybit_config_json
+                        .get("limit")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(1), // Default to 1 (top level orderbook)
+                    base_delay: bybit_config_json.get("baseDelay").and_then(|v| v.as_u64()),
+                    max_delay: bybit_config_json.get("maxDelay").and_then(|v| v.as_u64()),
+                    category,
+                }),
+            }
         }
         Exchange::Unsupported => {
             return Err("Unsupported exchange for Market Data Engine".into());

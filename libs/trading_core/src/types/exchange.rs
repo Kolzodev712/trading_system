@@ -215,6 +215,94 @@ pub struct Trade {
     pub fee_currency: Symbol,
 }
 
+/// Result of a single operation within a bulk request
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BulkOperationResult<T> {
+    pub success: bool,
+    /// Result data if successful
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data: Option<T>,
+    /// Error if failed
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    /// Index in the original request (0-based)
+    pub index: usize,
+}
+
+/// Bulk open orders request
+#[derive(Debug, Clone, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BulkOrderRequest {
+    /// List of order requests to place
+    pub requests: Vec<OrderRequest>,
+}
+
+/// Bulk open orders response
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BulkOrderResponse {
+    /// Results for each order request
+    pub results: Vec<BulkOperationResult<Order>>,
+    /// Number of successful orders
+    pub success_count: usize,
+    /// Number of failed orders
+    pub failure_count: usize,
+}
+
+/// Bulk cancel orders request
+#[derive(Debug, Clone, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BulkCancelRequest {
+    /// List of order IDs to cancel
+    pub order_ids: Vec<OrderId>,
+    /// Optional pair filter (if provided, only cancel orders for this pair)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pair: Option<Pair>,
+}
+
+/// Bulk cancel orders response
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BulkCancelResponse {
+    /// Results for each cancellation request
+    pub results: Vec<BulkOperationResult<OrderId>>,
+    /// List of successfully cancelled order IDs
+    pub cancelled_ids: Vec<OrderId>,
+    /// List of order IDs that failed to cancel (with their errors)
+    pub failed_ids: Vec<(OrderId, String)>,
+}
+
+/// Single amendment item in a bulk amend request
+#[derive(Debug, Clone, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BulkAmendItem {
+    /// Order ID to amend
+    pub order_id: OrderId,
+    /// New order request (replaces the existing order)
+    pub new_request: OrderRequest,
+}
+
+/// Bulk amend orders request
+#[derive(Debug, Clone, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BulkAmendRequest {
+    /// List of amendments to perform
+    pub amendments: Vec<BulkAmendItem>,
+}
+
+/// Bulk amend orders response
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BulkAmendResponse {
+    /// Results for each amendment request
+    pub results: Vec<BulkOperationResult<Order>>,
+    /// List of successfully amended orders
+    pub amended_orders: Vec<Order>,
+    /// List of failed amendments (order_id, error)
+    pub failed_amendments: Vec<(OrderId, String)>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -424,5 +512,370 @@ mod tests {
         let serialized = serde_json::to_string(&trade).unwrap();
         assert!(serialized.contains("12345"));
         assert!(serialized.contains("BTC"));
+    }
+
+    #[test]
+    fn test_bulk_operation_result_creation() {
+        let success_result = BulkOperationResult {
+            success: true,
+            data: Some(OrderId::new("12345".into())),
+            error: None,
+            index: 0,
+        };
+
+        let failure_result: BulkOperationResult<OrderId> = BulkOperationResult {
+            success: false,
+            data: None,
+            error: Some("Order not found".to_string()),
+            index: 1,
+        };
+
+        assert!(success_result.success);
+        assert_eq!(success_result.data, Some(OrderId::new("12345".into())));
+        assert!(!failure_result.success);
+        assert_eq!(failure_result.error, Some("Order not found".to_string()));
+    }
+
+    #[test]
+    fn test_bulk_order_request_creation() {
+        let requests = vec![
+            OrderRequest {
+                symbol: "BTCUSDT".into(),
+                side: Side::Buy,
+                order_type: OrderType::Limit,
+                price: Decimal::new(90000, 0),
+                amount: Decimal::new(1, 0),
+                timestamp: None,
+                instrument_type: InstrumentType::Spot,
+                exchange_params: HashMap::new(),
+            },
+            OrderRequest {
+                symbol: "ETHUSDT".into(),
+                side: Side::Sell,
+                order_type: OrderType::Limit,
+                price: Decimal::new(3000, 0),
+                amount: Decimal::new(10, 0),
+                timestamp: None,
+                instrument_type: InstrumentType::Spot,
+                exchange_params: HashMap::new(),
+            },
+        ];
+
+        let bulk_request = BulkOrderRequest { requests };
+
+        assert_eq!(bulk_request.requests.len(), 2);
+        assert_eq!(bulk_request.requests[0].symbol, "BTCUSDT");
+        assert_eq!(bulk_request.requests[1].symbol, "ETHUSDT");
+    }
+
+    #[test]
+    fn test_bulk_order_response_creation() {
+        let order1 = Order {
+            order_id: OrderId::new("12345".into()),
+            client_order_id: None,
+            symbol: "BTCUSDT".into(),
+            side: Side::Buy,
+            price: Decimal::new(90000, 0),
+            amount: Decimal::new(1, 0),
+            internal_created_at: 1734819700000,
+            exchange_created_at: Some(1734819696263),
+            status: OrderStatus::New,
+            filled_amount: Decimal::ZERO,
+            instrument_type: InstrumentType::Spot,
+        };
+
+        let order2 = Order {
+            order_id: OrderId::new("67890".into()),
+            client_order_id: None,
+            symbol: "ETHUSDT".into(),
+            side: Side::Sell,
+            price: Decimal::new(3000, 0),
+            amount: Decimal::new(10, 0),
+            internal_created_at: 1734819700000,
+            exchange_created_at: Some(1734819696263),
+            status: OrderStatus::New,
+            filled_amount: Decimal::ZERO,
+            instrument_type: InstrumentType::Spot,
+        };
+
+        let results = vec![
+            BulkOperationResult {
+                success: true,
+                data: Some(order1.clone()),
+                error: None,
+                index: 0,
+            },
+            BulkOperationResult {
+                success: false,
+                data: None,
+                error: Some("Insufficient balance".to_string()),
+                index: 1,
+            },
+            BulkOperationResult {
+                success: true,
+                data: Some(order2.clone()),
+                error: None,
+                index: 2,
+            },
+        ];
+
+        let response = BulkOrderResponse {
+            results: results.clone(),
+            success_count: 2,
+            failure_count: 1,
+        };
+
+        assert_eq!(response.results.len(), 3);
+        assert_eq!(response.success_count, 2);
+        assert_eq!(response.failure_count, 1);
+        assert_eq!(response.results[0].data, Some(order1));
+        assert_eq!(response.results[2].data, Some(order2));
+    }
+
+    #[test]
+    fn test_bulk_cancel_request_creation() {
+        let order_ids = vec![
+            OrderId::new("12345".into()),
+            OrderId::new("67890".into()),
+            OrderId::new("11111".into()),
+        ];
+
+        let request_with_pair = BulkCancelRequest {
+            order_ids: order_ids.clone(),
+            pair: Some(Pair::new("BTC", "USDT")),
+        };
+
+        let request_without_pair = BulkCancelRequest {
+            order_ids: order_ids.clone(),
+            pair: None,
+        };
+
+        assert_eq!(request_with_pair.order_ids.len(), 3);
+        assert_eq!(request_with_pair.pair, Some(Pair::new("BTC", "USDT")));
+        assert_eq!(request_without_pair.pair, None);
+    }
+
+    #[test]
+    fn test_bulk_cancel_response_creation() {
+        let cancelled_ids = vec![OrderId::new("12345".into()), OrderId::new("67890".into())];
+
+        let failed_ids = vec![(OrderId::new("11111".into()), "Order not found".to_string())];
+
+        let results = vec![
+            BulkOperationResult {
+                success: true,
+                data: Some(OrderId::new("12345".into())),
+                error: None,
+                index: 0,
+            },
+            BulkOperationResult {
+                success: true,
+                data: Some(OrderId::new("67890".into())),
+                error: None,
+                index: 1,
+            },
+            BulkOperationResult {
+                success: false,
+                data: None,
+                error: Some("Order not found".to_string()),
+                index: 2,
+            },
+        ];
+
+        let response = BulkCancelResponse {
+            results,
+            cancelled_ids: cancelled_ids.clone(),
+            failed_ids: failed_ids.clone(),
+        };
+
+        assert_eq!(response.cancelled_ids.len(), 2);
+        assert_eq!(response.failed_ids.len(), 1);
+        assert_eq!(response.cancelled_ids[0], OrderId::new("12345".into()));
+        assert_eq!(response.failed_ids[0].0, OrderId::new("11111".into()));
+    }
+
+    #[test]
+    fn test_bulk_amend_item_creation() {
+        let amend_item = BulkAmendItem {
+            order_id: OrderId::new("12345".into()),
+            new_request: OrderRequest {
+                symbol: "BTCUSDT".into(),
+                side: Side::Buy,
+                order_type: OrderType::Limit,
+                price: Decimal::new(91000, 0),
+                amount: Decimal::new(2, 0),
+                timestamp: None,
+                instrument_type: InstrumentType::Spot,
+                exchange_params: HashMap::new(),
+            },
+        };
+
+        assert_eq!(amend_item.order_id.as_str(), "12345");
+        assert_eq!(amend_item.new_request.price, Decimal::new(91000, 0));
+        assert_eq!(amend_item.new_request.amount, Decimal::new(2, 0));
+    }
+
+    #[test]
+    fn test_bulk_amend_request_creation() {
+        let amendments = vec![
+            BulkAmendItem {
+                order_id: OrderId::new("12345".into()),
+                new_request: OrderRequest {
+                    symbol: "BTCUSDT".into(),
+                    side: Side::Buy,
+                    order_type: OrderType::Limit,
+                    price: Decimal::new(91000, 0),
+                    amount: Decimal::new(2, 0),
+                    timestamp: None,
+                    instrument_type: InstrumentType::Spot,
+                    exchange_params: HashMap::new(),
+                },
+            },
+            BulkAmendItem {
+                order_id: OrderId::new("67890".into()),
+                new_request: OrderRequest {
+                    symbol: "ETHUSDT".into(),
+                    side: Side::Sell,
+                    order_type: OrderType::Limit,
+                    price: Decimal::new(3100, 0),
+                    amount: Decimal::new(15, 0),
+                    timestamp: None,
+                    instrument_type: InstrumentType::Spot,
+                    exchange_params: HashMap::new(),
+                },
+            },
+        ];
+
+        let request = BulkAmendRequest { amendments };
+
+        assert_eq!(request.amendments.len(), 2);
+        assert_eq!(request.amendments[0].order_id.as_str(), "12345");
+        assert_eq!(request.amendments[1].order_id.as_str(), "67890");
+    }
+
+    #[test]
+    fn test_bulk_amend_response_creation() {
+        let amended_order = Order {
+            order_id: OrderId::new("12345".into()),
+            client_order_id: None,
+            symbol: "BTCUSDT".into(),
+            side: Side::Buy,
+            price: Decimal::new(91000, 0),
+            amount: Decimal::new(2, 0),
+            internal_created_at: 1734819700000,
+            exchange_created_at: Some(1734819696263),
+            status: OrderStatus::Amended,
+            filled_amount: Decimal::ZERO,
+            instrument_type: InstrumentType::Spot,
+        };
+
+        let failed_amendments = vec![(
+            OrderId::new("67890".into()),
+            "Order already filled".to_string(),
+        )];
+
+        let results = vec![
+            BulkOperationResult {
+                success: true,
+                data: Some(amended_order.clone()),
+                error: None,
+                index: 0,
+            },
+            BulkOperationResult {
+                success: false,
+                data: None,
+                error: Some("Order already filled".to_string()),
+                index: 1,
+            },
+        ];
+
+        let response = BulkAmendResponse {
+            results,
+            amended_orders: vec![amended_order.clone()],
+            failed_amendments: failed_amendments.clone(),
+        };
+
+        assert_eq!(response.amended_orders.len(), 1);
+        assert_eq!(response.failed_amendments.len(), 1);
+        assert_eq!(
+            response.amended_orders[0].order_id,
+            OrderId::new("12345".into())
+        );
+        assert_eq!(
+            response.failed_amendments[0].0,
+            OrderId::new("67890".into())
+        );
+    }
+
+    #[test]
+    fn test_bulk_order_request_serialization() {
+        let request = BulkOrderRequest {
+            requests: vec![OrderRequest {
+                symbol: "BTCUSDT".into(),
+                side: Side::Buy,
+                order_type: OrderType::Limit,
+                price: Decimal::new(90000, 0),
+                amount: Decimal::new(1, 0),
+                timestamp: None,
+                instrument_type: InstrumentType::Spot,
+                exchange_params: HashMap::new(),
+            }],
+        };
+
+        let serialized = serde_json::to_string(&request).unwrap();
+        assert!(serialized.contains("BTCUSDT"));
+        assert!(serialized.contains("requests"));
+    }
+
+    #[test]
+    fn test_bulk_operation_result_serialization() {
+        let result = BulkOperationResult {
+            success: true,
+            data: Some(OrderId::new("12345".into())),
+            error: None,
+            index: 0,
+        };
+
+        let serialized = serde_json::to_string(&result).unwrap();
+        assert!(serialized.contains("success"));
+        assert!(serialized.contains("12345"));
+        assert!(serialized.contains("index"));
+    }
+
+    #[test]
+    fn test_bulk_cancel_request_serialization() {
+        let request = BulkCancelRequest {
+            order_ids: vec![OrderId::new("12345".into()), OrderId::new("67890".into())],
+            pair: Some(Pair::new("BTC", "USDT")),
+        };
+
+        let serialized = serde_json::to_string(&request).unwrap();
+        assert!(serialized.contains("orderIds"));
+        assert!(serialized.contains("pair"));
+        assert!(serialized.contains("12345"));
+    }
+
+    #[test]
+    fn test_bulk_amend_request_serialization() {
+        let request = BulkAmendRequest {
+            amendments: vec![BulkAmendItem {
+                order_id: OrderId::new("12345".into()),
+                new_request: OrderRequest {
+                    symbol: "BTCUSDT".into(),
+                    side: Side::Buy,
+                    order_type: OrderType::Limit,
+                    price: Decimal::new(91000, 0),
+                    amount: Decimal::new(2, 0),
+                    timestamp: None,
+                    instrument_type: InstrumentType::Spot,
+                    exchange_params: HashMap::new(),
+                },
+            }],
+        };
+
+        let serialized = serde_json::to_string(&request).unwrap();
+        assert!(serialized.contains("amendments"));
+        assert!(serialized.contains("12345"));
+        assert!(serialized.contains("BTCUSDT"));
     }
 }

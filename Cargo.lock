@@ -1842,6 +1842,7 @@ dependencies = [
  "tokio-test",
  "tokio-tungstenite",
  "tracing",
+ "tracing-subscriber",
  "trading_core",
  "url",
  "urlencoding",

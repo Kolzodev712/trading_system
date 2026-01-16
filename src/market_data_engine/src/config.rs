@@ -1,6 +1,6 @@
 use trading_core::{error::EngineError, types::common::Exchange};
 
-use super::exchanges::binance::config::BinanceConfig;
+use super::exchanges::{binance::config::BinanceConfig, bybit::config::BybitConfig};
 use serde::{Deserialize, Serialize};
 
 pub trait ConfigGetter<T> {
@@ -29,12 +29,27 @@ impl MarketDataConfig {
 #[derive(Debug, PartialEq, Eq, Deserialize, Serialize, Clone)]
 pub enum ExchangeConfig {
     Binance(BinanceConfig),
+    Bybit(BybitConfig),
 }
 
 impl ConfigGetter<BinanceConfig> for ExchangeConfig {
     fn get_config(self) -> Result<BinanceConfig, EngineError> {
         match self {
             ExchangeConfig::Binance(config) => Ok(config),
+            _ => Err(EngineError::CustomError(anyhow::anyhow!(
+                "Expected Binance config, got different exchange"
+            ))),
+        }
+    }
+}
+
+impl ConfigGetter<BybitConfig> for ExchangeConfig {
+    fn get_config(self) -> Result<BybitConfig, EngineError> {
+        match self {
+            ExchangeConfig::Bybit(config) => Ok(config),
+            _ => Err(EngineError::CustomError(anyhow::anyhow!(
+                "Expected Bybit config, got different exchange"
+            ))),
         }
     }
 }
@@ -82,6 +97,9 @@ mod tests {
                 assert_eq!(binance_config.limit, 100);
                 assert_eq!(binance_config.base_delay, None);
                 assert_eq!(binance_config.max_delay, None);
+            }
+            ExchangeConfig::Bybit(_) => {
+                panic!("Expected Binance config in test");
             }
         }
     }

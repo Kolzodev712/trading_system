@@ -1,0 +1,13 @@
+{
+    "pairs": [
+        {
+            "base": "BTC",
+            "quote": "USDC"
+        }
+    ],
+    "limit": 1,
+    "baseDelay": 2,
+    "maxDelay": 60,
+    "category": "spot"
+}
+

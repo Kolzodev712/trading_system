@@ -2,5 +2,6 @@
 /legacy
 /trading_keys/binance
 /src/exchange_engine/config/binance_config.json
+/src/market_data_engine/config
 /config
 /cli_debug.log

@@ -114,7 +114,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("✓ Asset data fetched");
 
     // Initialize Market Data Engine (pass pairs from bot config)
-    let (_, market_data_rx, market_data_handle) =
+    let (_, market_data_rx, market_data_handle, market_data_state_manager) =
         initialize_market_data_engine(&bot_config, &shutdown_manager)?;
     info!("✓ Market data engine initialized");
 
@@ -169,6 +169,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         indicator_handle,
         trading_state_manager,
         exchange_state_manager,
+        market_data_state_manager,
         asset_service: Some(asset_service),
         trading_control: None, // Created in runner functions
     };

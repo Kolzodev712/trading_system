@@ -26,6 +26,7 @@ This proposal details the implementation of Bybit support for both Spot and Futu
 | **REST Base URL (Spot)** | `https://api.binance.com/api/v3/` | `https://api.bybit.com/v5/` |
 | **REST Base URL (Futures)** | `https://fapi.binance.com/fapi/v1/` | `https://api.bybit.com/v5/` (same URL) |
 | **WebSocket URL** | Different for spot/futures | `wss://stream.bybit.com/v5/` (unified) |
+| **WebSocket Connections** | **Single connection per API key** (must split RPC + streaming on same stream) | **Multiple connections allowed** (up to 500/IP/5min per category) - can use separate connections for RPC and streaming |
 | **API Version** | v3 (spot), v1/v2 (futures) | v5 (unified) |
 | **Authentication** | HMAC-SHA256 | HMAC-SHA256 (different param order) |
 | **Request Format** | Query params | Query params (similar) |
@@ -242,10 +243,23 @@ Bybit wraps all responses in a `result` object:
 
 **Location**: `src/exchange_engine/src/exchanges/bybit/websocket/client.rs`
 
+#### WebSocket Architecture
+
+**Key Advantage**: Bybit allows **multiple WebSocket connections per API key**, unlike Binance which only allows one connection per API key pair. This enables a cleaner architecture:
+
+- **Separate RPC Connection**: Dedicated WebSocket for trading operations (open_order, cancel_order, etc.)
+- **Separate Streaming Connection**: Dedicated WebSocket for user data (execution reports, balances, positions)
+- **No Message Routing Needed**: Unlike Binance, we don't need to split a single stream - each connection has a clear purpose
+
+**Connection Limits**:
+- Up to **500 connections per IP per 5 minutes per category** (Spot, Linear, Inverse, Options are separate)
+- Connections are counted separately per category
+- Avoid rapid connect/disconnect cycles
+
 #### WebSocket URLs
 
-- **Public Stream**: `wss://stream.bybit.com/v5/public/spot`
-- **Private Stream**: `wss://stream.bybit.com/v5/private` (authenticated)
+- **Public Stream**: `wss://stream.bybit.com/v5/public/spot` (spot), `wss://stream.bybit.com/v5/public/linear` (futures), `wss://stream.bybit.com/v5/public/inverse` (inverse)
+- **Private Stream**: `wss://stream.bybit.com/v5/private` (authenticated, unified for all categories)
 
 #### Key WebSocket Topics (Spot)
 
@@ -259,21 +273,45 @@ Bybit wraps all responses in a `result` object:
    - `execution` - Trade executions
    - `wallet` - Balance updates
 
+#### Implementation Architecture
+
+**Two-Connection Design** (simpler than Binance):
+
+1. **BybitRpcClient** (`websocket/rpc_client.rs`):
+   - Manages its own WebSocket connection for RPC operations
+   - Handles order placement, cancellation, amendment
+   - Request/response pattern with correlation IDs
+   - Can reconnect independently
+
+2. **BybitStreamingClient** (`websocket/streaming_client.rs`):
+   - Manages its own WebSocket connection for user data streaming
+   - Subscribes to execution reports, balance updates, position updates
+   - Long-lived connection with automatic reconnection
+   - Publishes events to `ExchangeStateManager`
+
+**Benefits**:
+- Cleaner separation of concerns
+- No message routing/splitting logic needed
+- Independent reconnection for each connection type
+- Easier to debug and maintain
+
 #### Implementation Checklist
 
-- [ ] Create `BybitWsClient` struct (unified for spot + futures)
-- [ ] Implement `ExchangeDriver` trait
-- [ ] Connect to public WebSocket stream
-- [ ] Connect to private WebSocket stream (authenticated)
-- [ ] Subscribe to spot orderbook/trade topics
-- [ ] Subscribe to futures orderbook/trade topics
-- [ ] Subscribe to position update topics (futures)
-- [ ] Subscribe to funding rate topics (futures)
-- [ ] Handle order updates (both spot and futures)
-- [ ] Handle balance updates (unified account)
-- [ ] Handle position updates (futures)
-- [ ] Add reconnection logic
-- [ ] Handle authentication for private stream
+- [ ] Create `BybitRpcClient` struct (separate WebSocket connection for RPC)
+- [ ] Create `BybitStreamingClient` struct (separate WebSocket connection for streaming)
+- [ ] Implement RPC connection with authentication
+- [ ] Implement streaming connection with authentication
+- [ ] Implement `ExchangeDriver` trait (coordinates both clients)
+- [ ] Subscribe to spot orderbook/trade topics (streaming client)
+- [ ] Subscribe to futures orderbook/trade topics (streaming client)
+- [ ] Subscribe to position update topics (futures, streaming client)
+- [ ] Subscribe to funding rate topics (futures, streaming client)
+- [ ] Handle order updates (both spot and futures, streaming client)
+- [ ] Handle balance updates (unified account, streaming client)
+- [ ] Handle position updates (futures, streaming client)
+- [ ] Implement RPC operations (open_order, cancel_order, etc., RPC client)
+- [ ] Add reconnection logic for both connections
+- [ ] Handle authentication for both connections
 
 ## Phase 2: Futures Methods Implementation
 

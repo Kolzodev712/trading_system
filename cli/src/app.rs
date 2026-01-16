@@ -21,6 +21,7 @@ pub struct App {
     streaming_active: bool,
     selected_level_index: Option<usize>, // Selected level index in levels list
     selected_strategy_index: Option<usize>, // Selected strategy index in strategies list
+    selected_orderbook_pair_index: Option<usize>, // Selected orderbook pair index
     level_details: Option<crate::client::trading_cli::Level>, // Currently viewed level details
     show_level_details: bool,            // Whether to show level details popup
     show_strategy_details: bool,         // Whether to show strategy details popup
@@ -83,6 +84,7 @@ impl App {
             streaming_active: false,
             selected_level_index: None,
             selected_strategy_index: None,
+            selected_orderbook_pair_index: None,
             level_details: None,
             show_level_details: false,
             show_strategy_details: false,
@@ -378,6 +380,47 @@ impl App {
 
     pub fn selected_strategy_index(&self) -> Option<usize> {
         self.selected_strategy_index
+    }
+
+    pub fn selected_orderbook_pair_index(&self) -> Option<usize> {
+        self.selected_orderbook_pair_index
+    }
+
+    pub fn select_orderbook_pair_left(&mut self) {
+        if let Some(md) = &self.monitoring_data {
+            let orderbooks = &md.orderbooks;
+            if orderbooks.is_empty() {
+                self.selected_orderbook_pair_index = None;
+                return;
+            }
+            self.selected_orderbook_pair_index = Some(
+                self.selected_orderbook_pair_index
+                    .map(|idx| {
+                        if idx == 0 {
+                            orderbooks.len() - 1
+                        } else {
+                            idx - 1
+                        }
+                    })
+                    .unwrap_or(0),
+            );
+        }
+    }
+
+    pub fn select_orderbook_pair_right(&mut self) {
+        if let Some(md) = &self.monitoring_data {
+            let orderbooks = &md.orderbooks;
+            if orderbooks.is_empty() {
+                self.selected_orderbook_pair_index = None;
+                return;
+            }
+            let max_idx = orderbooks.len() - 1;
+            self.selected_orderbook_pair_index = Some(
+                self.selected_orderbook_pair_index
+                    .map(|idx| if idx >= max_idx { 0 } else { idx + 1 })
+                    .unwrap_or(0),
+            );
+        }
     }
 
     pub fn selected_strategy(&self) -> Option<&crate::client::trading_cli::StrategyStatus> {

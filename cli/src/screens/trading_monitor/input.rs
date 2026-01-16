@@ -308,6 +308,14 @@ async fn handle_normal_input(app: &mut App, key: KeyCode) -> Result<(), CliError
                 app.select_level_down();
             }
         }
+        KeyCode::Left => {
+            // Navigate orderbook pairs left
+            app.select_orderbook_pair_left();
+        }
+        KeyCode::Right => {
+            // Navigate orderbook pairs right
+            app.select_orderbook_pair_right();
+        }
         KeyCode::Char('t') | KeyCode::Char('T') => {
             // In strategies mode: toggle selected strategy
             // In levels mode: toggle selected level

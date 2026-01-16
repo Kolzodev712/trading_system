@@ -42,39 +42,46 @@ impl TradingMonitorScreen {
             .block(Block::default().borders(Borders::ALL));
         frame.render_widget(header, chunks[0]);
 
-        // Main content - split into three rows: (orders/balances), (levels/indicators)
+        // Main content - split into 3 columns: (orders/balances/levels), (orderbook), (indicators/trades)
         let main_chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Percentage(33), // Left column: orders/balances/levels
+                Constraint::Percentage(34), // Middle column: orderbook (bigger)
+                Constraint::Percentage(33), // Right column: indicators
+            ])
             .split(chunks[1]);
 
-        // Top row split horizontally (orders/balances)
-        let top_row = Layout::default()
-            .direction(Direction::Horizontal)
+        // Left column: split vertically (orders/balances, levels/strategy)
+        let left_col = Layout::default()
+            .direction(Direction::Vertical)
             .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
             .split(main_chunks[0]);
 
-        // Bottom row split horizontally (levels/indicators)
-        let bottom_row = Layout::default()
+        // Top-left: split horizontally (orders, balances)
+        let top_left = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-            .split(main_chunks[1]);
+            .split(left_col[0]);
 
         // Orders (top-left)
-        panels::render_orders(frame, top_row[0], app)?;
+        panels::render_orders(frame, top_left[0], app)?;
 
-        // Balances (top-right)
-        panels::render_balances(frame, top_row[1], app)?;
+        // Balances (top-right of left column)
+        panels::render_balances(frame, top_left[1], app)?;
 
         // Strategy or Levels (bottom-left) - show strategy if available, else levels
         if app.has_strategy() {
-            panels::render_strategy(frame, bottom_row[0], app)?;
+            panels::render_strategy(frame, left_col[1], app)?;
         } else {
-            panels::render_levels(frame, bottom_row[0], app)?;
+            panels::render_levels(frame, left_col[1], app)?;
         }
 
-        // Indicators (bottom-right)
-        panels::render_indicators(frame, bottom_row[1], app)?;
+        // Middle column: Orderbook (full height)
+        panels::render_orderbook(frame, main_chunks[1], app)?;
+
+        // Right column: Indicators (full height)
+        panels::render_indicators(frame, main_chunks[2], app)?;
 
         // Trades full-width
         panels::render_trades(frame, chunks[2], app)?;
@@ -203,6 +210,16 @@ impl TradingMonitorScreen {
                 ));
                 footer_spans.push(Span::from(" Create"));
             }
+
+            // Add orderbook navigation hint
+            footer_spans.push(Span::from("  │  "));
+            footer_spans.push(Span::styled(
+                "←/→",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ));
+            footer_spans.push(Span::from(" Orderbook Tabs"));
 
             vec![Line::from(footer_spans)]
         };

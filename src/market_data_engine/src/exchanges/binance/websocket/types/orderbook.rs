@@ -41,37 +41,16 @@ pub struct PriceLevel {
     pub quantity: Decimal,
 }
 
-impl From<BinanceOrderbook> for StructuredOrderbook {
-    fn from(orderbook: BinanceOrderbook) -> Self {
-        // Convert symbol to Pair - simple parsing for common Binance symbols
-        // For "BTCUSDT", we split at common quote currencies
-        let symbol_str = orderbook.symbol.as_str();
-        let pair = if let Some(base) = symbol_str.strip_suffix("USDT") {
-            Pair::new(base, "USDT")
-        } else if let Some(base) = symbol_str.strip_suffix("BTC") {
-            Pair::new(base, "BTC")
-        } else if let Some(base) = symbol_str.strip_suffix("ETH") {
-            Pair::new(base, "ETH")
-        } else if let Some(base) = symbol_str.strip_suffix("BNB") {
-            Pair::new(base, "BNB")
-        } else {
-            // Fallback: assume last 4 chars are quote, rest is base
-            if symbol_str.len() >= 4 {
-                let (base, quote) = symbol_str.split_at(symbol_str.len() - 4);
-                Pair::new(base, quote)
-            } else {
-                // Last resort: use UNKNOWN
-                Pair::new("UNKNOWN", "UNKNOWN")
-            }
-        };
-
+impl BinanceOrderbook {
+    /// Convert to StructuredOrderbook with a provided Pair
+    pub fn into_with_pair(self, pair: Pair) -> StructuredOrderbook {
         // Convert PriceLevel to (price, quantity) tuples
-        let bids: Vec<(rust_decimal::Decimal, rust_decimal::Decimal)> = orderbook
+        let bids: Vec<(rust_decimal::Decimal, rust_decimal::Decimal)> = self
             .bids
             .into_iter()
             .map(|level| (level.price, level.quantity))
             .collect();
-        let asks: Vec<(rust_decimal::Decimal, rust_decimal::Decimal)> = orderbook
+        let asks: Vec<(rust_decimal::Decimal, rust_decimal::Decimal)> = self
             .asks
             .into_iter()
             .map(|level| (level.price, level.quantity))
@@ -81,7 +60,7 @@ impl From<BinanceOrderbook> for StructuredOrderbook {
             pair,
             bids,
             asks,
-            timestamp: orderbook.event_time,
+            timestamp: self.event_time,
         }
     }
 }

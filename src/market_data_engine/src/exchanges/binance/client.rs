@@ -8,8 +8,10 @@ use super::{
 use crate::messages::WSMessageHandler;
 use async_trait::async_trait;
 use std::fmt::Debug;
+use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info};
+use trading_core::registry::symbol::SymbolRegistry;
 use trading_core::{
     error::EngineError, traits::MarketDataClient, types::common::DataType, Exchange,
 };
@@ -19,6 +21,7 @@ pub struct BinanceClient {
     pub config: BinanceConfig,
     buffer_size: usize,
     message_handler: Option<Box<dyn WSMessageHandler + Send + Sync>>,
+    symbol_registry: Arc<SymbolRegistry>,
 }
 
 impl BinanceClient {
@@ -28,11 +31,20 @@ impl BinanceClient {
         message_handler: Option<Box<dyn WSMessageHandler + Send + Sync>>,
         _pairs: Vec<trading_core::types::common::Pair>, // Pairs come from config now, kept for API compatibility
     ) -> Self {
+        // Initialize symbol registry with pairs from config
+        let symbol_registry = Arc::new(SymbolRegistry::from_pairs(config.pairs.clone()));
+
         BinanceClient {
             config,
             buffer_size,
             message_handler,
+            symbol_registry,
         }
+    }
+
+    /// Get the symbol registry
+    pub fn symbol_registry(&self) -> Arc<SymbolRegistry> {
+        self.symbol_registry.clone()
     }
 
     pub fn set_message_handler(&mut self, handler: Box<dyn WSMessageHandler + Send + Sync>) {
@@ -91,7 +103,7 @@ impl BinanceClient {
         data_type: DataType,
     ) -> Result<(), EngineError> {
         let pair_count = channels.len();
-        let client = BinanceWSClient::new(channels);
+        let client = BinanceWSClient::new(channels, self.symbol_registry.clone());
         client.run(tx.clone()).await?;
 
         info!(

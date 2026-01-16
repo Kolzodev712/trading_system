@@ -35,36 +35,16 @@ pub struct BinanceTrade {
     pub is_market_maker: bool,
 }
 
-impl From<BinanceTrade> for StructuredPublicTrade {
-    fn from(trade: BinanceTrade) -> Self {
-        // Convert symbol to Pair - simple parsing for common Binance symbols
-        let symbol_str = trade.symbol.as_str();
-        let pair = if let Some(base) = symbol_str.strip_suffix("USDT") {
-            Pair::new(base, "USDT")
-        } else if let Some(base) = symbol_str.strip_suffix("BTC") {
-            Pair::new(base, "BTC")
-        } else if let Some(base) = symbol_str.strip_suffix("ETH") {
-            Pair::new(base, "ETH")
-        } else if let Some(base) = symbol_str.strip_suffix("BNB") {
-            Pair::new(base, "BNB")
-        } else {
-            // Fallback: assume last 4 chars are quote, rest is base
-            if symbol_str.len() >= 4 {
-                let (base, quote) = symbol_str.split_at(symbol_str.len() - 4);
-                Pair::new(base, quote)
-            } else {
-                // Last resort: use UNKNOWN
-                Pair::new("UNKNOWN", "UNKNOWN")
-            }
-        };
-
+impl BinanceTrade {
+    /// Convert to StructuredPublicTrade with a provided Pair
+    pub fn into_with_pair(self, pair: Pair) -> StructuredPublicTrade {
         StructuredPublicTrade {
             pair,
-            price: trade.price,
-            quantity: trade.quantity,
-            timestamp: trade.trade_time,
-            is_market_maker: trade.is_market_maker,
-            trade_id: Some(smol_str::SmolStr::new(trade.trade_id.to_string())),
+            price: self.price,
+            quantity: self.quantity,
+            timestamp: self.trade_time,
+            is_market_maker: self.is_market_maker,
+            trade_id: Some(smol_str::SmolStr::new(self.trade_id.to_string())),
         }
     }
 }

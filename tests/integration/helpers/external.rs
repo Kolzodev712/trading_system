@@ -162,7 +162,19 @@ impl MarketDataClientBuilder {
                 Box::new(BinanceClient::new(config, self.buffer_size, None, vec![]))
             }
             Exchange::Bybit => {
-                todo!("Bybit market data clients not yet implemented in tests")
+                use market_data_engine::exchanges::bybit::{
+                    client::BybitClient, config::BybitCategory, config::BybitConfig,
+                };
+
+                let config = BybitConfig {
+                    pairs: self.config.pairs.clone(),
+                    limit: 1,
+                    base_delay: None,
+                    max_delay: None,
+                    category: BybitCategory::Spot,
+                };
+
+                Box::new(BybitClient::new(config, self.buffer_size, None, vec![]))
             }
             Exchange::Unsupported => {
                 panic!("Unsupported exchange cannot be used in tests")
@@ -192,7 +204,20 @@ impl MarketDataClientBuilder {
                 Box::new(client)
             }
             Exchange::Bybit => {
-                todo!("Bybit market data clients not yet implemented in tests")
+                use market_data_engine::exchanges::bybit::{
+                    client::BybitClient, config::BybitCategory, config::BybitConfig,
+                };
+
+                let config = BybitConfig {
+                    pairs: self.config.pairs.clone(),
+                    limit: 1,
+                    base_delay: None,
+                    max_delay: None,
+                    category: BybitCategory::Spot,
+                };
+
+                let client = BybitClient::new(config, self.buffer_size, handler, vec![]);
+                Box::new(client)
             }
             Exchange::Unsupported => {
                 panic!("Unsupported exchange cannot be used in tests")
@@ -215,13 +240,14 @@ impl AssetDataClientBuilder {
     pub fn build(&self) -> Arc<dyn asset_engine::AssetDataClient> {
         match self.config.exchange {
             Exchange::Binance => {
-                use asset_engine::exchanges::binance::public_client::BinancePublicClient;
+                use asset_engine::BinancePublicClient;
                 Arc::new(BinancePublicClient::new(
                     "https://api.binance.com".to_string(),
                 ))
             }
             Exchange::Bybit => {
-                todo!("Bybit asset clients not yet implemented in tests")
+                use asset_engine::exchanges::bybit::BybitPublicClient;
+                Arc::new(BybitPublicClient::new("https://api.bybit.com".to_string()))
             }
             Exchange::Unsupported => {
                 panic!("Unsupported exchange cannot be used in tests")

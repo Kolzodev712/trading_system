@@ -287,49 +287,46 @@ impl BinanceStreamingClient {
 
                             // Only create trade if there's actually a new fill (delta > 0)
                             if fill_delta > rust_decimal::Decimal::ZERO {
-                                // Get pair from symbol registry
+                                // Get pair from symbol registry with parsing fallback
                                 let state_arc = state_mgr.get_state();
                                 let state = state_arc.read().await;
-                                let pair = state
-                                    .symbol_registry()
-                                    .get_pair(&report_for_trade.symbol.clone().into())
-                                    .cloned();
+                                let symbol_str = report_for_trade.symbol.as_str();
+                                let pair = state.symbol_registry().get_or_parse_pair(symbol_str);
                                 drop(state);
 
-                                if let Some(pair) = pair {
-                                    // Create trade from execution report
-                                    let trade = Trade {
-                                        trade_id: format!(
-                                            "{}_{}",
-                                            report_for_trade.order_id,
-                                            report_for_trade.transaction_time
-                                        )
-                                        .into(),
-                                        order_id: report_for_trade.order_id.into(),
-                                        pair,
-                                        price: report_for_trade.price,
-                                        quantity: fill_delta, // Use delta, not cumulative
-                                        side: report_for_trade.side.clone().into(),
-                                        timestamp: report_for_trade.transaction_time,
-                                        fee: rust_decimal::Decimal::ZERO, // Fee not available in ExecutionReport
-                                        fee_currency: Symbol::from("USDT"), // Default, will be updated from REST if needed
-                                    };
+                                // Create trade from execution report
+                                let trade = Trade {
+                                    trade_id: format!(
+                                        "{}_{}",
+                                        report_for_trade.order_id,
+                                        report_for_trade.transaction_time
+                                    )
+                                    .into(),
+                                    order_id: report_for_trade.order_id.into(),
+                                    pair,
+                                    price: report_for_trade.price,
+                                    quantity: fill_delta, // Use delta, not cumulative
+                                    side: report_for_trade.side.clone().into(),
+                                    timestamp: report_for_trade.transaction_time,
+                                    fee: rust_decimal::Decimal::ZERO, // Fee not available in ExecutionReport
+                                    fee_currency: Symbol::from("USDT"), // Default, will be updated from REST if needed
+                                };
 
-                                    if let Err(e) = state_mgr.add_trade(trade.clone()).await {
-                                        warn!("[STREAMING] Failed to add trade from execution report: {}", e);
-                                    } else {
-                                        info!(
-                                            "[STREAMING] ✅ Trade created: order_id={}, trade_id={}, pair={}, side={:?}, price={}, quantity={}",
-                                            report_for_trade.order_id,
-                                            trade.trade_id,
-                                            trade.pair,
-                                            trade.side,
-                                            trade.price,
-                                            trade.quantity
-                                        );
-                                    }
+                                if let Err(e) = state_mgr.add_trade(trade.clone()).await {
+                                    warn!(
+                                        "[STREAMING] Failed to add trade from execution report: {}",
+                                        e
+                                    );
                                 } else {
-                                    warn!("[STREAMING] Could not find pair for symbol {} when creating trade", report_for_trade.symbol);
+                                    info!(
+                                        "[STREAMING] ✅ Trade created: order_id={}, trade_id={}, pair={}, side={:?}, price={}, quantity={}",
+                                        report_for_trade.order_id,
+                                        trade.trade_id,
+                                        trade.pair,
+                                        trade.side,
+                                        trade.price,
+                                        trade.quantity
+                                    );
                                 }
                             }
                         }

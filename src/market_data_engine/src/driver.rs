@@ -1,6 +1,7 @@
 use super::{config::MarketDataConfig, messages::StateManagerMessageHandler};
 use crate::{
-    config::ExchangeConfig, exchanges::binance::client::BinanceClient,
+    config::ExchangeConfig,
+    exchanges::{binance::client::BinanceClient, bybit::client::BybitClient},
     state::manager::MarketDataStateManager,
 };
 use std::sync::Arc;
@@ -83,7 +84,17 @@ impl MarketDataDriver {
                     Some(message_handler),
                     binance_config.pairs.clone(), // Use pairs from config
                 )))
-            } // _ => Err(EngineError::UnsupportedExchange), => add this when more exchanges are supported
+            }
+            ExchangeConfig::Bybit(bybit_config) => {
+                // Use pairs from config (single source of truth)
+                let message_handler = Box::new(StateManagerMessageHandler::new(state_manager));
+                Ok(Box::new(BybitClient::new(
+                    bybit_config.clone(),
+                    channels.market_data_engine_buffer,
+                    Some(message_handler),
+                    bybit_config.pairs.clone(), // Use pairs from config
+                )))
+            }
         }
     }
 

@@ -7,6 +7,7 @@ use async_trait::async_trait;
 use futures_util::{stream::StreamExt, SinkExt};
 use serde_json::Value;
 use smol_str::SmolStr;
+use std::sync::Arc;
 use tokio::{net::TcpStream, sync::mpsc};
 use tokio_tungstenite::{
     connect_async,
@@ -14,12 +15,10 @@ use tokio_tungstenite::{
     MaybeTlsStream, WebSocketStream,
 };
 use tracing::{debug, error};
+use trading_core::registry::symbol::SymbolRegistry;
 use trading_core::{
     error::EngineError,
-    types::{
-        common::DataType,
-        market_data::{StructuredOrderbook, StructuredPublicTrade},
-    },
+    types::common::DataType,
     utils::generate_custom_uuid,
     websocket::client::{MessageHandler, SubscriptionHandler, WebSocketClient},
 };
@@ -72,9 +71,15 @@ impl SubscriptionHandler for BinanceSubscriptionHandler {
 }
 
 #[derive(Debug, Clone)]
-struct DataHandler;
+struct DataHandler {
+    symbol_registry: Arc<SymbolRegistry>,
+}
 
 impl DataHandler {
+    fn new(symbol_registry: Arc<SymbolRegistry>) -> Self {
+        Self { symbol_registry }
+    }
+
     fn handle_initial_response(&self, v: Value) -> Result<ParsedBinanceMessage, EngineError> {
         let init_resp: InitialResponse =
             serde_json::from_value(v).map_err(EngineError::JsonError)?;
@@ -84,7 +89,10 @@ impl DataHandler {
     fn handle_orderbook_event(&self, v: Value) -> Result<ParsedBinanceMessage, EngineError> {
         let binance_orderbook: BinanceOrderbook =
             serde_json::from_value(v).map_err(EngineError::JsonError)?;
-        let structured_orderbook: StructuredOrderbook = binance_orderbook.into();
+        let pair = self
+            .symbol_registry
+            .get_or_parse_pair(binance_orderbook.symbol.as_str());
+        let structured_orderbook = binance_orderbook.into_with_pair(pair);
         Ok(ParsedBinanceMessage::OrderBook {
             orderbook: structured_orderbook,
         })
@@ -93,7 +101,10 @@ impl DataHandler {
     fn handle_trade_event(&self, v: Value) -> Result<ParsedBinanceMessage, EngineError> {
         let binance_trade: BinanceTrade =
             serde_json::from_value(v).map_err(EngineError::JsonError)?;
-        let structured_trade: StructuredPublicTrade = binance_trade.into();
+        let pair = self
+            .symbol_registry
+            .get_or_parse_pair(binance_trade.symbol.as_str());
+        let structured_trade = binance_trade.into_with_pair(pair);
         Ok(ParsedBinanceMessage::Trade {
             trade: structured_trade,
         })
@@ -162,13 +173,15 @@ impl MessageHandler<ParsedBinanceMessage> for DataHandler {
 pub struct BinanceWSClient {
     url: SmolStr,
     subscription_handler: BinanceSubscriptionHandler,
+    symbol_registry: Arc<SymbolRegistry>,
 }
 
 impl BinanceWSClient {
-    pub fn new(channels: Vec<BinanceChannel>) -> Self {
+    pub fn new(channels: Vec<BinanceChannel>, symbol_registry: Arc<SymbolRegistry>) -> Self {
         Self {
             url: BINANCE_WS_URL.into(),
             subscription_handler: BinanceSubscriptionHandler::new(channels),
+            symbol_registry,
         }
     }
 
@@ -182,7 +195,8 @@ impl BinanceWSClient {
         let mut ws_stream = self.create_ws_stream().await?;
         self.subscribe_to_channels(&mut ws_stream, self.subscription_handler.clone())
             .await?;
-        self.handle_messages(ws_stream, tx, DataHandler).await?;
+        let data_handler = DataHandler::new(self.symbol_registry.clone());
+        self.handle_messages(ws_stream, tx, data_handler).await?;
         Ok(())
     }
 }

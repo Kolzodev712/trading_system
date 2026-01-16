@@ -8,6 +8,7 @@ use tokio::sync::RwLock;
 use tracing::{error, info};
 use trading_core::{
     error::EngineError,
+    registry::symbol::SymbolRegistry,
     traits::TradingClient,
     types::{
         common::Pair,
@@ -311,12 +312,13 @@ pub fn compare_orders(rest_orders: &[Order], ws_orders: &[Order]) -> Vec<Discrep
                 }
             }
             None => {
-                // Order missing in WS
-                // Note: We can't convert Symbol to Pair reliably, so we'll use a placeholder
-                // In practice, the symbol string will be logged for debugging
+                // Order missing in WS - convert symbol to pair using registry with parsing fallback
+                let symbol_str = rest_order.symbol.as_ref();
+                let registry = SymbolRegistry::default(); // Empty registry, will use parsing fallback
+                let pair = registry.get_or_parse_pair(symbol_str);
                 discrepancies.push(Discrepancy::OrderMissingInWs {
                     order_id: rest_order.order_id.clone(),
-                    symbol: trading_core::types::common::Pair::new("UNKNOWN", "UNKNOWN"), // Placeholder - symbol info is in order_id
+                    symbol: pair,
                     status: rest_order.status.clone(),
                 });
             }

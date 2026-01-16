@@ -1,9 +1,15 @@
 {
-    "symbol": {
-        "base": "BTC",
-        "quote": "USDT"
-    },
-    "limit": 100,
+    "pairs": [
+        {
+            "base": "BTC",
+            "quote": "USDT"
+        },
+        {
+            "base": "ETH",
+            "quote": "USDT"
+        }
+    ],
+    "limit": 20,
     "baseDelay": 2,
     "maxDelay": 60
 }

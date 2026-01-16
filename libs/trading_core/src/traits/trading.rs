@@ -71,6 +71,43 @@ where
         new_request: OrderRequestType,
     ) -> Result<Order, EngineError>;
 
+    // ===== BULK OPERATION METHODS (Optional) =====
+    // All have default implementations that return "not supported"
+    // Exchanges with native bulk support (like Bybit) should implement these methods
+
+    /// Bulk open multiple orders in a single request.
+    /// Default implementation returns "not supported".
+    async fn bulk_open_orders(
+        &self,
+        _req: crate::types::exchange::BulkOrderRequest,
+    ) -> Result<crate::types::exchange::BulkOrderResponse, EngineError> {
+        Err(EngineError::NotSupported(
+            "Bulk order operations not supported".into(),
+        ))
+    }
+
+    /// Bulk cancel multiple orders by their IDs.
+    /// Default implementation returns "not supported".
+    async fn bulk_cancel_orders(
+        &self,
+        _req: crate::types::exchange::BulkCancelRequest,
+    ) -> Result<crate::types::exchange::BulkCancelResponse, EngineError> {
+        Err(EngineError::NotSupported(
+            "Bulk cancel operations not supported".into(),
+        ))
+    }
+
+    /// Bulk amend multiple orders.
+    /// Default implementation returns "not supported".
+    async fn bulk_amend_orders(
+        &self,
+        _req: crate::types::exchange::BulkAmendRequest,
+    ) -> Result<crate::types::exchange::BulkAmendResponse, EngineError> {
+        Err(EngineError::NotSupported(
+            "Bulk amend operations not supported".into(),
+        ))
+    }
+
     // ===== FUTURES METHODS (Optional) =====
     // All have default implementations that return "not supported"
     // Exchanges with unified APIs (like Bybit) implement these in the same client

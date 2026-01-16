@@ -215,13 +215,14 @@ impl AssetDataClientBuilder {
     pub fn build(&self) -> Arc<dyn asset_engine::AssetDataClient> {
         match self.config.exchange {
             Exchange::Binance => {
-                use asset_engine::exchanges::binance::public_client::BinancePublicClient;
+                use asset_engine::BinancePublicClient;
                 Arc::new(BinancePublicClient::new(
                     "https://api.binance.com".to_string(),
                 ))
             }
             Exchange::Bybit => {
-                todo!("Bybit asset clients not yet implemented in tests")
+                use asset_engine::exchanges::bybit::BybitPublicClient;
+                Arc::new(BybitPublicClient::new("https://api.bybit.com".to_string()))
             }
             Exchange::Unsupported => {
                 panic!("Unsupported exchange cannot be used in tests")

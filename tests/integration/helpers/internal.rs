@@ -474,65 +474,97 @@ impl TradingClient<OrderRequest> for MockTradingClient {
 /// Mock AssetDataClient for integration tests
 #[derive(Debug)]
 pub struct MockAssetDataClient {
-    exchange_info: asset_engine::exchanges::binance::types::BinanceExchangeInfo,
+    market_data: trading_core::types::asset::ExchangeMarketData,
 }
 
 #[async_trait]
 impl asset_engine::AssetDataClient for MockAssetDataClient {
-    async fn fetch_exchange_info(
+    async fn fetch_market_data(
         &self,
-    ) -> Result<asset_engine::exchanges::binance::types::BinanceExchangeInfo, EngineError> {
-        Ok(self.exchange_info.clone())
+        pairs: &[trading_core::types::common::Pair],
+    ) -> Result<trading_core::types::asset::ExchangeMarketData, EngineError> {
+        // Filter market data to only include requested pairs
+        let mut filtered_market_data = self.market_data.clone();
+
+        // Filter symbol_info
+        filtered_market_data.symbol_info = filtered_market_data
+            .symbol_info
+            .into_iter()
+            .filter(|(pair, _)| pairs.contains(pair))
+            .collect();
+
+        // Filter trading_rules
+        filtered_market_data.trading_rules = filtered_market_data
+            .trading_rules
+            .into_iter()
+            .filter(|(pair, _)| pairs.contains(pair))
+            .collect();
+
+        Ok(filtered_market_data)
     }
 }
 
 impl MockAssetDataClient {
-    pub fn new(
-        exchange_info: asset_engine::exchanges::binance::types::BinanceExchangeInfo,
-    ) -> Self {
-        Self { exchange_info }
+    pub fn new(market_data: trading_core::types::asset::ExchangeMarketData) -> Self {
+        Self { market_data }
     }
 }
 
-/// Create mock Binance exchange info for testing
-pub fn create_mock_binance_exchange_info(
-) -> asset_engine::exchanges::binance::types::BinanceExchangeInfo {
-    use asset_engine::exchanges::binance::types::{
-        BinanceFilter, BinanceRateLimit, BinanceSymbolInfo,
+/// Create mock market data for testing
+pub fn create_mock_market_data() -> trading_core::types::asset::ExchangeMarketData {
+    use std::collections::HashMap;
+    use trading_core::types::asset::{
+        ExchangeLimits, RateLimit, RateLimitType, SymbolInfo, SymbolStatus, TradingRules,
     };
-    use smol_str::SmolStr;
 
-    asset_engine::exchanges::binance::types::BinanceExchangeInfo {
-        server_time: 1234567890,
-        rate_limits: vec![BinanceRateLimit {
-            rate_limit_type: "REQUEST_WEIGHT".to_string(),
-            interval: "MINUTE".to_string(),
-            interval_num: 1,
-            limit: 1200,
-        }],
-        symbols: vec![BinanceSymbolInfo {
-            symbol: SmolStr::new("BTCUSDT"),
-            status: SmolStr::new("TRADING"),
-            base_asset: SmolStr::new("BTC"),
-            base_asset_precision: 8,
-            quote_asset: SmolStr::new("USDT"),
-            quote_precision: 8,
-            is_spot_trading_allowed: true,
-            filters: vec![
-                BinanceFilter::LotSize {
-                    min_qty: dec!(0.00001),
-                    max_qty: dec!(9000),
-                    step_size: dec!(0.00001),
-                },
-                BinanceFilter::PriceFilter {
-                    min_price: Some(dec!(0.01)),
-                    max_price: Some(dec!(1000000)),
-                    tick_size: Some(dec!(0.01)),
-                },
-                BinanceFilter::MinNotional {
-                    min_notional: dec!(10),
-                },
-            ],
-        }],
+    let pair = Pair::new("BTC", "USDT");
+    let mut symbol_info = HashMap::new();
+    let mut trading_rules = HashMap::new();
+
+    symbol_info.insert(
+        pair.clone(),
+        SymbolInfo {
+            pair: pair.clone(),
+            status: SymbolStatus::Trading,
+            base_asset: smol_str::SmolStr::new("BTC"),
+            quote_asset: smol_str::SmolStr::new("USDT"),
+            exchange_symbol: smol_str::SmolStr::new("BTCUSDT"),
+            trading_allowed: true,
+            is_active: true,
+        },
+    );
+
+    trading_rules.insert(
+        pair.clone(),
+        TradingRules {
+            pair: pair.clone(),
+            min_order_size: Some(dec!(0.00001)),
+            max_order_size: Some(dec!(9000)),
+            step_size: Some(dec!(0.00001)),
+            min_price: Some(dec!(0.01)),
+            max_price: Some(dec!(1000000)),
+            tick_size: Some(dec!(0.01)),
+            min_notional: Some(dec!(10)),
+            max_notional: None,
+            price_precision: Some(8),
+            quantity_precision: Some(8),
+        },
+    );
+
+    trading_core::types::asset::ExchangeMarketData {
+        symbol_info,
+        trading_rules,
+        current_prices: HashMap::new(),
+        exchange_limits: ExchangeLimits {
+            rate_limits: vec![RateLimit {
+                rate_limit_type: RateLimitType::RequestWeight,
+                interval: "MINUTE".to_string(),
+                limit: 1200,
+            }],
+            max_position_size: None,
+            max_open_orders: None,
+            other_limits: HashMap::new(),
+        },
+        last_updated: 1234567890,
     }
 }

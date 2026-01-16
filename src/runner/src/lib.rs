@@ -2,7 +2,7 @@ pub mod config;
 pub mod grpc;
 pub mod shutdown;
 
-use asset_engine::{AssetService, BinancePublicClient};
+use asset_engine::AssetService;
 use indicator_engine::IndicatorService;
 use market_data_engine::{
     config::{ExchangeConfig as MDExchangeConfig, MarketDataConfig},
@@ -785,23 +785,35 @@ pub async fn initialize_asset_service(
     info!("Initializing Asset Engine...");
     let asset_service = Arc::new(AssetService::new());
 
-    let base_url = match exchange {
-        Exchange::Binance => "https://api.binance.com",
+    match exchange {
+        Exchange::Binance => {
+            let base_url = "https://api.binance.com";
+            asset_service
+                .register_exchange(
+                    exchange,
+                    Arc::new(asset_engine::exchanges::BinancePublicClient::new(
+                        base_url.to_string(),
+                    )),
+                )
+                .await
+                .map_err(|e| format!("Failed to register Binance client: {e}"))?;
+        }
         Exchange::Bybit => {
-            return Err("Bybit Asset Engine not yet implemented".into());
+            let base_url = "https://api.bybit.com";
+            asset_service
+                .register_exchange(
+                    exchange,
+                    Arc::new(asset_engine::exchanges::BybitPublicClient::new(
+                        base_url.to_string(),
+                    )),
+                )
+                .await
+                .map_err(|e| format!("Failed to register Bybit client: {e}"))?;
         }
         Exchange::Unsupported => {
             return Err("Unsupported exchange for Asset Engine".into());
         }
-    };
-
-    asset_service
-        .register_exchange(
-            exchange,
-            Arc::new(BinancePublicClient::new(base_url.to_string())),
-        )
-        .await
-        .map_err(|e| format!("Failed to register exchange client: {e}"))?;
+    }
 
     Ok(asset_service)
 }

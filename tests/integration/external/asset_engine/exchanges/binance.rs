@@ -8,10 +8,10 @@ use crate::helpers::external::{AssetDataClientBuilder, TestExchangeConfig};
 use asset_engine::AssetService;
 use trading_core::types::common::{Exchange, Pair};
 
-/// Test fetching exchange info from Binance
+/// Test fetching market data from Binance
 #[tokio::test]
 #[ignore]
-async fn test_fetch_exchange_info() {
+async fn test_fetch_market_data_direct() {
     let config = TestExchangeConfig {
         exchange: Exchange::Binance,
         pairs: vec![Pair::new("BTC", "USDT")],
@@ -22,21 +22,25 @@ async fn test_fetch_exchange_info() {
     let client = AssetDataClientBuilder::new(config.clone()).build();
 
     // Test direct client call
-    let exchange_info = client.fetch_exchange_info().await;
+    let market_data_result = client.fetch_market_data(&config.pairs).await;
     assert!(
-        exchange_info.is_ok(),
-        "Failed to fetch exchange info: {:?}",
-        exchange_info.err()
+        market_data_result.is_ok(),
+        "Failed to fetch market data: {:?}",
+        market_data_result.err()
     );
 
-    let info = exchange_info.unwrap();
+    let market_data = market_data_result.unwrap();
     assert!(
-        !info.symbols.is_empty(),
-        "Exchange info should contain symbols"
+        !market_data.symbol_info.is_empty(),
+        "Market data should contain symbol info"
     );
     assert!(
-        !info.rate_limits.is_empty(),
-        "Exchange info should contain rate limits"
+        !market_data.trading_rules.is_empty(),
+        "Market data should contain trading rules"
+    );
+    assert!(
+        !market_data.exchange_limits.rate_limits.is_empty(),
+        "Market data should contain rate limits"
     );
 }
 

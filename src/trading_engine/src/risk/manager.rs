@@ -12,7 +12,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{error, warn};
 use trading_core::registry::symbol::SymbolRegistry;
-use trading_core::types::common::{Pair, Symbol};
+use trading_core::types::common::{Instrument, InstrumentType, Pair};
 use trading_core::types::exchange::{Balance, OrderRequest};
 
 /// Risk manager - orchestrates all risk checks
@@ -23,19 +23,16 @@ pub struct RiskManager {
     circuit_breaker: Arc<CircuitBreaker>,
     /// Cached metrics (updated periodically)
     cached_metrics: Arc<RwLock<Option<RiskMetrics>>>,
-    /// Symbol registry for Symbol -> Pair conversion
-    symbol_registry: Arc<SymbolRegistry>,
 }
 
 impl RiskManager {
     /// Create a new risk manager
-    pub fn new(limits: RiskLimits, symbol_registry: Arc<SymbolRegistry>) -> Self {
+    pub fn new(limits: RiskLimits, _symbol_registry: Arc<SymbolRegistry>) -> Self {
         Self {
             limits,
             metrics_calculator: RiskMetricsCalculator::new(),
             circuit_breaker: Arc::new(CircuitBreaker::new()),
             cached_metrics: Arc::new(RwLock::new(None)),
-            symbol_registry,
         }
     }
 
@@ -96,20 +93,13 @@ impl RiskManager {
         }
 
         // Construct OrderRequest from ResolvedLevel for balance check
-        let symbol = self
-            .symbol_registry
-            .get_symbol(&resolved_level.level.pair)
-            .cloned()
-            .unwrap_or_else(|| Symbol::from(resolved_level.level.pair.convert_to_smolstr()));
-
         let order_request = OrderRequest {
-            symbol,
+            instrument: Instrument::new(InstrumentType::Spot, resolved_level.level.pair.clone()),
             side: resolved_level.level.config.side.clone(),
             order_type: resolved_level.resolved_order_type.clone(),
             amount: resolved_level.resolved_quantity,
             price: resolved_level.resolved_price,
             timestamp: None,
-            instrument_type: trading_core::types::common::InstrumentType::Spot,
             exchange_params: std::collections::HashMap::new(),
         };
 
@@ -119,18 +109,10 @@ impl RiskManager {
             self.update_metrics(trading_state, prices).await;
 
             if let Some(metrics) = self.get_metrics().await {
-                // Convert Symbol to Pair using symbol registry
-                let pair_opt = self
-                    .symbol_registry
-                    .get_pair(&order_request.symbol)
-                    .cloned();
+                // Use pair from instrument
+                let pair = order_request.instrument.pair.clone();
 
-                let daily_loss_check = if let Some(pair) = pair_opt {
-                    self.check_daily_loss_limits(&metrics, &pair)
-                } else {
-                    // Symbol not in registry - check global limit only
-                    self.check_daily_loss_limits_global(&metrics)
-                };
+                let daily_loss_check = self.check_daily_loss_limits(&metrics, &pair);
 
                 if !daily_loss_check.allowed {
                     return daily_loss_check;
@@ -188,18 +170,10 @@ impl RiskManager {
             self.update_metrics(trading_state, prices).await;
 
             if let Some(metrics) = self.get_metrics().await {
-                // Convert Symbol to Pair using symbol registry
-                let pair_opt = self
-                    .symbol_registry
-                    .get_pair(&order_request.symbol)
-                    .cloned();
+                // Use pair from instrument
+                let pair = order_request.instrument.pair.clone();
 
-                let daily_loss_check = if let Some(pair) = pair_opt {
-                    self.check_daily_loss_limits(&metrics, &pair)
-                } else {
-                    // Symbol not in registry - check global limit only
-                    self.check_daily_loss_limits_global(&metrics)
-                };
+                let daily_loss_check = self.check_daily_loss_limits(&metrics, &pair);
 
                 if !daily_loss_check.allowed {
                     return daily_loss_check;
@@ -376,14 +350,8 @@ impl RiskManager {
         order_request: &OrderRequest,
         balances: &[Balance],
     ) -> RiskCheckResult {
-        // Convert Symbol to Pair using symbol registry
-        let pair = match self.symbol_registry.get_pair(&order_request.symbol) {
-            Some(p) => p.clone(),
-            None => {
-                // Symbol not in registry - skip balance check (better to allow than block incorrectly)
-                return RiskCheckResult::allowed();
-            }
-        };
+        // Use pair from instrument
+        let pair = order_request.instrument.pair.clone();
 
         match order_request.side {
             trading_core::types::common::Side::Buy => {

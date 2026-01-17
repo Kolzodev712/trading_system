@@ -79,7 +79,7 @@ impl ExchangeState {
         // Optimization #1: Extract order_id once and reuse
         // Optimization #2: Use symbol reference directly instead of cloning
         let order_id = order.order_id.clone();
-        let pair_opt = self.symbol_registry.get_pair(&order.symbol);
+        let pair_opt = Some(order.instrument.pair.clone());
 
         // Insert order into map (order is moved here, order_id cloned for HashMap key)
         self.orders.insert(order_id.clone(), order);
@@ -101,14 +101,12 @@ impl ExchangeState {
     /// Remove an order
     pub fn remove_order(&mut self, order_id: &OrderId) {
         if let Some(order) = self.orders.remove(order_id) {
-            let symbol = order.symbol;
-            // Remove from orders_by_pair index if we have a mapping in the registry
-            if let Some(pair) = self.symbol_registry.get_pair(&symbol) {
-                if let Some(orders) = self.orders_by_pair.get_mut(pair) {
-                    orders.retain(|id| id != order_id);
-                    if orders.is_empty() {
-                        self.orders_by_pair.remove(pair);
-                    }
+            let pair = order.instrument.pair.clone();
+            // Remove from orders_by_pair index
+            if let Some(orders) = self.orders_by_pair.get_mut(&pair) {
+                orders.retain(|id| id != order_id);
+                if orders.is_empty() {
+                    self.orders_by_pair.remove(&pair);
                 }
             }
         }
@@ -182,13 +180,18 @@ impl ExchangeState {
     /// Get orders for a specific symbol (uses symbol registry if available)
     pub fn get_orders_for_symbol(&self, symbol: &Symbol) -> Vec<&Order> {
         // Try to get via pair mapping first (more efficient)
+        // Convert symbol to pair using registry
         if let Some(pair) = self.symbol_registry.get_pair(symbol) {
             return self.get_orders_for_pair(pair);
         }
-        // Fallback: filter all orders by symbol
+        // Fallback: filter all orders by symbol string
+        let symbol_str: &str = symbol.as_ref();
         self.orders
             .values()
-            .filter(|o| &o.symbol == symbol)
+            .filter(|o| {
+                let order_symbol = o.instrument.symbol();
+                order_symbol.as_str() == symbol_str
+            })
             .collect()
     }
 
@@ -266,13 +269,16 @@ impl Default for ExchangeState {
 mod tests {
     use super::*;
     use rust_decimal::Decimal;
-    use trading_core::types::common::{OrderStatus, Side, Symbol};
+    use trading_core::types::common::{Instrument, InstrumentType, OrderStatus, Side, Symbol};
 
     fn create_test_order(order_id: &str, symbol: &str, status: OrderStatus) -> Order {
+        // symbol is the entire pair string (e.g., "BTCUSDT"), need to parse it
+        let registry = SymbolRegistry::default();
+        let pair = registry.get_or_parse_pair(symbol);
         Order {
             order_id: OrderId::new(order_id.into()),
             client_order_id: None,
-            symbol: Symbol::from(symbol),
+            instrument: Instrument::new(InstrumentType::Spot, pair),
             side: Side::Buy,
             price: Decimal::new(100, 0),
             amount: Decimal::new(1, 0),
@@ -280,7 +286,6 @@ mod tests {
             exchange_created_at: None,
             status,
             filled_amount: Decimal::ZERO,
-            instrument_type: trading_core::types::common::InstrumentType::Spot,
         }
     }
 

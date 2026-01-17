@@ -3,13 +3,17 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use trading_core::secret::SecretString;
-use trading_core::types::common::Pair;
+use trading_core::types::common::{InstrumentType, Pair};
 
 #[derive(Debug, PartialEq, Eq, Deserialize, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct BybitConfig {
     /// Trading pairs to use (centralized pair configuration)
     pub pairs: Vec<Pair>,
+    /// Instrument type for all pairs (Spot or Futures)
+    /// Defaults to Spot if not specified
+    #[serde(default)]
+    pub instrument_type: InstrumentType,
     /// API credentials (shared for both spot and futures)
     pub credentials: BybitCredentials,
     /// Testnet mode
@@ -93,6 +97,7 @@ mod tests {
     fn test_bybit_config_serde() {
         let config = BybitConfig {
             pairs: vec![Pair::new("BTC", "USDT")],
+            instrument_type: InstrumentType::Spot,
             credentials: BybitCredentials {
                 api_key: SecretString::new("api_key"),
                 api_secret: SecretString::new("api_secret"),

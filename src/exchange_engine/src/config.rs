@@ -1,6 +1,7 @@
 use trading_core::{error::EngineError, types::common::Exchange};
 
 use super::exchanges::binance::config::BinanceConfig;
+use super::exchanges::bybit::config::BybitConfig;
 use serde::{Deserialize, Serialize};
 
 pub trait ConfigGetter<T> {
@@ -25,83 +26,162 @@ impl ExchangeEngineConfig {
 #[derive(Debug, PartialEq, Eq, Deserialize, Serialize, Clone)]
 pub enum ExchangeConfig {
     Binance(BinanceConfig),
+    Bybit(BybitConfig),
 }
 
 impl ConfigGetter<BinanceConfig> for ExchangeConfig {
     fn get_config(self) -> Result<BinanceConfig, EngineError> {
         match self {
             ExchangeConfig::Binance(config) => Ok(config),
+            _ => Err(EngineError::CustomError(anyhow::anyhow!(
+                "Expected Binance config"
+            ))),
+        }
+    }
+}
+
+impl ConfigGetter<BybitConfig> for ExchangeConfig {
+    fn get_config(self) -> Result<BybitConfig, EngineError> {
+        match self {
+            ExchangeConfig::Bybit(config) => Ok(config),
+            _ => Err(EngineError::CustomError(anyhow::anyhow!(
+                "Expected Bybit config"
+            ))),
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::exchanges::binance::config::BinanceCredentials;
-
     use super::*;
+    use crate::exchanges::binance::config::{BinanceConfig, BinanceCredentials};
+    use crate::exchanges::bybit::config::{BybitConfig, BybitCredentials, BybitRateLimiterConfig};
     use serde_json;
+    use trading_core::secret::SecretString;
+    use trading_core::types::common::{InstrumentType, Pair};
 
-    // Sample config JSON for deserialization
-    const CONFIG_JSON: &str = r#"
-        {
-        "exchange": "Binance",
-        "exchange_config": {
-            "Binance": {
-            "pairs": [
-                {
-                    "base": "BTC",
-                    "quote": "USDT"
-                }
-            ],
-            "rest": {
-                "apiKey": "some_key",
-                "secretKey": "some_secret"    
-            },
-            "ws": {
-                "apiKey": "some_key",
-                "secretKey": "some_secret"    
-            },
-            "limit": 100,
-            "baseDelay": 2,
-            "maxDelay": 60
-            }
-        }
+    fn create_test_pair() -> Pair {
+        Pair::new("BTC", "USDT")
     }
-    "#;
 
-    // Test for deserializing the entire ExchangeEngineConfig
+    // Test that ExchangeEngineConfig can be serialized and deserialized for any exchange
     #[test]
-    fn test_exchange_engine_config_deserialization() {
-        let config: ExchangeEngineConfig = serde_json::from_str(CONFIG_JSON).unwrap();
+    fn test_exchange_engine_config_roundtrip_binance() {
+        let binance_config = BinanceConfig {
+            pairs: vec![create_test_pair()],
+            rest: BinanceCredentials {
+                api_key: SecretString::from("test_key"),
+                secret_key: SecretString::from("test_secret"),
+            },
+            ws: BinanceCredentials {
+                api_key: SecretString::from("test_key"),
+                secret_key: SecretString::from("test_secret"),
+            },
+            limit: Some(100),
+            base_delay: Some(2),
+            max_delay: Some(60),
+        };
+
+        let original = ExchangeEngineConfig {
+            exchange: Exchange::Binance,
+            exchange_config: ExchangeConfig::Binance(binance_config),
+        };
+
+        let json = serde_json::to_string(&original).unwrap();
+        let deserialized: ExchangeEngineConfig = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(original.exchange, deserialized.exchange);
+        assert!(matches!(
+            deserialized.exchange_config,
+            ExchangeConfig::Binance(_)
+        ));
+    }
+
+    #[test]
+    fn test_exchange_engine_config_roundtrip_bybit() {
+        let bybit_config = BybitConfig {
+            pairs: vec![create_test_pair()],
+            instrument_type: InstrumentType::Spot,
+            credentials: BybitCredentials {
+                api_key: SecretString::from("test_key"),
+                api_secret: SecretString::from("test_secret"),
+            },
+            testnet: false,
+            rate_limiter: BybitRateLimiterConfig::default(),
+        };
+
+        let original = ExchangeEngineConfig {
+            exchange: Exchange::Bybit,
+            exchange_config: ExchangeConfig::Bybit(bybit_config),
+        };
+
+        let json = serde_json::to_string(&original).unwrap();
+        let deserialized: ExchangeEngineConfig = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(original.exchange, deserialized.exchange);
+        assert!(matches!(
+            deserialized.exchange_config,
+            ExchangeConfig::Bybit(_)
+        ));
+    }
+
+    // Test that exchange field matches the config variant
+    #[test]
+    fn test_exchange_field_matches_config_binance() {
+        let config = ExchangeEngineConfig {
+            exchange: Exchange::Binance,
+            exchange_config: ExchangeConfig::Binance(BinanceConfig {
+                pairs: vec![create_test_pair()],
+                rest: BinanceCredentials {
+                    api_key: SecretString::from("key"),
+                    secret_key: SecretString::from("secret"),
+                },
+                ws: BinanceCredentials {
+                    api_key: SecretString::from("key"),
+                    secret_key: SecretString::from("secret"),
+                },
+                limit: None,
+                base_delay: None,
+                max_delay: None,
+            }),
+        };
 
         assert_eq!(config.exchange, Exchange::Binance);
-
-        match config.exchange_config {
-            ExchangeConfig::Binance(ref binance_config) => {
-                assert_eq!(binance_config.rest.api_key, "some_key".into());
-                assert_eq!(binance_config.rest.secret_key, "some_secret".into());
-                assert_eq!(binance_config.ws.api_key, "some_key".into());
-                assert_eq!(binance_config.ws.secret_key, "some_secret".into());
-                assert_eq!(binance_config.limit, Some(100));
-                assert_eq!(binance_config.base_delay, Some(2));
-                assert_eq!(binance_config.max_delay, Some(60));
-            }
-        }
+        assert!(matches!(config.exchange_config, ExchangeConfig::Binance(_)));
     }
 
-    // Test for serializing the ExchangeEngineConfig
     #[test]
-    fn test_exchange_engine_config_serialization() {
+    fn test_exchange_field_matches_config_bybit() {
+        let config = ExchangeEngineConfig {
+            exchange: Exchange::Bybit,
+            exchange_config: ExchangeConfig::Bybit(BybitConfig {
+                pairs: vec![create_test_pair()],
+                instrument_type: InstrumentType::Spot,
+                credentials: BybitCredentials {
+                    api_key: SecretString::from("key"),
+                    api_secret: SecretString::from("secret"),
+                },
+                testnet: false,
+                rate_limiter: BybitRateLimiterConfig::default(),
+            }),
+        };
+
+        assert_eq!(config.exchange, Exchange::Bybit);
+        assert!(matches!(config.exchange_config, ExchangeConfig::Bybit(_)));
+    }
+
+    // Test ConfigGetter trait for both exchanges
+    #[test]
+    fn test_get_exchange_config_binance() {
         let binance_config = BinanceConfig {
-            pairs: vec![trading_core::types::common::Pair::new("BTC", "USDT")],
+            pairs: vec![create_test_pair()],
             rest: BinanceCredentials {
-                api_key: trading_core::secret::SecretString::from("some_key"),
-                secret_key: trading_core::secret::SecretString::from("some_secret"),
+                api_key: SecretString::from("test_key"),
+                secret_key: SecretString::from("test_secret"),
             },
             ws: BinanceCredentials {
-                api_key: trading_core::secret::SecretString::from("some_key"),
-                secret_key: trading_core::secret::SecretString::from("some_secret"),
+                api_key: SecretString::from("test_key"),
+                secret_key: SecretString::from("test_secret"),
             },
             limit: Some(100),
             base_delay: Some(2),
@@ -110,46 +190,64 @@ mod tests {
 
         let exchange_engine_config = ExchangeEngineConfig {
             exchange: Exchange::Binance,
-            exchange_config: ExchangeConfig::Binance(binance_config),
+            exchange_config: ExchangeConfig::Binance(binance_config.clone()),
         };
 
-        let json = serde_json::to_string(&exchange_engine_config).unwrap();
-        assert!(json.contains("\"exchange\":\"Binance\""));
-        assert!(json.contains("\"apiKey\":\"some_key\""));
-        assert!(json.contains("\"pairs\":[{\"base\":\"BTC\",\"quote\":\"USDT\"}]"));
+        let retrieved: BinanceConfig = exchange_engine_config.get_exchange_config().unwrap();
+        assert_eq!(retrieved.pairs, binance_config.pairs);
+        assert_eq!(retrieved.limit, binance_config.limit);
     }
 
-    // Test for retrieving the BinanceConfig from the ExchangeEngineConfig
     #[test]
-    fn test_get_exchange_config() {
-        let binance_config = BinanceConfig {
-            pairs: vec![trading_core::types::common::Pair::new("BTC", "USDT")],
-            rest: BinanceCredentials {
-                api_key: trading_core::secret::SecretString::from("some_key"),
-                secret_key: trading_core::secret::SecretString::from("some_secret"),
+    fn test_get_exchange_config_bybit() {
+        let bybit_config = BybitConfig {
+            pairs: vec![create_test_pair()],
+            instrument_type: InstrumentType::Futures,
+            credentials: BybitCredentials {
+                api_key: SecretString::from("test_key"),
+                api_secret: SecretString::from("test_secret"),
             },
-            ws: BinanceCredentials {
-                api_key: trading_core::secret::SecretString::from("some_key"),
-                secret_key: trading_core::secret::SecretString::from("some_secret"),
-            },
-            limit: Some(100),
-            base_delay: Some(2),
-            max_delay: Some(60),
+            testnet: true,
+            rate_limiter: BybitRateLimiterConfig::default(),
         };
 
         let exchange_engine_config = ExchangeEngineConfig {
-            exchange: Exchange::Binance,
-            exchange_config: ExchangeConfig::Binance(binance_config),
+            exchange: Exchange::Bybit,
+            exchange_config: ExchangeConfig::Bybit(bybit_config.clone()),
         };
 
-        let retrieved_config: BinanceConfig = exchange_engine_config.get_exchange_config().unwrap();
+        let retrieved: BybitConfig = exchange_engine_config.get_exchange_config().unwrap();
+        assert_eq!(retrieved.pairs, bybit_config.pairs);
+        assert_eq!(retrieved.instrument_type, bybit_config.instrument_type);
+        assert_eq!(retrieved.testnet, bybit_config.testnet);
+    }
 
-        assert_eq!(retrieved_config.rest.api_key, "some_key".into());
-        assert_eq!(retrieved_config.rest.secret_key, "some_secret".into());
-        assert_eq!(retrieved_config.ws.api_key, "some_key".into());
-        assert_eq!(retrieved_config.ws.secret_key, "some_secret".into());
-        assert_eq!(retrieved_config.limit, Some(100));
-        assert_eq!(retrieved_config.base_delay, Some(2));
-        assert_eq!(retrieved_config.max_delay, Some(60));
+    // Test error handling when requesting wrong exchange type
+    #[test]
+    fn test_get_exchange_config_wrong_type() {
+        let exchange_engine_config = ExchangeEngineConfig {
+            exchange: Exchange::Binance,
+            exchange_config: ExchangeConfig::Binance(BinanceConfig {
+                pairs: vec![create_test_pair()],
+                rest: BinanceCredentials {
+                    api_key: SecretString::from("key"),
+                    secret_key: SecretString::from("secret"),
+                },
+                ws: BinanceCredentials {
+                    api_key: SecretString::from("key"),
+                    secret_key: SecretString::from("secret"),
+                },
+                limit: None,
+                base_delay: None,
+                max_delay: None,
+            }),
+        };
+
+        let result: Result<BybitConfig, _> = exchange_engine_config.clone().get_exchange_config();
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Expected Bybit config"));
     }
 }

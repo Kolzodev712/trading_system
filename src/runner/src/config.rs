@@ -3,7 +3,7 @@
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
-use trading_core::types::common::{Exchange, Pair};
+use trading_core::types::common::{Exchange, InstrumentType, Pair};
 
 /// General bot configuration - system-wide settings, not trading-specific
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -321,8 +321,38 @@ impl BotConfig {
                         .map_err(|e| format!("Failed to deserialize Binance config: {e}"))?;
                 Ok(binance_config.pairs)
             }
-            Exchange::Bybit => Err("Bybit config parsing not yet implemented".into()),
+            Exchange::Bybit => {
+                let bybit_config_json = self
+                    .exchange
+                    .exchange_specific
+                    .get("bybit")
+                    .ok_or("Bybit exchange configuration is required")?;
+                let bybit_config: exchange_engine::exchanges::bybit::config::BybitConfig =
+                    serde_json::from_value(bybit_config_json.clone())
+                        .map_err(|e| format!("Failed to deserialize Bybit config: {e}"))?;
+                Ok(bybit_config.pairs)
+            }
             Exchange::Unsupported => Err("Unsupported exchange".into()),
+        }
+    }
+
+    /// Get instrument type from exchange-specific config
+    /// Defaults to Spot if not specified
+    pub fn get_instrument_type(&self) -> Result<InstrumentType, Box<dyn std::error::Error>> {
+        match self.exchange.exchange {
+            Exchange::Binance => Ok(InstrumentType::Spot), // Binance doesn't have instrument_type in config yet
+            Exchange::Bybit => {
+                let bybit_config_json = self
+                    .exchange
+                    .exchange_specific
+                    .get("bybit")
+                    .ok_or("Bybit exchange configuration is required")?;
+                let bybit_config: exchange_engine::exchanges::bybit::config::BybitConfig =
+                    serde_json::from_value(bybit_config_json.clone())
+                        .map_err(|e| format!("Failed to deserialize Bybit config: {e}"))?;
+                Ok(bybit_config.instrument_type)
+            }
+            Exchange::Unsupported => Ok(InstrumentType::Spot), // Default to Spot
         }
     }
 }

@@ -51,7 +51,12 @@ impl MarketDataStatePublisher {
                 ))
             })?;
 
-        debug!("Published orderbook update for pair: {}", orderbook.pair);
+        debug!(
+            "Published orderbook update for pair: {} ({} bids, {} asks)",
+            orderbook.pair,
+            orderbook.bids.len(),
+            orderbook.asks.len()
+        );
         Ok(())
     }
 

@@ -10,20 +10,15 @@ pub struct BybitConfig {
     pub category: BybitCategory,
 }
 
-#[derive(Debug, PartialEq, Eq, Deserialize, Serialize, Clone)]
+#[derive(Debug, PartialEq, Eq, Deserialize, Serialize, Clone, Default)]
 pub enum BybitCategory {
     #[serde(rename = "spot")]
+    #[default]
     Spot,
     #[serde(rename = "linear")]
     Linear,
     #[serde(rename = "inverse")]
     Inverse,
-}
-
-impl Default for BybitCategory {
-    fn default() -> Self {
-        BybitCategory::Spot
-    }
 }
 
 #[cfg(test)]

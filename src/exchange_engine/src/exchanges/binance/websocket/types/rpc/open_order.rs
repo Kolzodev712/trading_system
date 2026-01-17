@@ -4,8 +4,9 @@ use crate::exchanges::binance::types::{
 };
 use trading_core::{
     error::EngineError,
+    registry::symbol::SymbolRegistry,
     types::{
-        common::OrderId,
+        common::{Instrument, InstrumentType, OrderId},
         exchange::{Order, OrderRequest},
     },
 };
@@ -113,7 +114,7 @@ impl TryFrom<OrderRequest> for BinanceWsOrderReqParams {
             });
 
         Ok(Self {
-            symbol: SmolStr::from(&req.symbol),
+            symbol: req.instrument.symbol(),
             side,
             order_type,
             time_in_force: Some(tif),
@@ -183,10 +184,15 @@ pub fn map_open_order_to_core(
         EngineError::new_custom_error("WS RPC success response missing result field".into())
     })?;
 
+    // Convert symbol to pair using registry
+    let symbol_str = result.symbol.as_str();
+    let registry = SymbolRegistry::default();
+    let pair = registry.get_or_parse_pair(symbol_str);
+
     Ok(Order {
         order_id: OrderId::from(result.order_id as u64),
         client_order_id: Some(result.client_order_id.clone()),
-        symbol: result.symbol.into(),
+        instrument: Instrument::new(InstrumentType::Spot, pair),
         price: params.price.unwrap_or_default(),
         amount: params.quantity.unwrap_or_default(),
         side: params.side.into(),
@@ -194,7 +200,6 @@ pub fn map_open_order_to_core(
         filled_amount: rust_decimal::Decimal::ZERO,
         internal_created_at: chrono::Utc::now().timestamp_millis() as u64,
         exchange_created_at: Some(result.transact_time as u64),
-        instrument_type: trading_core::types::common::InstrumentType::Spot,
     })
 }
 

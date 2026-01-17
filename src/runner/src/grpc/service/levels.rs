@@ -397,6 +397,7 @@ impl LevelService {
                             self.trading_client.clone(),
                             None, // asset_service not needed for cancellation
                             trading_core::types::common::Exchange::Binance,
+                            trading_core::types::common::InstrumentType::Spot, // Default to Spot for cancellation
                             rust_decimal::Decimal::new(1, 5), // config_min_order_size
                             rust_decimal::Decimal::new(1, 5), // config_step_size
                             rust_decimal::Decimal::new(1, 2), // config_tick_size

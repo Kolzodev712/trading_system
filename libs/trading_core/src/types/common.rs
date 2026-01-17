@@ -45,6 +45,31 @@ pub struct Instrument {
     pub pair: Pair,
 }
 
+impl Instrument {
+    /// Create a new instrument
+    pub fn new(instrument_type: InstrumentType, pair: Pair) -> Self {
+        Self {
+            instrument_type,
+            pair,
+        }
+    }
+
+    /// Get the symbol string representation (e.g., "BTCUSDT")
+    pub fn symbol(&self) -> SmolStr {
+        self.pair.convert_to_smolstr()
+    }
+
+    /// Get the instrument type
+    pub fn instrument_type(&self) -> InstrumentType {
+        self.instrument_type.clone()
+    }
+
+    /// Get the pair
+    pub fn pair(&self) -> &Pair {
+        &self.pair
+    }
+}
+
 /// Instrument type
 #[derive(Debug, Deserialize, Serialize, Clone, Eq, PartialEq, Default)]
 #[serde(rename_all = "PascalCase")]

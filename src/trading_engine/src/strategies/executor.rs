@@ -6,7 +6,11 @@ use trading_core::{
     error::EngineError,
     retry::{order_retry_config, retry_with_backoff},
     traits::TradingClient,
-    types::{common::Exchange, exchange::Order, Pair},
+    types::{
+        common::{Exchange, Instrument, InstrumentType},
+        exchange::Order,
+        Pair,
+    },
 };
 // ExecutionReport removed - use Order directly from channels
 use rust_decimal::Decimal;
@@ -33,6 +37,8 @@ pub struct StrategyExecutor<S: Strategy + 'static> {
     reconciliation_interval_secs: u64,
     asset_service: Option<Arc<AssetService>>,
     exchange: Exchange,
+    /// Instrument type for orders (Spot or Futures)
+    instrument_type: InstrumentType,
     /// Config fallback values
     config_min_order_size: Decimal,
     config_step_size: Decimal,
@@ -53,6 +59,7 @@ impl<S: Strategy> StrategyExecutor<S> {
         reconciliation_interval_secs: u64,
         asset_service: Option<Arc<AssetService>>,
         exchange: Exchange,
+        instrument_type: InstrumentType,
         config_min_order_size: Decimal,
         config_step_size: Decimal,
         config_tick_size: Decimal,
@@ -72,6 +79,7 @@ impl<S: Strategy> StrategyExecutor<S> {
             reconciliation_interval_secs,
             asset_service,
             exchange,
+            instrument_type,
             config_min_order_size,
             config_step_size,
             config_tick_size,
@@ -261,10 +269,15 @@ impl<S: Strategy> StrategyExecutor<S> {
                     // Use the orderbook's pair (single source of truth) instead of converting from symbol
                     let orderbook_pair = orderbook.pair.clone();
                     if let Some(mut req) = order_request {
+                        // Override instrument from config (strategies may hardcode Spot)
+                        req.instrument = Instrument::new(
+                            self.instrument_type.clone(),
+                            req.instrument.pair.clone(),
+                        );
                         info!(
                             "[StrategyExecutor] Strategy requested order: side={side}, symbol={symbol}, price={price}, amount={amount}",
                             side = req.side,
-                            symbol = req.symbol,
+                            symbol = req.instrument.symbol(),
                             price = req.price,
                             amount = req.amount
                         );
@@ -309,7 +322,7 @@ impl<S: Strategy> StrategyExecutor<S> {
                                 .active_orders
                                 .values()
                                 .find(|o| {
-                                    o.symbol == req.symbol && o.side == req.side
+                                    o.instrument.pair == req.instrument.pair && o.side == req.side
                                         && matches!(
                                             o.status,
                                             trading_core::types::common::OrderStatus::New
@@ -321,7 +334,7 @@ impl<S: Strategy> StrategyExecutor<S> {
                                 info!(
                                     "[StrategyExecutor] Found existing order for {side} {symbol}, checking if amendment needed",
                                     side = req.side,
-                                    symbol = req.symbol
+                                    symbol = req.instrument.symbol()
                                 );
                             }
                             found
@@ -537,7 +550,7 @@ impl<S: Strategy> StrategyExecutor<S> {
                             "[StrategyExecutor] Calling open_order with retry (max_attempts={max_attempts}) for {side} {symbol} @ {price} x {amount}",
                             max_attempts = retry_config.max_attempts,
                             side = req_for_retry.side,
-                            symbol = req_for_retry.symbol,
+                            symbol = req_for_retry.instrument.symbol(),
                             price = req_for_retry.price,
                             amount = req_for_retry.amount
                         );
@@ -577,7 +590,7 @@ impl<S: Strategy> StrategyExecutor<S> {
                                     "Order failed due to insufficient balance (skipping retries): {error}. Order request: side={side}, symbol={symbol}, price={price}, amount={amount}",
                                     error = e,
                                     side = req_for_retry.side,
-                                    symbol = req_for_retry.symbol,
+                                    symbol = req_for_retry.instrument.symbol(),
                                     price = req_for_retry.price,
                                     amount = req_for_retry.amount
                                 );
@@ -594,7 +607,7 @@ impl<S: Strategy> StrategyExecutor<S> {
                                 info!(
                                     "[StrategyExecutor] ✅ Order placed successfully: id={order_id}, symbol={symbol}, side={side}, price={price}, amount={amount}",
                                     order_id = order.order_id.as_str(),
-                                    symbol = order.symbol,
+                                    symbol = order.instrument.symbol(),
                                     side = order.side,
                                     price = order.price,
                                     amount = order.amount
@@ -612,7 +625,7 @@ impl<S: Strategy> StrategyExecutor<S> {
                                     max_retries = retry_config.max_attempts,
                                     error = e,
                                     side = req_for_retry.side,
-                                    symbol = req_for_retry.symbol,
+                                    symbol = req_for_retry.instrument.symbol(),
                                     price = req_for_retry.price,
                                     amount = req_for_retry.amount
                                 );

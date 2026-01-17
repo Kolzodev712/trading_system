@@ -1,7 +1,6 @@
 //! Strategy monitoring and execution tests
 
 use crate::helpers::internal::MockTradingClient;
-use crate::helpers::internal::*;
 use rust_decimal_macros::dec;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -162,8 +161,22 @@ async fn test_strategy_monitoring_with_active_orders() {
     let pair = Pair::new("BTC", "USDC");
 
     // Add an active order with matching symbol (BTCUSDC to match the pair)
-    let mut order = create_test_order("order1", dec!(50000), dec!(0.001));
-    order.symbol = trading_core::types::common::Symbol::from("BTCUSDC");
+    // Note: create_test_order creates an order with BTC/USDT pair
+    // We'll create a new order with the correct pair for this test
+    use trading_core::types::common::{Instrument, InstrumentType, OrderId, OrderStatus, Side};
+    use trading_core::types::exchange::Order;
+    let order = Order {
+        order_id: OrderId::new("order1".into()),
+        client_order_id: None,
+        instrument: Instrument::new(InstrumentType::Spot, pair.clone()),
+        side: Side::Buy,
+        price: dec!(50000),
+        amount: dec!(0.001),
+        internal_created_at: 0,
+        exchange_created_at: None,
+        status: OrderStatus::New,
+        filled_amount: dec!(0),
+    };
     trading_state.add_order(order);
 
     // Create exchange state manager first

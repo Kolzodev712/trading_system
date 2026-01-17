@@ -85,7 +85,7 @@ impl MonitoringService {
 
                         trading_cli::Order {
                             order_id: order_id_str,
-                            symbol: order.symbol.to_string(),
+                            symbol: order.instrument.symbol().to_string(),
                             side: format!("{:?}", order.side),
                             order_type,
                             price: order.price.to_string(),
@@ -319,7 +319,7 @@ impl MonitoringService {
             .active_orders
             .values()
             .filter(|o| {
-                let order_symbol: smol_str::SmolStr = o.symbol.clone().into();
+                let order_symbol: smol_str::SmolStr = o.instrument.symbol().clone();
                 // Order symbols might be in "ETHUSDC" format, so check both
                 order_symbol.as_str() == symbol_str || order_symbol.as_str() == symbol_no_slash
             })

@@ -1,8 +1,14 @@
 use crate::exchanges::binance::types::{
     BinanceOrderStatus, BinanceOrderType, BinanceSide, BinanceTimeInForce,
 };
-use trading_core::types::{common::OrderStatus, exchange::Order};
-use trading_core::utils::{deserialize_smol_str, serialize_smol_str};
+use trading_core::{
+    registry::symbol::SymbolRegistry,
+    types::{
+        common::{Instrument, InstrumentType, OrderStatus},
+        exchange::Order,
+    },
+    utils::{deserialize_smol_str, serialize_smol_str},
+};
 
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
@@ -75,10 +81,15 @@ impl From<ExecutionReport> for Order {
             _ => rust_decimal::Decimal::ZERO,
         };
 
+        // Convert symbol to pair using registry
+        let symbol_str = report.symbol.as_str();
+        let registry = SymbolRegistry::default();
+        let pair = registry.get_or_parse_pair(symbol_str);
+
         Order {
             order_id: report.order_id.into(),
             client_order_id: None, // ExecutionReport doesn't include client_order_id
-            symbol: report.symbol.into(),
+            instrument: Instrument::new(InstrumentType::Spot, pair),
             side: report.side.into(),
             price: report.price,
             amount: report.quantity,
@@ -86,7 +97,6 @@ impl From<ExecutionReport> for Order {
             exchange_created_at: Some(report.transaction_time),
             status: status.clone(),
             filled_amount,
-            instrument_type: trading_core::types::common::InstrumentType::Spot,
         }
     }
 }
@@ -148,7 +158,7 @@ mod tests {
         let order: Order = exec_report.into();
 
         assert_eq!(order.order_id, 4293153.into());
-        assert_eq!(order.symbol, "BTCUSDT");
+        assert_eq!(order.instrument.symbol(), "BTCUSDT");
         assert_eq!(order.side, Side::Buy);
         assert_eq!(order.price, Decimal::new(45000, 2));
         assert_eq!(order.amount, Decimal::new(1, 0));

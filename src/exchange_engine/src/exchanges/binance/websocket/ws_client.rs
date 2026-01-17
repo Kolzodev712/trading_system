@@ -320,13 +320,13 @@ impl TradingClient<OrderRequest, Pair> for BinanceClient {
             if let Some(state_mgr) = self.state_manager.lock().await.as_ref() {
                 if let Some(order) = state_mgr.get_order_by_id(&order_id).await {
                     // Extract symbol and client_order_id from the order
-                    let symbol = order.symbol.clone();
+                    let symbol = order.instrument.symbol();
                     tracing::info!(
                         "Found order {} in state manager: symbol={}",
                         order_id.as_str(),
-                        symbol.as_ref()
+                        symbol.as_str()
                     );
-                    (symbol.as_ref().into(), order.client_order_id.clone())
+                    (symbol, order.client_order_id.clone())
                 } else {
                     // Order not in state - cannot determine pair, return error
                     tracing::error!("Order {} not found in state manager. Cannot determine trading pair for cancellation.", order_id.as_str());
@@ -645,7 +645,7 @@ impl TradingClient<OrderRequest, Pair> for BinanceClient {
         }
 
         // Use native amend - only price and/or quantity changed
-        let symbol: SmolStr = original_order.symbol.as_ref().into();
+        let symbol: SmolStr = original_order.instrument.symbol();
         let params = if let Some(numeric_id) = order_id.as_numeric_id() {
             BinanceWsAmendOrderReqParams::new_with_order_id(
                 symbol,

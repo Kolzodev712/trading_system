@@ -159,7 +159,7 @@ async fn get_orders(
     for (order_id, order) in &state.active_orders {
         orders.push(OrderInfo {
             order_id: order_id.as_str().to_string(),
-            symbol: order.symbol.as_ref().to_string(),
+            symbol: order.instrument.symbol().to_string(),
             side: format!("{:?}", order.side),
             price: order.price.to_string(),
             amount: order.amount.to_string(),

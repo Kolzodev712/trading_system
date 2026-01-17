@@ -73,6 +73,9 @@ pub enum EngineError {
     #[error("Order already cancelled error: {0}")]
     OrderAlreadyCanceled(Error),
 
+    #[error("Rate limit exceeded: {0}")]
+    RateLimitError(Error),
+
     #[error("Invalid config")]
     InvalidConfig,
 

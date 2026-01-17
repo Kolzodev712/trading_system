@@ -16,7 +16,7 @@ use trading_core::{
     error::EngineError,
     traits::TradingClient,
     types::{
-        common::{Exchange, OrderStatus, OrderType, Pair, Side, Symbol},
+        common::{Exchange, Instrument, InstrumentType, OrderStatus, OrderType, Pair, Side},
         exchange::{Order, OrderRequest},
         market_data::Orderbook,
     },
@@ -448,14 +448,15 @@ impl Strategy for BuyLowSellHigh {
                                 );
                                 let sell_price = orderbook.best_bid_price().unwrap_or(mid_price);
                                 return Ok(Some(OrderRequest {
-                                    symbol: Symbol::from(self.symbol.convert_to_smolstr()),
+                                    instrument: Instrument::new(
+                                        InstrumentType::Spot,
+                                        self.symbol.clone(),
+                                    ),
                                     side: Side::Sell,
                                     order_type: OrderType::Limit,
                                     price: sell_price,
                                     amount: position.quantity,
                                     timestamp: None,
-                                    instrument_type:
-                                        trading_core::types::common::InstrumentType::Spot,
                                     exchange_params: Default::default(),
                                 }));
                             }
@@ -472,14 +473,15 @@ impl Strategy for BuyLowSellHigh {
                                 info!("Take-profit triggered: profit={profit_percent:.2}%, threshold={take_profit}%");
                                 let sell_price = orderbook.best_bid_price().unwrap_or(mid_price);
                                 return Ok(Some(OrderRequest {
-                                    symbol: Symbol::from(self.symbol.convert_to_smolstr()),
+                                    instrument: Instrument::new(
+                                        InstrumentType::Spot,
+                                        self.symbol.clone(),
+                                    ),
                                     side: Side::Sell,
                                     order_type: OrderType::Limit,
                                     price: sell_price,
                                     amount: position.quantity,
                                     timestamp: None,
-                                    instrument_type:
-                                        trading_core::types::common::InstrumentType::Spot,
                                     exchange_params: Default::default(),
                                 }));
                             }
@@ -638,19 +640,18 @@ impl Strategy for BuyLowSellHigh {
                 };
 
                 let order_req = OrderRequest {
-                    symbol: Symbol::from(self.symbol.convert_to_smolstr()),
+                    instrument: Instrument::new(InstrumentType::Spot, self.symbol.clone()),
                     side: Side::Buy,
                     order_type,
                     price: buy_price,
                     amount: final_amount_rounded,
                     timestamp: None,
-                    instrument_type: trading_core::types::common::InstrumentType::Spot,
                     exchange_params: Default::default(),
                 };
                 info!(
                     "[Strategy {}] ✅ RETURNING BUY ORDER REQUEST: symbol={}, side={:?}, price={}, amount={}",
                     self.symbol,
-                    order_req.symbol,
+                    order_req.instrument.symbol(),
                     order_req.side,
                     order_req.price,
                     order_req.amount
@@ -746,13 +747,12 @@ impl Strategy for BuyLowSellHigh {
             );
 
             return Ok(Some(OrderRequest {
-                symbol: Symbol::from(self.symbol.convert_to_smolstr()),
+                instrument: Instrument::new(InstrumentType::Spot, self.symbol.clone()),
                 side: Side::Sell,
                 order_type,
                 price: sell_price,
                 amount: final_sell_qty_rounded,
                 timestamp: None,
-                instrument_type: trading_core::types::common::InstrumentType::Spot,
                 exchange_params: Default::default(),
             }));
         }
@@ -807,7 +807,7 @@ impl Strategy for BuyLowSellHigh {
                     side = order.side,
                     filled = order.filled_amount,
                     total = order.amount,
-                    symbol = order.symbol,
+                    symbol = order.instrument.symbol(),
                     price = order.price
                 );
             }
@@ -827,7 +827,7 @@ impl Strategy for BuyLowSellHigh {
                     side = order.side,
                     filled = order.filled_amount,
                     total = order.amount,
-                    symbol = order.symbol,
+                    symbol = order.instrument.symbol(),
                     price = order.price
                 );
             }

@@ -104,16 +104,22 @@ mod tests {
     use trading_core::{
         channels::exchange::exchange_update_channel,
         types::{
-            common::{OrderId, OrderStatus, Side, Symbol},
+            common::{OrderId, OrderStatus, Side},
             exchange::Order,
         },
     };
 
     fn create_test_order() -> Order {
+        // symbol is the entire pair string (e.g., "BTCUSDT"), need to parse it
+        let registry = trading_core::registry::symbol::SymbolRegistry::default();
+        let pair = registry.get_or_parse_pair("BTCUSDT");
         Order {
             order_id: OrderId::new("12345".into()),
             client_order_id: None,
-            symbol: Symbol::from("BTCUSDT"),
+            instrument: trading_core::types::common::Instrument::new(
+                trading_core::types::common::InstrumentType::Spot,
+                pair,
+            ),
             side: Side::Buy,
             price: Decimal::new(100, 0),
             amount: Decimal::new(1, 0),
@@ -121,7 +127,6 @@ mod tests {
             exchange_created_at: None,
             status: OrderStatus::New,
             filled_amount: Decimal::ZERO,
-            instrument_type: trading_core::types::common::InstrumentType::Spot,
         }
     }
 

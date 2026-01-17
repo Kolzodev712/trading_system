@@ -43,6 +43,7 @@ pub struct TradingCliServiceImpl {
 }
 
 impl TradingCliServiceImpl {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         level_manager: Arc<RwLock<LevelManager>>,
         trading_state_manager: Arc<TradingStateManager>,
@@ -274,7 +275,7 @@ impl TradingCliService for TradingCliServiceImpl {
                     .active_orders
                     .values()
                     .filter(|o| {
-                        let order_symbol: smol_str::SmolStr = o.symbol.clone().into();
+                        let order_symbol: smol_str::SmolStr = o.instrument.symbol().clone();
                         order_symbol.as_str() == symbol_str
                             || order_symbol.as_str() == symbol_no_slash
                     })

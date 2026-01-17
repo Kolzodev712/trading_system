@@ -292,6 +292,11 @@ pub async fn strategy_runner(
     let grpc_handle = grpc_server.start(grpc_addr).await?;
     info!("gRPC server started on {}", grpc_addr);
 
+    // Get instrument type from config (defaults to Spot if not specified)
+    let instrument_type = bot_config
+        .get_instrument_type()
+        .unwrap_or(trading_core::types::common::InstrumentType::Spot);
+
     // Pass all pairs to executor (no .first() - single source of truth)
     let executor = StrategyExecutor::new(
         strategy_wrapper.clone(),
@@ -302,6 +307,7 @@ pub async fn strategy_runner(
         trading_reconciliation_interval_secs,
         services.asset_service.clone(),
         bot_config.exchange.exchange.clone(),
+        instrument_type,
         min_order_size,
         step_size,
         tick_size,
@@ -477,11 +483,17 @@ pub async fn level_runner(
     // Create TradingControl for enable/disable trading
     let trading_control = Arc::new(TradingControl::new(services.trading_client.clone()));
 
+    // Get instrument type from config (defaults to Spot if not specified)
+    let instrument_type = bot_config
+        .get_instrument_type()
+        .unwrap_or(trading_core::types::common::InstrumentType::Spot);
+
     let level_executor = Arc::new(
         LevelExecutor::new(
             services.trading_client.clone(),
             services.asset_service.clone(),
             bot_config.exchange.exchange.clone(),
+            instrument_type,
             config_min_order_size,
             config_step_size,
             config_tick_size,
@@ -850,19 +862,18 @@ pub async fn fetch_asset_data(
     }
 }
 
+type MarketDataEngineResult = (
+    trading_core::channels::market_data::MarketDataUpdateSender,
+    trading_core::channels::market_data::MarketDataUpdateReceiver,
+    JoinHandle<()>,
+    Arc<market_data_engine::state::manager::MarketDataStateManager>,
+);
+
 /// Initialize Market Data Engine
 pub fn initialize_market_data_engine(
     bot_config: &BotConfig,
     shutdown_manager: &ShutdownManager,
-) -> Result<
-    (
-        trading_core::channels::market_data::MarketDataUpdateSender,
-        trading_core::channels::market_data::MarketDataUpdateReceiver,
-        JoinHandle<()>,
-        Arc<market_data_engine::state::manager::MarketDataStateManager>,
-    ),
-    Box<dyn std::error::Error>,
-> {
+) -> Result<MarketDataEngineResult, Box<dyn std::error::Error>> {
     use market_data_engine::exchanges::{
         binance::config::BinanceConfig as MDBinanceConfig,
         bybit::{config::BybitCategory, config::BybitConfig as MDBybitConfig},
@@ -931,7 +942,7 @@ pub fn initialize_market_data_engine(
                     limit: bybit_config_json
                         .get("limit")
                         .and_then(|v| v.as_u64())
-                        .unwrap_or(1), // Default to 1 (top level orderbook)
+                        .unwrap_or(50), // Default to 50 (Bybit supports 1, 50, or 200)
                     base_delay: bybit_config_json.get("baseDelay").and_then(|v| v.as_u64()),
                     max_delay: bybit_config_json.get("maxDelay").and_then(|v| v.as_u64()),
                     category,
@@ -1220,7 +1231,28 @@ pub async fn initialize_exchange_engine(
             (exchange_config, pairs)
         }
         Exchange::Bybit => {
-            return Err("Bybit Exchange Engine not yet implemented".into());
+            let bybit_config_json = bot_config
+                .exchange
+                .exchange_specific
+                .get("bybit")
+                .ok_or("Bybit exchange configuration is required")?;
+            let bybit_config: exchange_engine::exchanges::bybit::config::BybitConfig =
+                serde_json::from_value(bybit_config_json.clone())
+                    .map_err(|e| format!("Failed to deserialize Bybit config: {e}"))?;
+
+            // Validate pairs
+            if bybit_config.pairs.is_empty() {
+                return Err("No pairs configured in bybit config".into());
+            }
+
+            let pairs = bybit_config.pairs.clone();
+
+            let exchange_config = ExchangeEngineConfig {
+                exchange: Exchange::Bybit,
+                exchange_config: exchange_engine::config::ExchangeConfig::Bybit(bybit_config),
+            };
+
+            (exchange_config, pairs)
         }
         Exchange::Unsupported => {
             return Err("Unsupported exchange for Exchange Engine".into());

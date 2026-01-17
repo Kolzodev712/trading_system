@@ -9,7 +9,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use trading_core::error::EngineError;
 use trading_core::traits::TradingClient;
-use trading_core::types::common::{Exchange, Symbol};
+use trading_core::types::common::{Exchange, Instrument, InstrumentType};
 use trading_core::types::exchange::{Order, OrderRequest};
 use trading_core::types::market_data::Orderbook;
 
@@ -19,6 +19,8 @@ pub struct LevelExecutor {
     resolver: IndicatorResolver,
     asset_service: Option<Arc<AssetService>>,
     exchange: Exchange,
+    /// Instrument type for orders (Spot or Futures)
+    instrument_type: InstrumentType,
     /// Config fallback values
     config_min_order_size: rust_decimal::Decimal,
     config_step_size: rust_decimal::Decimal,
@@ -30,10 +32,12 @@ pub struct LevelExecutor {
 
 impl LevelExecutor {
     /// Create a new level executor
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         trading_client: Arc<RwLock<dyn TradingClient<OrderRequest>>>,
         asset_service: Option<Arc<AssetService>>,
         exchange: Exchange,
+        instrument_type: InstrumentType,
         config_min_order_size: rust_decimal::Decimal,
         config_step_size: rust_decimal::Decimal,
         config_tick_size: rust_decimal::Decimal,
@@ -50,6 +54,7 @@ impl LevelExecutor {
             resolver,
             asset_service,
             exchange,
+            instrument_type,
             config_min_order_size,
             config_step_size,
             config_tick_size,
@@ -174,13 +179,12 @@ impl LevelExecutor {
 
         // Create order request
         let order_request = OrderRequest {
-            symbol: Symbol::from(level.pair.convert_to_smolstr()),
+            instrument: Instrument::new(self.instrument_type.clone(), level.pair.clone()),
             side: level.config.side.clone(),
             order_type: resolved.resolved_order_type,
             price: resolved.resolved_price,
             amount: resolved.resolved_quantity,
             timestamp: Some(trading_core::utils::current_timestamp()),
-            instrument_type: trading_core::types::common::InstrumentType::Spot,
             exchange_params: std::collections::HashMap::new(),
         };
 
@@ -240,13 +244,12 @@ impl LevelExecutor {
 
         // Create order request with new values
         let order_request = OrderRequest {
-            symbol: resolved.level.pair.convert_to_smolstr().into(),
+            instrument: Instrument::new(self.instrument_type.clone(), resolved.level.pair.clone()),
             side: resolved.level.config.side.clone(),
             order_type: resolved.resolved_order_type.clone(),
             price: resolved.resolved_price,
             amount: resolved.resolved_quantity,
             timestamp: Some(trading_core::utils::current_timestamp()),
-            instrument_type: trading_core::types::common::InstrumentType::Spot,
             exchange_params: std::collections::HashMap::new(),
         };
 

@@ -1,14 +1,17 @@
 use crate::state::Strategy;
+use crate::strategies::strategy_manager::StrategyManager;
 use asset_engine::AssetService;
+use trading_core::types::exchange::{
+    BulkAmendItem, BulkAmendRequest, BulkCancelRequest, BulkOrderRequest,
+};
 use trading_core::{
     channels::market_data::{MarketDataUpdate, MarketDataUpdateReceiver},
     circuit_breaker::{order_circuit_breaker, CircuitBreaker},
     error::EngineError,
-    retry::{order_retry_config, retry_with_backoff},
     traits::TradingClient,
     types::{
-        common::{Exchange, Instrument, InstrumentType},
-        exchange::Order,
+        common::{Exchange, Instrument, InstrumentType, OrderId},
+        exchange::{Order, OrderRequest},
         Pair,
     },
 };
@@ -46,6 +49,8 @@ pub struct StrategyExecutor<S: Strategy + 'static> {
     config_min_notional: Decimal,
     /// Trading control - checks if trading is enabled (optional, for TUI control)
     trading_enabled: Option<Arc<tokio::sync::RwLock<bool>>>,
+    /// Optional StrategyManager for batching (only set when using StrategyManagerWrapper)
+    strategy_manager: Option<Arc<RwLock<crate::strategies::strategy_manager::StrategyManager>>>,
 }
 
 impl<S: Strategy> StrategyExecutor<S> {
@@ -85,12 +90,19 @@ impl<S: Strategy> StrategyExecutor<S> {
             config_tick_size,
             config_min_notional,
             trading_enabled: None,
+            strategy_manager: None,
         }
     }
 
     /// Set trading enabled flag (for TUI control)
     pub fn with_trading_control(mut self, trading_enabled: Arc<tokio::sync::RwLock<bool>>) -> Self {
         self.trading_enabled = Some(trading_enabled);
+        self
+    }
+
+    /// Set StrategyManager for batching (only for StrategyManagerWrapper)
+    pub fn with_strategy_manager(mut self, strategy_manager: Arc<RwLock<StrategyManager>>) -> Self {
+        self.strategy_manager = Some(strategy_manager);
         self
     }
 
@@ -179,31 +191,46 @@ impl<S: Strategy> StrategyExecutor<S> {
 
                 // Get stale orders from TradingStateManager
                 let trading_state = trading_state_manager_for_cleanup.get_state();
-                let stale_orders = {
+                let stale_orders: Vec<_> = {
                     let state_guard = trading_state.read().await;
                     state_guard.get_stale_orders(order_timeout)
                 };
 
-                for order_id in stale_orders {
-                    warn!(
-                        "Cancelling stale order: {order_id}",
-                        order_id = order_id.as_str()
-                    );
-                    if let Err(e) = trading_client_for_cleanup
-                        .write()
-                        .await
-                        .cancel_order_by_id(order_id.clone())
-                        .await
-                    {
-                        error!(
-                            "Failed to cancel stale order {order_id}: {e}",
-                            order_id = order_id.as_str()
-                        );
-                    } else {
-                        // Remove order from TradingStateManager
-                        trading_state_manager_for_cleanup
-                            .remove_order(&order_id)
-                            .await;
+                if !stale_orders.is_empty() {
+                    warn!("Cancelling {} stale order(s)", stale_orders.len());
+
+                    let bulk_request = BulkCancelRequest {
+                        order_ids: stale_orders.clone(),
+                        pair: None,
+                    };
+                    let trading_client_guard = trading_client_for_cleanup.write().await;
+                    let bulk_response = trading_client_guard.bulk_cancel_orders(bulk_request).await;
+
+                    match bulk_response {
+                        Ok(response) => {
+                            for (order_id, result) in
+                                stale_orders.iter().zip(response.results.iter())
+                            {
+                                if result.success {
+                                    // Remove order from TradingStateManager
+                                    trading_state_manager_for_cleanup
+                                        .remove_order(order_id)
+                                        .await;
+                                } else {
+                                    error!(
+                                        "Failed to cancel stale order {order_id}: {e}",
+                                        order_id = order_id.as_str(),
+                                        e = result
+                                            .error
+                                            .as_ref()
+                                            .unwrap_or(&"Unknown error".to_string())
+                                    );
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            error!("Bulk cancel stale orders failed: {}", e);
+                        }
                     }
                 }
             }
@@ -248,32 +275,187 @@ impl<S: Strategy> StrategyExecutor<S> {
                         );
                     }
 
-                    // Get strategy decision using TradingStateManager's state
-                    let order_request = {
-                        let trading_state = self.trading_state_manager.get_state();
-                        let state = {
-                            let state_guard = trading_state.read().await;
-                            state_guard.clone()
-                        };
-                        let mut strat = strategy.write().await;
-                        match strat.on_orderbook(&orderbook, &state).await {
-                            Ok(req) => req,
-                            Err(e) => {
-                                error!("Strategy error in on_orderbook: {error}", error = e);
-                                continue;
+                    // Get all order requests from strategy
+                    // For StrategyManagerWrapper, get all requests for batching
+                    // For other strategies, get single request
+                    let orderbook_pair = orderbook.pair.clone();
+                    let trading_state = self.trading_state_manager.get_state();
+                    let state = {
+                        let state_guard = trading_state.read().await;
+                        state_guard.clone()
+                    };
+
+                    // Get all order requests and cancellation requests from strategy
+                    // If StrategyManager is available, get all requests for batching
+                    // Otherwise, get single request
+                    let all_requests: Vec<OrderRequest> = {
+                        if let Some(ref strategy_manager) = self.strategy_manager {
+                            // Get all requests from StrategyManager for batching
+                            let manager = strategy_manager.read().await;
+                            match manager.on_orderbook(&orderbook).await {
+                                Ok(requests) => requests,
+                                Err(e) => {
+                                    error!("StrategyManager error: {error}", error = e);
+                                    continue;
+                                }
+                            }
+                        } else {
+                            // Single strategy - get one request
+                            let mut strat = strategy.write().await;
+                            match strat.on_orderbook(&orderbook, &state).await {
+                                Ok(Some(req)) => vec![req],
+                                Ok(None) => vec![],
+                                Err(e) => {
+                                    error!("Strategy error in on_orderbook: {error}", error = e);
+                                    continue;
+                                }
                             }
                         }
                     };
 
-                    // If strategy wants to place an order, do it
-                    // Use the orderbook's pair (single source of truth) instead of converting from symbol
-                    let orderbook_pair = orderbook.pair.clone();
-                    if let Some(mut req) = order_request {
-                        // Override instrument from config (strategies may hardcode Spot)
-                        req.instrument = Instrument::new(
-                            self.instrument_type.clone(),
-                            req.instrument.pair.clone(),
+                    // Get cancellation requests from strategies
+                    let cancel_ids: Vec<OrderId> = {
+                        if let Some(ref strategy_manager) = self.strategy_manager {
+                            // Get all cancellation requests from StrategyManager
+                            let manager = strategy_manager.read().await;
+                            match manager.on_orderbook_cancels(&orderbook).await {
+                                Ok(ids) => ids,
+                                Err(e) => {
+                                    error!(
+                                        "StrategyManager error getting cancels: {error}",
+                                        error = e
+                                    );
+                                    vec![]
+                                }
+                            }
+                        } else {
+                            // Single strategy - get cancellation requests
+                            let mut strat = strategy.write().await;
+                            match strat.on_orderbook_cancels(&orderbook, &state).await {
+                                Ok(ids) => ids,
+                                Err(e) => {
+                                    error!(
+                                        "Strategy error in on_orderbook_cancels: {error}",
+                                        error = e
+                                    );
+                                    vec![]
+                                }
+                            }
+                        }
+                    };
+
+                    // Batch process cancellation requests first
+                    if !cancel_ids.is_empty() {
+                        info!(
+                            "[StrategyExecutor] Batch cancelling {} order(s) requested by strategies",
+                            cancel_ids.len()
                         );
+                        let bulk_request = BulkCancelRequest {
+                            order_ids: cancel_ids.clone(),
+                            pair: None,
+                        };
+                        let trading_client_guard = trading_client.write().await;
+                        let bulk_response =
+                            trading_client_guard.bulk_cancel_orders(bulk_request).await;
+
+                        match bulk_response {
+                            Ok(response) => {
+                                for (order_id, result) in
+                                    cancel_ids.iter().zip(response.results.iter())
+                                {
+                                    if result.success {
+                                        info!(
+                                            "[StrategyExecutor] ✅ Cancelled order {} requested by strategy",
+                                            order_id.as_str()
+                                        );
+                                        // Remove order from TradingStateManager
+                                        self.trading_state_manager.remove_order(order_id).await;
+                                    } else {
+                                        warn!(
+                                            "Failed to cancel order {} requested by strategy: {}",
+                                            order_id.as_str(),
+                                            result
+                                                .error
+                                                .as_ref()
+                                                .unwrap_or(&"Unknown error".to_string())
+                                        );
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                warn!("Bulk cancel orders failed: {}", e);
+                            }
+                        }
+                    }
+
+                    if all_requests.is_empty() {
+                        continue;
+                    }
+
+                    // Override instrument type for all requests
+                    let all_requests: Vec<OrderRequest> = all_requests
+                        .into_iter()
+                        .map(|mut req| {
+                            req.instrument = Instrument::new(
+                                self.instrument_type.clone(),
+                                req.instrument.pair.clone(),
+                            );
+                            req
+                        })
+                        .collect();
+
+                    // Check circuit breaker and trading control
+                    let cb = circuit_breaker.lock().await;
+                    if !cb.can_proceed() {
+                        debug!(
+                            "Circuit breaker is open, skipping order placement. State: {state}",
+                            state = cb.state()
+                        );
+                        continue;
+                    }
+                    drop(cb);
+
+                    // Check if trading is enabled
+                    if let Some(ref trading_enabled) = self.trading_enabled {
+                        if !*trading_enabled.read().await {
+                            tracing::warn!(
+                                "Trading is disabled - blocking order placement from strategy"
+                            );
+                            continue;
+                        }
+                    }
+
+                    // Get trading rules once for all requests
+                    use crate::order_validation::{
+                        get_trading_rules, round_price, round_quantity, validate_order,
+                    };
+                    let rules = get_trading_rules(
+                        self.asset_service.as_ref(),
+                        self.exchange.clone(),
+                        &orderbook_pair,
+                        self.config_min_order_size,
+                        self.config_step_size,
+                        self.config_tick_size,
+                        self.config_min_notional,
+                    )
+                    .await;
+
+                    // Get balances once
+                    let balances = trading_client.read().await.fetch_balance().await.ok();
+
+                    // Get active orders count
+                    let trading_state = self.trading_state_manager.get_state();
+                    let active_count = {
+                        let state = trading_state.read().await;
+                        state.get_active_order_count(&orderbook_pair)
+                    };
+
+                    // Collect requests into batches: to_post and to_amend
+                    let mut to_post: Vec<OrderRequest> = Vec::new();
+                    let mut to_amend: Vec<(OrderId, OrderRequest)> = Vec::new();
+
+                    // First pass: validate and check each request
+                    for mut req in all_requests {
                         info!(
                             "[StrategyExecutor] Strategy requested order: side={side}, symbol={symbol}, price={price}, amount={amount}",
                             side = req.side,
@@ -282,25 +464,7 @@ impl<S: Strategy> StrategyExecutor<S> {
                             amount = req.amount
                         );
 
-                        // Check circuit breaker
-                        let cb = circuit_breaker.lock().await;
-                        if !cb.can_proceed() {
-                            debug!(
-                                "Circuit breaker is open, skipping order placement. State: {state}",
-                                state = cb.state()
-                            );
-                            continue;
-                        }
-                        drop(cb);
-
-                        // Check active orders limit from TradingStateManager
-                        // Use the orderbook's pair (single source of truth)
-                        let trading_state = self.trading_state_manager.get_state();
-                        let active_count = {
-                            let state = trading_state.read().await;
-                            state.get_active_order_count(&orderbook_pair)
-                        };
-
+                        // Check active orders limit
                         if active_count >= 5 {
                             debug!(
                                 "Too many active orders ({active_count}), skipping order placement"
@@ -308,17 +472,10 @@ impl<S: Strategy> StrategyExecutor<S> {
                             continue;
                         }
 
-                        debug!(
-                            "Attempting to place order (active_orders={active_count})...",
-                            active_count = active_count
-                        );
-
                         // Check if there's an existing order for this symbol/side that should be amended
-                        let trading_state = self.trading_state_manager.get_state();
                         let existing_order_opt = {
                             let state = trading_state.read().await;
-                            // Find existing order matching symbol and side
-                            let found = state
+                            state
                                 .active_orders
                                 .values()
                                 .find(|o| {
@@ -329,309 +486,203 @@ impl<S: Strategy> StrategyExecutor<S> {
                                                 | trading_core::types::common::OrderStatus::PartiallyFilled
                                         )
                                 })
-                                .cloned();
-                            if found.is_some() {
-                                info!(
-                                    "[StrategyExecutor] Found existing order for {side} {symbol}, checking if amendment needed",
-                                    side = req.side,
-                                    symbol = req.instrument.symbol()
-                                );
-                            }
-                            found
+                                .cloned()
                         };
 
-                        // If we found an existing order, try to amend it instead of placing new
+                        // If we found an existing order, check if it needs amendment
                         if let Some(existing_order) = existing_order_opt {
                             use rust_decimal::Decimal;
-                            // Check if price or quantity changed significantly
                             let price_changed =
                                 (existing_order.price - req.price).abs() > Decimal::new(1, 10);
                             let quantity_changed =
                                 (existing_order.amount - req.amount).abs() > Decimal::new(1, 10);
 
                             if price_changed || quantity_changed {
-                                debug!(
-                                    "Amending existing strategy order {}: price {} -> {}, quantity {} -> {}",
-                                    existing_order.order_id.as_str(),
-                                    existing_order.price,
-                                    req.price,
-                                    existing_order.amount,
-                                    req.amount
-                                );
-
-                                match trading_client
-                                    .write()
-                                    .await
-                                    .amend_order(existing_order.order_id.clone(), req.clone())
-                                    .await
-                                {
-                                    Ok(amended_order) => {
-                                        info!(
-                                            "[SUCCESS] Strategy amended order: {} for {}",
-                                            amended_order.order_id.as_str(),
-                                            orderbook_pair
-                                        );
-                                        // Update trading state with amended order
-                                        self.trading_state_manager.add_order(amended_order).await;
-                                        continue; // Skip placing new order
-                                    }
-                                    Err(e) => {
-                                        warn!(
-                                            "Failed to amend strategy order {}: {}, will place new order",
-                                            existing_order.order_id.as_str(),
-                                            e
-                                        );
-                                        // Continue to place new order on amend failure
-                                    }
-                                }
+                                // Collect for batch amendment
+                                to_amend.push((existing_order.order_id, req));
+                                continue;
                             } else {
-                                debug!(
-                                    "Strategy order {} doesn't need amendment (price={}, qty={} unchanged), skipping",
-                                    existing_order.order_id.as_str(),
-                                    existing_order.price,
-                                    existing_order.amount
-                                );
-                                continue; // Skip placing new order
-                            }
-                        }
-
-                        // Check balance before placing order
-                        // Use the orderbook's pair (single source of truth)
-                        match trading_client.read().await.fetch_balance().await {
-                            Ok(balances) => {
-                                match req.side {
-                                    trading_core::types::common::Side::Buy => {
-                                        // Find quote currency balance (USDC for BTC/USDC)
-                                        let quote_balance = balances
-                                            .iter()
-                                            .find(|b| {
-                                                let balance_symbol = b.symbol.as_ref();
-                                                balance_symbol == orderbook_pair.quote.as_str()
-                                                    || balance_symbol
-                                                        .ends_with(orderbook_pair.quote.as_str())
-                                            })
-                                            .map(|b| b.free)
-                                            .unwrap_or(Decimal::ZERO);
-
-                                        let required_balance = req.price * req.amount;
-                                        if quote_balance < required_balance {
-                                            warn!(
-                                                "Insufficient balance: need {required} {quote}, have {available} {quote}. Skipping order.",
-                                                required = required_balance,
-                                                quote = orderbook_pair.quote,
-                                                available = quote_balance
-                                            );
-                                            continue;
-                                        }
-                                        debug!(
-                                            "Balance check passed: {available} {quote} >= {required} {quote}",
-                                            available = quote_balance,
-                                            quote = orderbook_pair.quote,
-                                            required = required_balance
-                                        );
-                                    }
-                                    trading_core::types::common::Side::Sell => {
-                                        // Find base currency balance (BTC for BTC/USDC)
-                                        let base_balance = balances
-                                            .iter()
-                                            .find(|b| {
-                                                let balance_symbol = b.symbol.as_ref();
-                                                balance_symbol == orderbook_pair.base.as_str()
-                                                    || balance_symbol
-                                                        .starts_with(orderbook_pair.base.as_str())
-                                            })
-                                            .map(|b| b.free)
-                                            .unwrap_or(Decimal::ZERO);
-
-                                        if base_balance < req.amount {
-                                            warn!(
-                                                "Insufficient balance: need {required} {base}, have {available} {base}. Skipping order.",
-                                                required = req.amount,
-                                                base = orderbook_pair.base,
-                                                available = base_balance
-                                            );
-                                            continue;
-                                        }
-                                        debug!(
-                                            "Balance check passed: {available} {base} >= {required} {base}",
-                                            available = base_balance,
-                                            base = orderbook_pair.base,
-                                            required = req.amount
-                                        );
-                                    }
-                                }
-                            }
-                            Err(e) => {
-                                warn!(
-                                    "Failed to fetch balance for validation: {error}. Proceeding with order placement.",
-                                    error = e
-                                );
-                            }
-                        }
-
-                        // Get trading rules from Asset Engine (with config fallback)
-                        // Use the orderbook's pair (single source of truth)
-                        use crate::order_validation::{
-                            get_trading_rules, round_price, round_quantity, validate_order,
-                        };
-                        let rules = get_trading_rules(
-                            self.asset_service.as_ref(),
-                            self.exchange.clone(),
-                            &orderbook_pair,
-                            self.config_min_order_size,
-                            self.config_step_size,
-                            self.config_tick_size,
-                            self.config_min_notional,
-                        )
-                        .await;
-
-                        // Round quantity to step size (Asset Engine or config fallback)
-                        let rounded_amount = round_quantity(req.amount, rules.step_size);
-                        if rounded_amount != req.amount {
-                            debug!(
-                                "Order amount {amount} rounded to step size {step}: {rounded}",
-                                amount = req.amount,
-                                step = rules.step_size,
-                                rounded = rounded_amount
-                            );
-                            req.amount = rounded_amount;
-                        }
-
-                        // Enforce minimum order size (Asset Engine or config fallback)
-                        if req.amount < rules.min_order_size {
-                            debug!(
-                                "Order amount {amount} is below minimum {min}. Skipping order.",
-                                amount = req.amount,
-                                min = rules.min_order_size
-                            );
-                            continue;
-                        }
-
-                        // Round price to tick size (Asset Engine or config fallback)
-                        let rounded_price = round_price(req.price, rules.tick_size);
-                        if rounded_price != req.price {
-                            debug!(
-                                "Order price {price} rounded to tick size {tick}: {rounded}",
-                                price = req.price,
-                                tick = rules.tick_size,
-                                rounded = rounded_price
-                            );
-                            req.price = rounded_price;
-                        }
-
-                        // Validate order against trading rules (includes min_notional check)
-                        if let Err(e) = validate_order(req.price, req.amount, &rules) {
-                            warn!(
-                                "[StrategyExecutor] Order validation failed: {error}. Skipping order. (price={price}, amount={amount})",
-                                error = e,
-                                price = req.price,
-                                amount = req.amount
-                            );
-                            continue;
-                        }
-
-                        // Check if trading is enabled
-                        if let Some(ref trading_enabled) = self.trading_enabled {
-                            if !*trading_enabled.read().await {
-                                tracing::warn!(
-                                    "Trading is disabled - blocking order placement from strategy"
-                                );
+                                // No amendment needed
                                 continue;
                             }
                         }
 
-                        // Place the order with retry logic
-                        let retry_config = order_retry_config();
-                        let client_clone = Arc::clone(&trading_client);
-                        // Clone req once for retry closure
-                        let req_for_retry = req.clone();
-
-                        info!(
-                            "[StrategyExecutor] Calling open_order with retry (max_attempts={max_attempts}) for {side} {symbol} @ {price} x {amount}",
-                            max_attempts = retry_config.max_attempts,
-                            side = req_for_retry.side,
-                            symbol = req_for_retry.instrument.symbol(),
-                            price = req_for_retry.price,
-                            amount = req_for_retry.amount
-                        );
-
-                        // Helper to check if error is insufficient balance (shouldn't retry)
-                        let is_insufficient_balance = |e: &EngineError| -> bool {
-                            let error_str = format!("{e}");
-                            error_str.contains("-2010")
-                                || error_str.contains("insufficient balance")
-                        };
-
-                        let result = retry_with_backoff(&retry_config, || {
-                            let client = Arc::clone(&client_clone);
-                            let req = req_for_retry.clone();
-                            Box::pin(async move {
-                                debug!("Retry attempt: calling open_order...");
-                                let result = client.write().await.open_order(req).await;
-                                match &result {
-                                    Ok(_) => info!("[StrategyExecutor] open_order succeeded"),
-                                    Err(e) => {
-                                        if is_insufficient_balance(e) {
-                                            warn!("[StrategyExecutor] open_order failed: insufficient balance (will not retry): {error}", error = e);
-                                        } else {
-                                            error!("[StrategyExecutor] open_order failed: {error}", error = e);
-                                        }
-                                    }
+                        // Validate balance
+                        if let Some(ref balances) = balances {
+                            let balance_ok = match req.side {
+                                trading_core::types::common::Side::Buy => {
+                                    let quote_balance = balances
+                                        .iter()
+                                        .find(|b| {
+                                            let balance_symbol = b.symbol.as_ref();
+                                            balance_symbol == orderbook_pair.quote.as_str()
+                                                || balance_symbol
+                                                    .ends_with(orderbook_pair.quote.as_str())
+                                        })
+                                        .map(|b| b.free)
+                                        .unwrap_or(Decimal::ZERO);
+                                    quote_balance >= req.price * req.amount
                                 }
-                                result
-                            })
-                        })
-                        .await;
-
-                        // If it's an insufficient balance error, don't retry and skip circuit breaker failure
-                        if let Err(e) = &result {
-                            if is_insufficient_balance(e) {
-                                debug!(
-                                    "Order failed due to insufficient balance (skipping retries): {error}. Order request: side={side}, symbol={symbol}, price={price}, amount={amount}",
-                                    error = e,
-                                    side = req_for_retry.side,
-                                    symbol = req_for_retry.instrument.symbol(),
-                                    price = req_for_retry.price,
-                                    amount = req_for_retry.amount
-                                );
-                                continue; // Skip to next message, don't record circuit breaker failure
+                                trading_core::types::common::Side::Sell => {
+                                    let base_balance = balances
+                                        .iter()
+                                        .find(|b| {
+                                            let balance_symbol = b.symbol.as_ref();
+                                            balance_symbol == orderbook_pair.base.as_str()
+                                                || balance_symbol
+                                                    .starts_with(orderbook_pair.base.as_str())
+                                        })
+                                        .map(|b| b.free)
+                                        .unwrap_or(Decimal::ZERO);
+                                    base_balance >= req.amount
+                                }
+                            };
+                            if !balance_ok {
+                                warn!("Insufficient balance, skipping order");
+                                continue;
                             }
                         }
 
-                        match result {
-                            Ok(mut order) => {
-                                // Ensure order has New status
-                                order.status = trading_core::types::common::OrderStatus::New;
-                                order.filled_amount = rust_decimal::Decimal::ZERO;
+                        // Round and validate
+                        req.amount = round_quantity(req.amount, rules.step_size);
+                        if req.amount < rules.min_order_size {
+                            continue;
+                        }
+                        req.price = round_price(req.price, rules.tick_size);
+                        if validate_order(req.price, req.amount, &rules).is_err() {
+                            continue;
+                        }
 
-                                info!(
-                                    "[StrategyExecutor] ✅ Order placed successfully: id={order_id}, symbol={symbol}, side={side}, price={price}, amount={amount}",
-                                    order_id = order.order_id.as_str(),
-                                    symbol = order.instrument.symbol(),
-                                    side = order.side,
-                                    price = order.price,
-                                    amount = order.amount
-                                );
+                        // Collect for batch posting
+                        to_post.push(req);
+                    }
 
-                                // Record success in circuit breaker
-                                circuit_breaker.lock().await.record_success();
+                    // Second pass: Batch process posts and amendments
+                    let trading_client_guard = trading_client.write().await;
 
-                                // Add order to TradingStateManager (single source of truth)
-                                self.trading_state_manager.add_order(order).await;
+                    // Batch process posts
+                    if !to_post.is_empty() {
+                        info!(
+                            "[StrategyExecutor] Batch posting {} order(s) for {}",
+                            to_post.len(),
+                            orderbook_pair
+                        );
+                        let bulk_request = BulkOrderRequest {
+                            requests: to_post.clone(),
+                        };
+                        let bulk_response =
+                            trading_client_guard.bulk_open_orders(bulk_request).await;
+
+                        match bulk_response {
+                            Ok(response) => {
+                                let results = response.results;
+                                for (idx, _req) in to_post.iter().enumerate() {
+                                    if idx >= results.len() {
+                                        warn!("Bulk response missing result for index {}", idx);
+                                        continue;
+                                    }
+                                    let result = &results[idx];
+                                    let order_result = if result.success {
+                                        result.data.clone().ok_or_else(|| {
+                                            EngineError::CustomError(anyhow::anyhow!(
+                                                "Bulk operation succeeded but no data returned"
+                                            ))
+                                        })
+                                    } else {
+                                        let error_msg = result
+                                            .error
+                                            .clone()
+                                            .unwrap_or_else(|| "Unknown error".to_string());
+                                        Err(EngineError::CustomError(anyhow::anyhow!(error_msg)))
+                                    };
+
+                                    match order_result {
+                                        Ok(mut order) => {
+                                            order.status =
+                                                trading_core::types::common::OrderStatus::New;
+                                            order.filled_amount = Decimal::ZERO;
+                                            info!(
+                                                "[StrategyExecutor] ✅ Order placed: {} for {}",
+                                                order.order_id.as_str(),
+                                                orderbook_pair
+                                            );
+                                            circuit_breaker.lock().await.record_success();
+                                            self.trading_state_manager.add_order(order).await;
+                                        }
+                                        Err(e) => {
+                                            warn!("Failed to place order in batch: {}", e);
+                                            circuit_breaker.lock().await.record_failure();
+                                        }
+                                    }
+                                }
                             }
                             Err(e) => {
-                                warn!(
-                                    "Failed to place order after {max_retries} retries: {error}. Order request: side={side}, symbol={symbol}, price={price}, amount={amount}",
-                                    max_retries = retry_config.max_attempts,
-                                    error = e,
-                                    side = req_for_retry.side,
-                                    symbol = req_for_retry.instrument.symbol(),
-                                    price = req_for_retry.price,
-                                    amount = req_for_retry.amount
-                                );
+                                warn!("Bulk open orders failed: {}", e);
+                            }
+                        }
+                    }
 
-                                // Record failure in circuit breaker
-                                circuit_breaker.lock().await.record_failure();
+                    // Batch process amendments
+                    if !to_amend.is_empty() {
+                        info!(
+                            "[StrategyExecutor] Batch amending {} order(s) for {}",
+                            to_amend.len(),
+                            orderbook_pair
+                        );
+                        let amendments: Vec<BulkAmendItem> = to_amend
+                            .iter()
+                            .map(|(order_id, req)| BulkAmendItem {
+                                order_id: order_id.clone(),
+                                new_request: req.clone(),
+                            })
+                            .collect();
+                        let bulk_request = BulkAmendRequest { amendments };
+                        let bulk_response =
+                            trading_client_guard.bulk_amend_orders(bulk_request).await;
+
+                        match bulk_response {
+                            Ok(response) => {
+                                let results = response.results;
+                                for (idx, (order_id, _)) in to_amend.iter().enumerate() {
+                                    if idx >= results.len() {
+                                        warn!("Bulk response missing result for index {}", idx);
+                                        continue;
+                                    }
+                                    let result = &results[idx];
+                                    let amended_order_result = if result.success {
+                                        result.data.clone().ok_or_else(|| {
+                                            EngineError::CustomError(anyhow::anyhow!(
+                                                "Bulk operation succeeded but no data returned"
+                                            ))
+                                        })
+                                    } else {
+                                        let error_msg = result
+                                            .error
+                                            .clone()
+                                            .unwrap_or_else(|| "Unknown error".to_string());
+                                        Err(EngineError::CustomError(anyhow::anyhow!(error_msg)))
+                                    };
+
+                                    match amended_order_result {
+                                        Ok(amended_order) => {
+                                            info!(
+                                                "[StrategyExecutor] ✅ Order amended: {} -> {} for {}",
+                                                order_id.as_str(),
+                                                amended_order.order_id.as_str(),
+                                                orderbook_pair
+                                            );
+                                            self.trading_state_manager
+                                                .add_order(amended_order)
+                                                .await;
+                                        }
+                                        Err(e) => {
+                                            warn!("Failed to amend order in batch: {}", e);
+                                        }
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                warn!("Bulk amend orders failed: {}", e);
                             }
                         }
                     }

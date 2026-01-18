@@ -314,7 +314,8 @@ pub async fn strategy_runner(
         tick_size,
         min_notional,
     )
-    .with_trading_control(trading_control.enabled_flag());
+    .with_trading_control(trading_control.enabled_flag())
+    .with_strategy_manager(strategy_manager_arc.clone());
 
     // Set up execution report handler (StrategyManager handles routing to all strategies)
     let strategy_manager_for_reports = strategy_manager_arc.clone();

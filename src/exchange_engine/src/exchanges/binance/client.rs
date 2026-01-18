@@ -710,6 +710,128 @@ impl TradingClient<OrderRequest, Pair> for BinanceClient {
             )),
         }
     }
+
+    async fn bulk_open_orders(
+        &self,
+        req: trading_core::types::exchange::BulkOrderRequest,
+    ) -> Result<trading_core::types::exchange::BulkOrderResponse, EngineError> {
+        // Binance doesn't support bulk operations, fall back to single operations
+        let mut results = Vec::new();
+        let mut success_count = 0;
+        let mut failure_count = 0;
+
+        for (idx, order_req) in req.requests.into_iter().enumerate() {
+            match self.open_order(order_req).await {
+                Ok(order) => {
+                    results.push(trading_core::types::exchange::BulkOperationResult {
+                        success: true,
+                        data: Some(order),
+                        error: None,
+                        index: idx,
+                    });
+                    success_count += 1;
+                }
+                Err(e) => {
+                    results.push(trading_core::types::exchange::BulkOperationResult {
+                        success: false,
+                        data: None,
+                        error: Some(format!("{}", e)),
+                        index: idx,
+                    });
+                    failure_count += 1;
+                }
+            }
+        }
+
+        Ok(trading_core::types::exchange::BulkOrderResponse {
+            results,
+            success_count,
+            failure_count,
+        })
+    }
+
+    async fn bulk_cancel_orders(
+        &self,
+        req: trading_core::types::exchange::BulkCancelRequest,
+    ) -> Result<trading_core::types::exchange::BulkCancelResponse, EngineError> {
+        // Binance doesn't support bulk operations, fall back to single operations
+        let mut results = Vec::new();
+        let mut cancelled_ids = Vec::new();
+        let mut failed_ids = Vec::new();
+
+        for (idx, order_id) in req.order_ids.into_iter().enumerate() {
+            match self.cancel_order_by_id(order_id.clone()).await {
+                Ok(_) => {
+                    results.push(trading_core::types::exchange::BulkOperationResult {
+                        success: true,
+                        data: Some(order_id.clone()),
+                        error: None,
+                        index: idx,
+                    });
+                    cancelled_ids.push(order_id);
+                }
+                Err(e) => {
+                    let error_msg = format!("{}", e);
+                    results.push(trading_core::types::exchange::BulkOperationResult {
+                        success: false,
+                        data: None,
+                        error: Some(error_msg.clone()),
+                        index: idx,
+                    });
+                    failed_ids.push((order_id, error_msg));
+                }
+            }
+        }
+
+        Ok(trading_core::types::exchange::BulkCancelResponse {
+            results,
+            cancelled_ids,
+            failed_ids,
+        })
+    }
+
+    async fn bulk_amend_orders(
+        &self,
+        req: trading_core::types::exchange::BulkAmendRequest,
+    ) -> Result<trading_core::types::exchange::BulkAmendResponse, EngineError> {
+        // Binance doesn't support bulk operations, fall back to single operations
+        let mut results = Vec::new();
+        let mut amended_orders = Vec::new();
+        let mut failed_amendments = Vec::new();
+
+        for (idx, amendment) in req.amendments.into_iter().enumerate() {
+            match self
+                .amend_order(amendment.order_id.clone(), amendment.new_request)
+                .await
+            {
+                Ok(order) => {
+                    results.push(trading_core::types::exchange::BulkOperationResult {
+                        success: true,
+                        data: Some(order.clone()),
+                        error: None,
+                        index: idx,
+                    });
+                    amended_orders.push(order);
+                }
+                Err(e) => {
+                    let error_msg = format!("{}", e);
+                    results.push(trading_core::types::exchange::BulkOperationResult {
+                        success: false,
+                        data: None,
+                        error: Some(error_msg.clone()),
+                        index: idx,
+                    });
+                    failed_amendments.push((amendment.order_id, error_msg));
+                }
+            }
+        }
+
+        Ok(trading_core::types::exchange::BulkAmendResponse {
+            results,
+            amended_orders,
+            failed_amendments,
+        })
+    }
 }
 
 #[async_trait]

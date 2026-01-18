@@ -235,6 +235,63 @@ impl StrategyManager {
         Ok(requests)
     }
 
+    /// Get cancellation requests from all strategies for an orderbook update
+    /// Returns a vector of order IDs that strategies want to cancel
+    pub async fn on_orderbook_cancels(
+        &self,
+        orderbook: &Orderbook,
+    ) -> Result<Vec<trading_core::types::common::OrderId>, EngineError> {
+        let mut cancel_ids = Vec::new();
+
+        // Get only strategies that match this orderbook's symbol
+        let matching_indices = self
+            .pair_to_indices
+            .get(&orderbook.pair)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[]);
+
+        if matching_indices.is_empty() {
+            return Ok(cancel_ids);
+        }
+
+        // Get enabled states for matching strategies only
+        let enabled_map = self.strategy_enabled.read().await;
+        let enabled_states: Vec<(usize, bool)> = matching_indices
+            .iter()
+            .map(|&idx| {
+                let strategy_id = &self.strategy_ids[idx];
+                let enabled = enabled_map.get(strategy_id).copied().unwrap_or(false);
+                (idx, enabled)
+            })
+            .collect();
+        drop(enabled_map);
+
+        // Collect cancellation requests from enabled strategies
+        for (idx, enabled) in enabled_states {
+            if !enabled {
+                continue; // Skip disabled strategies
+            }
+
+            let strategy = &self.strategies[idx];
+            let mut strat = strategy.write().await;
+            let state = strat.get_state().clone();
+            match strat.on_orderbook_cancels(orderbook, &state).await {
+                Ok(ids) => {
+                    cancel_ids.extend(ids);
+                }
+                Err(e) => {
+                    error!(
+                        "[StrategyManager] Strategy {} error in on_orderbook_cancels: {}",
+                        self.strategy_ids[idx], e
+                    );
+                    // Continue with other strategies
+                }
+            }
+        }
+
+        Ok(cancel_ids)
+    }
+
     pub async fn on_execution_report(&self, order: &Order) -> Result<(), EngineError> {
         for strategy in &self.strategies {
             let mut strat_guard = strategy.write().await;

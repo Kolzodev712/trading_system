@@ -155,6 +155,18 @@ pub trait Strategy: Send + Sync {
         state: &TradingState,
     ) -> Result<Option<OrderRequest>, EngineError>;
 
+    /// Called when a new orderbook update arrives - returns order IDs to cancel
+    /// This allows strategies to cancel orders as part of their workflow
+    /// Returns a vector of order IDs that should be cancelled
+    /// Default implementation returns empty vector (no cancellations)
+    async fn on_orderbook_cancels(
+        &mut self,
+        _orderbook: &Orderbook,
+        _state: &TradingState,
+    ) -> Result<Vec<OrderId>, EngineError> {
+        Ok(Vec::new()) // Default: no cancellations
+    }
+
     /// Called when an execution report is received
     /// This allows the strategy to update its internal state
     async fn on_execution_report(&mut self, order: &Order) -> Result<(), EngineError>;

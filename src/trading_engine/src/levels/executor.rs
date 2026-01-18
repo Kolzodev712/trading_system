@@ -9,8 +9,9 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use trading_core::error::EngineError;
 use trading_core::traits::TradingClient;
-use trading_core::types::common::{Exchange, Instrument, InstrumentType};
-use trading_core::types::exchange::{Order, OrderRequest};
+use trading_core::types::common::{Exchange, InstrumentType};
+use trading_core::types::exchange::BulkCancelRequest;
+use trading_core::types::exchange::OrderRequest;
 use trading_core::types::market_data::Orderbook;
 
 /// Executes levels by resolving indicator values and placing orders
@@ -67,6 +68,20 @@ impl LevelExecutor {
     pub fn with_trading_control(mut self, trading_enabled: Arc<tokio::sync::RwLock<bool>>) -> Self {
         self.trading_enabled = Some(trading_enabled);
         self
+    }
+
+    /// Get instrument type
+    pub fn instrument_type(&self) -> &InstrumentType {
+        &self.instrument_type
+    }
+
+    /// Get trading enabled state (for batch operations)
+    pub async fn is_trading_enabled(&self) -> bool {
+        if let Some(ref trading_enabled) = self.trading_enabled {
+            *trading_enabled.read().await
+        } else {
+            true // Default to enabled if no control set
+        }
     }
 
     /// Resolve a level to an OrderRequest
@@ -152,121 +167,9 @@ impl LevelExecutor {
         })
     }
 
-    /// Post a level (place order)
-    pub async fn post_level(
-        &self,
-        level: &Level,
-        indicators: &HashMap<SmolStr, IndicatorValue>,
-        orderbook: Option<&Orderbook>,
-        balances: &[trading_core::types::exchange::Balance],
-    ) -> Result<Order, EngineError> {
-        // Check if trading is enabled
-        if let Some(ref trading_enabled) = self.trading_enabled {
-            if !*trading_enabled.read().await {
-                tracing::warn!(
-                    "Trading is disabled - blocking order placement for level {}",
-                    level.config.id
-                );
-                return Err(EngineError::CustomError(anyhow::anyhow!(
-                    "Trading is disabled"
-                )));
-            }
-        }
-
-        let resolved = self
-            .resolve_level(level, indicators, orderbook, balances)
-            .await?;
-
-        // Create order request
-        let order_request = OrderRequest {
-            instrument: Instrument::new(self.instrument_type.clone(), level.pair.clone()),
-            side: level.config.side.clone(),
-            order_type: resolved.resolved_order_type,
-            price: resolved.resolved_price,
-            amount: resolved.resolved_quantity,
-            timestamp: Some(trading_core::utils::current_timestamp()),
-            exchange_params: std::collections::HashMap::new(),
-        };
-
-        // Place order
-        let client = self.trading_client.write().await;
-        let order = client.open_order(order_request).await?;
-        Ok(order)
-    }
-
-    /// Amend an existing order for a level if price/quantity changed
-    /// Returns true if order was amended, false if no amendment needed
-    pub async fn amend_level_order_if_needed(
-        &self,
-        level: &Level,
-        resolved: &ResolvedLevel,
-        existing_order: &Order,
-    ) -> Result<Option<Order>, EngineError> {
-        use rust_decimal::Decimal;
-
-        // Check if price or quantity changed significantly (use small epsilon for comparison)
-        let price_changed =
-            (existing_order.price - resolved.resolved_price).abs() > Decimal::new(1, 10); // 0.0000000001 difference threshold
-        let quantity_changed =
-            (existing_order.amount - resolved.resolved_quantity).abs() > Decimal::new(1, 10);
-
-        // Only amend if price or quantity changed (and side/order_type haven't changed)
-        if !price_changed && !quantity_changed {
-            tracing::debug!(
-                "Level {} order {} doesn't need amendment (price={}, qty={} unchanged)",
-                level.config.id,
-                existing_order.order_id.as_str(),
-                existing_order.price,
-                existing_order.amount
-            );
-            return Ok(None);
-        }
-
-        // Check if side changed - if so, cannot amend, must cancel+place
-        if existing_order.side != resolved.level.config.side {
-            tracing::debug!(
-                "Level {} order {} side changed, cannot amend",
-                level.config.id,
-                existing_order.order_id.as_str()
-            );
-            return Ok(None);
-        }
-
-        tracing::info!(
-            "Amending level {} order {}: price {} -> {}, quantity {} -> {}",
-            level.config.id,
-            existing_order.order_id.as_str(),
-            existing_order.price,
-            resolved.resolved_price,
-            existing_order.amount,
-            resolved.resolved_quantity
-        );
-
-        // Create order request with new values
-        let order_request = OrderRequest {
-            instrument: Instrument::new(self.instrument_type.clone(), resolved.level.pair.clone()),
-            side: resolved.level.config.side.clone(),
-            order_type: resolved.resolved_order_type.clone(),
-            price: resolved.resolved_price,
-            amount: resolved.resolved_quantity,
-            timestamp: Some(trading_core::utils::current_timestamp()),
-            exchange_params: std::collections::HashMap::new(),
-        };
-
-        // Amend order
-        let client = self.trading_client.write().await;
-        let amended_order = client
-            .amend_order(existing_order.order_id.clone(), order_request)
-            .await?;
-
-        Ok(Some(amended_order))
-    }
-
     /// Cancel all orders for a level
     /// Cancels individual orders for this level only (not all orders for the pair)
     pub async fn cancel_level_orders(&self, level: &Level) -> Result<(), EngineError> {
-        let client = self.trading_client.write().await;
-
         if level.active_orders.is_empty() {
             tracing::debug!("Level {} has no active orders to cancel", level.config.id);
             return Ok(());
@@ -280,34 +183,35 @@ impl LevelExecutor {
             level.pair.quote
         );
 
+        // Use bulk cancel
+        let order_ids: Vec<_> = level.active_orders.to_vec();
+        let bulk_request = BulkCancelRequest {
+            order_ids: order_ids.clone(),
+            pair: None,
+        };
+        let trading_client = self.trading_client.write().await;
+        let bulk_response = trading_client.bulk_cancel_orders(bulk_request).await;
+
         let mut cancelled_count = 0;
         let mut failed_count = 0;
 
-        // Cancel individual orders for this level only
-        for order_id in &level.active_orders {
-            tracing::info!(
-                "Cancelling order {} for level {}",
-                order_id.as_str(),
-                level.config.id
-            );
-            match client.cancel_order_by_id(order_id.clone()).await {
-                Ok(_) => {
-                    cancelled_count += 1;
-                    tracing::info!(
-                        "Successfully cancelled order {} for level {}",
-                        order_id.as_str(),
-                        level.config.id
-                    );
+        match bulk_response {
+            Ok(response) => {
+                for result in response.results {
+                    if result.success {
+                        cancelled_count += 1;
+                    } else {
+                        failed_count += 1;
+                        tracing::warn!(
+                            "Failed to cancel order: {}",
+                            result.error.unwrap_or_else(|| "Unknown error".to_string())
+                        );
+                    }
                 }
-                Err(e) => {
-                    failed_count += 1;
-                    tracing::warn!(
-                        "Failed to cancel order {} for level {}: {}",
-                        order_id.as_str(),
-                        level.config.id,
-                        e
-                    );
-                }
+            }
+            Err(e) => {
+                failed_count = order_ids.len();
+                tracing::error!("Bulk cancel orders failed: {}", e);
             }
         }
 

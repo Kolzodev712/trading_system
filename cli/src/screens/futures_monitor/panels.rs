@@ -1,4 +1,11 @@
-//! Panel rendering functions for Futures Monitor
+//! Futures-specific panel rendering functions
+//!
+//! This module contains panels that are specific to futures trading:
+//! - Positions panel (futures positions with PnL, leverage, etc.)
+//! - Margin Info panel (collateral, margin used, total PnL)
+//!
+//! For shared panels (orders, orderbook, indicators, trades, levels, strategies),
+//! see `crate::screens::shared::panels`.
 use crate::app::App;
 use crate::error::CliError;
 use ratatui::{
@@ -142,21 +149,4 @@ pub fn render_margin_info(frame: &mut Frame, area: Rect, app: &App) -> Result<()
         Table::new(rows, widths).block(Block::default().borders(Borders::ALL).title("Margin Info"));
     frame.render_widget(table, area);
     Ok(())
-}
-
-// Re-export shared panels from shared module
-pub fn render_orders(frame: &mut Frame, area: Rect, app: &App) -> Result<(), CliError> {
-    crate::screens::shared::panels::render_orders(frame, area, app)
-}
-
-pub fn render_orderbook(frame: &mut Frame, area: Rect, app: &App) -> Result<(), CliError> {
-    crate::screens::shared::panels::render_orderbook(frame, area, app)
-}
-
-pub fn render_indicators(frame: &mut Frame, area: Rect, app: &App) -> Result<(), CliError> {
-    crate::screens::shared::panels::render_indicators(frame, area, app)
-}
-
-pub fn render_trades(frame: &mut Frame, area: Rect, app: &App) -> Result<(), CliError> {
-    crate::screens::shared::panels::render_trades(frame, area, app)
 }

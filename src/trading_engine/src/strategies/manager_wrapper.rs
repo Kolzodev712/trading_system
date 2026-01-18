@@ -45,6 +45,24 @@ impl StrategyManagerWrapper {
     pub fn get_manager(&self) -> Arc<RwLock<StrategyManager>> {
         Arc::clone(&self.strategy_manager)
     }
+
+    /// Get all order requests from StrategyManager (for batching)
+    pub async fn get_all_requests(
+        &self,
+        orderbook: &Orderbook,
+    ) -> Result<Vec<OrderRequest>, EngineError> {
+        let manager = self.strategy_manager.read().await;
+        manager.on_orderbook(orderbook).await
+    }
+
+    /// Get all cancellation requests from StrategyManager (for batching)
+    pub async fn get_all_cancels(
+        &self,
+        orderbook: &Orderbook,
+    ) -> Result<Vec<trading_core::types::common::OrderId>, EngineError> {
+        let manager = self.strategy_manager.read().await;
+        manager.on_orderbook_cancels(orderbook).await
+    }
 }
 
 #[async_trait]
@@ -84,6 +102,16 @@ impl Strategy for StrategyManagerWrapper {
         // Other requests will be processed on subsequent orderbook updates
         // This is acceptable as orderbook updates are frequent
         Ok(requests.into_iter().next())
+    }
+
+    async fn on_orderbook_cancels(
+        &mut self,
+        orderbook: &Orderbook,
+        _state: &TradingState,
+    ) -> Result<Vec<trading_core::types::common::OrderId>, EngineError> {
+        // Delegate to StrategyManager
+        let manager = self.strategy_manager.read().await;
+        manager.on_orderbook_cancels(orderbook).await
     }
 
     async fn on_execution_report(&mut self, order: &Order) -> Result<(), EngineError> {

@@ -1518,6 +1518,104 @@ pub trait EventTransport: Send + Sync {
 
 ---
 
+## Phase 3.6: Transport Health & Metrics
+
+### Transport Health Trait
+
+**Location**: `src/gateway/src/transports/health.rs` (new file)
+
+**Purpose**: Monitor transport health and collect metrics.
+
+```rust
+pub trait TransportHealth: Send + Sync {
+    /// Check if transport is healthy
+    fn is_healthy(&self) -> bool;
+    
+    /// Get transport metrics
+    fn metrics(&self) -> TransportMetrics;
+}
+
+#[derive(Debug, Clone)]
+pub struct TransportMetrics {
+    pub queue_depth: usize,
+    pub queue_capacity: usize,
+    pub messages_sent: u64,
+    pub messages_dropped: u64,
+    pub avg_latency_us: u64,
+    pub connection_status: ConnectionStatus,
+}
+
+#[derive(Debug, Clone)]
+pub enum ConnectionStatus {
+    Connected,
+    Disconnected,
+    Reconnecting { attempts: u32 },
+}
+```
+
+### Backpressure Policy
+
+**Location**: `src/gateway/src/backpressure.rs` (new file)
+
+**Purpose**: Configurable backpressure handling when queues are full.
+
+```rust
+#[derive(Debug, Clone)]
+pub enum BackpressurePolicy {
+    /// Drop new messages when queue is full
+    Drop,
+    
+    /// Sample messages (send every Nth message)
+    Sample { every_nth: u32 },
+    
+    /// Block until queue has space (use with caution)
+    Block { timeout_ms: u64 },
+    
+    /// Apply priority (drop low-priority first)
+    Priority { priorities: Vec<EventPriority> },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub enum EventPriority {
+    Critical = 0,  // Errors, risk events
+    High = 1,      // Orders, fills
+    Medium = 2,    // Positions, balances
+    Low = 3,       // Market data (can be sampled)
+}
+```
+
+### Connection Management
+
+**Location**: `src/gateway/src/transports/connection.rs` (new file)
+
+**Purpose**: Reconnection logic and connection pooling.
+
+```rust
+pub trait TransportConnection: Send + Sync {
+    /// Connect to transport
+    async fn connect(&mut self) -> Result<(), TransportError>;
+    
+    /// Disconnect from transport
+    async fn disconnect(&mut self) -> Result<(), TransportError>;
+    
+    /// Check connection status
+    fn is_connected(&self) -> bool;
+    
+    /// Get reconnection config
+    fn reconnection_config(&self) -> ReconnectionConfig;
+}
+
+#[derive(Debug, Clone)]
+pub struct ReconnectionConfig {
+    pub max_retries: u32,
+    pub initial_backoff_ms: u64,
+    pub max_backoff_ms: u64,
+    pub backoff_multiplier: f64,
+}
+```
+
+---
+
 ## Phase 4: Transport Implementations
 
 ### 4.1 gRPC Transport
@@ -1835,10 +1933,26 @@ This ensures zero downtime migration.
 - [ ] Add JSON derived stream for tooling (optional, separate from canonical)
 - [ ] Test all transports
 
-### Phase 6: Integration & Testing (Week 7-8)
+### Phase 6: Transport Health & Observability (Week 7-8)
+- [ ] Implement `TransportHealth` trait
+- [ ] Add metrics collection (queue depths, latency, drops)
+- [ ] Add health check endpoints
+- [ ] Add Prometheus metrics export
+- [ ] Add connection status monitoring
+
+## Phase 7: Backpressure & Connection Management (Week 8-9)
+- [ ] Implement backpressure policies (Drop, Sample, Priority)
+- [ ] Add connection management to all transports
+- [ ] Add reconnection logic with exponential backoff
+- [ ] Add circuit breakers for transports
+- [ ] Add connection pooling where applicable
+
+## Phase 8: Integration & Testing (Week 9-10)
 - [ ] End-to-end testing
 - [ ] Performance testing (ensure <1μs internal latency maintained)
 - [ ] Backward compatibility testing
+- [ ] Load testing with backpressure scenarios
+- [ ] Connection failure/recovery testing
 - [ ] Documentation
 - [ ] Migration guide
 
@@ -1859,6 +1973,9 @@ This ensures zero downtime migration.
 - [ ] Multiple consumers can connect simultaneously
 - [ ] Authentication and validation working
 - [ ] DTP enables versioning, observability, and event sourcing
+- [ ] Transport health monitoring working
+- [ ] Backpressure policies configurable
+- [ ] Connection management (reconnection, pooling) working
 - [ ] Documentation complete
 - [ ] Ready for additional UIs/consumers
 

@@ -118,8 +118,10 @@ pub fn render_margin_info(frame: &mut Frame, area: Rect, app: &App) -> Result<()
                 Cell::from("Total PnL:"),
                 Cell::from(pnl_str.clone()).style(if total_pnl > 0.0 {
                     Style::default().fg(Color::Green)
-                } else {
+                } else if total_pnl < 0.0 {
                     Style::default().fg(Color::Red)
+                } else {
+                    Style::default().fg(Color::White)
                 }),
             ]),
             Row::new(vec![

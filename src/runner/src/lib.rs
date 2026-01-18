@@ -494,7 +494,7 @@ pub async fn level_runner(
             services.trading_client.clone(),
             services.asset_service.clone(),
             bot_config.exchange_engine.exchange.clone(),
-            instrument_type,
+            instrument_type.clone(),
             config_min_order_size,
             config_step_size,
             config_tick_size,
@@ -514,7 +514,10 @@ pub async fn level_runner(
     let grpc_addr: std::net::SocketAddr = "[::]:50051"
         .parse()
         .map_err(|e| format!("Failed to parse gRPC address: {}", e))?;
-    let grpc_server = TradingGrpcServer::new(
+
+    // Create gRPC service with instrument_type (same as strategy_runner)
+    use crate::grpc::service::TradingCliServiceImpl;
+    let grpc_service = TradingCliServiceImpl::new(
         level_manager.clone(),
         services.trading_state_manager.clone(),
         services.trading_client.clone(),
@@ -522,8 +525,11 @@ pub async fn level_runner(
         services.market_data_state_manager.clone(),
         services.indicator_service.clone(),
         services.indicator_calculator.clone(),
-        trading_control.clone(), // Pass the same TradingControl instance
-    );
+        trading_control.clone(),
+    )
+    .with_instrument_type(instrument_type.clone());
+
+    let grpc_server = TradingGrpcServer::from_service(grpc_service);
     let grpc_handle = grpc_server.start(grpc_addr).await?;
     info!("gRPC server started on {}", grpc_addr);
 

@@ -47,14 +47,22 @@ impl FuturesMonitorScreen {
             ])
             .split(chunks[1]);
 
-        // Left column: split vertically (positions, orders)
+        // Left column: split vertically
+        // In strategies mode: (strategies, orders)
+        // In levels mode: (positions, orders)
         let left_col = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
             .split(main_chunks[0]);
 
-        // Positions (top-left) - most important for futures
-        panels::render_positions(frame, left_col[0], app)?;
+        // Top-left: Show strategies if in strategies mode, otherwise show positions
+        if app.has_strategy() {
+            // Strategies (top-left) - for futures strategies mode
+            crate::screens::shared::panels::render_strategy(frame, left_col[0], app)?;
+        } else {
+            // Positions (top-left) - most important for futures levels mode
+            panels::render_positions(frame, left_col[0], app)?;
+        }
 
         // Orders (bottom-left)
         panels::render_orders(frame, left_col[1], app)?;
@@ -101,6 +109,24 @@ impl FuturesMonitorScreen {
             ),
             Span::from(" Select  │  "),
             Span::styled(
+                "T",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::from(if app.has_strategy() {
+                " Toggle Trading  │  "
+            } else {
+                " Toggle  │  "
+            }),
+            Span::styled(
+                "L",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::from(" Details  │  "),
+            Span::styled(
                 "←/→",
                 Style::default()
                     .fg(Color::Yellow)
@@ -112,6 +138,11 @@ impl FuturesMonitorScreen {
             .alignment(Alignment::Center)
             .block(Block::default().borders(Borders::ALL));
         frame.render_widget(footer, chunks[3]);
+
+        // Strategy details popup (if shown) - render LAST so it overlays everything
+        if app.show_strategy_details() {
+            crate::screens::shared::popups::render_strategy_details_popup(frame, app)?;
+        }
 
         Ok(())
     }

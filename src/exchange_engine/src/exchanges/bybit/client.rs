@@ -236,7 +236,45 @@ impl TradingClient<OrderRequest> for BybitClient {
     }
 
     async fn cancel_order_by_id(&self, order_id: OrderId) -> Result<(), EngineError> {
-        let category = self.get_category_from_instrument_type(self.config.instrument_type.clone());
+        // Bybit API requires symbol for order cancellation
+        // Get order from state manager (authoritative source) to get symbol
+        let (symbol, category) = {
+            if let Some(state_mgr) = self.state_manager.lock().await.as_ref() {
+                if let Some(order) = state_mgr.get_order_by_id(&order_id).await {
+                    // Extract symbol and determine category from order's instrument type
+                    let symbol = order.instrument.symbol();
+                    let category = self.get_category_from_instrument_type(
+                        order.instrument.instrument_type().clone(),
+                    );
+                    tracing::info!(
+                        "Found order {} in state manager: symbol={}, category={:?}",
+                        order_id.as_str(),
+                        symbol.as_str(),
+                        category
+                    );
+                    (symbol, category)
+                } else {
+                    // Order not in state - cannot determine symbol, return error
+                    tracing::error!("Order {} not found in state manager. Cannot determine symbol for cancellation.", order_id.as_str());
+                    return Err(EngineError::new_custom_error(
+                        format!(
+                            "Order {} not found in state manager. Cannot determine symbol for cancellation.",
+                            order_id.as_str()
+                        )
+                        .into(),
+                    ));
+                }
+            } else {
+                // State manager not available - cannot determine symbol, return error
+                tracing::error!(
+                    "State manager not available. Cannot determine symbol for order cancellation."
+                );
+                return Err(EngineError::new_custom_error(
+                    "State manager not available. Cannot determine symbol for order cancellation."
+                        .into(),
+                ));
+            }
+        };
 
         let request = BybitRpcCancelOrderRequest {
             req_id: Some(trading_core::utils::generate_custom_uuid().into()),
@@ -249,7 +287,7 @@ impl TradingClient<OrderRequest> for BybitClient {
             args: vec![
                 super::websocket::types::rpc::cancel_by_id::BybitRpcCancelOrderArgs {
                     category: category.clone(),
-                    symbol: "".into(),
+                    symbol: symbol.as_str().into(),
                     order_id: Some(order_id.as_str().into()),
                     order_link_id: None,
                 },

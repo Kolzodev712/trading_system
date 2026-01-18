@@ -182,7 +182,29 @@ impl BybitRpcClient {
 
         let operation = request.operation();
         let endpoint = operation.endpoint();
-        self.rate_limiter.wait_if_needed_endpoint(endpoint).await;
+
+        // For batch operations, determine the count and use batch rate limiting
+        let batch_count = match &request {
+            RpcRequest::BatchCreateOrder(req) => {
+                req.args.iter().map(|arg| arg.request.len()).sum::<usize>() as u64
+            }
+            RpcRequest::BatchAmendOrder(req) => {
+                req.args.iter().map(|arg| arg.request.len()).sum::<usize>() as u64
+            }
+            RpcRequest::BatchCancelOrder(req) => {
+                req.args.iter().map(|arg| arg.request.len()).sum::<usize>() as u64
+            }
+            _ => 0,
+        };
+
+        // Use batch rate limiting for batch operations, regular for single operations
+        if batch_count > 0 {
+            self.rate_limiter
+                .wait_if_needed_batch_endpoint(endpoint, batch_count)
+                .await;
+        } else {
+            self.rate_limiter.wait_if_needed_endpoint(endpoint).await;
+        }
 
         let header = self.build_rpc_header();
         let req_id = generate_custom_uuid();
@@ -348,7 +370,14 @@ impl BybitRpcClient {
             }
         }
 
-        self.rate_limiter.record_endpoint(endpoint).await;
+        // Record batch operations with count, single operations with count 1
+        if batch_count > 0 {
+            self.rate_limiter
+                .record_batch_endpoint(endpoint, batch_count)
+                .await;
+        } else {
+            self.rate_limiter.record_endpoint(endpoint).await;
+        }
 
         let op = BybitRpcOperation::try_from(op_str).map_err(|_| {
             EngineError::CustomError(anyhow::anyhow!("Unknown RPC operation: {}", op_str))

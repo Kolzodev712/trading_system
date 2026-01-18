@@ -89,6 +89,11 @@ impl BybitRateLimiter {
         limiter.wait_if_needed(1).await;
     }
 
+    pub async fn wait_if_needed_batch_endpoint(&self, endpoint: &str, count: u64) {
+        let limiter = self.get_or_create_endpoint_limiter(endpoint).await;
+        limiter.wait_if_needed(count).await;
+    }
+
     pub async fn record_endpoint(&self, endpoint: &str) {
         let limiter = self.get_or_create_endpoint_limiter(endpoint).await;
         limiter.record(1).await;

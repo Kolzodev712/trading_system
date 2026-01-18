@@ -116,6 +116,7 @@ impl ExchangeDriver for BybitDriver {
         // Start event processing task
         let state_manager_events = self.state_manager.clone();
         let connection_state_events = self.connection_state.clone();
+        let connection_ready_tx_events = self.connection_ready_tx.clone();
         let event_handle = tokio::spawn(async move {
             let mut connected = false;
             while let Some(event) = event_rx.recv().await {
@@ -148,20 +149,22 @@ impl ExchangeDriver for BybitDriver {
                     }
                 }
 
-                // Mark as connected after first event
+                // Mark as connected after first event (verifies connection is actually working)
                 if !connected {
                     connected = true;
                     let mut guard = connection_state_events.write().await;
                     *guard = ConnectionState::Connected;
                     drop(guard);
+
+                    // Signal connection ready
+                    if let Some(tx) = connection_ready_tx_events.write().await.take() {
+                        let _ = tx.send(());
+                    }
+
+                    info!("Bybit driver: Connection verified (received first event)");
                 }
             }
         });
-
-        // Update connection state to Connected after a short delay
-        // (streaming client will authenticate and start sending events)
-        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-        self.set_connection_state(ConnectionState::Connected).await;
 
         info!("Bybit driver started, waiting for shutdown signal");
 

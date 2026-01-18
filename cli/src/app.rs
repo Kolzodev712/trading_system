@@ -326,6 +326,27 @@ impl App {
                 update = stream_rx.recv() => {
                     match update {
                         Some(data) => {
+                            // Check if instrument_type changed and switch screens if needed
+                            let old_instrument_type = self.monitoring_data
+                                .as_ref()
+                                .map(|md| md.instrument_type.as_str());
+                            let new_instrument_type = data.instrument_type.as_str();
+
+                            // Switch screen if instrument_type changed (e.g., from Spot to Futures)
+                            if old_instrument_type != Some(new_instrument_type) {
+                                self.current_screen = if new_instrument_type == "Futures" {
+                                    Screen::FuturesMonitor
+                                } else {
+                                    Screen::SpotMonitor
+                                };
+                                tracing::debug!(
+                                    "[CLI] Instrument type changed from {:?} to {}, switching to {:?}",
+                                    old_instrument_type,
+                                    new_instrument_type,
+                                    self.current_screen
+                                );
+                            }
+
                             self.monitoring_data = Some(data.clone());
                             // Extract strategies from monitoring data
                             self.strategies = if !data.strategies.is_empty() {
@@ -564,6 +585,16 @@ impl App {
     }
 
     pub async fn go_to_trading_monitor(&mut self) -> Result<(), CliError> {
+        // Always refresh monitoring data to get accurate instrument_type
+        // This ensures we have the correct instrument_type when entering the monitor
+        if let Err(e) = self.refresh_monitoring_data().await {
+            tracing::warn!(
+                "[CLI] Failed to fetch monitoring data for screen selection: {:?}",
+                e
+            );
+            // If refresh fails, we'll check again when streaming data arrives
+        }
+
         // Determine which monitor screen to show based on instrument_type
         let instrument_type = self
             .monitoring_data
@@ -578,8 +609,11 @@ impl App {
         };
         // Reset selection when entering
         self.selected_level_index = None;
-        // Fetch levels when entering trading monitor
-        self.refresh_levels().await?;
+        self.selected_strategy_index = None;
+        // Fetch levels when entering trading monitor (only needed for levels mode)
+        if !self.has_strategy() {
+            self.refresh_levels().await?;
+        }
         // Don't block - just switch screen, data will come from streaming
         // The streaming will start automatically in the event loop
         Ok(())

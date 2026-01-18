@@ -11,7 +11,10 @@ use trading_core::traits::TradingClient;
 use trading_core::types::common::{
     Instrument, InstrumentType, OrderId, OrderStatus, Pair, Side, Symbol,
 };
-use trading_core::types::exchange::{Balance, Order, OrderRequest, Position, Trade};
+use trading_core::types::exchange::{
+    Balance, BulkAmendRequest, BulkAmendResponse, BulkCancelRequest, BulkCancelResponse,
+    BulkOperationResult, BulkOrderRequest, BulkOrderResponse, Order, OrderRequest, Position, Trade,
+};
 use trading_engine::levels::config::{
     LevelRiskConfig, LifecycleConfig, OrderTypeConfig, PriceConfig, QuantityConfig,
 };
@@ -464,6 +467,125 @@ impl TradingClient<OrderRequest> for MockTradingClient {
             .filter(|o| o.instrument.instrument_type() == InstrumentType::Futures)
             .cloned()
             .collect())
+    }
+
+    async fn bulk_open_orders(
+        &self,
+        req: BulkOrderRequest,
+    ) -> Result<BulkOrderResponse, EngineError> {
+        let mut results = Vec::new();
+        let mut success_count = 0;
+        let mut failure_count = 0;
+
+        for (idx, order_req) in req.requests.into_iter().enumerate() {
+            match self.open_order(order_req).await {
+                Ok(order) => {
+                    results.push(BulkOperationResult {
+                        success: true,
+                        data: Some(order),
+                        error: None,
+                        index: idx,
+                    });
+                    success_count += 1;
+                }
+                Err(e) => {
+                    results.push(BulkOperationResult {
+                        success: false,
+                        data: None,
+                        error: Some(format!("{}", e)),
+                        index: idx,
+                    });
+                    failure_count += 1;
+                }
+            }
+        }
+
+        Ok(BulkOrderResponse {
+            results,
+            success_count,
+            failure_count,
+        })
+    }
+
+    async fn bulk_cancel_orders(
+        &self,
+        req: BulkCancelRequest,
+    ) -> Result<BulkCancelResponse, EngineError> {
+        let mut results = Vec::new();
+        let mut cancelled_ids = Vec::new();
+        let mut failed_ids = Vec::new();
+
+        for (idx, order_id) in req.order_ids.into_iter().enumerate() {
+            match self.cancel_order_by_id(order_id.clone()).await {
+                Ok(_) => {
+                    results.push(BulkOperationResult {
+                        success: true,
+                        data: Some(order_id.clone()),
+                        error: None,
+                        index: idx,
+                    });
+                    cancelled_ids.push(order_id);
+                }
+                Err(e) => {
+                    let error_msg = format!("{}", e);
+                    results.push(BulkOperationResult {
+                        success: false,
+                        data: None,
+                        error: Some(error_msg.clone()),
+                        index: idx,
+                    });
+                    failed_ids.push((order_id, error_msg));
+                }
+            }
+        }
+
+        Ok(BulkCancelResponse {
+            results,
+            cancelled_ids,
+            failed_ids,
+        })
+    }
+
+    async fn bulk_amend_orders(
+        &self,
+        req: BulkAmendRequest,
+    ) -> Result<BulkAmendResponse, EngineError> {
+        let mut results = Vec::new();
+        let mut amended_orders = Vec::new();
+        let mut failed_amendments = Vec::new();
+
+        for (idx, amendment) in req.amendments.into_iter().enumerate() {
+            match self
+                .amend_order(amendment.order_id.clone(), amendment.new_request)
+                .await
+            {
+                Ok(order) => {
+                    results.push(BulkOperationResult {
+                        success: true,
+                        data: Some(order.clone()),
+                        error: None,
+                        index: idx,
+                    });
+                    amended_orders.push(order);
+                }
+                Err(e) => {
+                    let error_msg = format!("{}", e);
+                    results.push(BulkOperationResult {
+                        success: false,
+                        data: None,
+                        error: Some(error_msg.clone()),
+                        index: idx,
+                    });
+                    failed_amendments.push((amendment.order_id, error_msg));
+                }
+            }
+        }
+
+        Ok(BulkAmendResponse {
+            results,
+            amended_orders,
+            failed_amendments,
+        })
     }
 }
 

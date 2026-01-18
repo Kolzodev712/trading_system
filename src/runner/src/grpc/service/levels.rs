@@ -434,7 +434,7 @@ impl LevelService {
                     }
 
                     // If there are open orders on exchange but not in active_orders, use cancel_all_orders as fallback
-                    // This handles the case where post_level timed out but the order was placed
+                    // This handles the case where an order was placed but not tracked in active_orders
                     // NOTE: This will cancel ALL orders for the pair, not just this level's orders
                     // This is a limitation - ideally we'd track which orders belong to which level
                     if orders_on_exchange > 0 && orders_in_level == 0 {

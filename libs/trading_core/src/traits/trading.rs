@@ -71,42 +71,74 @@ where
         new_request: OrderRequestType,
     ) -> Result<Order, EngineError>;
 
-    // ===== BULK OPERATION METHODS (Optional) =====
-    // All have default implementations that return "not supported"
-    // Exchanges with native bulk support (like Bybit) should implement these methods
+    // ===== BULK OPERATION METHODS =====
+    // These methods handle batching internally:
+    // - Try bulk operation if supported
+    // - Fall back to single operations automatically
+    // - Return results preserving input order
 
     /// Bulk open multiple orders in a single request.
-    /// Default implementation returns "not supported".
+    /// Exchange implementations should try bulk first, fall back to single operations.
+    ///
+    /// Exchanges must implement this method. For exchanges without bulk support,
+    /// implement a fallback to single operations.
     async fn bulk_open_orders(
         &self,
-        _req: crate::types::exchange::BulkOrderRequest,
-    ) -> Result<crate::types::exchange::BulkOrderResponse, EngineError> {
-        Err(EngineError::NotSupported(
-            "Bulk order operations not supported".into(),
-        ))
-    }
+        req: crate::types::exchange::BulkOrderRequest,
+    ) -> Result<crate::types::exchange::BulkOrderResponse, EngineError>;
 
     /// Bulk cancel multiple orders by their IDs.
-    /// Default implementation returns "not supported".
+    /// Exchange implementations should try bulk first, fall back to single operations.
+    /// Default implementation falls back to single operations.
     async fn bulk_cancel_orders(
         &self,
-        _req: crate::types::exchange::BulkCancelRequest,
+        req: crate::types::exchange::BulkCancelRequest,
     ) -> Result<crate::types::exchange::BulkCancelResponse, EngineError> {
-        Err(EngineError::NotSupported(
-            "Bulk cancel operations not supported".into(),
-        ))
+        // Default: fall back to single operations
+        let mut results = Vec::new();
+        let mut cancelled_ids = Vec::new();
+        let mut failed_ids = Vec::new();
+
+        for (idx, order_id) in req.order_ids.into_iter().enumerate() {
+            match self.cancel_order_by_id(order_id.clone()).await {
+                Ok(_) => {
+                    results.push(crate::types::exchange::BulkOperationResult {
+                        success: true,
+                        data: Some(order_id.clone()),
+                        error: None,
+                        index: idx,
+                    });
+                    cancelled_ids.push(order_id);
+                }
+                Err(e) => {
+                    let error_msg = format!("{}", e);
+                    results.push(crate::types::exchange::BulkOperationResult {
+                        success: false,
+                        data: None,
+                        error: Some(error_msg.clone()),
+                        index: idx,
+                    });
+                    failed_ids.push((order_id, error_msg));
+                }
+            }
+        }
+
+        Ok(crate::types::exchange::BulkCancelResponse {
+            results,
+            cancelled_ids,
+            failed_ids,
+        })
     }
 
     /// Bulk amend multiple orders.
-    /// Default implementation returns "not supported".
+    /// Exchange implementations should try bulk first, fall back to single operations.
+    ///
+    /// Exchanges must implement this method. For exchanges without bulk support,
+    /// implement a fallback to single operations.
     async fn bulk_amend_orders(
         &self,
-        _req: crate::types::exchange::BulkAmendRequest,
-    ) -> Result<crate::types::exchange::BulkAmendResponse, EngineError> {
-        Err(EngineError::NotSupported(
-            "Bulk amend operations not supported".into(),
-        ))
-    }
+        req: crate::types::exchange::BulkAmendRequest,
+    ) -> Result<crate::types::exchange::BulkAmendResponse, EngineError>;
 
     // ===== FUTURES METHODS (Optional) =====
     // All have default implementations that return "not supported"
@@ -282,6 +314,128 @@ mod tests {
             _new_request: OrderRequest,
         ) -> Result<Order, EngineError> {
             Err(EngineError::NotSupported("Mock".into()))
+        }
+
+        async fn bulk_open_orders(
+            &self,
+            req: crate::types::exchange::BulkOrderRequest,
+        ) -> Result<crate::types::exchange::BulkOrderResponse, EngineError> {
+            // Fallback to single operations
+            let mut results = Vec::new();
+            let mut success_count = 0;
+            let mut failure_count = 0;
+
+            for (idx, order_req) in req.requests.into_iter().enumerate() {
+                match self.open_order(order_req).await {
+                    Ok(order) => {
+                        results.push(crate::types::exchange::BulkOperationResult {
+                            success: true,
+                            data: Some(order),
+                            error: None,
+                            index: idx,
+                        });
+                        success_count += 1;
+                    }
+                    Err(e) => {
+                        results.push(crate::types::exchange::BulkOperationResult {
+                            success: false,
+                            data: None,
+                            error: Some(format!("{}", e)),
+                            index: idx,
+                        });
+                        failure_count += 1;
+                    }
+                }
+            }
+
+            Ok(crate::types::exchange::BulkOrderResponse {
+                results,
+                success_count,
+                failure_count,
+            })
+        }
+
+        async fn bulk_cancel_orders(
+            &self,
+            req: crate::types::exchange::BulkCancelRequest,
+        ) -> Result<crate::types::exchange::BulkCancelResponse, EngineError> {
+            // Fallback to single operations
+            let mut results = Vec::new();
+            let mut cancelled_ids = Vec::new();
+            let mut failed_ids = Vec::new();
+
+            for (idx, order_id) in req.order_ids.into_iter().enumerate() {
+                match self.cancel_order_by_id(order_id.clone()).await {
+                    Ok(_) => {
+                        results.push(crate::types::exchange::BulkOperationResult {
+                            success: true,
+                            data: Some(order_id.clone()),
+                            error: None,
+                            index: idx,
+                        });
+                        cancelled_ids.push(order_id);
+                    }
+                    Err(e) => {
+                        let error_msg = format!("{}", e);
+                        results.push(crate::types::exchange::BulkOperationResult {
+                            success: false,
+                            data: None,
+                            error: Some(error_msg.clone()),
+                            index: idx,
+                        });
+                        failed_ids.push((order_id, error_msg));
+                    }
+                }
+            }
+
+            Ok(crate::types::exchange::BulkCancelResponse {
+                results,
+                cancelled_ids,
+                failed_ids,
+            })
+        }
+
+        async fn bulk_amend_orders(
+            &self,
+            req: crate::types::exchange::BulkAmendRequest,
+        ) -> Result<crate::types::exchange::BulkAmendResponse, EngineError> {
+            // Fallback to single operations
+            let mut results = Vec::new();
+            let mut amended_orders = Vec::new();
+            let mut failed_amendments = Vec::new();
+
+            for (idx, amendment) in req.amendments.into_iter().enumerate() {
+                match self
+                    .amend_order(amendment.order_id.clone(), amendment.new_request)
+                    .await
+                {
+                    Ok(order) => {
+                        results.push(crate::types::exchange::BulkOperationResult {
+                            success: true,
+                            data: Some(order.clone()),
+                            error: None,
+                            index: idx,
+                        });
+                        amended_orders.push(order);
+                    }
+                    Err(e) => {
+                        let error_msg = format!("{}", e);
+                        results.push(crate::types::exchange::BulkOperationResult {
+                            success: false,
+                            data: None,
+                            error: Some(error_msg.clone()),
+                            index: idx,
+                        });
+                        failed_amendments.push((amendment.order_id, error_msg));
+                    }
+                }
+            }
+
+            Ok(crate::types::exchange::BulkAmendResponse {
+                results,
+                amended_orders,
+                failed_amendments,
+            })
         }
     }
 

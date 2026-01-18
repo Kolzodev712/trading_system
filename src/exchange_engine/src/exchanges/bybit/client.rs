@@ -17,6 +17,10 @@ use super::{
         rpc_client::{BybitRpcClient, RpcRequest, RpcResponse},
         types::rpc::{
             amend::BybitRpcAmendOrderRequest,
+            bulk::{
+                BybitRpcBatchAmendOrderRequest, BybitRpcBatchCancelOrderRequest,
+                BybitRpcBatchCreateOrderRequest,
+            },
             cancel_all::BybitRpcCancelAllOrdersRequest,
             cancel_by_id::BybitRpcCancelOrderRequest,
             open_order::{BybitRpcCreateOrderArgs, BybitRpcCreateOrderRequest},
@@ -34,7 +38,11 @@ use trading_core::{
     traits::TradingClient,
     types::{
         common::{InstrumentType, OrderId, OrderStatus, OrderType, Pair},
-        exchange::{Balance, Order, OrderRequest, Trade},
+        exchange::{
+            Balance, BulkAmendItem, BulkAmendRequest, BulkAmendResponse, BulkCancelRequest,
+            BulkCancelResponse, BulkOperationResult, BulkOrderRequest, BulkOrderResponse, Order,
+            OrderRequest, Trade,
+        },
     },
 };
 
@@ -287,7 +295,7 @@ impl TradingClient<OrderRequest> for BybitClient {
             args: vec![
                 super::websocket::types::rpc::cancel_by_id::BybitRpcCancelOrderArgs {
                     category: category.clone(),
-                    symbol: symbol.as_str().into(),
+                    symbol,
                     order_id: Some(order_id.as_str().into()),
                     order_link_id: None,
                 },
@@ -576,5 +584,488 @@ impl TradingClient<OrderRequest> for BybitClient {
                 "Unexpected response type"
             ))),
         }
+    }
+
+    async fn bulk_open_orders(
+        &self,
+        req: BulkOrderRequest,
+    ) -> Result<BulkOrderResponse, EngineError> {
+        if req.requests.is_empty() {
+            return Ok(BulkOrderResponse {
+                results: vec![],
+                success_count: 0,
+                failure_count: 0,
+            });
+        }
+
+        // Group requests by category (required by Bybit API structure)
+        // But process them uniformly - category is just metadata
+        let mut requests_by_category: Vec<(BybitCategory, Vec<(usize, BybitRpcCreateOrderArgs)>)> =
+            Vec::new();
+
+        for (idx, order_req) in req.requests.iter().enumerate() {
+            let category =
+                self.get_category_from_instrument_type(order_req.instrument.instrument_type());
+            let args = self.order_request_to_bybit_args(order_req)?;
+
+            // Find or create category group
+            if let Some((_, requests)) = requests_by_category
+                .iter_mut()
+                .find(|(cat, _)| *cat == category)
+            {
+                requests.push((idx, args));
+            } else {
+                requests_by_category.push((category, vec![(idx, args)]));
+            }
+        }
+
+        let mut results = Vec::new();
+        let mut success_count = 0;
+        let mut failure_count = 0;
+
+        // Process all categories uniformly
+        for (category, requests_with_indices) in requests_by_category {
+            let batch_items: Vec<_> = requests_with_indices
+                .iter()
+                .map(
+                    |(_, args)| super::websocket::types::rpc::bulk::BybitRpcBatchCreateOrderItem {
+                        symbol: args.symbol.clone(),
+                        side: args.side.clone(),
+                        order_type: args.order_type.clone(),
+                        qty: args.qty,
+                        price: args.price.unwrap_or_default(),
+                        time_in_force: args.time_in_force.clone().unwrap_or_else(|| "GTC".into()),
+                        order_link_id: args.order_link_id.clone(),
+                    },
+                )
+                .collect();
+
+            let batch_request = BybitRpcBatchCreateOrderRequest {
+                req_id: Some(trading_core::utils::generate_custom_uuid().into()),
+                header: super::websocket::types::rpc::BybitRpcRequestHeader {
+                    x_bapi_timestamp: chrono::Utc::now().timestamp_millis().to_string().into(),
+                    x_bapi_recv_window: Some("5000".into()),
+                    referer: None,
+                },
+                op: "order.create-batch".into(),
+                args: vec![
+                    super::websocket::types::rpc::bulk::BybitRpcBatchCreateOrderArgs {
+                        category,
+                        request: batch_items,
+                    },
+                ],
+            };
+
+            match self
+                .rpc_client
+                .send_request(RpcRequest::BatchCreateOrder(batch_request))
+                .await?
+            {
+                RpcResponse::BatchCreateOrder(resp) => {
+                    if resp.ret_code != 0 {
+                        // All failed for this category
+                        for (orig_idx, _) in &requests_with_indices {
+                            results.push(BulkOperationResult {
+                                success: false,
+                                data: None,
+                                error: Some(resp.ret_msg.to_string()),
+                                index: *orig_idx,
+                            });
+                            failure_count += 1;
+                        }
+                    } else if let Some(data) = resp.data {
+                        // Map response back to original indices
+                        for (response_idx, (orig_idx, _)) in
+                            requests_with_indices.iter().enumerate()
+                        {
+                            if response_idx < data.list.len() {
+                                let item = &data.list[response_idx];
+                                let order_req = &req.requests[*orig_idx];
+                                results.push(BulkOperationResult {
+                                    success: true,
+                                    data: Some(Order {
+                                        order_id: OrderId::new(item.order_id.clone()),
+                                        client_order_id: item.order_link_id.clone(),
+                                        instrument: order_req.instrument.clone(),
+                                        side: order_req.side.clone(),
+                                        price: order_req.price,
+                                        amount: order_req.amount,
+                                        internal_created_at: chrono::Utc::now().timestamp_millis()
+                                            as u64,
+                                        exchange_created_at: None,
+                                        status: OrderStatus::New,
+                                        filled_amount: rust_decimal::Decimal::ZERO,
+                                    }),
+                                    error: None,
+                                    index: *orig_idx,
+                                });
+                                success_count += 1;
+                            } else {
+                                results.push(BulkOperationResult {
+                                    success: false,
+                                    data: None,
+                                    error: Some("Response missing order data".to_string()),
+                                    index: *orig_idx,
+                                });
+                                failure_count += 1;
+                            }
+                        }
+                    }
+                }
+                _ => {
+                    return Err(EngineError::CustomError(anyhow::anyhow!(
+                        "Unexpected response type for batch create"
+                    )));
+                }
+            }
+        }
+
+        // Sort results by original index
+        results.sort_by_key(|r| r.index);
+
+        Ok(BulkOrderResponse {
+            results,
+            success_count,
+            failure_count,
+        })
+    }
+
+    async fn bulk_cancel_orders(
+        &self,
+        req: BulkCancelRequest,
+    ) -> Result<BulkCancelResponse, EngineError> {
+        if req.order_ids.is_empty() {
+            return Ok(BulkCancelResponse {
+                results: vec![],
+                cancelled_ids: vec![],
+                failed_ids: vec![],
+            });
+        }
+
+        // Get orders from state manager to determine category and symbol
+        let mut cancel_items = Vec::new();
+        let mut order_info = Vec::new(); // Track (order_id, category, index, found)
+        let mut not_found_results = Vec::new(); // Track orders not found for immediate failure
+
+        if let Some(state_mgr) = self.state_manager.lock().await.as_ref() {
+            for (idx, order_id) in req.order_ids.iter().enumerate() {
+                if let Some(order) = state_mgr.get_order_by_id(order_id).await {
+                    let category = self.get_category_from_instrument_type(
+                        order.instrument.instrument_type().clone(),
+                    );
+                    let symbol = order.instrument.symbol();
+
+                    cancel_items.push(
+                        super::websocket::types::rpc::bulk::BybitRpcBatchCancelOrderItem {
+                            symbol,
+                            order_id: Some(order_id.as_str().into()),
+                            order_link_id: None,
+                        },
+                    );
+
+                    order_info.push((order_id.clone(), category, idx, true));
+                } else {
+                    // Order not found - mark as failed immediately
+                    not_found_results.push((order_id.clone(), idx));
+                    order_info.push((order_id.clone(), BybitCategory::Spot, idx, false));
+                }
+            }
+        } else {
+            return Err(EngineError::CustomError(anyhow::anyhow!(
+                "State manager not available for bulk cancel"
+            )));
+        }
+
+        if cancel_items.is_empty() {
+            // All orders not found
+            return Ok(BulkCancelResponse {
+                results: req
+                    .order_ids
+                    .iter()
+                    .enumerate()
+                    .map(|(idx, _order_id)| BulkOperationResult {
+                        success: false,
+                        data: None,
+                        error: Some("Order not found in state manager".to_string()),
+                        index: idx,
+                    })
+                    .collect(),
+                cancelled_ids: vec![],
+                failed_ids: req
+                    .order_ids
+                    .iter()
+                    .map(|id| (id.clone(), "Order not found".to_string()))
+                    .collect(),
+            });
+        }
+
+        // Group by category (for now, assume all same category - could be improved)
+        // Find first valid category from found orders
+        let category = order_info
+            .iter()
+            .find_map(|(_, cat, _, found)| if *found { Some(cat.clone()) } else { None })
+            .unwrap_or(BybitCategory::Spot);
+        let batch_request = BybitRpcBatchCancelOrderRequest {
+            req_id: Some(trading_core::utils::generate_custom_uuid().into()),
+            header: super::websocket::types::rpc::BybitRpcRequestHeader {
+                x_bapi_timestamp: chrono::Utc::now().timestamp_millis().to_string().into(),
+                x_bapi_recv_window: Some("5000".into()),
+                referer: None,
+            },
+            op: "order.cancel-batch".into(),
+            args: vec![
+                super::websocket::types::rpc::bulk::BybitRpcBatchCancelOrderArgs {
+                    category,
+                    request: cancel_items,
+                },
+            ],
+        };
+
+        let mut results = Vec::new();
+        let mut cancelled_ids = Vec::new();
+        let mut failed_ids = Vec::new();
+
+        // First, add results for orders not found
+        for (order_id, idx) in not_found_results {
+            results.push(BulkOperationResult {
+                success: false,
+                data: None,
+                error: Some("Order not found in state manager".to_string()),
+                index: idx,
+            });
+            failed_ids.push((order_id, "Order not found".to_string()));
+        }
+
+        match self
+            .rpc_client
+            .send_request(RpcRequest::BatchCancelOrder(batch_request))
+            .await?
+        {
+            RpcResponse::BatchCancelOrder(resp) => {
+                if resp.ret_code != 0 {
+                    // All failed - only process orders that were found
+                    for (order_id, _, idx, found) in order_info {
+                        if found {
+                            results.push(BulkOperationResult {
+                                success: false,
+                                data: None,
+                                error: Some(resp.ret_msg.to_string()),
+                                index: idx,
+                            });
+                            failed_ids.push((order_id, resp.ret_msg.to_string()));
+                        }
+                    }
+                } else if let Some(data) = resp.data {
+                    // Map response - only process orders that were found
+                    let mut response_idx = 0;
+                    for (order_id, _, orig_idx, found) in order_info {
+                        if found {
+                            if response_idx < data.list.len() {
+                                let item = &data.list[response_idx];
+                                if !item.order_id.is_empty() {
+                                    results.push(BulkOperationResult {
+                                        success: true,
+                                        data: Some(order_id.clone()),
+                                        error: None,
+                                        index: orig_idx,
+                                    });
+                                    cancelled_ids.push(order_id);
+                                } else {
+                                    results.push(BulkOperationResult {
+                                        success: false,
+                                        data: None,
+                                        error: Some("Empty order ID in response".to_string()),
+                                        index: orig_idx,
+                                    });
+                                    failed_ids.push((order_id, "Empty order ID".to_string()));
+                                }
+                                response_idx += 1;
+                            } else {
+                                results.push(BulkOperationResult {
+                                    success: false,
+                                    data: None,
+                                    error: Some("Response missing cancellation data".to_string()),
+                                    index: orig_idx,
+                                });
+                                failed_ids.push((order_id, "Response missing data".to_string()));
+                            }
+                        }
+                    }
+                }
+            }
+            _ => {
+                return Err(EngineError::CustomError(anyhow::anyhow!(
+                    "Unexpected response type for batch cancel"
+                )));
+            }
+        }
+
+        // Sort results by original index
+        results.sort_by_key(|r| r.index);
+
+        Ok(BulkCancelResponse {
+            results,
+            cancelled_ids,
+            failed_ids,
+        })
+    }
+
+    async fn bulk_amend_orders(
+        &self,
+        req: BulkAmendRequest,
+    ) -> Result<BulkAmendResponse, EngineError> {
+        if req.amendments.is_empty() {
+            return Ok(BulkAmendResponse {
+                results: vec![],
+                amended_orders: vec![],
+                failed_amendments: vec![],
+            });
+        }
+
+        // Group by category (required by API) but process uniformly
+        let mut amendments_by_category: Vec<(BybitCategory, Vec<(usize, BulkAmendItem)>)> =
+            Vec::new();
+
+        for (idx, amendment) in req.amendments.iter().enumerate() {
+            let category = self.get_category_from_instrument_type(
+                amendment.new_request.instrument.instrument_type(),
+            );
+
+            // Find or create category group
+            if let Some((_, amendments)) = amendments_by_category
+                .iter_mut()
+                .find(|(cat, _)| *cat == category)
+            {
+                amendments.push((idx, amendment.clone()));
+            } else {
+                amendments_by_category.push((category, vec![(idx, amendment.clone())]));
+            }
+        }
+
+        let mut results = Vec::new();
+        let mut amended_orders = Vec::new();
+        let mut failed_amendments = Vec::new();
+
+        // Process all categories uniformly
+        for (category, amendments_with_indices) in amendments_by_category {
+            let amend_items: Vec<_> = amendments_with_indices
+                .iter()
+                .map(|(_, amendment)| {
+                    let symbol = amendment.new_request.instrument.symbol();
+                    super::websocket::types::rpc::bulk::BybitRpcBatchAmendOrderItem {
+                        symbol: symbol.clone(),
+                        order_id: Some(amendment.order_id.as_str().into()),
+                        order_link_id: None,
+                        price: Some(amendment.new_request.price),
+                        qty: Some(amendment.new_request.amount),
+                    }
+                })
+                .collect();
+
+            let batch_request = BybitRpcBatchAmendOrderRequest {
+                req_id: Some(trading_core::utils::generate_custom_uuid().into()),
+                header: super::websocket::types::rpc::BybitRpcRequestHeader {
+                    x_bapi_timestamp: chrono::Utc::now().timestamp_millis().to_string().into(),
+                    x_bapi_recv_window: Some("5000".into()),
+                    referer: None,
+                },
+                op: "order.amend-batch".into(),
+                args: vec![
+                    super::websocket::types::rpc::bulk::BybitRpcBatchAmendOrderArgs {
+                        category,
+                        request: amend_items,
+                    },
+                ],
+            };
+
+            match self
+                .rpc_client
+                .send_request(RpcRequest::BatchAmendOrder(batch_request))
+                .await?
+            {
+                RpcResponse::BatchAmendOrder(resp) => {
+                    if resp.ret_code != 0 {
+                        // All failed for this category
+                        for (orig_idx, amendment) in &amendments_with_indices {
+                            results.push(BulkOperationResult {
+                                success: false,
+                                data: None,
+                                error: Some(resp.ret_msg.to_string()),
+                                index: *orig_idx,
+                            });
+                            failed_amendments
+                                .push((amendment.order_id.clone(), resp.ret_msg.to_string()));
+                        }
+                    } else if let Some(data) = resp.data {
+                        // Map response back to original indices
+                        for (response_idx, (orig_idx, amendment)) in
+                            amendments_with_indices.iter().enumerate()
+                        {
+                            if response_idx < data.list.len() {
+                                let item = &data.list[response_idx];
+                                if !item.order_id.is_empty() {
+                                    let amended_order = Order {
+                                        order_id: amendment.order_id.clone(),
+                                        client_order_id: item.order_link_id.clone(),
+                                        instrument: amendment.new_request.instrument.clone(),
+                                        side: amendment.new_request.side.clone(),
+                                        price: amendment.new_request.price,
+                                        amount: amendment.new_request.amount,
+                                        internal_created_at: chrono::Utc::now().timestamp_millis()
+                                            as u64,
+                                        exchange_created_at: None,
+                                        status: OrderStatus::New,
+                                        filled_amount: rust_decimal::Decimal::ZERO,
+                                    };
+                                    results.push(BulkOperationResult {
+                                        success: true,
+                                        data: Some(amended_order.clone()),
+                                        error: None,
+                                        index: *orig_idx,
+                                    });
+                                    amended_orders.push(amended_order);
+                                } else {
+                                    results.push(BulkOperationResult {
+                                        success: false,
+                                        data: None,
+                                        error: Some("Empty order ID in response".to_string()),
+                                        index: *orig_idx,
+                                    });
+                                    failed_amendments.push((
+                                        amendment.order_id.clone(),
+                                        "Empty order ID".to_string(),
+                                    ));
+                                }
+                            } else {
+                                results.push(BulkOperationResult {
+                                    success: false,
+                                    data: None,
+                                    error: Some("Response missing amendment data".to_string()),
+                                    index: *orig_idx,
+                                });
+                                failed_amendments.push((
+                                    amendment.order_id.clone(),
+                                    "Response missing data".to_string(),
+                                ));
+                            }
+                        }
+                    }
+                }
+                _ => {
+                    return Err(EngineError::CustomError(anyhow::anyhow!(
+                        "Unexpected response type for batch amend"
+                    )));
+                }
+            }
+        }
+
+        // Sort results by original index
+        results.sort_by_key(|r| r.index);
+
+        Ok(BulkAmendResponse {
+            results,
+            amended_orders,
+            failed_amendments,
+        })
     }
 }

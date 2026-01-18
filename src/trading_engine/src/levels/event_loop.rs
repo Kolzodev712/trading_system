@@ -12,7 +12,8 @@ use tokio::time::{interval, Duration};
 use trading_core::channels::market_data::{MarketDataUpdate, MarketDataUpdateReceiver};
 use trading_core::error::EngineError;
 use trading_core::traits::TradingClient;
-use trading_core::types::common::Pair;
+use trading_core::types::common::{OrderId, Pair};
+use trading_core::types::exchange::{BulkAmendItem, BulkAmendRequest, BulkOrderRequest};
 use trading_core::types::exchange::{Order, OrderRequest};
 use trading_core::types::market_data::StructuredOrderbook;
 
@@ -274,7 +275,32 @@ impl LevelBasedEventLoop {
             client.fetch_balance().await?
         };
 
-        // Process each level
+        // Get fresh indicators once
+        let fresh_indicators: HashMap<SmolStr, IndicatorValue> = {
+            let cache = indicator_cache.read().await;
+            cache.clone()
+        };
+
+        // Get trading state once
+        let trading_state = self.trading_state_manager.get_state();
+        let state = {
+            let state_guard = trading_state.read().await;
+            state_guard.clone()
+        };
+
+        // Get current price for risk checks
+        let current_price = orderbook.mid_price();
+        let current_prices = current_price.map(|price| {
+            let mut map = HashMap::new();
+            map.insert(orderbook.pair.clone(), price);
+            map
+        });
+
+        // Collect levels into batches: to_post and to_amend
+        let mut to_post: Vec<(SmolStr, OrderRequest)> = Vec::new(); // (expanded_id, order_request)
+        let mut to_amend: Vec<(SmolStr, OrderId, OrderRequest)> = Vec::new(); // (expanded_id, order_id, new_order_request)
+
+        // First pass: resolve, check risk, validate state - collect into batches
         for level_id in level_ids {
             // Get the level again (need to re-acquire lock)
             let level = {
@@ -306,19 +332,7 @@ impl LevelBasedEventLoop {
                     continue;
                 }
             };
-            // Get trading state
-            let trading_state = self.trading_state_manager.get_state();
-            let state = {
-                let state_guard = trading_state.read().await;
-                state_guard.clone()
-            };
-
-            // Resolve level - read fresh indicators from cache right before resolving
-            // This ensures we have the latest indicator values
-            let fresh_indicators: HashMap<SmolStr, IndicatorValue> = {
-                let cache = indicator_cache.read().await;
-                cache.clone()
-            };
+            // Resolve level using fresh indicators
 
             tracing::debug!(
                 "Attempting to resolve level {} for {}/{} (indicators in cache: {})",
@@ -355,14 +369,6 @@ impl LevelBasedEventLoop {
             };
 
             // Perform risk checks
-            // Get current price from orderbook for the level's symbol
-            let current_price = orderbook.mid_price();
-            let current_prices = current_price.map(|price| {
-                let mut map = HashMap::new();
-                map.insert(level.pair.clone(), price);
-                map
-            });
-
             tracing::debug!(
                 "Performing risk check for level {} ({}/{}), current_price={:?}",
                 level.config.id,
@@ -433,14 +439,13 @@ impl LevelBasedEventLoop {
                 }
             };
 
-            // Check if level has active orders - if so, try to amend instead of posting new
+            // Check if level has active orders - if so, collect for amendment batch
             if !current_level.active_orders.is_empty()
                 && matches!(current_level.state, super::LevelState::Posted)
             {
                 // Get the first active order (levels typically have one order)
                 if let Some(order_id) = current_level.active_orders.first() {
                     // Get order from trading state (orders we placed)
-                    let trading_state = self.trading_state_manager.get_state();
                     let existing_order_opt = {
                         let state = trading_state.read().await;
                         state.active_orders.get(order_id).cloned()
@@ -448,68 +453,42 @@ impl LevelBasedEventLoop {
 
                     if let Some(existing_order) = existing_order_opt {
                         // Check if order should be amended
-                        match self
-                            .level_executor
-                            .amend_level_order_if_needed(&current_level, &resolved, &existing_order)
-                            .await
-                        {
-                            Ok(Some(amended_order)) => {
-                                tracing::info!(
-                                    "[SUCCESS] Level {} amended order: {} for {}/{}",
-                                    current_level.config.id,
-                                    amended_order.order_id.as_str(),
-                                    current_level.pair.base,
-                                    current_level.pair.quote
-                                );
+                        use rust_decimal::Decimal;
+                        let price_changed = (existing_order.price - resolved.resolved_price).abs()
+                            > Decimal::new(1, 10);
+                        let quantity_changed = (existing_order.amount - resolved.resolved_quantity)
+                            .abs()
+                            > Decimal::new(1, 10);
 
-                                // Update trading state with amended order
-                                self.trading_state_manager
-                                    .add_order(amended_order.clone())
-                                    .await;
+                        if price_changed || quantity_changed {
+                            // Side must not have changed for amendment
+                            if existing_order.side == resolved.level.config.side {
+                                // Create order request for amendment
+                                let order_request = OrderRequest {
+                                    instrument: trading_core::types::common::Instrument::new(
+                                        self.level_executor.instrument_type().clone(),
+                                        current_level.pair.clone(),
+                                    ),
+                                    side: resolved.level.config.side.clone(),
+                                    order_type: resolved.resolved_order_type,
+                                    price: resolved.resolved_price,
+                                    amount: resolved.resolved_quantity,
+                                    timestamp: Some(trading_core::utils::current_timestamp()),
+                                    exchange_params: std::collections::HashMap::new(),
+                                };
 
-                                // Update level state (order ID might have changed if amend used cancel+place fallback)
-                                {
-                                    let mut manager = self.level_manager.write().await;
-                                    if let Some(level_mut) = manager.get_level_mut(&expanded_id) {
-                                        // If order ID changed, update active_orders
-                                        if amended_order.order_id != *order_id {
-                                            level_mut.active_orders.clear();
-                                            level_mut
-                                                .active_orders
-                                                .push(amended_order.order_id.clone());
-                                        }
-                                        level_mut.last_posted_at =
-                                            Some(trading_core::utils::current_timestamp());
-                                    }
-                                }
-
+                                to_amend.push((expanded_id, order_id.clone(), order_request));
                                 continue; // Skip posting new order
                             }
-                            Ok(None) => {
-                                // No amendment needed - order is already correct, skip posting
-                                tracing::debug!(
-                                    "Level {} order {} doesn't need amendment, skipping",
-                                    current_level.config.id,
-                                    order_id.as_str()
-                                );
-                                continue; // Skip posting new order
-                            }
-                            Err(e) => {
-                                tracing::warn!(
-                                    "Failed to amend level {} order {}: {}, will try posting new",
-                                    current_level.config.id,
-                                    order_id.as_str(),
-                                    e
-                                );
-                                // Continue to post new order on amend failure
-                            }
+                        } else {
+                            // No amendment needed - order is already correct
+                            tracing::debug!(
+                                "Level {} order {} doesn't need amendment, skipping",
+                                current_level.config.id,
+                                order_id.as_str()
+                            );
+                            continue;
                         }
-                    } else {
-                        tracing::debug!(
-                            "Level {} has active_order {} but order not found in trading state, will post new",
-                            current_level.config.id,
-                            order_id.as_str()
-                        );
                     }
                 }
             }
@@ -527,105 +506,214 @@ impl LevelBasedEventLoop {
                 continue;
             }
 
+            // Create order request for posting
+            let order_request = OrderRequest {
+                instrument: trading_core::types::common::Instrument::new(
+                    self.level_executor.instrument_type().clone(),
+                    current_level.pair.clone(),
+                ),
+                side: resolved.level.config.side.clone(),
+                order_type: resolved.resolved_order_type,
+                price: resolved.resolved_price,
+                amount: resolved.resolved_quantity,
+                timestamp: Some(trading_core::utils::current_timestamp()),
+                exchange_params: std::collections::HashMap::new(),
+            };
+
+            to_post.push((expanded_id, order_request));
+        }
+
+        // Check trading control before batching
+        if !self.level_executor.is_trading_enabled().await {
+            // Only log periodically to avoid spam
+            static SKIP_COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let skip_count = SKIP_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            if skip_count.is_multiple_of(100) {
+                tracing::debug!(
+                    "Trading is disabled - skipping batch operations (skipped {skip_count} so far)"
+                );
+            }
+            return Ok(());
+        }
+
+        // Second pass: Batch process posts and amendments
+        let trading_client = self.trading_client.write().await;
+
+        // Batch process posts
+        if !to_post.is_empty() {
             tracing::info!(
-                "Attempting to post level {} ({}/{}) - price={}, quantity={}",
-                current_level.config.id,
-                current_level.pair.base,
-                current_level.pair.quote,
-                resolved.resolved_price,
-                resolved.resolved_quantity
+                "Batch posting {} level(s) for {}/{}",
+                to_post.len(),
+                orderbook.pair.base,
+                orderbook.pair.quote
             );
 
-            // Post level (LevelExecutor will also check global trading control)
-            // Use fresh indicators for posting as well
-            match self
-                .level_executor
-                .post_level(
-                    &current_level,
-                    &fresh_indicators,
-                    Some(orderbook),
-                    &balances,
-                )
-                .await
-            {
-                Ok(order) => {
-                    tracing::info!(
-                        "[SUCCESS] Level {} posted order: {} for {}/{}",
-                        level.config.id,
-                        order.order_id.as_str(),
-                        level.pair.base,
-                        level.pair.quote
-                    );
+            let requests: Vec<OrderRequest> = to_post.iter().map(|(_, req)| req.clone()).collect();
+            let bulk_request = BulkOrderRequest { requests };
+            let bulk_response = trading_client.bulk_open_orders(bulk_request).await;
 
-                    // Update level state
-                    {
-                        // Use expanded ID to look up the level
-                        let expanded_id = {
-                            let pair_str = level.pair.convert_to_smolstr();
-                            SmolStr::new(format!("{}_{}", level.config.id, pair_str))
-                        };
-                        let mut manager = self.level_manager.write().await;
-                        if let Some(level_mut) = manager.get_level_mut(&expanded_id) {
-                            level_mut.state = super::LevelState::Posted;
-                            level_mut.active_orders.push(order.order_id.clone());
-                            level_mut.last_posted_at =
-                                Some(trading_core::utils::current_timestamp());
+            // Process results and update state
+            match bulk_response {
+                Ok(response) => {
+                    let results = response.results;
+                    for ((expanded_id, _), result) in to_post.iter().zip(results.iter()) {
+                        let order_result = if result.success {
+                            result.data.clone().ok_or_else(|| {
+                                EngineError::CustomError(anyhow::anyhow!(
+                                    "Bulk operation succeeded but no data returned"
+                                ))
+                            })
                         } else {
-                            tracing::warn!(
-                                "Level {} ({}/{}) not found when updating state (expanded_id={})",
-                                level.config.id,
-                                level.pair.base,
-                                level.pair.quote,
-                                expanded_id
-                            );
-                        }
-                    }
-
-                    // Add order to TradingStateManager (tracks orders we placed)
-                    // Add order to TradingStateManager (single source of truth)
-                    self.trading_state_manager.add_order(order.clone()).await;
-
-                    // Post-trade risk check
-                    let current_price = orderbook.mid_price();
-                    if let Some(price) = current_price {
-                        let mut current_prices = HashMap::new();
-                        current_prices.insert(level.pair.clone(), price);
-
-                        // Get fresh trading state after order was added
-                        let trading_state = self.trading_state_manager.get_state();
-                        let state_after_trade = {
-                            let state_guard = trading_state.read().await;
-                            state_guard.clone()
+                            let error_msg = result
+                                .error
+                                .clone()
+                                .unwrap_or_else(|| "Unknown error".to_string());
+                            Err(EngineError::CustomError(anyhow::anyhow!(error_msg)))
                         };
 
-                        let post_trade_result = self
-                            .risk_manager
-                            .check_post_trade(&state_after_trade, &current_prices)
-                            .await;
+                        match order_result {
+                            Ok(order) => {
+                                tracing::info!(
+                                    "[SUCCESS] Level posted order: {} for {}/{}",
+                                    order.order_id.as_str(),
+                                    orderbook.pair.base,
+                                    orderbook.pair.quote
+                                );
 
-                        if !post_trade_result.allowed {
-                            tracing::warn!(
-                                "Post-trade risk check failed for order {}: {}",
-                                order.order_id.as_str(),
-                                post_trade_result
-                                    .reason
-                                    .as_ref()
-                                    .map(|r| r.as_str())
-                                    .unwrap_or("unknown")
-                            );
-                            // Note: Order is already placed, but we log the warning
-                            // In the future, we could cancel the order or trigger circuit breaker
+                                // Update level state
+                                {
+                                    let mut manager = self.level_manager.write().await;
+                                    if let Some(level_mut) = manager.get_level_mut(expanded_id) {
+                                        level_mut.state = super::LevelState::Posted;
+                                        level_mut.active_orders.push(order.order_id.clone());
+                                        level_mut.last_posted_at =
+                                            Some(trading_core::utils::current_timestamp());
+                                    }
+                                }
+
+                                // Add order to TradingStateManager
+                                self.trading_state_manager.add_order(order.clone()).await;
+
+                                // Post-trade risk check
+                                if let Some(price) = current_price {
+                                    let mut current_prices = HashMap::new();
+                                    current_prices.insert(orderbook.pair.clone(), price);
+
+                                    let trading_state = self.trading_state_manager.get_state();
+                                    let state_after_trade = {
+                                        let state_guard = trading_state.read().await;
+                                        state_guard.clone()
+                                    };
+
+                                    let post_trade_result = self
+                                        .risk_manager
+                                        .check_post_trade(&state_after_trade, &current_prices)
+                                        .await;
+
+                                    if !post_trade_result.allowed {
+                                        tracing::warn!(
+                                            "Post-trade risk check failed for order {}: {}",
+                                            order.order_id.as_str(),
+                                            post_trade_result
+                                                .reason
+                                                .as_ref()
+                                                .map(|r| r.as_str())
+                                                .unwrap_or("unknown")
+                                        );
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                tracing::warn!("Failed to post level in batch: {}", e);
+                            }
                         }
                     }
                 }
                 Err(e) => {
-                    tracing::warn!(
-                        "Failed to post level {} for {}/{}: {}",
-                        level.config.id,
-                        level.pair.base,
-                        level.pair.quote,
-                        e
-                    );
+                    tracing::error!("Bulk open orders failed: {}", e);
+                }
+            }
+        }
+
+        // Batch process amendments
+        if !to_amend.is_empty() {
+            tracing::info!(
+                "Batch amending {} level(s) for {}/{}",
+                to_amend.len(),
+                orderbook.pair.base,
+                orderbook.pair.quote
+            );
+
+            let amendments: Vec<BulkAmendItem> = to_amend
+                .iter()
+                .map(|(_, order_id, req)| BulkAmendItem {
+                    order_id: order_id.clone(),
+                    new_request: req.clone(),
+                })
+                .collect();
+            let bulk_request = BulkAmendRequest { amendments };
+            let bulk_response = trading_client.bulk_amend_orders(bulk_request).await;
+
+            // Process results and update state
+            match bulk_response {
+                Ok(response) => {
+                    let results = response.results;
+                    for ((expanded_id, original_order_id, _), result) in
+                        to_amend.iter().zip(results.iter())
+                    {
+                        let amended_order_result = if result.success {
+                            result.data.clone().ok_or_else(|| {
+                                EngineError::CustomError(anyhow::anyhow!(
+                                    "Bulk operation succeeded but no data returned"
+                                ))
+                            })
+                        } else {
+                            let error_msg = result
+                                .error
+                                .clone()
+                                .unwrap_or_else(|| "Unknown error".to_string());
+                            Err(EngineError::CustomError(anyhow::anyhow!(error_msg)))
+                        };
+
+                        match amended_order_result {
+                            Ok(amended_order) => {
+                                tracing::info!(
+                                    "[SUCCESS] Level amended order: {} -> {} for {}/{}",
+                                    original_order_id.as_str(),
+                                    amended_order.order_id.as_str(),
+                                    orderbook.pair.base,
+                                    orderbook.pair.quote
+                                );
+
+                                // Update trading state with amended order
+                                self.trading_state_manager
+                                    .add_order(amended_order.clone())
+                                    .await;
+
+                                // Update level state (order ID might have changed if amend used cancel+place fallback)
+                                {
+                                    let mut manager = self.level_manager.write().await;
+                                    if let Some(level_mut) = manager.get_level_mut(expanded_id) {
+                                        // If order ID changed, update active_orders
+                                        if amended_order.order_id != *original_order_id {
+                                            level_mut.active_orders.clear();
+                                            level_mut
+                                                .active_orders
+                                                .push(amended_order.order_id.clone());
+                                        }
+                                        level_mut.last_posted_at =
+                                            Some(trading_core::utils::current_timestamp());
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                tracing::warn!("Failed to amend level in batch: {}", e);
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::error!("Bulk amend orders failed: {}", e);
                 }
             }
         }

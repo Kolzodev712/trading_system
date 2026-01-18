@@ -9,14 +9,14 @@ use trading_core::{
     registry::symbol::SymbolRegistry,
     types::{
         common::{OrderId, Pair, Symbol},
-        exchange::{Balance, Order, Trade},
+        exchange::{Balance, Order, Position, Trade},
     },
 };
 
 /// In-memory state for raw exchange data (what the exchange says)
 ///
 /// This state is updated from WebSocket streams and reconciled with REST API.
-/// It does NOT track positions - positions are derived from balances by Trading Engine.
+/// For futures, positions are tracked directly from exchange WebSocket updates.
 #[derive(Debug, Clone)]
 pub struct ExchangeState {
     /// Orders by order ID (all orders from exchange)
@@ -30,6 +30,9 @@ pub struct ExchangeState {
 
     /// Balances by currency symbol (all balances from exchange)
     balances: HashMap<String, Balance>,
+
+    /// Positions by pair (for futures trading)
+    positions: HashMap<Pair, Position>,
 
     /// Recent private trades (last N from exchange)
     private_trades: Vec<Trade>,
@@ -46,6 +49,7 @@ impl ExchangeState {
             orders_by_pair: HashMap::new(),
             symbol_registry: Arc::new(SymbolRegistry::new()),
             balances: HashMap::new(),
+            positions: HashMap::new(),
             private_trades: Vec::new(),
             last_update: 0,
         }
@@ -61,6 +65,7 @@ impl ExchangeState {
             orders_by_pair: HashMap::new(),
             symbol_registry,
             balances: HashMap::new(),
+            positions: HashMap::new(),
             private_trades: Vec::new(),
             last_update: 0,
         }
@@ -251,6 +256,30 @@ impl ExchangeState {
                     .collect()
             })
             .unwrap_or_default()
+    }
+
+    /// Update or add a position
+    ///
+    /// # Arguments
+    /// * `position` - Position update from WebSocket
+    pub fn update_position(&mut self, position: Position) {
+        let pair = position.instrument.pair.clone();
+        self.positions.insert(pair, position);
+
+        self.last_update = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+    }
+
+    /// Get all positions
+    pub fn get_positions(&self) -> Vec<&Position> {
+        self.positions.values().collect()
+    }
+
+    /// Get position for a specific pair
+    pub fn get_position(&self, pair: &Pair) -> Option<&Position> {
+        self.positions.get(pair)
     }
 
     /// Get last update timestamp

@@ -11,8 +11,9 @@ pub struct BotConfig {
     /// System-wide settings
     pub system: SystemConfig,
 
-    /// Exchange configuration
-    pub exchange: ExchangeConfig,
+    /// Exchange engine configuration
+    #[serde(rename = "exchange_engine")]
+    pub exchange_engine: ExchangeConfig,
 
     /// HTTP server configuration
     pub server: ServerConfig,
@@ -57,9 +58,7 @@ pub struct ExchangeConfig {
 
     /// Exchange-specific configuration stored as JSON
     /// This will be deserialized by the exchange-specific engine
-    /// The JSON should contain the exchange name as a key (e.g., "binance": {...})
-    #[serde(flatten)]
-    pub exchange_specific: JsonValue,
+    pub config: JsonValue,
 }
 
 /// HTTP server configuration
@@ -91,18 +90,6 @@ fn default_redis_enabled() -> bool {
 /// Feature flags for enabling/disabling system features
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct FeatureFlags {
-    /// Enable strategies mode
-    #[serde(default = "default_true")]
-    pub enable_strategies: bool,
-
-    /// Enable levels mode
-    #[serde(default = "default_true")]
-    pub enable_levels: bool,
-
-    /// Enable indicator engine
-    #[serde(default = "default_true")]
-    pub enable_indicators: bool,
-
     /// Enable reconciliation
     #[serde(default = "default_true")]
     pub enable_reconciliation: bool,
@@ -309,26 +296,16 @@ impl BotConfig {
 
     /// Get pairs from exchange-specific config
     pub fn get_pairs(&self) -> Result<Vec<Pair>, Box<dyn std::error::Error>> {
-        match self.exchange.exchange {
+        match self.exchange_engine.exchange {
             Exchange::Binance => {
-                let binance_config_json = self
-                    .exchange
-                    .exchange_specific
-                    .get("binance")
-                    .ok_or("Binance exchange configuration is required")?;
                 let binance_config: exchange_engine::exchanges::binance::config::BinanceConfig =
-                    serde_json::from_value(binance_config_json.clone())
+                    serde_json::from_value(self.exchange_engine.config.clone())
                         .map_err(|e| format!("Failed to deserialize Binance config: {e}"))?;
                 Ok(binance_config.pairs)
             }
             Exchange::Bybit => {
-                let bybit_config_json = self
-                    .exchange
-                    .exchange_specific
-                    .get("bybit")
-                    .ok_or("Bybit exchange configuration is required")?;
                 let bybit_config: exchange_engine::exchanges::bybit::config::BybitConfig =
-                    serde_json::from_value(bybit_config_json.clone())
+                    serde_json::from_value(self.exchange_engine.config.clone())
                         .map_err(|e| format!("Failed to deserialize Bybit config: {e}"))?;
                 Ok(bybit_config.pairs)
             }
@@ -339,16 +316,11 @@ impl BotConfig {
     /// Get instrument type from exchange-specific config
     /// Defaults to Spot if not specified
     pub fn get_instrument_type(&self) -> Result<InstrumentType, Box<dyn std::error::Error>> {
-        match self.exchange.exchange {
+        match self.exchange_engine.exchange {
             Exchange::Binance => Ok(InstrumentType::Spot), // Binance doesn't have instrument_type in config yet
             Exchange::Bybit => {
-                let bybit_config_json = self
-                    .exchange
-                    .exchange_specific
-                    .get("bybit")
-                    .ok_or("Bybit exchange configuration is required")?;
                 let bybit_config: exchange_engine::exchanges::bybit::config::BybitConfig =
-                    serde_json::from_value(bybit_config_json.clone())
+                    serde_json::from_value(self.exchange_engine.config.clone())
                         .map_err(|e| format!("Failed to deserialize Bybit config: {e}"))?;
                 Ok(bybit_config.instrument_type)
             }

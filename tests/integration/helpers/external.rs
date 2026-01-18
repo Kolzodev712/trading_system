@@ -18,7 +18,7 @@ use trading_core::{
 };
 
 use exchange_engine::{
-    exchanges::binance::{config::BinanceConfig, websocket::ws_client::BinanceClient},
+    exchanges::binance::{client::BinanceClient, config::BinanceConfig},
     state::manager::ExchangeStateManager,
 };
 
@@ -106,18 +106,10 @@ impl ExchangeClientBuilder {
     }
 
     fn create_binance_config(&self) -> BinanceConfig {
-        use exchange_engine::exchanges::binance::config::BinanceCredentials;
-
         BinanceConfig {
             pairs: self.config.pairs.clone(),
-            rest: BinanceCredentials {
-                api_key: SecretString::new(self.config.api_key.clone()),
-                secret_key: SecretString::new(self.config.secret_key.clone()),
-            },
-            ws: BinanceCredentials {
-                api_key: SecretString::new(self.config.api_key.clone()),
-                secret_key: SecretString::new(self.config.secret_key.clone()),
-            },
+            api_key: SecretString::from("key"),
+            secret: SecretString::from("secret"),
             limit: None,
             base_delay: None,
             max_delay: None,

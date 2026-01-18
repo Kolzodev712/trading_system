@@ -7,7 +7,7 @@ use tracing::{debug, warn};
 use trading_core::{
     channels::exchange::ExchangeUpdateSender,
     error::EngineError,
-    types::exchange::{Balance, Order, Trade},
+    types::exchange::{Balance, Order, Position, Trade},
 };
 
 /// Publisher for exchange state updates via broadcast channels
@@ -91,6 +91,32 @@ impl ExchangeStatePublisher {
             })?;
 
         debug!("Published trade update: trade_id={}", trade.trade_id);
+        Ok(())
+    }
+
+    /// Publish a position update via broadcast channel
+    ///
+    /// # Errors
+    /// Returns an error if the channel is closed (all receivers dropped)
+    pub async fn publish_position(&self, position: &Position) -> Result<(), EngineError> {
+        use trading_core::channels::exchange::ExchangeUpdate;
+
+        self.exchange_update_tx
+            .send(ExchangeUpdate::Position(position.clone()))
+            .map_err(|e| {
+                warn!(
+                    "Failed to publish position update: channel closed or lagged ({} receivers)",
+                    e
+                );
+                EngineError::CustomError(anyhow::anyhow!(
+                    "Failed to publish position: channel closed"
+                ))
+            })?;
+
+        debug!(
+            "Published position update: pair={}",
+            position.instrument.pair
+        );
         Ok(())
     }
 }

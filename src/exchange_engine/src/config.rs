@@ -54,7 +54,7 @@ impl ConfigGetter<BybitConfig> for ExchangeConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::exchanges::binance::config::{BinanceConfig, BinanceCredentials};
+    use crate::exchanges::binance::config::BinanceConfig;
     use crate::exchanges::bybit::config::{BybitConfig, BybitCredentials, BybitRateLimiterConfig};
     use serde_json;
     use trading_core::secret::SecretString;
@@ -69,14 +69,8 @@ mod tests {
     fn test_exchange_engine_config_roundtrip_binance() {
         let binance_config = BinanceConfig {
             pairs: vec![create_test_pair()],
-            rest: BinanceCredentials {
-                api_key: SecretString::from("test_key"),
-                secret_key: SecretString::from("test_secret"),
-            },
-            ws: BinanceCredentials {
-                api_key: SecretString::from("test_key"),
-                secret_key: SecretString::from("test_secret"),
-            },
+            api_key: SecretString::from("test_key"),
+            secret: SecretString::from("test_secret"),
             limit: Some(100),
             base_delay: Some(2),
             max_delay: Some(60),
@@ -132,14 +126,8 @@ mod tests {
             exchange: Exchange::Binance,
             exchange_config: ExchangeConfig::Binance(BinanceConfig {
                 pairs: vec![create_test_pair()],
-                rest: BinanceCredentials {
-                    api_key: SecretString::from("key"),
-                    secret_key: SecretString::from("secret"),
-                },
-                ws: BinanceCredentials {
-                    api_key: SecretString::from("key"),
-                    secret_key: SecretString::from("secret"),
-                },
+                api_key: SecretString::from("key"),
+                secret: SecretString::from("secret"),
                 limit: None,
                 base_delay: None,
                 max_delay: None,
@@ -175,14 +163,8 @@ mod tests {
     fn test_get_exchange_config_binance() {
         let binance_config = BinanceConfig {
             pairs: vec![create_test_pair()],
-            rest: BinanceCredentials {
-                api_key: SecretString::from("test_key"),
-                secret_key: SecretString::from("test_secret"),
-            },
-            ws: BinanceCredentials {
-                api_key: SecretString::from("test_key"),
-                secret_key: SecretString::from("test_secret"),
-            },
+            api_key: SecretString::from("test_key"),
+            secret: SecretString::from("test_secret"),
             limit: Some(100),
             base_delay: Some(2),
             max_delay: Some(60),
@@ -229,14 +211,8 @@ mod tests {
             exchange: Exchange::Binance,
             exchange_config: ExchangeConfig::Binance(BinanceConfig {
                 pairs: vec![create_test_pair()],
-                rest: BinanceCredentials {
-                    api_key: SecretString::from("key"),
-                    secret_key: SecretString::from("secret"),
-                },
-                ws: BinanceCredentials {
-                    api_key: SecretString::from("key"),
-                    secret_key: SecretString::from("secret"),
-                },
+                api_key: SecretString::from("key"),
+                secret: SecretString::from("secret"),
                 limit: None,
                 base_delay: None,
                 max_delay: None,

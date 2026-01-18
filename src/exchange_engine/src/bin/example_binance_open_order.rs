@@ -9,9 +9,10 @@
 //! **Warning**: This will place a real test order on Binance testnet
 
 use exchange_engine::exchanges::binance::{
-    types::{BinanceOrderType, BinanceSide, BinanceSymbol, BinanceTimeInForce},
+    client::BinanceClient,
+    common_types::{BinanceOrderType, BinanceSide, BinanceSymbol, BinanceTimeInForce},
     config::BinanceConfig,
-    websocket::{types::rpc::open_order::BinanceWsOrderReqParams, ws_client::BinanceClient},
+    websocket::types::rpc::open_order::BinanceWsOrderReqParams,
 };
 use rust_decimal::Decimal;
 use std::{fs, sync::Arc};

@@ -7,7 +7,7 @@ use super::subscriber::{
     BybitSubscriber, TOPIC_EXECUTION, TOPIC_ORDER, TOPIC_POSITION, TOPIC_WALLET,
 };
 use super::types::ws_streaming::{BybitAuthRequest, BybitStreamingMessage, BybitWebSocketOp};
-use crate::exchanges::bybit::auth::{self, BybitAuthenticator};
+use crate::exchanges::bybit::authenticator::BybitAuthenticator;
 use crate::exchanges::bybit::config::BybitConfig;
 use futures_util::{SinkExt, StreamExt};
 use std::sync::Arc;
@@ -66,7 +66,10 @@ impl BybitStreamingClient {
     }
 
     fn generate_auth_signature(&self, expires: i64) -> Result<String, EngineError> {
-        auth::websocket::generate_auth_signature(&self.authenticator.api_secret, expires)
+        crate::exchanges::bybit::authenticator::websocket::generate_auth_signature(
+            &self.authenticator.api_secret,
+            expires,
+        )
     }
 
     fn create_auth_request(&self) -> Result<BybitAuthRequest, EngineError> {

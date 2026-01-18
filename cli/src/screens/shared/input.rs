@@ -1,4 +1,4 @@
-//! Input handling for Trading Monitor
+//! Shared input handling for Spot and Futures monitor screens
 use crate::app::App;
 use crate::error::CliError;
 use crossterm::event::KeyCode;

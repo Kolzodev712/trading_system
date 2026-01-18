@@ -40,6 +40,8 @@ pub struct TradingCliServiceImpl {
     strategy_infos: Vec<monitoring::StrategyInfo>,
     /// Strategy manager (only set in strategies mode, for toggling individual strategies)
     strategy_manager: Option<Arc<RwLock<StrategyManager>>>,
+    /// Instrument type (Spot or Futures) - determines which TUI view to show
+    instrument_type: trading_core::types::common::InstrumentType,
 }
 
 impl TradingCliServiceImpl {
@@ -65,6 +67,7 @@ impl TradingCliServiceImpl {
             indicator_calculator,
             strategy_infos: Vec::new(),
             strategy_manager: None,
+            instrument_type: trading_core::types::common::InstrumentType::Spot, // Default to Spot
         }
     }
 
@@ -95,6 +98,15 @@ impl TradingCliServiceImpl {
         self
     }
 
+    /// Set instrument type (Spot or Futures)
+    pub fn with_instrument_type(
+        mut self,
+        instrument_type: trading_core::types::common::InstrumentType,
+    ) -> Self {
+        self.instrument_type = instrument_type;
+        self
+    }
+
     /// Clone self for use in streaming tasks
     fn clone_for_streaming(&self) -> Self {
         Self {
@@ -108,6 +120,7 @@ impl TradingCliServiceImpl {
             indicator_calculator: self.indicator_calculator.clone(),
             strategy_infos: self.strategy_infos.clone(),
             strategy_manager: self.strategy_manager.clone(),
+            instrument_type: self.instrument_type.clone(),
         }
     }
 
@@ -121,6 +134,7 @@ impl TradingCliServiceImpl {
             indicator_calculator: self.indicator_calculator.clone(),
             strategy_infos: self.strategy_infos.clone(),
             strategy_manager: self.strategy_manager.clone(),
+            instrument_type: self.instrument_type.clone(),
         }
     }
 

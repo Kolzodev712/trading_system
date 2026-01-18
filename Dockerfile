@@ -58,12 +58,9 @@ WORKDIR /app
 # Copy binary from builder
 COPY --from=builder /app/target/release/runner /app/trading-system
 
-# Copy sample_config and create config directory from it
-# (config will be mounted as volume at runtime in docker-compose)
-COPY sample_config ./sample_config
-RUN mkdir -p ./config && cp -r ./sample_config/* ./config/
-
-# Create logs directory
+# Create config and logs directories
+# Note: Config directory should be mounted as volume at runtime
+RUN mkdir -p ./config
 RUN mkdir -p /app/logs && chown -R appuser:appuser /app
 
 # Switch to non-root user

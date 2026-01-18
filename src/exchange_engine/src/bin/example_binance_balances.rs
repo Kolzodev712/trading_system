@@ -7,9 +7,7 @@
 //!
 //! **Note**: This requires valid Binance API keys in `config/binance_config.json`
 
-use exchange_engine::exchanges::binance::{
-    config::BinanceConfig, websocket::ws_client::BinanceClient,
-};
+use exchange_engine::exchanges::binance::{client::BinanceClient, config::BinanceConfig};
 use std::{fs, sync::Arc};
 use tokio::sync::RwLock;
 use tracing::{error, info};

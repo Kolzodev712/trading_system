@@ -120,11 +120,11 @@ impl ExchangeDriver for BybitDriver {
             let mut connected = false;
             while let Some(event) = event_rx.recv().await {
                 match event {
-                    StreamingEvent::Position(_pos) => {
-                        debug!(
-                            "Received position update (positions not yet handled by state manager)"
-                        );
-                        // Positions are not yet handled by ExchangeStateManager
+                    StreamingEvent::Position(pos) => {
+                        debug!("Received position update: {:?}", pos);
+                        if let Err(e) = state_manager_events.update_position(pos).await {
+                            error!("Failed to update position: {}", e);
+                        }
                     }
                     StreamingEvent::Execution(trade) => {
                         debug!("Received execution update: {:?}", trade);

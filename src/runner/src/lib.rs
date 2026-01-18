@@ -184,7 +184,7 @@ pub async fn strategy_runner(
             config.min_price_history,
             Some(services.indicator_calculator.clone()), // Use calculator directly (read-only, no Mutex)
             services.asset_service.clone(),
-            bot_config.exchange.exchange.clone(),
+            bot_config.exchange_engine.exchange.clone(),
             min_order_size,
             step_size,
             tick_size,
@@ -273,6 +273,11 @@ pub async fn strategy_runner(
             .collect::<Vec<_>>()
     );
 
+    // Get instrument type from config (defaults to Spot if not specified)
+    let instrument_type = bot_config
+        .get_instrument_type()
+        .unwrap_or(trading_core::types::common::InstrumentType::Spot);
+
     // Create gRPC service with strategy manager for individual toggling
     use crate::grpc::service::TradingCliServiceImpl;
     let grpc_service = TradingCliServiceImpl::new(
@@ -286,16 +291,12 @@ pub async fn strategy_runner(
         trading_control.clone(),
     )
     .with_strategy_infos(monitoring_strategy_infos)
-    .with_strategy_manager(strategy_manager_arc.clone());
+    .with_strategy_manager(strategy_manager_arc.clone())
+    .with_instrument_type(instrument_type.clone());
 
     let grpc_server = TradingGrpcServer::from_service(grpc_service);
     let grpc_handle = grpc_server.start(grpc_addr).await?;
     info!("gRPC server started on {}", grpc_addr);
-
-    // Get instrument type from config (defaults to Spot if not specified)
-    let instrument_type = bot_config
-        .get_instrument_type()
-        .unwrap_or(trading_core::types::common::InstrumentType::Spot);
 
     // Pass all pairs to executor (no .first() - single source of truth)
     let executor = StrategyExecutor::new(
@@ -306,7 +307,7 @@ pub async fn strategy_runner(
         services.trading_state_manager.clone(),
         trading_reconciliation_interval_secs,
         services.asset_service.clone(),
-        bot_config.exchange.exchange.clone(),
+        bot_config.exchange_engine.exchange.clone(),
         instrument_type,
         min_order_size,
         step_size,
@@ -492,7 +493,7 @@ pub async fn level_runner(
         LevelExecutor::new(
             services.trading_client.clone(),
             services.asset_service.clone(),
-            bot_config.exchange.exchange.clone(),
+            bot_config.exchange_engine.exchange.clone(),
             instrument_type,
             config_min_order_size,
             config_step_size,
@@ -881,7 +882,7 @@ pub fn initialize_market_data_engine(
 
     info!(
         "Starting Market Data Engine (exchange: {:?})...",
-        bot_config.exchange.exchange
+        bot_config.exchange_engine.exchange
     );
 
     // Get pairs from exchange config
@@ -892,20 +893,15 @@ pub fn initialize_market_data_engine(
 
     // Extract exchange-specific config
     // Pairs come from bot.json - single source of truth
-    let market_data_config = match bot_config.exchange.exchange {
+    let market_data_config = match bot_config.exchange_engine.exchange {
         Exchange::Binance => {
-            let binance_config_json = bot_config
-                .exchange
-                .exchange_specific
-                .get("binance")
-                .ok_or("Binance exchange configuration is required")?;
             let binance_config: exchange_engine::exchanges::binance::config::BinanceConfig =
-                serde_json::from_value(binance_config_json.clone())
+                serde_json::from_value(bot_config.exchange_engine.config.clone())
                     .map_err(|e| format!("Failed to deserialize Binance config: {e}"))?;
 
             MarketDataConfig {
                 redis_url: None,
-                exchange: bot_config.exchange.exchange.clone(),
+                exchange: bot_config.exchange_engine.exchange.clone(),
                 exchange_config: MDExchangeConfig::Binance(MDBinanceConfig {
                     pairs: pairs.clone(), // Single source of truth from bot.json
                     limit: binance_config.limit.unwrap_or(100),
@@ -915,36 +911,34 @@ pub fn initialize_market_data_engine(
             }
         }
         Exchange::Bybit => {
-            let bybit_config_json = bot_config
-                .exchange
-                .exchange_specific
-                .get("bybit")
-                .ok_or("Bybit exchange configuration is required")?;
             let _bybit_config: exchange_engine::exchanges::bybit::config::BybitConfig =
-                serde_json::from_value(bybit_config_json.clone())
+                serde_json::from_value(bot_config.exchange_engine.config.clone())
                     .map_err(|e| format!("Failed to deserialize Bybit config: {e}"))?;
 
-            // Extract category from exchange_specific if present, default to Spot
-            let category = bybit_config_json
+            // Extract market data specific fields from raw JSON config
+            // These are not part of exchange engine config, but needed for market data engine
+            let config_json = &bot_config.exchange_engine.config;
+            let category = config_json
                 .get("category")
                 .and_then(|v| v.as_str())
                 .map(|s| match s {
                     "linear" => BybitCategory::Linear,
+                    "inverse" => BybitCategory::Inverse,
                     _ => BybitCategory::Spot,
                 })
                 .unwrap_or(BybitCategory::Spot);
 
             MarketDataConfig {
                 redis_url: None,
-                exchange: bot_config.exchange.exchange.clone(),
+                exchange: bot_config.exchange_engine.exchange.clone(),
                 exchange_config: MDExchangeConfig::Bybit(MDBybitConfig {
                     pairs: pairs.clone(), // Single source of truth from bot.json
-                    limit: bybit_config_json
+                    limit: config_json
                         .get("limit")
                         .and_then(|v| v.as_u64())
                         .unwrap_or(50), // Default to 50 (Bybit supports 1, 50, or 200)
-                    base_delay: bybit_config_json.get("baseDelay").and_then(|v| v.as_u64()),
-                    max_delay: bybit_config_json.get("maxDelay").and_then(|v| v.as_u64()),
+                    base_delay: config_json.get("baseDelay").and_then(|v| v.as_u64()),
+                    max_delay: config_json.get("maxDelay").and_then(|v| v.as_u64()),
                     category,
                 }),
             }
@@ -1191,7 +1185,7 @@ pub async fn initialize_exchange_engine(
 
     info!(
         "Starting Exchange Engine (exchange: {:?}, reconciliation: {})...",
-        bot_config.exchange.exchange,
+        bot_config.exchange_engine.exchange,
         if reconciliation_enabled {
             format!(
                 "enabled (interval: {}s)",
@@ -1203,15 +1197,10 @@ pub async fn initialize_exchange_engine(
     );
 
     // Extract exchange-specific config and get pairs
-    let (exchange_engine_config, pairs) = match bot_config.exchange.exchange {
+    let (exchange_engine_config, pairs) = match bot_config.exchange_engine.exchange {
         Exchange::Binance => {
-            let binance_config_json = bot_config
-                .exchange
-                .exchange_specific
-                .get("binance")
-                .ok_or("Binance exchange configuration is required")?;
             let binance_config: exchange_engine::exchanges::binance::config::BinanceConfig =
-                serde_json::from_value(binance_config_json.clone())
+                serde_json::from_value(bot_config.exchange_engine.config.clone())
                     .map_err(|e| format!("Failed to deserialize Binance config: {e}"))?;
 
             // Validate pairs
@@ -1231,13 +1220,8 @@ pub async fn initialize_exchange_engine(
             (exchange_config, pairs)
         }
         Exchange::Bybit => {
-            let bybit_config_json = bot_config
-                .exchange
-                .exchange_specific
-                .get("bybit")
-                .ok_or("Bybit exchange configuration is required")?;
             let bybit_config: exchange_engine::exchanges::bybit::config::BybitConfig =
-                serde_json::from_value(bybit_config_json.clone())
+                serde_json::from_value(bot_config.exchange_engine.config.clone())
                     .map_err(|e| format!("Failed to deserialize Bybit config: {e}"))?;
 
             // Validate pairs

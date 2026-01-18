@@ -3,9 +3,9 @@
     "log_level": "info",
     "shutdown_timeout_secs": 30
   },
-  "exchange": {
-    "exchange": "Binance",
-    "binance": {
+  "exchange_engine": {
+    "exchange": "Bybit",
+    "config": {
       "pairs": [
         {
           "base": "ETH",
@@ -16,17 +16,12 @@
           "quote": "USDC"
         }
       ],
-      "ws": {
+      "instrumentType": "Spot",
+      "credentials": {
         "apiKey": "xxxxxxxxxxxxxxxxxxxx",
-        "secretKey": "xxxxxxxxxxxxxxxxxxxx"
+        "apiSecret": "xxxxxxxxxxxxxxxxxxxx"
       },
-      "rest": {
-        "apiKey": "xxxxxxxxxxxxxxxxxxxx",
-        "secretKey": "xxxxxxxxxxxxxxxxxxxx"
-      },
-      "limit": 100,
-      "baseDelay": 2,
-      "maxDelay": 60
+      "testnet": false
     }
   },
   "server": {
@@ -38,9 +33,6 @@
     "enabled": false
   },
   "features": {
-    "enable_strategies": true,
-    "enable_levels": true,
-    "enable_indicators": true,
     "enable_reconciliation": true
   },
   "reconciliation": {
@@ -49,10 +41,9 @@
     "enabled": true
   },
   "mongo": {
-    "connection_string": "mongodb://mongodb:27017",
+    "connection_string": "mongodb://localhost:27017",
     "database": "trading_system",
     "bot_id": "main_bot",
     "enabled": true
   }
 }
-

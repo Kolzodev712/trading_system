@@ -72,13 +72,13 @@ pub async fn run(
     // 2. Create trading client first (needed for state manager)
     // Create ONE client instance that will be shared between driver and trading_client
     enum ExchangeClient {
-        Binance(crate::exchanges::binance::websocket::ws_client::BinanceClient),
+        Binance(crate::exchanges::binance::client::BinanceClient),
         Bybit(crate::exchanges::bybit::client::BybitClient),
     }
 
     let (trading_client, exchange_client) = match &config.exchange_config {
         ExchangeConfig::Binance(binance_config) => {
-            let client = crate::exchanges::binance::websocket::ws_client::BinanceClient::new(
+            let client = crate::exchanges::binance::client::BinanceClient::new(
                 binance_config.clone(),
                 channels.websocket_inbound_capacity,
                 channels.websocket_ping_capacity,

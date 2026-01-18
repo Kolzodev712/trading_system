@@ -7,7 +7,7 @@ use tracing::{debug, warn};
 use trading_core::{
     channels::exchange::ExchangeUpdateSender,
     error::EngineError,
-    types::exchange::{Balance, Order, Trade},
+    types::exchange::{Balance, Order, Position, Trade},
 };
 
 /// Publisher for exchange state updates via broadcast channels
@@ -93,6 +93,32 @@ impl ExchangeStatePublisher {
         debug!("Published trade update: trade_id={}", trade.trade_id);
         Ok(())
     }
+
+    /// Publish a position update via broadcast channel
+    ///
+    /// # Errors
+    /// Returns an error if the channel is closed (all receivers dropped)
+    pub async fn publish_position(&self, position: &Position) -> Result<(), EngineError> {
+        use trading_core::channels::exchange::ExchangeUpdate;
+
+        self.exchange_update_tx
+            .send(ExchangeUpdate::Position(position.clone()))
+            .map_err(|e| {
+                warn!(
+                    "Failed to publish position update: channel closed or lagged ({} receivers)",
+                    e
+                );
+                EngineError::CustomError(anyhow::anyhow!(
+                    "Failed to publish position: channel closed"
+                ))
+            })?;
+
+        debug!(
+            "Published position update: pair={}",
+            position.instrument.pair
+        );
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -104,16 +130,22 @@ mod tests {
     use trading_core::{
         channels::exchange::exchange_update_channel,
         types::{
-            common::{OrderId, OrderStatus, Side, Symbol},
+            common::{OrderId, OrderStatus, Side},
             exchange::Order,
         },
     };
 
     fn create_test_order() -> Order {
+        // symbol is the entire pair string (e.g., "BTCUSDT"), need to parse it
+        let registry = trading_core::registry::symbol::SymbolRegistry::default();
+        let pair = registry.get_or_parse_pair("BTCUSDT");
         Order {
             order_id: OrderId::new("12345".into()),
             client_order_id: None,
-            symbol: Symbol::from("BTCUSDT"),
+            instrument: trading_core::types::common::Instrument::new(
+                trading_core::types::common::InstrumentType::Spot,
+                pair,
+            ),
             side: Side::Buy,
             price: Decimal::new(100, 0),
             amount: Decimal::new(1, 0),
@@ -121,7 +153,6 @@ mod tests {
             exchange_created_at: None,
             status: OrderStatus::New,
             filled_amount: Decimal::ZERO,
-            instrument_type: trading_core::types::common::InstrumentType::Spot,
         }
     }
 

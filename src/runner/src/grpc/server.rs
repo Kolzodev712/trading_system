@@ -23,6 +23,7 @@ pub struct TradingGrpcServer {
 
 impl TradingGrpcServer {
     /// Create a new gRPC server
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         level_manager: Arc<RwLock<LevelManager>>,
         trading_state_manager: Arc<TradingStateManager>,

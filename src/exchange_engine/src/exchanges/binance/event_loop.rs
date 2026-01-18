@@ -4,7 +4,7 @@
 //! This module handles the main event loop for Binance WebSocket connections.
 
 use crate::exchanges::binance::config::BinanceConfig;
-use crate::exchanges::binance::websocket::client::InboundHandler;
+use crate::exchanges::binance::websocket::mapper::BinanceMessageMapper;
 use crate::exchanges::binance::websocket::{
     rpc_client::BinanceRpcClient, streaming_client::BinanceStreamingClient,
     types::rpc::BinanceRpcRequest, types::user_data::events::ParsedBinanceMessage,
@@ -149,7 +149,7 @@ impl BinanceEventLoop {
                 event_tx.clone(),
                 ping_tx,
                 ping_rx,
-                InboundHandler,
+                BinanceMessageMapper,
             )
             .await?;
         debug!("[BINANCE EVENT LOOP] Stream split successful - writer task spawned");

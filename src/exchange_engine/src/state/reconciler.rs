@@ -8,7 +8,6 @@ use tokio::sync::RwLock;
 use tracing::{error, info};
 use trading_core::{
     error::EngineError,
-    registry::symbol::SymbolRegistry,
     traits::TradingClient,
     types::{
         common::Pair,
@@ -312,13 +311,10 @@ pub fn compare_orders(rest_orders: &[Order], ws_orders: &[Order]) -> Vec<Discrep
                 }
             }
             None => {
-                // Order missing in WS - convert symbol to pair using registry with parsing fallback
-                let symbol_str = rest_order.symbol.as_ref();
-                let registry = SymbolRegistry::default(); // Empty registry, will use parsing fallback
-                let pair = registry.get_or_parse_pair(symbol_str);
+                // Order missing in WS - use pair from order instrument
                 discrepancies.push(Discrepancy::OrderMissingInWs {
                     order_id: rest_order.order_id.clone(),
-                    symbol: pair,
+                    symbol: rest_order.instrument.pair.clone(),
                     status: rest_order.status.clone(),
                 });
             }
@@ -351,7 +347,10 @@ pub fn compare_trades(rest_trades: &[Trade], ws_trades: &[Trade]) -> Vec<Discrep
 #[cfg(test)]
 mod tests {
     use super::*;
-    use trading_core::types::common::{Side, Symbol};
+    use trading_core::{
+        registry::symbol::SymbolRegistry,
+        types::common::{Instrument, OrderId, OrderStatus, Side, Symbol},
+    };
 
     fn create_test_balance(symbol: &str, free: Decimal, used: Decimal) -> Balance {
         Balance {
@@ -368,10 +367,13 @@ mod tests {
         status: OrderStatus,
         filled: Decimal,
     ) -> Order {
+        // symbol is the entire pair string (e.g., "BTCUSDT"), need to parse it
+        let registry = SymbolRegistry::default();
+        let pair = registry.get_or_parse_pair(symbol);
         Order {
             order_id: OrderId::new(order_id.into()),
             client_order_id: None,
-            symbol: Symbol::from(symbol),
+            instrument: Instrument::new(trading_core::types::common::InstrumentType::Spot, pair),
             side: Side::Buy,
             price: Decimal::new(100, 0),
             amount: Decimal::new(1, 0),
@@ -379,7 +381,6 @@ mod tests {
             exchange_created_at: None,
             status,
             filled_amount: filled,
-            instrument_type: trading_core::types::common::InstrumentType::Spot,
         }
     }
 

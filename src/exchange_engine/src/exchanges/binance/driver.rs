@@ -3,7 +3,7 @@
 //! This driver manages the Binance WebSocket connection and event loop.
 //! It integrates with the state manager to update and publish exchange state.
 
-use super::websocket::ws_client::BinanceClient;
+use super::client::BinanceClient;
 use crate::state::manager::ExchangeStateManager;
 use async_trait::async_trait;
 use std::sync::Arc;

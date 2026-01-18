@@ -72,7 +72,7 @@ impl MarketDataStateManager {
         let expected_pair = self
             .symbol_registry
             .get_pair(symbol)
-            .map(|p| p.clone())
+            .cloned()
             .unwrap_or_else(|| {
                 // Symbol not in registry - try parsing it (handles case sensitivity)
                 debug!("Symbol {} not in registry, parsing it to get pair", symbol);
@@ -93,8 +93,12 @@ impl MarketDataStateManager {
         }
 
         debug!(
-            "Orderbook validation passed: symbol={}, pair={}/{}",
-            symbol, orderbook.pair.base, orderbook.pair.quote
+            "Orderbook validation passed: symbol={}, pair={}/{}, bids={}, asks={}",
+            symbol,
+            orderbook.pair.base,
+            orderbook.pair.quote,
+            orderbook.bids.len(),
+            orderbook.asks.len()
         );
 
         // Clone before lock to minimize lock time

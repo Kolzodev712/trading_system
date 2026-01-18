@@ -16,6 +16,8 @@ use trading_core::{
     },
 };
 
+type ParseExchangeInfoResult = (HashMap<Pair, SymbolInfo>, HashMap<Pair, TradingRules>);
+
 /// Binance public REST client (no authentication required)
 #[derive(Debug)]
 pub struct BinancePublicClient {
@@ -72,7 +74,7 @@ impl BinancePublicClient {
     fn parse_exchange_info(
         exchange_info: &BinanceExchangeInfo,
         pairs: &[Pair],
-    ) -> Result<(HashMap<Pair, SymbolInfo>, HashMap<Pair, TradingRules>), EngineError> {
+    ) -> Result<ParseExchangeInfoResult, EngineError> {
         let mut symbol_info_map = HashMap::new();
         let mut trading_rules_map = HashMap::new();
 

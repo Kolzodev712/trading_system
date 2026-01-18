@@ -5,7 +5,7 @@ use smol_str::SmolStr;
 use trading_core::channels::exchange::exchange_update_channel;
 use trading_core::channels::indicators::indicator_update_channel;
 use trading_core::channels::market_data::market_data_update_channel;
-use trading_core::types::common::{OrderId, OrderStatus, Pair, Side, Symbol};
+use trading_core::types::common::{Instrument, InstrumentType, OrderId, OrderStatus, Pair, Side};
 use trading_core::types::exchange::Order;
 use trading_core::types::market_data::StructuredOrderbook;
 
@@ -58,7 +58,7 @@ async fn test_exchange_channel() {
     let order = Order {
         order_id: OrderId::new("test".into()),
         client_order_id: None,
-        symbol: Symbol::from("BTCUSDT"),
+        instrument: Instrument::new(InstrumentType::Spot, Pair::new("BTC", "USDT")),
         side: Side::Buy,
         price: dec!(50000),
         amount: dec!(0.001),
@@ -66,7 +66,6 @@ async fn test_exchange_channel() {
         exchange_created_at: None,
         status: OrderStatus::New,
         filled_amount: dec!(0),
-        instrument_type: trading_core::types::common::InstrumentType::Spot,
     };
 
     tx.send(trading_core::channels::exchange::ExchangeUpdate::Order(

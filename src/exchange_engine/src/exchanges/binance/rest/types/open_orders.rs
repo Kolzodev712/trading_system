@@ -1,11 +1,15 @@
-use crate::exchanges::binance::types::{
+use crate::exchanges::binance::common_types::{
     BinanceOrderStatus, BinanceOrderType, BinanceSide, BinanceTimeInForce,
 };
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use smol_str::SmolStr;
 use trading_core::{
-    types::exchange::Order,
+    registry::symbol::SymbolRegistry,
+    types::{
+        common::{Instrument, InstrumentType},
+        exchange::Order,
+    },
     utils::{
         deserialize_option_smol_str, deserialize_smol_str, serialize_option_smol_str,
         serialize_smol_str,
@@ -71,10 +75,15 @@ impl From<BinanceOrderResponse> for Order {
         // amount should be the full, original order amount (orig_qty), not the executed amount
         let amount = binance_res.orig_qty.unwrap_or_default();
 
+        // Convert symbol to pair using registry
+        let symbol_str = binance_res.symbol.as_str();
+        let registry = SymbolRegistry::default();
+        let pair = registry.get_or_parse_pair(symbol_str);
+
         Order {
             order_id: binance_res.order_id.into(),
             client_order_id: Some(binance_res.client_order_id.clone()),
-            symbol: binance_res.symbol.into(),
+            instrument: Instrument::new(InstrumentType::Spot, pair),
             side: binance_res.side.unwrap_or_default().into(),
             price: binance_res.price.unwrap_or_default(),
             amount,
@@ -82,7 +91,6 @@ impl From<BinanceOrderResponse> for Order {
             internal_created_at: binance_res.working_time.unwrap_or_default(),
             status,
             filled_amount,
-            instrument_type: trading_core::types::common::InstrumentType::Spot,
         }
     }
 }
@@ -252,7 +260,7 @@ mod tests {
 
         let order: Order = binance_response.into();
 
-        assert_eq!(order.symbol, "BTCUSDT");
+        assert_eq!(order.instrument.symbol(), "BTCUSDT");
         assert_eq!(order.side, Side::Buy);
         assert_eq!(order.price, Decimal::new(90000, 0));
         assert_eq!(order.amount, Decimal::new(10, 2)); // Full original order amount (orig_qty)

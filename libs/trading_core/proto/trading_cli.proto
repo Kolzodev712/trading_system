@@ -152,6 +152,7 @@ message MonitoringData {
     AggregatedData aggregated = 6;
     repeated StrategyStatus strategies = 7; // Strategy info (only present in strategies mode, supports multiple)
     repeated Orderbook orderbooks = 8; // Orderbook data for all pairs
+    string instrument_type = 9; // "Spot" or "Futures" - determines which view to show in TUI
 }
 
 message Order {
@@ -186,8 +187,16 @@ message Trade {
 
 message Position {
     string symbol = 1;
-    string quantity = 2;
-    string avg_price = 3;
+    string quantity = 2; // Positive for long, negative for short
+    string avg_price = 3; // Entry price
+    string side = 4; // "Long" or "Short"
+    string mark_price = 5; // Current mark price
+    string unrealized_pnl = 6; // Unrealized P&L
+    string leverage = 7; // Leverage (e.g., "10x")
+    string margin_used = 8; // Initial margin used
+    string maintenance_margin = 9; // Maintenance margin required
+    string liquidation_price = 10; // Liquidation price (if available)
+    string realized_pnl = 11; // Cumulative realized P&L (if available)
 }
 
 message IndicatorValue {

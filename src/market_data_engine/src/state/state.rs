@@ -36,13 +36,64 @@ impl MarketDataState {
     }
 
     /// Update orderbook for a pair
+    /// If orderbook already exists, merges delta updates; otherwise replaces with snapshot
     pub fn update_orderbook(&mut self, pair: Pair, orderbook: StructuredOrderbook) {
         // Use timestamp from orderbook if available, otherwise use current time
         let timestamp = orderbook.timestamp;
 
-        // Pair is moved into the HashMap, no need to clone
-        self.orderbooks.insert(pair, orderbook);
+        // If orderbook exists, merge delta updates; otherwise replace (snapshot)
+        if let Some(existing) = self.orderbooks.get_mut(&pair) {
+            // Merge delta: update/remove changed levels, keep unchanged levels
+            Self::merge_orderbook_delta(existing, &orderbook);
+        } else {
+            // First snapshot: replace entirely
+            self.orderbooks.insert(pair, orderbook);
+        }
+
         self.last_update = timestamp;
+    }
+
+    /// Merge delta update into existing orderbook
+    /// - Levels with size 0 are removed
+    /// - Levels with new prices are added
+    /// - Levels with existing prices are updated
+    fn merge_orderbook_delta(existing: &mut StructuredOrderbook, delta: &StructuredOrderbook) {
+        // Update bids
+        for (price, size) in &delta.bids {
+            if size.is_zero() {
+                // Remove level if size is 0
+                existing.bids.retain(|(p, _)| p != price);
+            } else {
+                // Update or add level
+                if let Some(level) = existing.bids.iter_mut().find(|(p, _)| p == price) {
+                    *level = (*price, *size);
+                } else {
+                    existing.bids.push((*price, *size));
+                }
+            }
+        }
+
+        // Update asks
+        for (price, size) in &delta.asks {
+            if size.is_zero() {
+                // Remove level if size is 0
+                existing.asks.retain(|(p, _)| p != price);
+            } else {
+                // Update or add level
+                if let Some(level) = existing.asks.iter_mut().find(|(p, _)| p == price) {
+                    *level = (*price, *size);
+                } else {
+                    existing.asks.push((*price, *size));
+                }
+            }
+        }
+
+        // Sort bids descending (highest first) and asks ascending (lowest first)
+        existing.bids.sort_by(|a, b| b.0.cmp(&a.0));
+        existing.asks.sort_by(|a, b| a.0.cmp(&b.0));
+
+        // Update timestamp
+        existing.timestamp = delta.timestamp;
     }
 
     /// Add a public trade for a pair

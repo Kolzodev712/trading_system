@@ -57,7 +57,10 @@ impl TradingControlService {
             for order in exchange_state.get_open_orders() {
                 active_order_ids_set.insert(order.order_id.clone());
                 // Extract pair from symbol using symbol registry
-                if let Some(pair) = exchange_state.symbol_registry().get_pair(&order.symbol) {
+                if let Some(pair) = exchange_state
+                    .symbol_registry()
+                    .get_pair(&order.instrument.symbol().into())
+                {
                     pairs_with_orders_set.insert(pair.clone());
                 }
                 exchange_state_count += 1;

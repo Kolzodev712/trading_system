@@ -13,6 +13,8 @@ use trading_core::{
     },
 };
 
+type ParseExchangeInfoResult = (HashMap<Pair, SymbolInfo>, HashMap<Pair, TradingRules>);
+
 /// Bybit public REST client (no authentication required)
 #[derive(Debug)]
 pub struct BybitPublicClient {
@@ -157,7 +159,7 @@ impl BybitPublicClient {
     fn parse_exchange_info(
         bybit_responses: &[BybitInstrumentsInfoResponse],
         pairs: &[Pair],
-    ) -> Result<(HashMap<Pair, SymbolInfo>, HashMap<Pair, TradingRules>), EngineError> {
+    ) -> Result<ParseExchangeInfoResult, EngineError> {
         let mut symbol_info_map = HashMap::new();
         let mut trading_rules_map = HashMap::new();
 
@@ -231,7 +233,7 @@ impl BybitPublicClient {
             instrument
                 .lot_size_filter
                 .qty_step
-                .or_else(|| instrument.lot_size_filter.base_precision)
+                .or(instrument.lot_size_filter.base_precision)
         } else {
             instrument.lot_size_filter.qty_step
         };

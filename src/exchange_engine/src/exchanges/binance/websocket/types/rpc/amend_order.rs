@@ -1,7 +1,11 @@
-use crate::exchanges::binance::types::{BinanceOrderStatus, BinanceSide};
+use crate::exchanges::binance::common_types::{BinanceOrderStatus, BinanceSide};
 use trading_core::{
     error::EngineError,
-    types::{common::OrderId, exchange::Order},
+    registry::symbol::SymbolRegistry,
+    types::{
+        common::{Instrument, InstrumentType, OrderId},
+        exchange::Order,
+    },
 };
 
 use super::super::common::{BinanceRateLimit, SessionLogonParams};
@@ -169,10 +173,15 @@ pub fn map_amend_order_to_core(
     let side: Side = resp.side.into();
     let status: OrderStatus = resp.status.into();
 
+    // Convert symbol to pair using registry
+    let symbol_str = params.symbol.as_str();
+    let registry = SymbolRegistry::default();
+    let pair = registry.get_or_parse_pair(symbol_str);
+
     Ok(Order {
         order_id: OrderId::from(resp.order_id.to_string()),
         client_order_id: Some(resp.client_order_id.clone()),
-        symbol: params.symbol.into(),
+        instrument: Instrument::new(InstrumentType::Spot, pair),
         side,
         status,
         price: resp.price,
@@ -180,7 +189,6 @@ pub fn map_amend_order_to_core(
         filled_amount: resp.executed_qty,
         internal_created_at: chrono::Utc::now().timestamp_millis() as u64,
         exchange_created_at: Some(resp.update_time as u64),
-        instrument_type: trading_core::types::common::InstrumentType::Spot,
     })
 }
 

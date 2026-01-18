@@ -8,7 +8,9 @@ use tokio::sync::RwLock;
 use trading_core::error::EngineError;
 use trading_core::registry::symbol::SymbolRegistry;
 use trading_core::traits::TradingClient;
-use trading_core::types::common::{InstrumentType, OrderId, OrderStatus, Pair, Side, Symbol};
+use trading_core::types::common::{
+    Instrument, InstrumentType, OrderId, OrderStatus, Pair, Side, Symbol,
+};
 use trading_core::types::exchange::{Balance, Order, OrderRequest, Position, Trade};
 use trading_engine::levels::config::{
     LevelRiskConfig, LifecycleConfig, OrderTypeConfig, PriceConfig, QuantityConfig,
@@ -48,7 +50,7 @@ pub fn create_test_order(
     Order {
         order_id: trading_core::types::common::OrderId::new(order_id.into()),
         client_order_id: None,
-        symbol: Symbol::from("BTCUSDT"),
+        instrument: Instrument::new(InstrumentType::Spot, Pair::new("BTC", "USDT")),
         side: Side::Buy,
         price,
         amount,
@@ -56,7 +58,6 @@ pub fn create_test_order(
         exchange_created_at: None,
         status: trading_core::types::common::OrderStatus::New,
         filled_amount: dec!(0),
-        instrument_type: trading_core::types::common::InstrumentType::Spot,
     }
 }
 
@@ -66,13 +67,12 @@ pub fn create_test_order_request(
     amount: rust_decimal::Decimal,
 ) -> OrderRequest {
     OrderRequest {
-        symbol: Symbol::from("BTCUSDT"),
+        instrument: Instrument::new(InstrumentType::Spot, Pair::new("BTC", "USDT")),
         side: Side::Buy,
         order_type: trading_core::types::common::OrderType::Limit,
         price,
         amount,
         timestamp: None,
-        instrument_type: trading_core::types::common::InstrumentType::Spot,
         exchange_params: std::collections::HashMap::new(),
     }
 }
@@ -93,19 +93,12 @@ pub fn create_test_balance(
 
 /// Create Binance config for testing
 pub fn create_test_binance_config() -> exchange_engine::exchanges::binance::config::BinanceConfig {
-    use exchange_engine::exchanges::binance::config::BinanceCredentials;
     use trading_core::secret::SecretString;
 
     exchange_engine::exchanges::binance::config::BinanceConfig {
         pairs: vec![Pair::new("BTC", "USDT")],
-        rest: BinanceCredentials {
-            api_key: SecretString::new("test_key"),
-            secret_key: SecretString::new("test_secret"),
-        },
-        ws: BinanceCredentials {
-            api_key: SecretString::new("test_key"),
-            secret_key: SecretString::new("test_secret"),
-        },
+        api_key: SecretString::from("key"),
+        secret: SecretString::from("secret"),
         limit: None,
         base_delay: None,
         max_delay: None,
@@ -117,7 +110,7 @@ pub async fn create_test_exchange_state_manager() -> (
     exchange_engine::state::manager::ExchangeStateManager,
     trading_core::channels::exchange::ExchangeUpdateReceiver,
 ) {
-    use exchange_engine::exchanges::binance::websocket::ws_client::BinanceClient;
+    use exchange_engine::exchanges::binance::client::BinanceClient;
     use trading_core::channels::exchange::exchange_update_channel;
     use trading_core::config::ChannelConfig;
     use trading_core::registry::symbol::SymbolRegistry;
@@ -275,9 +268,9 @@ impl TradingClient<OrderRequest> for MockTradingClient {
 
     async fn open_order(&self, req: OrderRequest) -> Result<Order, EngineError> {
         Ok(Order {
-            order_id: OrderId::new(format!("mock_order_{}", req.symbol).into()),
+            order_id: OrderId::new(format!("mock_order_{}", req.instrument.symbol()).into()),
             client_order_id: None,
-            symbol: req.symbol,
+            instrument: req.instrument.clone(),
             side: req.side,
             price: req.price,
             amount: req.amount,
@@ -285,7 +278,6 @@ impl TradingClient<OrderRequest> for MockTradingClient {
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
                 .as_secs(),
-            instrument_type: req.instrument_type,
             exchange_created_at: None,
             status: OrderStatus::New,
             filled_amount: rust_decimal::Decimal::ZERO,
@@ -331,9 +323,9 @@ impl TradingClient<OrderRequest> for MockTradingClient {
         new_request: OrderRequest,
     ) -> Result<Order, EngineError> {
         Ok(Order {
-            order_id: OrderId::new(format!("amended_{}", new_request.symbol).into()),
+            order_id: OrderId::new(format!("amended_{}", new_request.instrument.symbol()).into()),
             client_order_id: None,
-            symbol: new_request.symbol,
+            instrument: new_request.instrument.clone(),
             side: new_request.side,
             price: new_request.price,
             amount: new_request.amount,
@@ -341,7 +333,6 @@ impl TradingClient<OrderRequest> for MockTradingClient {
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
                 .as_secs(),
-            instrument_type: new_request.instrument_type,
             exchange_created_at: None,
             status: OrderStatus::New,
             filled_amount: rust_decimal::Decimal::ZERO,
@@ -354,7 +345,11 @@ impl TradingClient<OrderRequest> for MockTradingClient {
     }
 
     async fn fetch_position(&self, pair: &Pair) -> Result<Option<Position>, EngineError> {
-        Ok(self.positions.iter().find(|p| &p.pair == pair).cloned())
+        Ok(self
+            .positions
+            .iter()
+            .find(|p| &p.instrument.pair == pair)
+            .cloned())
     }
 
     async fn fetch_collateral_balance(
@@ -436,9 +431,11 @@ impl TradingClient<OrderRequest> for MockTradingClient {
         req: trading_core::types::futures::FuturesOrderRequest,
     ) -> Result<Order, EngineError> {
         Ok(Order {
-            order_id: OrderId::new(format!("futures_order_{}", req.base.symbol).into()),
+            order_id: OrderId::new(
+                format!("futures_order_{}", req.base.instrument.symbol()).into(),
+            ),
             client_order_id: None,
-            symbol: req.base.symbol,
+            instrument: req.base.instrument.clone(),
             side: req.base.side,
             price: req.base.price,
             amount: req.base.amount,
@@ -446,7 +443,6 @@ impl TradingClient<OrderRequest> for MockTradingClient {
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
                 .as_secs(),
-            instrument_type: InstrumentType::Futures,
             exchange_created_at: None,
             status: OrderStatus::New,
             filled_amount: rust_decimal::Decimal::ZERO,
@@ -465,7 +461,7 @@ impl TradingClient<OrderRequest> for MockTradingClient {
         Ok(self
             .futures_orders
             .iter()
-            .filter(|o| o.instrument_type == InstrumentType::Futures)
+            .filter(|o| o.instrument.instrument_type() == InstrumentType::Futures)
             .cloned()
             .collect())
     }
@@ -487,18 +483,14 @@ impl asset_engine::AssetDataClient for MockAssetDataClient {
         let mut filtered_market_data = self.market_data.clone();
 
         // Filter symbol_info
-        filtered_market_data.symbol_info = filtered_market_data
+        filtered_market_data
             .symbol_info
-            .into_iter()
-            .filter(|(pair, _)| pairs.contains(pair))
-            .collect();
+            .retain(|pair, _| pairs.contains(pair));
 
         // Filter trading_rules
-        filtered_market_data.trading_rules = filtered_market_data
+        filtered_market_data
             .trading_rules
-            .into_iter()
-            .filter(|(pair, _)| pairs.contains(pair))
-            .collect();
+            .retain(|pair, _| pairs.contains(pair));
 
         Ok(filtered_market_data)
     }

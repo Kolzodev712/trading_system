@@ -10,7 +10,7 @@ async fn test_bot_config_loading() {
 
     let bot_config = bot_config.unwrap();
     assert_eq!(
-        bot_config.exchange.exchange,
+        bot_config.exchange_engine.exchange,
         trading_core::types::common::Exchange::Binance
     );
 }

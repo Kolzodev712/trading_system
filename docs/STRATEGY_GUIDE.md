@@ -89,6 +89,8 @@ Strategies are configured in `config/strategies.json`:
    ```bash
    cargo run --release --package cli
    ```
+   
+   The TUI automatically detects the instrument type (Spot or Futures) and displays the appropriate monitor view.
 
 ### Strategy Monitoring
 
@@ -105,7 +107,7 @@ The TUI CLI displays a **Strategy panel** (replaces the Levels panel in strategi
 ### Trading Control
 
 **Per-Strategy Enable/Disable**:
-- Press `T` in the Trading Monitor to toggle the **selected** strategy
+- Press `T` in the Spot Monitor to toggle the **selected** strategy
 - Each strategy can be enabled/disabled independently
 - When disabled, the strategy continues monitoring but won't place orders
 - Strategy panel shows status: "●" (green, enabled) or "⏸" (red, disabled) for each strategy

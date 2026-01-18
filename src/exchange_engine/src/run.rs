@@ -70,25 +70,40 @@ pub async fn run(
     let symbol_registry = Arc::new(SymbolRegistry::from_pairs(pairs.clone()));
 
     // 2. Create trading client first (needed for state manager)
-    // Create ONE BinanceClient instance that will be shared between driver and trading_client
-    // Since BinanceClient contains Arc<BinanceRpcClient>, cloning it shares the same RPC client instance
-    let (trading_client, binance_client_for_driver, _binance_config_for_driver) =
-        match &config.exchange_config {
-            ExchangeConfig::Binance(binance_config) => {
-                let client = crate::exchanges::binance::websocket::ws_client::BinanceClient::new(
-                    binance_config.clone(),
-                    channels.websocket_inbound_capacity,
-                    channels.websocket_ping_capacity,
-                    channels.websocket_outbound_rpc_capacity,
-                    channels.shutdown_capacity,
-                );
-                // Clone the client - since it contains Arc<BinanceRpcClient>, both clones share the same RPC client
-                let client_for_driver = client.clone();
-                let trading_client: Arc<tokio::sync::RwLock<dyn TradingClient<OrderRequest>>> =
-                    Arc::new(tokio::sync::RwLock::new(client));
-                (trading_client, client_for_driver, binance_config.clone())
-            }
-        };
+    // Create ONE client instance that will be shared between driver and trading_client
+    enum ExchangeClient {
+        Binance(crate::exchanges::binance::client::BinanceClient),
+        Bybit(crate::exchanges::bybit::client::BybitClient),
+    }
+
+    let (trading_client, exchange_client) = match &config.exchange_config {
+        ExchangeConfig::Binance(binance_config) => {
+            let client = crate::exchanges::binance::client::BinanceClient::new(
+                binance_config.clone(),
+                channels.websocket_inbound_capacity,
+                channels.websocket_ping_capacity,
+                channels.websocket_outbound_rpc_capacity,
+                channels.shutdown_capacity,
+            );
+            let client_for_driver = ExchangeClient::Binance(client.clone());
+            let trading_client: Arc<tokio::sync::RwLock<dyn TradingClient<OrderRequest>>> =
+                Arc::new(tokio::sync::RwLock::new(client));
+            (trading_client, client_for_driver)
+        }
+        ExchangeConfig::Bybit(bybit_config) => {
+            let client = crate::exchanges::bybit::client::BybitClient::new(
+                bybit_config.clone(),
+                channels.websocket_inbound_capacity,
+                channels.websocket_ping_capacity,
+                channels.websocket_outbound_rpc_capacity,
+                channels.shutdown_capacity,
+            );
+            let client_for_driver = ExchangeClient::Bybit(client.clone());
+            let trading_client: Arc<tokio::sync::RwLock<dyn TradingClient<OrderRequest>>> =
+                Arc::new(tokio::sync::RwLock::new(client));
+            (trading_client, client_for_driver)
+        }
+    };
 
     // 3. Create state manager (top-level setup)
     let state_manager = Arc::new(ExchangeStateManager::new(
@@ -130,25 +145,45 @@ pub async fn run(
     state_manager.start_reconciliation(configured_pairs);
 
     // 5. Power up the exchange-specific integration (driver handles protocol/communication)
-    // Pass the same BinanceClient instance to the driver that's used in trading_client
-    // Since BinanceClient contains Arc<BinanceRpcClient>, both will share the same RPC channel
-    let mut driver = match config.exchange_config {
-        ExchangeConfig::Binance(_) => crate::exchanges::binance::driver::BinanceDriver::new(
-            binance_client_for_driver,
-            state_manager.clone(),
-            trading_client.clone(),
-        )?,
+    // Pass the same client instance to the driver that's used in trading_client
+    enum ExchangeDriverEnum {
+        Binance(crate::exchanges::binance::driver::BinanceDriver),
+        Bybit(crate::exchanges::bybit::driver::BybitDriver),
+    }
+
+    let driver = match exchange_client {
+        ExchangeClient::Binance(binance_client) => {
+            ExchangeDriverEnum::Binance(crate::exchanges::binance::driver::BinanceDriver::new(
+                binance_client,
+                state_manager.clone(),
+                trading_client.clone(),
+            )?)
+        }
+        ExchangeClient::Bybit(bybit_client) => {
+            ExchangeDriverEnum::Bybit(crate::exchanges::bybit::driver::BybitDriver::new(
+                bybit_client,
+                state_manager.clone(),
+                trading_client.clone(),
+            )?)
+        }
     };
 
-    // Keep client reference for readiness checking before moving driver
-    let client_for_readiness = driver.client().clone();
+    // Store client reference for readiness checking before moving driver
+    let binance_client_for_readiness = match &driver {
+        ExchangeDriverEnum::Binance(d) => Some(d.client().clone()),
+        ExchangeDriverEnum::Bybit(_) => None,
+    };
 
     // 6. Power up the integration: Start the driver's event loop
     // The driver's run() method handles the WebSocket event loop and protocol communication
     // Use the new ExchangeDriver trait methods for better connection management
     let shutdown_rx_for_driver = shutdown_rx;
     let driver_handle = tokio::spawn(async move {
-        if let Err(e) = driver.run(shutdown_rx_for_driver).await {
+        let result = match driver {
+            ExchangeDriverEnum::Binance(mut d) => d.run(shutdown_rx_for_driver).await,
+            ExchangeDriverEnum::Bybit(mut d) => d.run(shutdown_rx_for_driver).await,
+        };
+        if let Err(e) = result {
             tracing::error!("Exchange driver error: {}", e);
         }
     });
@@ -160,31 +195,39 @@ pub async fn run(
     let start = std::time::Instant::now();
     let timeout = tokio::time::Duration::from_secs(30);
 
-    // Create a temporary driver reference for readiness checking
-    // Note: We can't use driver.is_connection_ready() here since driver was moved
-    // So we fall back to checking the client directly
-    loop {
-        // Check if RPC channel is ready AND open (not just set)
-        let rpc_ready = {
-            let rpc_tx = client_for_readiness.rpc_client.get_rpc_request_tx().await;
-            if let Some(tx) = rpc_tx {
-                // Channel exists - check if it's actually open
-                !tx.is_closed()
-            } else {
-                false
+    // Wait for connection to be ready
+    // For Binance, we check the RPC channel directly
+    // For Bybit, we check the connection state via the driver
+    match config.exchange_config {
+        ExchangeConfig::Binance(_) => {
+            if let Some(client) = binance_client_for_readiness {
+                // Check if RPC channel is ready AND open (not just set)
+                loop {
+                    let rpc_tx = client.rpc_client.get_rpc_request_tx().await;
+                    if let Some(tx) = rpc_tx {
+                        if !tx.is_closed() {
+                            tracing::info!(
+                                "WebSocket connection ready, RPC channel available and open"
+                            );
+                            break;
+                        }
+                    }
+                    if start.elapsed() > timeout {
+                        tracing::warn!("Timeout waiting for WebSocket connection (30s), proceeding anyway - connection may still be establishing");
+                        break;
+                    }
+                    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                }
             }
-        };
-        if rpc_ready {
-            tracing::info!("WebSocket connection ready, RPC channel available and open");
-            break;
         }
-
-        if start.elapsed() > timeout {
-            tracing::warn!("Timeout waiting for WebSocket connection (30s), proceeding anyway - connection may still be establishing");
-            break;
+        ExchangeConfig::Bybit(_) => {
+            // For Bybit, we need to check connection readiness via a different mechanism
+            // Since we can't access the driver after moving it, we'll just wait a bit
+            // The driver will establish connections in the background
+            tracing::info!("Bybit driver starting, connections will be established in background");
+            // Give it a moment to start
+            tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
         }
-
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
     }
 
     // Store driver handle for potential cleanup (though it runs until shutdown)

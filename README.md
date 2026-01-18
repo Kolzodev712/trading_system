@@ -30,7 +30,7 @@ The Trading System is a comprehensive, production-ready trading platform that su
 - **Real-Time Market Data**: WebSocket-based orderbook and trade streaming
 - **Risk Management**: Comprehensive risk checks, circuit breakers, and daily loss limits
 - **TUI CLI**: Terminal-based interface for monitoring and level management
-- **Exchange Integration**: Currently supports Binance (spot trading), extensible to other exchanges
+- **Exchange Integration**: Supports Binance (spot) and Bybit (spot and futures), extensible to other exchanges
 
 ### Key Features
 
@@ -381,7 +381,7 @@ brew services start mongodb-community
 - `strategies` - Strategy configurations
 
 #### 2. Exchange API Access
-**Exchange**: Binance (spot trading)
+**Exchanges**: Binance (spot) and Bybit (spot and futures)
 
 **Required**:
 - API Key
@@ -396,6 +396,8 @@ brew services start mongodb-community
 - View trade history
 
 **Configuration**: API keys in `config/bot.json` (see [Configuration](#configuration))
+
+**Note**: Sample configurations are available in `sample_config/binance/` and `sample_config/bybit/` directories.
 
 ### Optional Services
 
@@ -423,6 +425,8 @@ brew services start mongodb-community
 #### Outbound Connections
 - **Binance REST API**: `https://api.binance.com` (production) or `https://testnet.binance.vision` (testnet)
 - **Binance WebSocket**: `wss://stream.binance.com` (production) or `wss://testnet.binance.vision` (testnet)
+- **Bybit REST API**: `https://api.bybit.com` (production) or `https://api-testnet.bybit.com` (testnet)
+- **Bybit WebSocket**: `wss://stream.bybit.com` (production) or `wss://stream-testnet.bybit.com` (testnet)
 - **MongoDB**: Connection to MongoDB instance (if enabled)
 
 #### Inbound Connections
@@ -430,8 +434,8 @@ brew services start mongodb-community
 - **Health Server**: Port 8080 (default, configurable)
 
 #### Firewall Rules
-- Allow outbound HTTPS (443) to Binance
-- Allow outbound WebSocket (443) to Binance
+- Allow outbound HTTPS (443) to exchange APIs
+- Allow outbound WebSocket (443) to exchange WebSocket endpoints
 - Allow inbound connections to gRPC/HTTP ports (if accessing remotely)
 - Allow connections to MongoDB (if remote)
 
@@ -609,14 +613,19 @@ To set up the configuration:
 
 2. **Copy the sample configuration files** from `sample_config/`:
    ```bash
-   cp sample_config/bot.json config/bot.json
-   cp sample_config/strategies.json config/strategies.json
-   cp sample_config/levels.json config/levels.json
+   # For Binance
+   cp sample_config/binance/bot.json config/bot.json
+   cp sample_config/binance/strategies.json config/strategies.json
+   cp sample_config/binance/levels.json config/levels.json
+   
+   # Or for Bybit
+   cp sample_config/bybit/bot.json config/bot.json
+   cp sample_config/bybit/strategies.json config/strategies.json
+   cp sample_config/bybit/levels.json config/levels.json
    ```
 
 3. **Edit `config/bot.json`** and add your:
-   - Binance API keys (`binance.rest.api_key` and `binance.rest.secret_key`)
-   - Binance WebSocket API keys (`binance.ws.api_key` and `binance.ws.secret_key`)
+   - Exchange API keys (see [Configuration](#configuration) for structure)
    - MongoDB connection string if different from default
 
 4. **Customize** `config/strategies.json` and `config/levels.json` as needed for your trading strategy.
@@ -625,32 +634,43 @@ To set up the configuration:
 
 ### Main Configuration (`config/bot.json`)
 
+**Binance Configuration**:
 ```json
 {
   "system": {
     "log_level": "info"
   },
-  "exchange": {
+  "exchange_engine": {
     "exchange": "Binance",
-    "binance": {
-      "symbol": {
-        "base": "BTC",
-        "quote": "USDT"
-      },
-      "rest": {
-        "api_key": "your_api_key",
-        "secret_key": "your_secret_key"
-      },
-      "ws": {
-        "api_key": "your_api_key",
-        "secret_key": "your_secret_key"
-      }
+    "config": {
+      "pairs": ["ETH/USDC", "BTC/USDT"],
+      "apiKey": "your_api_key",
+      "secret": "your_secret_key"
     }
   },
   "mongo": {
     "enabled": true,
     "connection_string": "mongodb://localhost:27017",
     "database": "trading_system"
+  },
+```
+
+**Bybit Configuration** (for futures trading):
+```json
+{
+  "system": {
+    "log_level": "info"
+  },
+  "exchange_engine": {
+    "exchange": "Bybit",
+    "config": {
+      "pairs": ["ETH/USDC", "BTC/USDT"],
+      "instrumentType": "Futures",
+      "credentials": {
+        "apiKey": "your_api_key",
+        "apiSecret": "your_secret_key"
+      }
+    }
   },
   "server": {
     "grpc": {
@@ -813,7 +833,9 @@ cargo run --release --package cli -- http://localhost:50051
 Once the TUI starts, you'll see:
 
 - **Main Menu**: Trading status and navigation
-- **Trading Monitor**: Real-time display of orders, balances, levels, indicators, trades
+- **Spot Monitor** or **Futures Monitor**: Real-time display (automatically selected based on instrument type)
+  - Spot Monitor: Orders, balances, levels/strategies, indicators, trades
+  - Futures Monitor: Positions, margin info, orders, orderbook, indicators, trades
 
 **Navigation**:
 - `↑/↓`: Navigate levels
@@ -856,7 +878,7 @@ cargo run --release --package cli -- http://localhost:50051
 Once the TUI starts, you'll see:
 
 - **Main Menu**: Trading status and navigation
-- **Trading Monitor**: Real-time display with **Strategy panel** (replaces Levels panel)
+- **Spot Monitor** or **Futures Monitor**: Real-time display with **Strategy panel** (replaces Levels panel in strategies mode)
   - Strategy status per strategy (Running/Paused, enabled/disabled)
   - Current position and average price per strategy
   - Unrealized P&L per strategy

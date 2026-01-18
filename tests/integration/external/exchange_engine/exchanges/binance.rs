@@ -10,7 +10,7 @@
 use crate::helpers::external::{ExchangeClientBuilder, TestExchangeConfig};
 use rust_decimal_macros::dec;
 use trading_core::types::{
-    common::{Exchange, OrderType, Pair, Side},
+    common::{Exchange, Instrument, InstrumentType, OrderType, Pair, Side},
     exchange::OrderRequest,
 };
 
@@ -71,14 +71,17 @@ async fn test_test_order() {
     let trading_client = builder.build_trading_client();
     let client_guard = trading_client.read().await;
 
+    use trading_core::types::common::Instrument;
     let order_request = OrderRequest {
-        symbol: pair.clone().convert_to_smolstr().into(),
+        instrument: Instrument::new(
+            trading_core::types::common::InstrumentType::Spot,
+            pair.clone(),
+        ),
         side: Side::Buy,
         order_type: OrderType::Limit,
         price: dec!(10000.0), // Very low price (won't execute)
         amount: dec!(0.001),  // Small amount
         timestamp: None,
-        instrument_type: trading_core::types::common::InstrumentType::Spot,
         exchange_params: Default::default(),
     };
 
@@ -109,13 +112,12 @@ async fn test_place_order() {
 
     // Use a very low price that won't execute immediately
     let mut order_request = OrderRequest {
-        symbol: pair.clone().convert_to_smolstr().into(),
+        instrument: Instrument::new(InstrumentType::Spot, pair.clone()),
         side: Side::Buy,
         order_type: OrderType::Limit,
         price: dec!(10000.0), // Adjust to a price that won't execute
         amount: dec!(0.001),
         timestamp: None,
-        instrument_type: trading_core::types::common::InstrumentType::Spot,
         exchange_params: Default::default(),
     };
     order_request
@@ -127,7 +129,7 @@ async fn test_place_order() {
 
     let order = result.unwrap();
     assert_eq!(
-        order.symbol.to_string(),
+        order.instrument.symbol().to_string(),
         pair.convert_to_smolstr().as_str(),
         "Order symbol should match pair"
     );
@@ -155,13 +157,12 @@ async fn test_cancel_order() {
 
     // Place an order first
     let mut order_request = OrderRequest {
-        symbol: pair.clone().convert_to_smolstr().into(),
+        instrument: Instrument::new(InstrumentType::Spot, pair.clone()),
         side: Side::Buy,
         order_type: OrderType::Limit,
         price: dec!(10000.0), // Won't execute
         amount: dec!(0.001),
         timestamp: None,
-        instrument_type: trading_core::types::common::InstrumentType::Spot,
         exchange_params: Default::default(),
     };
     order_request
@@ -271,13 +272,12 @@ async fn test_amend_order() {
 
     // Place an order first
     let mut order_request = OrderRequest {
-        symbol: pair.clone().convert_to_smolstr().into(),
+        instrument: Instrument::new(InstrumentType::Spot, pair.clone()),
         side: Side::Buy,
         order_type: OrderType::Limit,
         price: dec!(10000.0),
         amount: dec!(0.001),
         timestamp: None,
-        instrument_type: trading_core::types::common::InstrumentType::Spot,
         exchange_params: Default::default(),
     };
     order_request
@@ -291,13 +291,12 @@ async fn test_amend_order() {
 
     // Amend the order (change price)
     let mut amend_request = OrderRequest {
-        symbol: pair.clone().convert_to_smolstr().into(),
+        instrument: Instrument::new(InstrumentType::Spot, pair.clone()),
         side: Side::Buy,
         order_type: OrderType::Limit,
         price: dec!(11000.0), // New price
         amount: dec!(0.001),
         timestamp: None,
-        instrument_type: trading_core::types::common::InstrumentType::Spot,
         exchange_params: [("origClientOrderId".into(), order.order_id.as_str().into())]
             .iter()
             .cloned()

@@ -1,4 +1,5 @@
-use super::{sign::BinanceAuthenticator, utils::deserialize_or_none};
+use super::utils::deserialize_or_none;
+use crate::exchanges::binance::authenticator::BinanceAuthenticator;
 use crate::exchanges::binance::{
     config::BinanceConfig,
     rate_limit::{BinanceRateLimitType, BinanceRateLimiter},
@@ -43,10 +44,7 @@ impl BinanceHttpClient {
         BinanceHttpClient {
             base_url: BINANCE_SPOT_URL.into(),
             handler: BinanceHandler,
-            authenticator: BinanceAuthenticator {
-                api_key: config.rest.api_key,
-                secret_key: config.rest.secret_key,
-            },
+            authenticator: BinanceAuthenticator::new(config.api_key, config.secret),
             client: Client::new(),
             rate_limiter,
         }

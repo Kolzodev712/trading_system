@@ -137,10 +137,9 @@ impl TradingState {
     }
 
     pub fn get_active_order_count(&self, symbol: &Pair) -> usize {
-        let symbol_str = symbol.convert_to_smolstr();
         self.active_orders
             .values()
-            .filter(|o| o.symbol.as_ref() == symbol_str.as_str())
+            .filter(|o| &o.instrument.pair == symbol)
             .count()
     }
 }
@@ -176,7 +175,7 @@ pub trait Strategy: Send + Sync {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use trading_core::types::common::{InstrumentType, Side};
+    use trading_core::types::common::{Instrument, InstrumentType, Side};
 
     #[test]
     fn test_trading_state_new() {
@@ -192,9 +191,8 @@ mod tests {
         let pair = Pair::new("BTC", "USDT");
         let order = Order {
             order_id: OrderId::new("12345".into()),
-            instrument_type: InstrumentType::Spot,
             client_order_id: None,
-            symbol: pair.convert_to_smolstr().into(),
+            instrument: Instrument::new(InstrumentType::Spot, pair.clone()),
             side: Side::Buy,
             price: Decimal::new(90000, 0),
             amount: Decimal::new(10, 2),
@@ -215,9 +213,8 @@ mod tests {
         let mut state = TradingState::new();
         let order = Order {
             order_id: OrderId::new("12345".into()),
-            instrument_type: InstrumentType::Spot,
             client_order_id: None,
-            symbol: "BTCUSDT".into(),
+            instrument: Instrument::new(InstrumentType::Spot, Pair::new("BTC", "USDT")),
             side: Side::Buy,
             price: Decimal::new(90000, 0),
             amount: Decimal::new(10, 2),
@@ -238,9 +235,8 @@ mod tests {
         let order_id = OrderId::new("12345".into());
         let order = Order {
             order_id: order_id.clone(),
-            instrument_type: InstrumentType::Spot,
             client_order_id: None,
-            symbol: "BTCUSDT".into(),
+            instrument: Instrument::new(InstrumentType::Spot, Pair::new("BTC", "USDT")),
             side: Side::Buy,
             price: Decimal::new(90000, 0),
             amount: Decimal::new(10, 2),
@@ -264,9 +260,8 @@ mod tests {
         let order_id = OrderId::new("12345".into());
         let order = Order {
             order_id: order_id.clone(),
-            instrument_type: InstrumentType::Spot,
             client_order_id: None,
-            symbol: "BTCUSDT".into(),
+            instrument: Instrument::new(InstrumentType::Spot, Pair::new("BTC", "USDT")),
             side: Side::Buy,
             price: Decimal::new(90000, 0),
             amount: Decimal::new(10, 2),
@@ -352,9 +347,8 @@ mod tests {
 
         let order1 = Order {
             order_id: OrderId::new("1".into()),
-            instrument_type: InstrumentType::Spot,
             client_order_id: None,
-            symbol: "BTCUSDT".into(),
+            instrument: Instrument::new(InstrumentType::Spot, Pair::new("BTC", "USDT")),
             side: Side::Buy,
             price: Decimal::new(90000, 0),
             amount: Decimal::new(10, 2),
@@ -366,9 +360,8 @@ mod tests {
 
         let order2 = Order {
             order_id: OrderId::new("2".into()),
-            instrument_type: InstrumentType::Spot,
             client_order_id: None,
-            symbol: "BTCUSDT".into(),
+            instrument: Instrument::new(InstrumentType::Spot, Pair::new("BTC", "USDT")),
             side: Side::Buy,
             price: Decimal::new(90000, 0),
             amount: Decimal::new(10, 2),
@@ -380,9 +373,8 @@ mod tests {
 
         let order3 = Order {
             order_id: OrderId::new("3".into()),
-            instrument_type: InstrumentType::Spot,
             client_order_id: None,
-            symbol: "ETHUSDT".into(), // Different symbol
+            instrument: Instrument::new(InstrumentType::Spot, Pair::new("ETH", "USDT")), // Different symbol
             side: Side::Buy,
             price: Decimal::new(3000, 0),
             amount: Decimal::new(10, 2),
@@ -405,9 +397,8 @@ mod tests {
         let order_id = OrderId::new("12345".into());
         let order = Order {
             order_id: order_id.clone(),
-            instrument_type: InstrumentType::Spot,
             client_order_id: None,
-            symbol: "BTCUSDT".into(),
+            instrument: Instrument::new(InstrumentType::Spot, Pair::new("BTC", "USDT")),
             side: Side::Buy,
             price: Decimal::new(90000, 0),
             amount: Decimal::new(10, 2),

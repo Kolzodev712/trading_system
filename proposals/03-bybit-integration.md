@@ -26,6 +26,7 @@ This proposal details the implementation of Bybit support for both Spot and Futu
 | **REST Base URL (Spot)** | `https://api.binance.com/api/v3/` | `https://api.bybit.com/v5/` |
 | **REST Base URL (Futures)** | `https://fapi.binance.com/fapi/v1/` | `https://api.bybit.com/v5/` (same URL) |
 | **WebSocket URL** | Different for spot/futures | `wss://stream.bybit.com/v5/` (unified) |
+| **WebSocket Connections** | **Single connection per API key** (must split RPC + streaming on same stream) | **Multiple connections allowed** (up to 500/IP/5min per category) - can use separate connections for RPC and streaming |
 | **API Version** | v3 (spot), v1/v2 (futures) | v5 (unified) |
 | **Authentication** | HMAC-SHA256 | HMAC-SHA256 (different param order) |
 | **Request Format** | Query params | Query params (similar) |
@@ -242,10 +243,23 @@ Bybit wraps all responses in a `result` object:
 
 **Location**: `src/exchange_engine/src/exchanges/bybit/websocket/client.rs`
 
+#### WebSocket Architecture
+
+**Key Advantage**: Bybit allows **multiple WebSocket connections per API key**, unlike Binance which only allows one connection per API key pair. This enables a cleaner architecture:
+
+- **Separate RPC Connection**: Dedicated WebSocket for trading operations (open_order, cancel_order, etc.)
+- **Separate Streaming Connection**: Dedicated WebSocket for user data (execution reports, balances, positions)
+- **No Message Routing Needed**: Unlike Binance, we don't need to split a single stream - each connection has a clear purpose
+
+**Connection Limits**:
+- Up to **500 connections per IP per 5 minutes per category** (Spot, Linear, Inverse, Options are separate)
+- Connections are counted separately per category
+- Avoid rapid connect/disconnect cycles
+
 #### WebSocket URLs
 
-- **Public Stream**: `wss://stream.bybit.com/v5/public/spot`
-- **Private Stream**: `wss://stream.bybit.com/v5/private` (authenticated)
+- **Public Stream**: `wss://stream.bybit.com/v5/public/spot` (spot), `wss://stream.bybit.com/v5/public/linear` (futures), `wss://stream.bybit.com/v5/public/inverse` (inverse)
+- **Private Stream**: `wss://stream.bybit.com/v5/private` (authenticated, unified for all categories)
 
 #### Key WebSocket Topics (Spot)
 
@@ -259,21 +273,45 @@ Bybit wraps all responses in a `result` object:
    - `execution` - Trade executions
    - `wallet` - Balance updates
 
+#### Implementation Architecture
+
+**Two-Connection Design** (simpler than Binance):
+
+1. **BybitRpcClient** (`websocket/rpc_client.rs`):
+   - Manages its own WebSocket connection for RPC operations
+   - Handles order placement, cancellation, amendment
+   - Request/response pattern with correlation IDs
+   - Can reconnect independently
+
+2. **BybitStreamingClient** (`websocket/streaming_client.rs`):
+   - Manages its own WebSocket connection for user data streaming
+   - Subscribes to execution reports, balance updates, position updates
+   - Long-lived connection with automatic reconnection
+   - Publishes events to `ExchangeStateManager`
+
+**Benefits**:
+- Cleaner separation of concerns
+- No message routing/splitting logic needed
+- Independent reconnection for each connection type
+- Easier to debug and maintain
+
 #### Implementation Checklist
 
-- [ ] Create `BybitWsClient` struct (unified for spot + futures)
-- [ ] Implement `ExchangeDriver` trait
-- [ ] Connect to public WebSocket stream
-- [ ] Connect to private WebSocket stream (authenticated)
-- [ ] Subscribe to spot orderbook/trade topics
-- [ ] Subscribe to futures orderbook/trade topics
-- [ ] Subscribe to position update topics (futures)
-- [ ] Subscribe to funding rate topics (futures)
-- [ ] Handle order updates (both spot and futures)
-- [ ] Handle balance updates (unified account)
-- [ ] Handle position updates (futures)
-- [ ] Add reconnection logic
-- [ ] Handle authentication for private stream
+- [ ] Create `BybitRpcClient` struct (separate WebSocket connection for RPC)
+- [ ] Create `BybitStreamingClient` struct (separate WebSocket connection for streaming)
+- [ ] Implement RPC connection with authentication
+- [ ] Implement streaming connection with authentication
+- [ ] Implement `ExchangeDriver` trait (coordinates both clients)
+- [ ] Subscribe to spot orderbook/trade topics (streaming client)
+- [ ] Subscribe to futures orderbook/trade topics (streaming client)
+- [ ] Subscribe to position update topics (futures, streaming client)
+- [ ] Subscribe to funding rate topics (futures, streaming client)
+- [ ] Handle order updates (both spot and futures, streaming client)
+- [ ] Handle balance updates (unified account, streaming client)
+- [ ] Handle position updates (futures, streaming client)
+- [ ] Implement RPC operations (open_order, cancel_order, etc., RPC client)
+- [ ] Add reconnection logic for both connections
+- [ ] Handle authentication for both connections
 
 ## Phase 2: Futures Methods Implementation
 
@@ -394,16 +432,143 @@ impl BybitAuthenticator {
 
 **Location**: `src/exchange_engine/src/exchanges/bybit/common/rate_limit.rs`
 
-Bybit has different rate limits:
-- **REST API**: 
-  - Spot: 120 requests per second
-  - Futures: 120 requests per second
-  - Unified: Shared limits
-- **WebSocket**: 
-  - 20 subscriptions per connection
-  - 10 connections per IP
+**Status**: ✅ Rate limiter structure implemented. See `src/exchange_engine/src/exchanges/bybit/common/rate_limit.rs`
 
-### 3.3 Unified Account Management
+Bybit uses a **two-level rate limiting system**:
+1. **IP-based HTTP limit**: 600 requests per 5 seconds (applies to ALL REST calls)
+2. **Per-endpoint limits**: Each endpoint has its own limit (rolling window per second)
+
+**Rate Limit Algorithm**: Rolling window (not fixed window like Binance)
+- Uses `RollingWindowRateLimiter` from `trading_core`
+- 1-second rolling windows for endpoints
+- 5-second rolling window for IP limit
+
+**Default Limits** (from Bybit documentation):
+- IP HTTP: 600 requests per 5 seconds
+- Common endpoints (default tier):
+  - `/v5/order/create`: 10/s
+  - `/v5/order/amend`: 10/s
+  - `/v5/order/cancel`: 10/s
+  - `/v5/order/cancel-all`: 1/s
+  - `/v5/order/create-batch`: 10/s
+  - `/v5/order/history`: 50/s
+  - `/v5/order/realtime`: 50/s
+  - `/v5/position/list`: 50/s
+  - `/v5/account/wallet-balance`: 50/s
+- Default fallback: 10/s for unknown endpoints
+
+**Configuration**: `BybitRateLimiterConfig` in `config.rs`
+- `endpoint_limits`: HashMap of endpoint -> limit per second
+- `default_endpoint_limit`: Fallback limit (default: 10/s)
+- `ip_limit`: IP HTTP limit (default: 600)
+- `ip_window_seconds`: IP window duration (default: 5)
+
+**Implementation Notes**:
+
+1. **Response Header Parsing** (TODO - REST client implementation):
+   - Parse `X-Bapi-Limit-*` headers from HTTP responses
+   - `X-Bapi-Limit`: Current limit for endpoint
+   - `X-Bapi-Limit-Status`: Remaining requests
+   - `X-Bapi-Limit-Reset-Timestamp`: Reset timestamp
+   - Update rate limiter via `update_endpoint_limit(endpoint, limit)`
+
+2. **VIP Account Support** (TODO - Future enhancement):
+   - VIP accounts have higher limits (2x-6x multiplier)
+   - VIP 1: ~2x, VIP 2: ~4x, VIP 3+: ~6x
+   - Limits should be configured based on account tier
+   - Source: [Bybit VIP Rate Limits](https://bybit-exchange.github.io/docs/v5/rate-limit/rules-for-vips)
+
+3. **PRO Account Custom Limits** (TODO - Future enhancement):
+   - PRO accounts can query/set custom limits via API
+   - `GET /v5/apilimit/query` - Query current limits
+   - `GET /v5/apilimit/query-all` - Query all limits
+   - `POST /v5/apilimit/set` - Set custom limits
+   - Should periodically refresh limits from API
+
+4. **Batch Request Handling**:
+   - Batch endpoints count per order, not per request
+   - Use `record_batch_endpoint(endpoint, order_count)` instead of `record_endpoint`
+   - Example: Batch with 5 orders = consumes 5x rate limit capacity
+
+5. **WebSocket Rate Limiting**:
+   - IP limits don't apply to WebSocket RPC calls
+   - Endpoint limits DO apply to WebSocket RPC (order placement via WS)
+   - WebSocket has separate connection limits (500/5min) - not yet implemented
+
+6. **Integration Points**:
+   - REST client: Check IP + endpoint limits before request, update from headers after response
+   - WebSocket RPC: Check endpoint limit before sending, record after successful send
+   - Map WebSocket methods to REST endpoints for consistent rate limiting
+
+**Sources**:
+- [Bybit Rate Limit Docs](https://bybit-exchange.github.io/docs/v5/rate-limit)
+- [Bybit Rate Limit Table](https://bybit-exchange.github.io/docs/v5/rate-limit#api-rate-limit-table)
+- [Bybit VIP Rate Limits](https://bybit-exchange.github.io/docs/v5/rate-limit/rules-for-vips)
+
+### 3.3 Pair and Instrument Management
+
+**Location**: `src/exchange_engine/src/exchanges/bybit/common/pair_manager.rs`
+
+**Status**: ✅ Basic structure implemented. See `src/exchange_engine/src/exchanges/bybit/common/pair_manager.rs`
+
+Bybit uses the **same symbol string** (e.g., "BTCUSDT") for both spot and futures, distinguished by the `category` parameter in API calls.
+
+**Key Design Decisions**:
+
+1. **Bybit uses `Instrument` as `InstrumentId`**: 
+   - Bybit implements `TradingClient<OrderRequest, Instrument>` (not `Pair`)
+   - This allows methods like `cancel_all_orders(&self, instrument: &Instrument)` to distinguish spot vs futures
+   - Binance continues using `Pair` (separate clients, no ambiguity)
+
+2. **Symbol Format**:
+   - Spot: "BTCUSDT" (baseCoin + quoteCoin)
+   - Linear Futures: "BTCUSDT" (same format, different category)
+   - Inverse Futures: "BTCUSD" (different quote coin)
+   - Options: "BTC-27MAR26-70000-P-USDT" (different format)
+
+3. **Category Mapping**:
+   - `InstrumentType::Spot` → `category="spot"`
+   - `InstrumentType::Futures` → `category="linear"` (default) or `category="inverse"`
+   - `InstrumentType::Derivitives` → `category="option"`
+
+**Current Implementation**:
+
+- ✅ `instrument_to_bybit()`: Converts `Instrument` → `(symbol, category)`
+- ✅ `bybit_to_instrument()`: Converts Bybit response → `Instrument`
+- ✅ Basic caching structure for validated instruments
+- ✅ Category enum for type safety
+
+**Enhancement TODOs** (when REST client is implemented):
+
+1. **Instrument Validation**:
+   - Query `/v5/market/instruments-info` to validate instruments exist
+   - Handle pagination (linear has >500 symbols)
+   - Check instrument status (Trading, PreLaunch, etc.)
+
+2. **Trading Rules Caching**:
+   - Parse and cache trading rules from instrument info (price precision, lot size, min/max orders)
+   - Store leverage filters for futures
+   - Cache risk parameters
+
+3. **Symbol Validation**:
+   - Validate symbol format matches baseCoin + quoteCoin
+   - Handle options symbol format parsing
+   - Support inverse contracts (different quote coin)
+
+4. **Status Management**:
+   - Track instrument status transitions
+   - Filter by active status (Trading only vs include PreLaunch)
+   - Handle delisted/closed instruments
+
+5. **Cache Refresh**:
+   - Periodic refresh of instrument list
+   - Handle new instruments being added
+   - Handle instruments being delisted
+
+**Sources**:
+- [Bybit Instruments Info API](https://bybit-exchange.github.io/docs/v5/market/instrument)
+
+### 3.4 Unified Account Management
 
 **Location**: `src/exchange_engine/src/exchanges/bybit/unified/account.rs`
 

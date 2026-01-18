@@ -6,7 +6,7 @@
 use crate::helpers::internal::MockTradingClient;
 use rust_decimal::Decimal;
 use trading_core::traits::TradingClient;
-use trading_core::types::common::{InstrumentType, OrderType, Pair, Side, Symbol};
+use trading_core::types::common::{Instrument, InstrumentType, OrderType, Pair, Side, Symbol};
 use trading_core::types::exchange::{OrderRequest, Position};
 use trading_core::types::futures::{
     FuturesBalance, FuturesOrderRequest, LeverageInfo, MarginType, PositionMode,
@@ -16,12 +16,11 @@ use trading_core::types::futures::{
 async fn test_mock_trading_client_futures_methods() {
     let pair = Pair::new("BTC", "USDT");
     let position = Position {
-        pair: pair.clone(),
+        instrument: Instrument::new(InstrumentType::Futures, pair.clone()),
         quantity: Decimal::new(1, 0), // Positive = long position
         avg_price: Decimal::new(50000, 0),
         current_price: Decimal::new(51000, 0),
         unrealized_pnl: Decimal::new(1000, 0),
-        instrument_type: InstrumentType::Futures,
         mark_price: Some(Decimal::new(51000, 0)),
         leverage: Some(10),
         margin_type: Some(MarginType::Cross),
@@ -61,12 +60,12 @@ async fn test_mock_trading_client_futures_methods() {
     // Test fetch_positions
     let positions = client.fetch_positions().await.unwrap();
     assert_eq!(positions.len(), 1);
-    assert_eq!(positions[0].pair, pair);
+    assert_eq!(positions[0].instrument.pair, pair);
 
     // Test fetch_position
     let fetched_position = client.fetch_position(&pair).await.unwrap();
     assert!(fetched_position.is_some());
-    assert_eq!(fetched_position.unwrap().pair, pair);
+    assert_eq!(fetched_position.unwrap().instrument.pair, pair);
 
     // Test fetch_collateral_balance
     let balances = client.fetch_collateral_balance().await.unwrap();
@@ -102,13 +101,12 @@ async fn test_mock_trading_client_futures_methods() {
     // Test place_futures_order
     let futures_req = FuturesOrderRequest {
         base: OrderRequest {
-            symbol: Symbol::from("BTCUSDT"),
+            instrument: Instrument::new(InstrumentType::Futures, pair.clone()),
             side: Side::Buy,
             order_type: OrderType::Limit,
             price: Decimal::new(50000, 0),
             amount: Decimal::new(1, 0),
             timestamp: None,
-            instrument_type: InstrumentType::Futures,
             exchange_params: std::collections::HashMap::new(),
         },
         position_side: None,
@@ -122,7 +120,7 @@ async fn test_mock_trading_client_futures_methods() {
     };
 
     let order = client.place_futures_order(futures_req).await.unwrap();
-    assert_eq!(order.instrument_type, InstrumentType::Futures);
+    assert_eq!(order.instrument.instrument_type(), InstrumentType::Futures);
 
     // Test cancel_all_futures_orders
     client.cancel_all_futures_orders(&pair).await.unwrap();

@@ -3,7 +3,7 @@
 **Version**: 1.0  
 **Date**: December 2024  
 **Status**: Draft  
-**Prerequisites**: Proposal 05 (Communication Layer) recommended but not required
+**Prerequisites**: Proposal 03 (Communication Layer) recommended but not required
 
 ## Executive Summary
 

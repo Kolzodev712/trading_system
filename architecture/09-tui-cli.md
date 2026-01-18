@@ -24,12 +24,17 @@ cli/
 │   ├── screens/
 │   │   ├── mod.rs                # Screen orchestrator
 │   │   ├── main_menu.rs          # Main menu screen
-│   │   └── trading_monitor/
-│   │       ├── mod.rs            # Trading monitor orchestrator
-│   │       ├── panels.rs          # Panel rendering
-│   │       ├── popups.rs          # Popup rendering
-│   │       ├── forms.rs           # Form rendering
-│   │       └── input.rs           # Input handling
+│   │   ├── shared/               # Shared components
+│   │   │   ├── mod.rs            # Shared module
+│   │   │   ├── panels.rs          # Shared panel rendering
+│   │   │   ├── popups.rs          # Shared popup rendering
+│   │   │   ├── forms.rs           # Shared form rendering
+│   │   │   └── input.rs           # Shared input handling
+│   │   ├── spot_monitor/
+│   │   │   └── mod.rs            # SpotMonitorScreen
+│   │   └── futures_monitor/
+│   │       ├── mod.rs            # FuturesMonitorScreen
+│   │       └── panels.rs          # Futures-specific panels
 │   └── error.rs                  # Error handling
 ```
 
@@ -52,9 +57,10 @@ cli/
 
 **State Management**:
 - `App` struct holds all application state
-- Current screen (MainMenu, TradingMonitor)
+- Current screen (MainMenu, SpotMonitor, FuturesMonitor)
 - Level selection and form state
 - Real-time data cache
+- Automatic screen switching based on `instrument_type` from monitoring data
 
 **Key Methods**:
 - `new()` - Create new App
@@ -89,38 +95,22 @@ cli/
 
 **Features**:
 - Trading status display
-- Navigation to Trading Monitor
+- Navigation to Spot Monitor or Futures Monitor (auto-detected based on instrument type)
 - System information
 
-##### Trading Monitor (`trading_monitor/`)
+##### Spot Monitor (`spot_monitor/`)
 
-**Purpose**: Comprehensive real-time trading monitor.
+**Purpose**: Real-time spot trading monitor.
 
 **Components**:
-- **Panels** (`panels.rs`): Individual panel rendering
+- Uses shared components from `shared/` module
+- **Layout**:
   - Orders panel: Open orders with level mapping
   - Balances panel: Account balances
-  - Levels panel: Active levels with status (levels mode only)
-  - Strategy panel: Strategy status, position, P&L, active orders (strategies mode only)
+  - Levels/Strategy panel: Active levels (levels mode) or strategy status (strategies mode)
+  - Orderbook panel: Real-time orderbook data
   - Indicators panel: Real-time indicator values
   - Trades panel: Recent trades
-
-- **Popups** (`popups.rs`): Overlay popups
-  - Level details popup: Full level information
-  - Error popup: Error messages
-
-- **Forms** (`forms.rs`): Input forms
-  - Edit level form: Edit level configuration
-  - Create level form: Create new level
-
-- **Input Handling** (`input.rs`): Keyboard input handling
-  - Navigation (↑/↓, Tab)
-  - Level toggle (T) - in levels mode
-  - Trading toggle (T) - in strategies mode
-  - Level details (L) - in levels mode
-  - Edit level (E) - in levels mode
-  - Create level (C) - in levels mode
-  - Form navigation and editing
 
 **Features**:
 - Real-time updates via gRPC streaming
@@ -137,7 +127,63 @@ cli/
   - Active orders tracking per strategy
   - Per-strategy trading control (enable/disable individual strategies)
   - Strategy details view (L key) - popup overlay with full strategy information
-- Real-time data display
+
+##### Futures Monitor (`futures_monitor/`)
+
+**Purpose**: Real-time futures trading monitor with position-focused display.
+
+**Components**:
+- **Futures-Specific Panels** (`panels.rs`):
+  - Positions panel: Exchange-level positions with leverage, margin, P&L, liquidation price
+  - Margin info panel: Collateral, margin used, total P&L, position count
+- **Shared Panels** (from `shared/`):
+  - Orders panel: Open orders
+  - Orderbook panel: Real-time orderbook data
+  - Indicators panel: Real-time indicator values
+  - Trades panel: Recent trades
+
+**Features**:
+- Real-time position updates from exchange WebSocket
+- Position display with:
+  - Side (Long/Short) with color coding
+  - Entry price, mark price
+  - Unrealized P&L with color coding
+  - Leverage
+  - Liquidation price
+- Margin information:
+  - Collateral balance
+  - Total margin used
+  - Total unrealized P&L
+  - Position count
+
+##### Shared Components (`shared/`)
+
+**Purpose**: Common components used by both Spot and Futures monitors.
+
+**Components**:
+- **Panels** (`panels.rs`): Shared panel rendering
+  - Orders panel
+  - Orderbook panel
+  - Indicators panel
+  - Trades panel
+  - Balances panel (spot-specific)
+  - Levels panel (spot-specific)
+  - Strategy panel (spot-specific)
+- **Popups** (`popups.rs`): Overlay popups
+  - Level details popup
+  - Strategy details popup
+  - Error popup
+- **Forms** (`forms.rs`): Input forms
+  - Edit level form
+  - Create level form
+- **Input Handling** (`input.rs`): Keyboard input handling
+  - Navigation (↑/↓, Tab)
+  - Level toggle (T) - in levels mode
+  - Trading toggle (T) - in strategies mode
+  - Level details (L) - in levels mode
+  - Edit level (E) - in levels mode
+  - Create level (C) - in levels mode
+  - Form navigation and editing
 
 ## Data Flow
 
@@ -179,14 +225,24 @@ User Input → TUI
 - Navigation options
 - System information
 
-### Trading Monitor
+### Spot Monitor
 
 **Real-Time Display**:
 - Open orders (with level mapping and order types)
 - Account balances
 - Recent trades
 - Indicator values (real-time from Indicator Engine)
-- Active levels (with status, enabled state, active orders)
+- Active levels (with status, enabled state, active orders) or strategy status
+
+### Futures Monitor
+
+**Real-Time Display**:
+- Exchange-level positions (with leverage, margin, P&L, liquidation price)
+- Margin information (collateral, margin used, total P&L)
+- Open orders
+- Orderbook data
+- Indicator values
+- Recent trades
 
 **Level Management**:
 - Level selection and navigation (↑/↓ keys)
@@ -236,10 +292,14 @@ User Input → TUI
 
 All data fetched from existing execution layer (no separate REST calls):
 - **Balances, orders, trades**: From `ExchangeStateManager` (WebSocket updates)
+- **Positions**: From `ExchangeStateManager` (WebSocket updates for futures)
 - **Indicator values**: From `IndicatorService` (direct calculator access)
 - **Levels**: From `LevelManager` (MongoDB persistence)
 
-**Note**: Positions removed from TUI (internal calculation, not exchange data).
+**Screen Selection**:
+- TUI automatically detects `instrument_type` from `MonitoringData`
+- Switches to `FuturesMonitor` for futures trading
+- Switches to `SpotMonitor` for spot trading
 
 ## Performance Characteristics
 
@@ -311,14 +371,18 @@ cargo run --release --bin trading-cli -- --endpoint http://localhost:50051
 ### Navigation
 
 - **Main Menu**: Navigate with arrow keys, Enter to select
-- **Trading Monitor**: 
-  - ↑/↓: Navigate levels
-  - T: Toggle level
-  - L: View level details
-  - E: Edit level
-  - C: Create level
+- **Spot Monitor**: 
+  - ↑/↓: Navigate levels/strategies
+  - T: Toggle level/strategy
+  - L: View level/strategy details
+  - E: Edit level (levels mode only)
+  - C: Create level (levels mode only)
   - Tab: Switch between panels
   - Esc: Close popup/form
+- **Futures Monitor**:
+  - ↑/↓: Navigate positions
+  - Tab: Switch between panels
+  - Esc: Back to main menu
 
 ### Real-Time Updates
 

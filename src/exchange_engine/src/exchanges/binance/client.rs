@@ -12,18 +12,19 @@ use trading_core::{
     utils::hours_ago_from,
 };
 
-use super::types::rpc::{
+use crate::exchanges::binance::authenticator::BinanceAuthenticator;
+use crate::exchanges::binance::config::BinanceConfig;
+use crate::exchanges::binance::websocket::types::rpc::{
     amend_order::{map_amend_order_to_core, BinanceWsAmendOrderReqParams},
     cancel_all::BinanceWsCancelAllOrdersReqParams,
     cancel_order::BinanceWsCancelOrderReqParams,
     open_order::{map_open_order_to_core, BinanceWsOrderReqParams},
     BinanceRpcRequest, BinanceRpcResponse,
 };
-use super::{
-    client::BinanceSubscriptionHandler, rpc_client::BinanceRpcClient, sign::BinanceWsAuthenticator,
-    streaming_client::BinanceStreamingClient,
+use crate::exchanges::binance::websocket::{
+    rpc_client::BinanceRpcClient, streaming_client::BinanceStreamingClient,
+    subscriber::BinanceSubscriptionHandler,
 };
-use crate::exchanges::binance::config::BinanceConfig;
 use async_trait::async_trait;
 use std::{fmt::Debug, sync::Arc};
 use tokio::sync::RwLock;
@@ -57,8 +58,7 @@ impl BinanceClient {
         outbound_rpc_capacity: usize,
         _shutdown_capacity: usize,
     ) -> Self {
-        let signer =
-            BinanceWsAuthenticator::new(config.ws.api_key.clone(), config.ws.secret_key.clone());
+        let signer = BinanceAuthenticator::new(config.api_key.clone(), config.secret.clone());
         let session = Arc::new(RwLock::new(None));
         let subscription_handler = BinanceSubscriptionHandler::new(signer, session);
 

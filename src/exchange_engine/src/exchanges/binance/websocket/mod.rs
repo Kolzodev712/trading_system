@@ -1,6 +1,6 @@
 pub mod client;
+pub mod mapper;
 pub mod rpc_client;
-pub mod sign;
 pub mod streaming_client;
+pub mod subscriber;
 pub mod types;
-pub mod ws_client;

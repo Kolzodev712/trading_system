@@ -1,4 +1,4 @@
-use crate::exchanges::binance::types::{BinanceOrderStatus, BinanceSide};
+use crate::exchanges::binance::common_types::{BinanceOrderStatus, BinanceSide};
 use trading_core::{
     error::EngineError,
     registry::symbol::SymbolRegistry,

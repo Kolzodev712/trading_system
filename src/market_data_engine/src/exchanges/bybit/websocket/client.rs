@@ -63,7 +63,7 @@ impl SubscriptionHandler for BybitSubscriptionHandler {
                         // Bybit only supports orderbook depths of 1, 50, or 200
                         // Round to nearest valid value (prefer 50 for reasonable defaults like 10)
                         let valid_limit = match ch.limit {
-                            l if l == 1 => 1,
+                            1 => 1,
                             l if l <= 25 => 50,  // Round to 50 for small values (e.g., default 10)
                             l if l <= 125 => 50,  // Round to 50 if <= 125
                             _ => 200,  // Round to 200 if > 125

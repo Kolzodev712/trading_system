@@ -93,19 +93,12 @@ pub fn create_test_balance(
 
 /// Create Binance config for testing
 pub fn create_test_binance_config() -> exchange_engine::exchanges::binance::config::BinanceConfig {
-    use exchange_engine::exchanges::binance::config::BinanceCredentials;
     use trading_core::secret::SecretString;
 
     exchange_engine::exchanges::binance::config::BinanceConfig {
         pairs: vec![Pair::new("BTC", "USDT")],
-        rest: BinanceCredentials {
-            api_key: SecretString::new("test_key"),
-            secret_key: SecretString::new("test_secret"),
-        },
-        ws: BinanceCredentials {
-            api_key: SecretString::new("test_key"),
-            secret_key: SecretString::new("test_secret"),
-        },
+        api_key: SecretString::from("key"),
+        secret: SecretString::from("secret"),
         limit: None,
         base_delay: None,
         max_delay: None,
@@ -117,7 +110,7 @@ pub async fn create_test_exchange_state_manager() -> (
     exchange_engine::state::manager::ExchangeStateManager,
     trading_core::channels::exchange::ExchangeUpdateReceiver,
 ) {
-    use exchange_engine::exchanges::binance::websocket::ws_client::BinanceClient;
+    use exchange_engine::exchanges::binance::client::BinanceClient;
     use trading_core::channels::exchange::exchange_update_channel;
     use trading_core::config::ChannelConfig;
     use trading_core::registry::symbol::SymbolRegistry;
@@ -490,18 +483,14 @@ impl asset_engine::AssetDataClient for MockAssetDataClient {
         let mut filtered_market_data = self.market_data.clone();
 
         // Filter symbol_info
-        filtered_market_data.symbol_info = filtered_market_data
+        filtered_market_data
             .symbol_info
-            .into_iter()
-            .filter(|(pair, _)| pairs.contains(pair))
-            .collect();
+            .retain(|pair, _| pairs.contains(pair));
 
         // Filter trading_rules
-        filtered_market_data.trading_rules = filtered_market_data
+        filtered_market_data
             .trading_rules
-            .into_iter()
-            .filter(|(pair, _)| pairs.contains(pair))
-            .collect();
+            .retain(|pair, _| pairs.contains(pair));
 
         Ok(filtered_market_data)
     }

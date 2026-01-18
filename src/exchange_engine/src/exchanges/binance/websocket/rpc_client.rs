@@ -1,8 +1,6 @@
 use super::types::rpc::{BinanceRpcRequest, BinanceRpcResponse};
-use super::{
-    client::{BinanceSubscriptionHandler, BinanceWSClient},
-    sign::BinanceWsAuthenticator,
-};
+use super::{client::BinanceWSClient, subscriber::BinanceSubscriptionHandler};
+use crate::exchanges::binance::authenticator::BinanceAuthenticator;
 use crate::exchanges::binance::{
     config::BinanceConfig,
     rate_limit::{BinanceRateLimitType, BinanceRateLimiter},
@@ -44,8 +42,7 @@ pub struct BinanceRpcClient {
 
 impl BinanceRpcClient {
     pub fn new(config: BinanceConfig, outbound_rpc_capacity: usize, ping_capacity: usize) -> Self {
-        let signer =
-            BinanceWsAuthenticator::new(config.ws.api_key.clone(), config.ws.secret_key.clone());
+        let signer = BinanceAuthenticator::new(config.api_key.clone(), config.secret.clone());
         let session = Arc::new(RwLock::new(None));
         let ws_client = BinanceWSClient::new(signer.clone(), session.clone());
         let subscription_handler = BinanceSubscriptionHandler::new(signer, session);

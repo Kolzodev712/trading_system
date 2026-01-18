@@ -1,4 +1,4 @@
-//! Form rendering functions for Trading Monitor
+//! Shared form rendering functions for Spot and Futures monitor screens
 use crate::app::App;
 use crate::error::CliError;
 use ratatui::{

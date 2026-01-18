@@ -4,7 +4,7 @@
 //! Routes requests based on InstrumentType in OrderRequest.
 //! See: <https://bybit-exchange.github.io/docs/v5/guide>
 
-use crate::exchanges::bybit::auth::{self, BybitAuthenticator};
+use crate::exchanges::bybit::authenticator::BybitAuthenticator;
 use crate::exchanges::bybit::{
     config::BybitConfig, error::BybitError, rate_limit::BybitRateLimiter,
 };
@@ -221,7 +221,7 @@ impl BybitHttpClient {
             http_method,
             url,
             query_params,
-            json_body_string.as_ref().map(|s| s.as_str()),
+            json_body_string.as_deref(),
             signed
         );
 
@@ -244,7 +244,7 @@ impl BybitHttpClient {
                 format!("{timestamp}{api_key_str}{recv_window}{query_string}")
             };
 
-            let headers = auth::rest::build_signed_headers(
+            let headers = crate::exchanges::bybit::authenticator::rest::build_signed_headers(
                 &self.authenticator.api_key,
                 &self.authenticator.api_secret,
                 timestamp,

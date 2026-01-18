@@ -81,7 +81,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("=== Starting Trading System in TEST MODE ===");
     info!("Mode: {}", args.mode);
     info!("Duration: {} seconds", args.duration);
-    info!("Exchange: {:?}", bot_config.exchange.exchange);
+    info!("Exchange: {:?}", bot_config.exchange_engine.exchange);
     info!("⚠️  TEST MODE: No actual trades will be placed");
     warn!("This is a test run - all orders will use test_open_order()");
 
@@ -95,7 +95,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("✓ Shutdown manager initialized");
 
     // Initialize Asset Service
-    let asset_service = initialize_asset_service(bot_config.exchange.exchange.clone()).await?;
+    let asset_service =
+        initialize_asset_service(bot_config.exchange_engine.exchange.clone()).await?;
     info!("✓ Asset service initialized");
 
     // Get pairs from exchange config
@@ -107,7 +108,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     fetch_asset_data(
         &asset_service,
-        bot_config.exchange.exchange.clone(),
+        bot_config.exchange_engine.exchange.clone(),
         &configured_pairs,
     )
     .await;

@@ -1,4 +1,7 @@
-//! Binance WebSocket API Authentication (ED25519)
+//! Binance API Authentication (ED25519)
+//!
+//! Shared authenticator for both REST and WebSocket APIs.
+//! Binance supports ED25519 for both REST and WebSocket, and it's the recommended method.
 
 use anyhow::anyhow;
 use async_trait::async_trait;
@@ -11,31 +14,32 @@ use trading_core::{
 };
 
 #[derive(Clone, Debug)]
-pub struct BinanceWsAuthenticator {
+pub struct BinanceAuthenticator {
     pub api_key: SecretString,
-    pub secret_key_ed25519: SecretString,
+    pub secret_key: SecretString,
 }
 
-impl BinanceWsAuthenticator {
+impl BinanceAuthenticator {
     pub fn new(api_key: SecretString, secret_key: SecretString) -> Self {
         Self {
             api_key,
-            // to get this key use info from here <https://www.binance.com/en/support/faq/detail/6b9a63f1e3384cf48a2eedb82767a69a>
-            secret_key_ed25519: secret_key,
+            // ED25519 private key (base64-encoded, 32 bytes when decoded)
+            // See: https://www.binance.com/en/support/faq/detail/6b9a63f1e3384cf48a2eedb82767a69a
+            secret_key,
         }
     }
 }
 
 #[async_trait]
-impl ExchangeAuthenticator for BinanceWsAuthenticator {
+impl ExchangeAuthenticator for BinanceAuthenticator {
     fn generate_signature(&self, payload: &str) -> Result<Option<SmolStr>, EngineError> {
         let private_key_bytes = general_purpose::STANDARD
-            .decode(self.secret_key_ed25519.expose())
+            .decode(self.secret_key.expose())
             .map_err(|e| EngineError::AuthenticationError(anyhow!(e)))?;
 
         if private_key_bytes.len() != 32 {
             return Err(EngineError::AuthenticationError(anyhow!(
-                "Private key must be 32 bytes, got {}",
+                "ED25519 private key must be 32 bytes when decoded, got {}",
                 private_key_bytes.len()
             )));
         }
@@ -67,5 +71,14 @@ impl ExchangeAuthenticator for BinanceWsAuthenticator {
         }
 
         Ok(params)
+    }
+
+    fn get_headers(&self) -> Result<Option<BTreeMap<SmolStr, SmolStr>>, EngineError> {
+        let mut headers = BTreeMap::new();
+        headers.insert(
+            "X-MBX-APIKEY".into(),
+            self.api_key.expose_smol_str().clone(),
+        );
+        Ok(Some(headers))
     }
 }

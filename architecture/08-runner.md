@@ -291,6 +291,8 @@ let market_data_driver = initialize_market_data_engine(&bot_config, &channels)?;
 **Monitoring**:
 - `GetMonitoringData` - Get current monitoring data
 - `StreamMonitoringData` - Stream real-time updates
+  - Includes `instrument_type` field ("Spot" or "Futures") for TUI view selection
+  - Positions include futures-specific fields (leverage, margin, P&L, liquidation price)
 
 **Level Management**:
 - `GetLevels` - Get all levels
@@ -307,10 +309,16 @@ let market_data_driver = initialize_market_data_engine(&bot_config, &channels)?;
 ### Data Aggregation
 
 gRPC service aggregates data from multiple sources:
-- `ExchangeStateManager`: Balances, orders, trades
+- `ExchangeStateManager`: Balances, orders, trades, positions (for futures)
 - `IndicatorService`: Indicator values
 - `TradingStateManager`: Trading state
 - `LevelManager`: Level configurations
+
+**MonitoringData Structure**:
+- `instrument_type`: "Spot" or "Futures" - determines which TUI view to show
+- `positions`: Exchange-level positions (from `ExchangeStateManager` for futures, from `TradingStateManager` for spot)
+  - Futures positions include: side, mark_price, unrealized_pnl, leverage, margin_used, liquidation_price
+  - Spot positions include: symbol, quantity, avg_price
 
 ## Performance Characteristics
 

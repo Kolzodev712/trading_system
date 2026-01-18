@@ -19,19 +19,42 @@ The Exchange Engine is the **single point of contact** with the exchange for all
 src/exchange_engine/
 ├── src/
 │   ├── run.rs                    # Exchange-agnostic entry point
+│   ├── config.rs                  # Exchange configuration structures
 │   ├── state/
 │   │   ├── state.rs              # ExchangeState - in-memory state
 │   │   ├── manager.rs            # ExchangeStateManager - orchestrates state
 │   │   ├── publisher.rs          # ExchangeStatePublisher - publishes updates
 │   │   └── reconciler.rs         # StateReconciler - WS vs REST reconciliation
 │   └── exchanges/
-│       └── binance/
-│           ├── driver.rs          # BinanceDriver - exchange-specific driver
-│           ├── rate_limit.rs      # BinanceRateLimiter - rate limiting
+│       ├── binance/
+│       │   ├── client.rs          # BinanceClient - main client
+│       │   ├── driver.rs          # BinanceDriver - exchange-specific driver
+│       │   ├── authenticator.rs   # BinanceAuthenticator - ED25519 signing
+│       │   ├── config.rs          # BinanceConfig
+│       │   ├── common_types.rs    # Binance common types
+│       │   ├── error.rs           # Binance error types
+│       │   ├── rest/
+│       │   │   └── client.rs      # BinanceHttpClient - REST client
+│       │   └── websocket/
+│       │       ├── client.rs      # BinanceWebSocketClient
+│       │       ├── rpc_client.rs   # BinanceRpcClient - RPC client
+│       │       ├── streaming_client.rs # BinanceStreamingClient
+│       │       ├── mapper.rs       # Message mapping
+│       │       └── subscriber.rs  # Subscription handling
+│       └── bybit/
+│           ├── client.rs          # BybitClient - main client
+│           ├── driver.rs          # BybitDriver - exchange-specific driver
+│           ├── authenticator.rs   # BybitAuthenticator - HMAC signing
+│           ├── config.rs          # BybitConfig
+│           ├── common_types.rs    # Bybit common types
+│           ├── error.rs           # Bybit error types
 │           ├── rest/
-│           │   └── client.rs      # BinanceHttpClient - REST client with rate limiting
-│           ├── rpc_client.rs       # BinanceRpcClient - RPC client with rate limiting
-│           └── ws_client.rs       # BinanceClient - WebSocket client
+│           │   └── client.rs      # BybitHttpClient - REST client
+│           └── websocket/
+│               ├── rpc_client.rs   # BybitRpcClient - RPC client
+│               ├── streaming_client.rs # BybitStreamingClient
+│               ├── mapper.rs       # Message mapping
+│               └── subscriber.rs  # Subscription handling
 ```
 
 ### Components
@@ -109,6 +132,7 @@ run.rs (exchange-agnostic)
 - `balances: HashMap<Symbol, Balance>` - Account balances
 - `orders: HashMap<OrderId, Order>` - All orders (active and filled)
 - `orders_by_pair: HashMap<Pair, Vec<OrderId>>` - Orders indexed by pair
+- `positions: HashMap<Pair, Position>` - Exchange-level positions (for futures)
 - `trades: Vec<Trade>` - Trade history
 - `symbol_registry: SymbolRegistry` - For symbol↔pair conversions
 
@@ -135,6 +159,7 @@ run.rs (exchange-agnostic)
 **Methods**:
 - `update_order(order: Order)` - Update order state
 - `update_balance(balance: Balance)` - Update balance
+- `update_position(position: Position)` - Update position (for futures)
 - `add_trade(trade: Trade)` - Add trade to history
 - `get_state() -> Arc<RwLock<ExchangeState>>` - Get state for reading
 - `reconcile()` - Trigger reconciliation
@@ -148,6 +173,7 @@ run.rs (exchange-agnostic)
   - Trading Engine (subscribes, updates TradingState)
   - Risk Engine (subscribes, updates risk cache)
   - TUI (via gRPC aggregation)
+- Publishes order, balance, position, and trade updates
 - Uses broadcast channels for efficient fan-out
 - Each subscriber tracks its own lag
 
@@ -216,6 +242,12 @@ Exchange WebSocket → ExchangeStateManager
 - Creates trades for filled/partially filled orders
 - Publishes `ExchangeUpdate::Order` and `ExchangeUpdate::Trade` via channel
 
+### Position Messages (Futures)
+- Position updates from exchange WebSocket (for futures trading)
+- Updates `ExchangeState.positions`
+- Publishes `ExchangeUpdate::Position` via channel
+- Includes leverage, margin, unrealized P&L, liquidation price
+
 ### OutboundAccountPosition Messages
 - Full balance snapshot
 - Updates all balances in `ExchangeState`
@@ -270,6 +302,41 @@ Exchange WebSocket → ExchangeStateManager
 - Channel publishing tests
 
 ## Configuration
+
+### Exchange Configuration Structure
+
+Exchange configuration follows a unified structure:
+
+```json
+{
+  "exchange_engine": {
+    "exchange": "Binance",
+    "config": {
+      "pairs": ["ETH/USDC", "BTC/USDT"],
+      "apiKey": "...",
+      "secret": "..."
+    }
+  }
+}
+```
+
+For Bybit, includes instrument type:
+
+```json
+{
+  "exchange_engine": {
+    "exchange": "Bybit",
+    "config": {
+      "pairs": ["ETH/USDC", "BTC/USDT"],
+      "instrumentType": "Futures",
+      "credentials": {
+        "apiKey": "...",
+        "apiSecret": "..."
+      }
+    }
+  }
+}
+```
 
 ### Channel Configuration
 

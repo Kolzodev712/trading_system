@@ -53,7 +53,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     setup_shutdown_handler(shutdown_manager.clone());
 
     // Initialize Asset Service
-    let asset_service = initialize_asset_service(bot_config.exchange.exchange.clone()).await?;
+    let asset_service =
+        initialize_asset_service(bot_config.exchange_engine.exchange.clone()).await?;
 
     // Get pairs from exchange config
     let configured_pairs = bot_config.get_pairs()?;
@@ -62,7 +63,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     fetch_asset_data(
         &asset_service,
-        bot_config.exchange.exchange.clone(),
+        bot_config.exchange_engine.exchange.clone(),
         &configured_pairs.clone(),
     )
     .await;
@@ -178,7 +179,7 @@ fn initialize_logging(bot_config: &BotConfig) {
 fn log_startup_info(bot_config: &BotConfig, mode: &str) {
     info!("=== Starting Trading System ===");
     info!("Mode: {}", mode);
-    info!("Exchange: {:?}", bot_config.exchange.exchange);
+    info!("Exchange: {:?}", bot_config.exchange_engine.exchange);
     info!(
         "MongoDB persistence: {}",
         if bot_config.mongo.enabled {

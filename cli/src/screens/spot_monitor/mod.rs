@@ -1,9 +1,4 @@
-//! Trading Monitor Screen - Displays real-time trading data
-mod forms;
-mod input;
-mod panels;
-mod popups;
-
+//! Spot Monitor Screen - Displays real-time spot trading data
 use crate::app::App;
 use crate::error::CliError;
 use ratatui::{
@@ -14,11 +9,11 @@ use ratatui::{
     Frame,
 };
 
-pub use input::handle_input_async;
+use crate::screens::shared::{forms, panels, popups};
 
-pub struct TradingMonitorScreen;
+pub struct SpotMonitorScreen;
 
-impl TradingMonitorScreen {
+impl SpotMonitorScreen {
     pub fn render(frame: &mut Frame, area: Rect, app: &App) -> Result<(), CliError> {
         // Create main layout - use Percentage to avoid overflow issues
         let chunks = Layout::default()
@@ -32,7 +27,7 @@ impl TradingMonitorScreen {
             .split(area);
 
         // Header
-        let header = Paragraph::new("Trading Monitor")
+        let header = Paragraph::new("Spot Monitor")
             .style(
                 Style::default()
                     .fg(Color::Cyan)

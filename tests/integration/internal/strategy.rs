@@ -71,6 +71,7 @@ async fn test_strategy_monitoring_with_position() {
             max_active_orders: 2,
         }],
         strategy_manager: None,
+        instrument_type: trading_core::types::common::InstrumentType::Spot,
     };
 
     // Collect monitoring data
@@ -139,6 +140,7 @@ async fn test_strategy_monitoring_without_position() {
             max_active_orders: 2,
         }],
         strategy_manager: None,
+        instrument_type: trading_core::types::common::InstrumentType::Spot,
     };
 
     // Collect monitoring data
@@ -232,6 +234,7 @@ async fn test_strategy_monitoring_with_active_orders() {
             max_active_orders: 2,
         }],
         strategy_manager: None,
+        instrument_type: trading_core::types::common::InstrumentType::Spot,
     };
 
     // Collect monitoring data

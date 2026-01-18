@@ -401,6 +401,8 @@ You can configure conditions that prevent reposting:
    ```bash
    cargo run --release --package cli
    ```
+   
+   The TUI automatically detects the instrument type (Spot or Futures) and displays the appropriate monitor view.
 
 ### Level Monitoring
 
@@ -419,7 +421,7 @@ The TUI CLI displays a **Levels panel** showing:
 ### Trading Control
 
 **Per-Level Enable/Disable**:
-- Press `T` in the Trading Monitor to toggle the **selected** level
+- Press `T` in the Spot Monitor to toggle the **selected** level
 - Each level can be enabled/disabled independently
 - When disabled, the level won't post new orders (existing orders remain active)
 - Level panel shows status: "●" (green, enabled) or "⏸" (red, disabled) for each level

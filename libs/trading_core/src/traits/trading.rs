@@ -231,7 +231,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::common::InstrumentType;
+    use crate::types::common::{InstrumentType, Pair};
     use rust_decimal::Decimal;
 
     /// Mock implementation to test default futures methods
@@ -338,13 +338,15 @@ mod tests {
 
         let futures_req = FuturesOrderRequest {
             base: OrderRequest {
-                symbol: "BTCUSDT".into(),
+                instrument: crate::types::common::Instrument::new(
+                    InstrumentType::Futures,
+                    Pair::new("BTC", "USDT"),
+                ),
                 side: crate::types::common::Side::Buy,
                 order_type: crate::types::common::OrderType::Limit,
                 price: Decimal::new(50000, 0),
                 amount: Decimal::new(1, 0),
                 timestamp: None,
-                instrument_type: InstrumentType::Futures,
                 exchange_params: std::collections::HashMap::new(),
             },
             position_side: None,

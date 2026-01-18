@@ -137,6 +137,12 @@ impl BybitClient {
                 ParsedBybitMessage::OrderBook { orderbook } => {
                     // Extract symbol from pair for backward compatibility with handler interface
                     let symbol = orderbook.pair.convert_to_smolstr();
+                    debug!(
+                        "Received orderbook for {}: {} bids, {} asks",
+                        symbol,
+                        orderbook.bids.len(),
+                        orderbook.asks.len()
+                    );
                     handler
                         .handle_orderbook_with_symbol(&symbol, orderbook)
                         .await?

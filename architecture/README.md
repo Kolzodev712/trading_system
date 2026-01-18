@@ -15,6 +15,8 @@ This directory contains detailed architectural documentation for each service an
    - Single point of contact with exchange for account data
    - WebSocket and REST API integration
    - State management and reconciliation
+   - Position tracking for futures trading
+   - Multi-exchange support (Binance, Bybit)
    - Rate limiting (REQUEST_WEIGHT, ORDERS) with automatic enforcement
    - Order amendment API (amend instead of cancel+place)
 
@@ -59,6 +61,8 @@ This directory contains detailed architectural documentation for each service an
 9. **[TUI CLI](09-tui-cli.md)**
    - Terminal user interface
    - Real-time monitoring
+   - Separate views for Spot and Futures trading
+   - Position monitoring for futures (leverage, margin, P&L)
    - Level management and trading control
 
 ### Deployment & Operations

@@ -1,6 +1,6 @@
 use super::types::{
     common::{BybitSubscriptionRequest, BybitSubscriptionResponse, ParsedBybitMessage},
-    orderbook::BybitOrderbookMessage,
+    orderbook::{BybitMessageType, BybitOrderbookMessage},
     trade::BybitTradeMessage,
 };
 use crate::exchanges::bybit::config::BybitCategory;
@@ -27,6 +27,7 @@ pub fn get_bybit_ws_url(category: &BybitCategory) -> &'static str {
     match category {
         BybitCategory::Spot => "wss://stream.bybit.com/v5/public/spot",
         BybitCategory::Linear => "wss://stream.bybit.com/v5/public/linear",
+        BybitCategory::Inverse => "wss://stream.bybit.com/v5/public/inverse",
     }
 }
 
@@ -58,7 +59,24 @@ impl SubscriptionHandler for BybitSubscriptionHandler {
             .map(|ch| {
                 let symbol = format!("{}{}", ch.base.to_uppercase(), ch.quote.to_uppercase());
                 match ch.channel {
-                    DataType::Orderbook => format!("orderbook.{}.{}", ch.limit, symbol).into(),
+                    DataType::Orderbook => {
+                        // Bybit only supports orderbook depths of 1, 50, or 200
+                        // Round to nearest valid value (prefer 50 for reasonable defaults like 10)
+                        let valid_limit = match ch.limit {
+                            1 => 1,
+                            l if l <= 25 => 50,  // Round to 50 for small values (e.g., default 10)
+                            l if l <= 125 => 50,  // Round to 50 if <= 125
+                            _ => 200,  // Round to 200 if > 125
+                        };
+                        if valid_limit != ch.limit {
+                            tracing::warn!(
+                                "Bybit orderbook limit {} is not supported (valid: 1, 50, 200), using {}",
+                                ch.limit,
+                                valid_limit
+                            );
+                        }
+                        format!("orderbook.{}.{}", valid_limit, symbol).into()
+                    }
                     DataType::Trade => format!("publicTrade.{}", symbol).into(),
                     _ => {
                         // Unsupported data type, return empty string (will be filtered out)
@@ -100,6 +118,27 @@ impl DataHandler {
             serde_json::from_value(v).map_err(EngineError::JsonError)?;
         let symbol_str = bybit_orderbook.data.symbol.as_str();
         let pair = self.symbol_registry.get_or_parse_pair(symbol_str);
+
+        // Log message type for debugging
+        match bybit_orderbook.message_type {
+            BybitMessageType::Snapshot => {
+                debug!(
+                    "Received orderbook SNAPSHOT for {}: {} bids, {} asks",
+                    symbol_str,
+                    bybit_orderbook.data.bids.len(),
+                    bybit_orderbook.data.asks.len()
+                );
+            }
+            BybitMessageType::Delta => {
+                debug!(
+                    "Received orderbook DELTA for {}: {} bids, {} asks",
+                    symbol_str,
+                    bybit_orderbook.data.bids.len(),
+                    bybit_orderbook.data.asks.len()
+                );
+            }
+        }
+
         let structured_orderbook = bybit_orderbook.into_with_pair(pair);
         Ok(ParsedBybitMessage::OrderBook {
             orderbook: structured_orderbook,

@@ -1,3 +1,5 @@
 //! TUI screens
+pub mod futures_monitor;
 pub mod main_menu;
-pub mod trading_monitor;
+pub mod shared;
+pub mod spot_monitor;

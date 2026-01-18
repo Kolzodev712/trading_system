@@ -202,7 +202,11 @@ impl StrategyManager {
                 Ok(Some(req)) => {
                     info!(
                         "[StrategyManager] ✅ Strategy {} returned order request: {} {} @ {} x {}",
-                        strategy_id, req.side, req.symbol, req.price, req.amount
+                        strategy_id,
+                        req.side,
+                        req.instrument.symbol(),
+                        req.price,
+                        req.amount
                     );
                     requests.push(req);
                 }

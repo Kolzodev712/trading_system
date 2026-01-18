@@ -9,8 +9,8 @@ use std::collections::HashMap;
 #[derive(Debug, Clone, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OrderRequest {
-    /// Symbol for the open order response
-    pub symbol: Symbol,
+    /// Trading instrument (pair + instrument type)
+    pub instrument: Instrument,
     /// Side of the book to place the order
     pub side: Side,
     /// Type of the order to place
@@ -21,10 +21,6 @@ pub struct OrderRequest {
     pub amount: Decimal,
     /// Exchange's timestamp of the order
     pub timestamp: Option<u64>,
-    /// Instrument type (Spot or Futures)
-    /// Defaults to Spot for backward compatibility
-    #[serde(default)]
-    pub instrument_type: crate::types::common::InstrumentType,
     /// Custom params specific to exchanges:
     pub exchange_params: HashMap<SmolStr, SmolStr>,
 }
@@ -38,8 +34,8 @@ pub struct Order {
     /// Client order ID (if provided by exchange, used for cancellation fallback)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub client_order_id: Option<SmolStr>,
-    /// Symbol for the open order response
-    pub symbol: Symbol,
+    /// Trading instrument (pair + instrument type)
+    pub instrument: Instrument,
     /// Side of the book to place the order
     pub side: Side,
     /// Price at which the order will be placed
@@ -56,10 +52,6 @@ pub struct Order {
     /// Filled amount (for partial fills)
     #[serde(default)]
     pub filled_amount: Decimal,
-    /// Instrument type (Spot or Futures)
-    /// Defaults to Spot for backward compatibility
-    #[serde(default)]
-    pub instrument_type: crate::types::common::InstrumentType,
 }
 
 /// Amended Order - represents an order that was amended (canceled and replaced)
@@ -70,8 +62,8 @@ pub struct AmendedOrder {
     pub original_order_id: OrderId,
     /// New order ID (the replacement order)
     pub new_order_id: OrderId,
-    /// Symbol for the order
-    pub symbol: Symbol,
+    /// Trading instrument (pair + instrument type)
+    pub instrument: Instrument,
     /// Side of the book
     pub side: Side,
     /// Original price (before amendment)
@@ -122,8 +114,8 @@ pub struct Balance {
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Position {
-    /// Trading pair
-    pub pair: Pair,
+    /// Trading instrument (pair + instrument type)
+    pub instrument: Instrument,
     /// Position size (positive for long, negative for short)
     pub quantity: Decimal,
     /// Average entry price
@@ -134,9 +126,6 @@ pub struct Position {
     pub unrealized_pnl: Decimal,
     /// Last update timestamp
     pub last_update: u64,
-    /// Instrument type (Spot or Futures)
-    #[serde(default)]
-    pub instrument_type: crate::types::common::InstrumentType,
 
     // Futures-specific fields (optional, None for spot positions)
     /// Mark price (futures only, for accurate P&L calculation)
@@ -172,7 +161,7 @@ impl Position {
     /// Check if this is a futures position
     pub fn is_futures(&self) -> bool {
         matches!(
-            self.instrument_type,
+            self.instrument.instrument_type,
             crate::types::common::InstrumentType::Futures
         )
     }
@@ -180,9 +169,14 @@ impl Position {
     /// Check if this is a spot position
     pub fn is_spot(&self) -> bool {
         matches!(
-            self.instrument_type,
+            self.instrument.instrument_type,
             crate::types::common::InstrumentType::Spot
         )
+    }
+
+    /// Get the pair
+    pub fn pair(&self) -> &Pair {
+        &self.instrument.pair
     }
 
     /// Get mark price (returns current_price for spot, mark_price for futures)
@@ -315,17 +309,19 @@ mod tests {
         exchange_params.insert(SmolStr::new("timeInForce"), SmolStr::new("GTC"));
 
         let order_request = OrderRequest {
-            symbol: "BTCUSDT".into(),
+            instrument: Instrument::new(
+                crate::types::common::InstrumentType::Spot,
+                Pair::new("BTC", "USDT"),
+            ),
             side: Side::Buy,
             order_type: OrderType::Limit,
             price: Decimal::new(90000, 0),
             amount: Decimal::new(10, 2),
             timestamp: Some(1734819696263),
-            instrument_type: crate::types::common::InstrumentType::Spot,
             exchange_params,
         };
 
-        assert_eq!(order_request.symbol, "BTCUSDT");
+        assert_eq!(order_request.instrument.symbol(), "BTCUSDT");
         assert_eq!(order_request.side, Side::Buy);
         assert_eq!(order_request.price, Decimal::new(90000, 0));
         assert_eq!(order_request.amount, Decimal::new(10, 2));
@@ -336,7 +332,10 @@ mod tests {
         let order = Order {
             order_id: OrderId::new("12345".into()),
             client_order_id: None,
-            symbol: "BTCUSDT".into(),
+            instrument: Instrument::new(
+                crate::types::common::InstrumentType::Spot,
+                Pair::new("BTC", "USDT"),
+            ),
             side: Side::Buy,
             price: Decimal::new(90000, 0),
             amount: Decimal::new(10, 2),
@@ -344,7 +343,6 @@ mod tests {
             exchange_created_at: Some(1734819696263),
             status: OrderStatus::New,
             filled_amount: Decimal::ZERO,
-            instrument_type: crate::types::common::InstrumentType::Spot,
         };
 
         assert_eq!(order.order_id.as_str(), "12345");
@@ -381,13 +379,15 @@ mod tests {
     #[test]
     fn test_position_creation() {
         let position = Position {
-            pair: Pair::new("BTC", "USDT"),
+            instrument: Instrument::new(
+                crate::types::common::InstrumentType::Spot,
+                Pair::new("BTC", "USDT"),
+            ),
             quantity: Decimal::new(1, 0),
             avg_price: Decimal::new(90000, 0),
             current_price: Decimal::new(91000, 0),
             unrealized_pnl: Decimal::new(1000, 0),
             last_update: 1734819696263,
-            instrument_type: crate::types::common::InstrumentType::Spot,
             mark_price: None,
             index_price: None,
             realized_pnl: None,
@@ -399,7 +399,7 @@ mod tests {
             liquidation_price: None,
         };
 
-        assert_eq!(position.pair.base, "BTC");
+        assert_eq!(position.pair().base, "BTC");
         assert_eq!(position.quantity, Decimal::new(1, 0));
     }
 
@@ -444,7 +444,10 @@ mod tests {
         let order = Order {
             order_id: OrderId::new("12345".into()),
             client_order_id: None,
-            symbol: "BTCUSDT".into(),
+            instrument: Instrument::new(
+                crate::types::common::InstrumentType::Spot,
+                Pair::new("BTC", "USDT"),
+            ),
             side: Side::Buy,
             price: Decimal::new(90000, 0),
             amount: Decimal::new(10, 2),
@@ -452,33 +455,34 @@ mod tests {
             exchange_created_at: Some(1734819696263),
             status: OrderStatus::New,
             filled_amount: Decimal::ZERO,
-            instrument_type: crate::types::common::InstrumentType::Spot,
         };
 
         let serialized = serde_json::to_string(&order).unwrap();
         assert!(serialized.contains("12345"));
-        assert!(serialized.contains("BTCUSDT"));
+        assert!(serialized.contains("BTC"));
+        assert!(serialized.contains("USDT"));
     }
 
     #[test]
     fn test_order_deserialization() {
-        let json = r#"
-        {
-            "orderId": "12345",
-            "symbol": "BTCUSDT",
-            "side": "Buy",
-            "price": "90000",
-            "amount": "0.10",
-            "internalCreatedAt": 1734819700000,
-            "exchangeCreatedAt": 1734819696263,
-            "status": "New",
-            "filledAmount": "0"
-        }
-        "#;
+        // Create an order and serialize it to get the correct format
+        let order = Order {
+            order_id: OrderId::new("12345".into()),
+            client_order_id: None,
+            instrument: Instrument::new(InstrumentType::Spot, Pair::new("BTC", "USDT")),
+            side: Side::Buy,
+            price: Decimal::new(90000, 0),
+            amount: Decimal::new(10, 2),
+            internal_created_at: 1734819700000,
+            exchange_created_at: Some(1734819696263),
+            status: OrderStatus::New,
+            filled_amount: Decimal::ZERO,
+        };
 
-        let order: Order = serde_json::from_str(json).unwrap();
-        assert_eq!(order.order_id.as_str(), "12345");
-        assert_eq!(order.status, OrderStatus::New);
+        let json = serde_json::to_string(&order).unwrap();
+        let deserialized: Order = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.order_id.as_str(), "12345");
+        assert_eq!(deserialized.status, OrderStatus::New);
     }
 
     #[test]
@@ -540,23 +544,21 @@ mod tests {
     fn test_bulk_order_request_creation() {
         let requests = vec![
             OrderRequest {
-                symbol: "BTCUSDT".into(),
+                instrument: Instrument::new(InstrumentType::Spot, Pair::new("BTC", "USDT")),
                 side: Side::Buy,
                 order_type: OrderType::Limit,
                 price: Decimal::new(90000, 0),
                 amount: Decimal::new(1, 0),
                 timestamp: None,
-                instrument_type: InstrumentType::Spot,
                 exchange_params: HashMap::new(),
             },
             OrderRequest {
-                symbol: "ETHUSDT".into(),
+                instrument: Instrument::new(InstrumentType::Spot, Pair::new("ETH", "USDT")),
                 side: Side::Sell,
                 order_type: OrderType::Limit,
                 price: Decimal::new(3000, 0),
                 amount: Decimal::new(10, 0),
                 timestamp: None,
-                instrument_type: InstrumentType::Spot,
                 exchange_params: HashMap::new(),
             },
         ];
@@ -564,8 +566,8 @@ mod tests {
         let bulk_request = BulkOrderRequest { requests };
 
         assert_eq!(bulk_request.requests.len(), 2);
-        assert_eq!(bulk_request.requests[0].symbol, "BTCUSDT");
-        assert_eq!(bulk_request.requests[1].symbol, "ETHUSDT");
+        assert_eq!(bulk_request.requests[0].instrument.symbol(), "BTCUSDT");
+        assert_eq!(bulk_request.requests[1].instrument.symbol(), "ETHUSDT");
     }
 
     #[test]
@@ -573,7 +575,7 @@ mod tests {
         let order1 = Order {
             order_id: OrderId::new("12345".into()),
             client_order_id: None,
-            symbol: "BTCUSDT".into(),
+            instrument: Instrument::new(InstrumentType::Spot, Pair::new("BTC", "USDT")),
             side: Side::Buy,
             price: Decimal::new(90000, 0),
             amount: Decimal::new(1, 0),
@@ -581,13 +583,12 @@ mod tests {
             exchange_created_at: Some(1734819696263),
             status: OrderStatus::New,
             filled_amount: Decimal::ZERO,
-            instrument_type: InstrumentType::Spot,
         };
 
         let order2 = Order {
             order_id: OrderId::new("67890".into()),
             client_order_id: None,
-            symbol: "ETHUSDT".into(),
+            instrument: Instrument::new(InstrumentType::Spot, Pair::new("ETH", "USDT")),
             side: Side::Sell,
             price: Decimal::new(3000, 0),
             amount: Decimal::new(10, 0),
@@ -595,7 +596,6 @@ mod tests {
             exchange_created_at: Some(1734819696263),
             status: OrderStatus::New,
             filled_amount: Decimal::ZERO,
-            instrument_type: InstrumentType::Spot,
         };
 
         let results = vec![
@@ -699,13 +699,12 @@ mod tests {
         let amend_item = BulkAmendItem {
             order_id: OrderId::new("12345".into()),
             new_request: OrderRequest {
-                symbol: "BTCUSDT".into(),
+                instrument: Instrument::new(InstrumentType::Spot, Pair::new("BTC", "USDT")),
                 side: Side::Buy,
                 order_type: OrderType::Limit,
                 price: Decimal::new(91000, 0),
                 amount: Decimal::new(2, 0),
                 timestamp: None,
-                instrument_type: InstrumentType::Spot,
                 exchange_params: HashMap::new(),
             },
         };
@@ -721,26 +720,24 @@ mod tests {
             BulkAmendItem {
                 order_id: OrderId::new("12345".into()),
                 new_request: OrderRequest {
-                    symbol: "BTCUSDT".into(),
+                    instrument: Instrument::new(InstrumentType::Spot, Pair::new("BTC", "USDT")),
                     side: Side::Buy,
                     order_type: OrderType::Limit,
                     price: Decimal::new(91000, 0),
                     amount: Decimal::new(2, 0),
                     timestamp: None,
-                    instrument_type: InstrumentType::Spot,
                     exchange_params: HashMap::new(),
                 },
             },
             BulkAmendItem {
                 order_id: OrderId::new("67890".into()),
                 new_request: OrderRequest {
-                    symbol: "ETHUSDT".into(),
+                    instrument: Instrument::new(InstrumentType::Spot, Pair::new("ETH", "USDT")),
                     side: Side::Sell,
                     order_type: OrderType::Limit,
                     price: Decimal::new(3100, 0),
                     amount: Decimal::new(15, 0),
                     timestamp: None,
-                    instrument_type: InstrumentType::Spot,
                     exchange_params: HashMap::new(),
                 },
             },
@@ -758,7 +755,7 @@ mod tests {
         let amended_order = Order {
             order_id: OrderId::new("12345".into()),
             client_order_id: None,
-            symbol: "BTCUSDT".into(),
+            instrument: Instrument::new(InstrumentType::Spot, Pair::new("BTC", "USDT")),
             side: Side::Buy,
             price: Decimal::new(91000, 0),
             amount: Decimal::new(2, 0),
@@ -766,7 +763,6 @@ mod tests {
             exchange_created_at: Some(1734819696263),
             status: OrderStatus::Amended,
             filled_amount: Decimal::ZERO,
-            instrument_type: InstrumentType::Spot,
         };
 
         let failed_amendments = vec![(
@@ -811,19 +807,19 @@ mod tests {
     fn test_bulk_order_request_serialization() {
         let request = BulkOrderRequest {
             requests: vec![OrderRequest {
-                symbol: "BTCUSDT".into(),
+                instrument: Instrument::new(InstrumentType::Spot, Pair::new("BTC", "USDT")),
                 side: Side::Buy,
                 order_type: OrderType::Limit,
                 price: Decimal::new(90000, 0),
                 amount: Decimal::new(1, 0),
                 timestamp: None,
-                instrument_type: InstrumentType::Spot,
                 exchange_params: HashMap::new(),
             }],
         };
 
         let serialized = serde_json::to_string(&request).unwrap();
-        assert!(serialized.contains("BTCUSDT"));
+        assert!(serialized.contains("BTC"));
+        assert!(serialized.contains("USDT"));
         assert!(serialized.contains("requests"));
     }
 
@@ -861,13 +857,12 @@ mod tests {
             amendments: vec![BulkAmendItem {
                 order_id: OrderId::new("12345".into()),
                 new_request: OrderRequest {
-                    symbol: "BTCUSDT".into(),
+                    instrument: Instrument::new(InstrumentType::Spot, Pair::new("BTC", "USDT")),
                     side: Side::Buy,
                     order_type: OrderType::Limit,
                     price: Decimal::new(91000, 0),
                     amount: Decimal::new(2, 0),
                     timestamp: None,
-                    instrument_type: InstrumentType::Spot,
                     exchange_params: HashMap::new(),
                 },
             }],
@@ -876,6 +871,7 @@ mod tests {
         let serialized = serde_json::to_string(&request).unwrap();
         assert!(serialized.contains("amendments"));
         assert!(serialized.contains("12345"));
-        assert!(serialized.contains("BTCUSDT"));
+        assert!(serialized.contains("BTC"));
+        assert!(serialized.contains("USDT"));
     }
 }

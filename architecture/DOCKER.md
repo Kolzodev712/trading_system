@@ -120,7 +120,30 @@ docker-compose run --rm trading-cli http://trading-system:50051
 
 ### Step-by-Step Setup
 
-#### 1. Fix Docker Permissions (if needed)
+#### 1. Set Up Configuration Directory
+
+Before running Docker, you need to create your `config/` directory with the appropriate configuration files:
+
+```bash
+# Create config directory
+mkdir -p config
+
+# Copy sample config for your exchange (choose one):
+# For Binance:
+cp sample_config/binance/* config/
+
+# For Bybit:
+cp sample_config/bybit/* config/
+
+# Edit config files with your API keys
+# config/bot.json - Add your API keys
+# config/levels.json - Configure your levels (if using levels mode)
+# config/strategies.json - Configure your strategies (if using strategies mode)
+```
+
+**Note**: The Docker image does not include sample config files. You must set up your `config/` directory on the host, which will be mounted into the container.
+
+#### 2. Fix Docker Permissions (if needed)
 
 If you encounter permission errors:
 
@@ -137,7 +160,7 @@ newgrp docker
 docker ps  # Should work without sudo
 ```
 
-#### 2. Configure MongoDB Connection
+#### 3. Configure MongoDB Connection
 
 Edit `config/bot.json` and update the MongoDB connection string:
 
@@ -163,22 +186,34 @@ Edit `config/bot.json` and update the MongoDB connection string:
 }
 ```
 
-#### 3. Configure API Keys
+#### 4. Configure API Keys
 
 Edit `config/bot.json` and add your Binance API credentials:
 
 ```json
 {
-  "exchange": {
+  "exchange_engine": {
     "exchange": "Binance",
-    "binance": {
-      "rest": {
+    "config": {
+      "pairs": ["ETH/USDC", "BTC/USDT"],
+      "apiKey": "your_api_key",
+      "secret": "your_secret_key"
+    }
+  }
+}
+```
+
+For Bybit:
+```json
+{
+  "exchange_engine": {
+    "exchange": "Bybit",
+    "config": {
+      "pairs": ["ETH/USDC", "BTC/USDT"],
+      "instrumentType": "Futures",
+      "credentials": {
         "apiKey": "your_api_key",
-        "secretKey": "your_secret_key"
-      },
-      "ws": {
-        "apiKey": "your_api_key",
-        "secretKey": "your_secret_key"
+        "apiSecret": "your_secret_key"
       }
     }
   }

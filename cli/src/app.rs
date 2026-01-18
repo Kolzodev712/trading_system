@@ -2,8 +2,10 @@
 use crate::client::trading_cli::MonitoringData;
 use crate::client::TradingCliClient;
 use crate::error::CliError;
+use crate::screens::futures_monitor::FuturesMonitorScreen;
 use crate::screens::main_menu::MainMenuScreen;
-use crate::screens::trading_monitor::{handle_input_async, TradingMonitorScreen};
+use crate::screens::shared::handle_input_async;
+use crate::screens::spot_monitor::SpotMonitorScreen;
 use ratatui::backend::Backend;
 use ratatui::Terminal;
 use std::time::Duration;
@@ -67,7 +69,8 @@ pub struct EditFormState {
 #[derive(Debug)]
 pub enum Screen {
     MainMenu,
-    TradingMonitor,
+    SpotMonitor,
+    FuturesMonitor,
 }
 
 impl App {
@@ -169,8 +172,24 @@ impl App {
                         f.render_widget(paragraph, f.size());
                     }
                 }
-                Screen::TradingMonitor => {
-                    if let Err(e) = TradingMonitorScreen::render(f, f.size(), self) {
+                Screen::SpotMonitor => {
+                    if let Err(e) = SpotMonitorScreen::render(f, f.size(), self) {
+                        // Fallback: show error message
+                        use ratatui::{
+                            layout::Alignment,
+                            style::{Color, Style},
+                            widgets::{Block, Borders, Paragraph},
+                        };
+                        let error_msg = format!("Render error: {}", e);
+                        let paragraph = Paragraph::new(error_msg)
+                            .style(Style::default().fg(Color::Red))
+                            .alignment(Alignment::Center)
+                            .block(Block::default().borders(Borders::ALL).title("Error"));
+                        f.render_widget(paragraph, f.size());
+                    }
+                }
+                Screen::FuturesMonitor => {
+                    if let Err(e) = FuturesMonitorScreen::render(f, f.size(), self) {
                         // Fallback: show error message
                         use ratatui::{
                             layout::Alignment,
@@ -193,8 +212,12 @@ impl App {
         level_refresh_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
         loop {
-            // Start streaming if we're in Trading Monitor and not already streaming
-            if matches!(self.current_screen, Screen::TradingMonitor) && !self.streaming_active {
+            // Start streaming if we're in a monitor screen and not already streaming
+            if matches!(
+                self.current_screen,
+                Screen::SpotMonitor | Screen::FuturesMonitor
+            ) && !self.streaming_active
+            {
                 // Refresh levels immediately when entering
                 if self.refresh_levels().await.is_err() {
                     // Ignore errors, will retry next cycle
@@ -205,8 +228,12 @@ impl App {
                 needs_redraw = true;
             }
 
-            // Stop streaming if we left Trading Monitor
-            if !matches!(self.current_screen, Screen::TradingMonitor) && self.streaming_active {
+            // Stop streaming if we left monitor screens
+            if !matches!(
+                self.current_screen,
+                Screen::SpotMonitor | Screen::FuturesMonitor
+            ) && self.streaming_active
+            {
                 self.streaming_active = false;
                 needs_redraw = true;
             }
@@ -229,8 +256,23 @@ impl App {
                             f.render_widget(paragraph, f.size());
                         }
                     }
-                    Screen::TradingMonitor => {
-                        if let Err(e) = TradingMonitorScreen::render(f, f.size(), self) {
+                    Screen::SpotMonitor => {
+                        if let Err(e) = SpotMonitorScreen::render(f, f.size(), self) {
+                            use ratatui::{
+                                layout::Alignment,
+                                style::{Color, Style},
+                                widgets::{Block, Borders, Paragraph},
+                            };
+                            let error_msg = format!("Render error: {}", e);
+                            let paragraph = Paragraph::new(error_msg)
+                                .style(Style::default().fg(Color::Red))
+                                .alignment(Alignment::Center)
+                                .block(Block::default().borders(Borders::ALL).title("Error"));
+                            f.render_widget(paragraph, f.size());
+                        }
+                    }
+                    Screen::FuturesMonitor => {
+                        if let Err(e) = FuturesMonitorScreen::render(f, f.size(), self) {
                             use ratatui::{
                                 layout::Alignment,
                                 style::{Color, Style},
@@ -268,7 +310,7 @@ impl App {
                                         needs_redraw = true;
                                     }
                                 }
-                                Screen::TradingMonitor => {
+                                Screen::SpotMonitor | Screen::FuturesMonitor => {
                                     if handle_input_async(self, key_code).await.is_ok() {
                                         needs_redraw = true;
                                     }
@@ -284,6 +326,27 @@ impl App {
                 update = stream_rx.recv() => {
                     match update {
                         Some(data) => {
+                            // Check if instrument_type changed and switch screens if needed
+                            let old_instrument_type = self.monitoring_data
+                                .as_ref()
+                                .map(|md| md.instrument_type.as_str());
+                            let new_instrument_type = data.instrument_type.as_str();
+
+                            // Switch screen if instrument_type changed (e.g., from Spot to Futures)
+                            if old_instrument_type != Some(new_instrument_type) {
+                                self.current_screen = if new_instrument_type == "Futures" {
+                                    Screen::FuturesMonitor
+                                } else {
+                                    Screen::SpotMonitor
+                                };
+                                tracing::debug!(
+                                    "[CLI] Instrument type changed from {:?} to {}, switching to {:?}",
+                                    old_instrument_type,
+                                    new_instrument_type,
+                                    self.current_screen
+                                );
+                            }
+
                             self.monitoring_data = Some(data.clone());
                             // Extract strategies from monitoring data
                             self.strategies = if !data.strategies.is_empty() {
@@ -295,16 +358,16 @@ impl App {
                         }
                         None => {
                             // Channel closed - this means the stream handler stopped
-                            // Try to restart streaming if we're still in Trading Monitor
-                            if matches!(self.current_screen, Screen::TradingMonitor) {
+                            // Try to restart streaming if we're still in a monitor screen
+                            if matches!(self.current_screen, Screen::SpotMonitor | Screen::FuturesMonitor) {
                                 self.streaming_active = false;
                             }
                         }
                     }
                 }
 
-                // Periodic level refresh (only when in Trading Monitor)
-                _ = level_refresh_interval.tick(), if matches!(self.current_screen, Screen::TradingMonitor) => {
+                // Periodic level refresh (only when in Spot Monitor)
+                _ = level_refresh_interval.tick(), if matches!(self.current_screen, Screen::SpotMonitor) => {
                     if self.refresh_levels().await.is_err() {
                         // Ignore errors, will retry next cycle
                     } else {
@@ -522,11 +585,35 @@ impl App {
     }
 
     pub async fn go_to_trading_monitor(&mut self) -> Result<(), CliError> {
-        self.current_screen = Screen::TradingMonitor;
+        // Always refresh monitoring data to get accurate instrument_type
+        // This ensures we have the correct instrument_type when entering the monitor
+        if let Err(e) = self.refresh_monitoring_data().await {
+            tracing::warn!(
+                "[CLI] Failed to fetch monitoring data for screen selection: {:?}",
+                e
+            );
+            // If refresh fails, we'll check again when streaming data arrives
+        }
+
+        // Determine which monitor screen to show based on instrument_type
+        let instrument_type = self
+            .monitoring_data
+            .as_ref()
+            .map(|md| md.instrument_type.as_str())
+            .unwrap_or("Spot");
+
+        self.current_screen = if instrument_type == "Futures" {
+            Screen::FuturesMonitor
+        } else {
+            Screen::SpotMonitor
+        };
         // Reset selection when entering
         self.selected_level_index = None;
-        // Fetch levels when entering trading monitor
-        self.refresh_levels().await?;
+        self.selected_strategy_index = None;
+        // Fetch levels when entering trading monitor (only needed for levels mode)
+        if !self.has_strategy() {
+            self.refresh_levels().await?;
+        }
         // Don't block - just switch screen, data will come from streaming
         // The streaming will start automatically in the event loop
         Ok(())

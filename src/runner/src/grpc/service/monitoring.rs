@@ -24,6 +24,8 @@ pub struct MonitoringService {
     pub strategy_infos: Vec<StrategyInfo>,
     /// Strategy manager (only set in strategies mode, for checking enabled status)
     pub strategy_manager: Option<Arc<RwLock<StrategyManager>>>,
+    /// Instrument type (Spot or Futures) - determines which TUI view to show
+    pub instrument_type: trading_core::types::common::InstrumentType,
 }
 
 /// Strategy information for monitoring
@@ -85,7 +87,7 @@ impl MonitoringService {
 
                         trading_cli::Order {
                             order_id: order_id_str,
-                            symbol: order.symbol.to_string(),
+                            symbol: order.instrument.symbol().to_string(),
                             side: format!("{:?}", order.side),
                             order_type,
                             price: order.price.to_string(),
@@ -115,28 +117,86 @@ impl MonitoringService {
 
                 (orders, balances)
             },
-            // Get positions from TradingStateManager
+            // Get positions from ExchangeStateManager (for futures) or TradingStateManager (for spot)
             async {
+                let exchange_state_arc = self.exchange_state_manager.get_state();
+                let exchange_state = exchange_state_arc.read().await;
+                let exchange_positions: Vec<trading_cli::Position> = exchange_state
+                    .get_positions()
+                    .iter()
+                    .map(|pos| {
+                        let side = if pos.quantity.is_sign_positive() {
+                            "Long"
+                        } else {
+                            "Short"
+                        };
+                        trading_cli::Position {
+                            symbol: pos.instrument.symbol().to_string(),
+                            quantity: pos.quantity.to_string(),
+                            avg_price: pos.avg_price.to_string(),
+                            side: side.to_string(),
+                            mark_price: pos.mark_price.map(|p| p.to_string()).unwrap_or_default(),
+                            unrealized_pnl: pos.unrealized_pnl.to_string(),
+                            leverage: pos.leverage.map(|l| format!("{}x", l)).unwrap_or_default(),
+                            margin_used: pos
+                                .initial_margin
+                                .map(|m| m.to_string())
+                                .unwrap_or_default(),
+                            maintenance_margin: pos
+                                .maintenance_margin
+                                .map(|m| m.to_string())
+                                .unwrap_or_default(),
+                            liquidation_price: pos
+                                .liquidation_price
+                                .map(|p| p.to_string())
+                                .unwrap_or_default(),
+                            realized_pnl: pos
+                                .realized_pnl
+                                .map(|p| p.to_string())
+                                .unwrap_or_default(),
+                        }
+                    })
+                    .collect();
+
+                // Also get positions from TradingStateManager (for spot/strategy positions)
                 let trading_state_arc = self.trading_state_manager.get_state();
                 let trading_state = trading_state_arc.read().await;
-                let positions: Vec<trading_cli::Position> = trading_state
+                let trading_positions: Vec<trading_cli::Position> = trading_state
                     .positions
                     .values()
                     .map(|pos| trading_cli::Position {
                         symbol: pos.symbol.convert_to_smolstr().to_string(),
                         quantity: pos.quantity.to_string(),
                         avg_price: pos.avg_price.to_string(),
+                        side: String::new(), // Trading engine positions don't have side
+                        mark_price: String::new(),
+                        unrealized_pnl: String::new(),
+                        leverage: String::new(),
+                        margin_used: String::new(),
+                        maintenance_margin: String::new(),
+                        liquidation_price: String::new(),
+                        realized_pnl: String::new(),
                     })
                     .collect();
 
-                if !positions.is_empty() {
+                // Combine both (exchange positions take precedence for same symbol)
+                let mut all_positions = exchange_positions.clone();
+                for trading_pos in trading_positions.clone() {
+                    if !all_positions.iter().any(|p| p.symbol == trading_pos.symbol) {
+                        all_positions.push(trading_pos);
+                    }
+                }
+
+                if !all_positions.is_empty() {
                     tracing::debug!(
-                        "[gRPC] get_positions: {} position(s) found",
-                        positions.len()
+                        "[gRPC] get_positions: {} position(s) found ({} from exchange, {} from trading)",
+                        all_positions.len(),
+                        exchange_positions.len(),
+                        trading_positions.len()
                     );
                 }
 
-                positions
+                all_positions
             },
             // Get indicators
             async { self.get_indicators().await.unwrap_or_default() },
@@ -202,6 +262,13 @@ impl MonitoringService {
             indicators.len()
         );
 
+        // Convert instrument_type to string
+        let instrument_type_str = match self.instrument_type {
+            trading_core::types::common::InstrumentType::Spot => "Spot",
+            trading_core::types::common::InstrumentType::Futures => "Futures",
+            trading_core::types::common::InstrumentType::Derivitives => "Futures", // Treat derivatives as futures
+        };
+
         let data = trading_cli::MonitoringData {
             orders,
             balances,
@@ -211,6 +278,7 @@ impl MonitoringService {
             aggregated: Some(aggregated),
             strategies: strategy_statuses,
             orderbooks,
+            instrument_type: instrument_type_str.to_string(),
         };
 
         tracing::debug!("[gRPC] collect_monitoring_data: Returning data successfully");
@@ -319,7 +387,7 @@ impl MonitoringService {
             .active_orders
             .values()
             .filter(|o| {
-                let order_symbol: smol_str::SmolStr = o.symbol.clone().into();
+                let order_symbol: smol_str::SmolStr = o.instrument.symbol().clone();
                 // Order symbols might be in "ETHUSDC" format, so check both
                 order_symbol.as_str() == symbol_str || order_symbol.as_str() == symbol_no_slash
             })

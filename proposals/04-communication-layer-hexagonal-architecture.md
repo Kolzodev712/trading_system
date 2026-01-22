@@ -3,7 +3,9 @@
 **Version**: 2.0  
 **Date**: December 2024  
 **Status**: Revised (Based on Low-Latency Feedback)  
-**Prerequisites**: None (can be implemented independently)
+**Prerequisites**: Proposal 03 (Traceability & Observability) - Trace types must be defined first
+
+**Implementation Order**: This proposal (04) comes AFTER Proposal 03 (Traceability), but can be designed in parallel once trace types are defined
 
 ## Executive Summary
 
@@ -19,17 +21,9 @@ This proposal outlines the transformation of the trading system to a **UI-agnost
 6. **Enable horizontal scaling** - Multiple consumers, multiple strategies, no tight coupling
 7. **Allocation discipline** - Minimize heap allocations on hot path, use Arc for cold path
 
-### Why This Architecture?
-
-- **Future-proof**: Add new UIs/consumers without touching core
-- **Scalable**: Multiple dashboards, analytics pipelines, automation tools
-- **Testable**: Core logic testable without I/O concerns
-- **Flexible**: Support HFT daemon, web UI, mobile app, all simultaneously
-- **Maintainable**: Clear boundaries, single responsibility
-
 ---
 
-## Current Architecture Analysis
+## Current Architecture
 
 ### Current State
 
@@ -60,15 +54,6 @@ This proposal outlines the transformation of the trading system to a **UI-agnost
                             ▼
                     TUI (gRPC Client)
 ```
-
-### Issues with Current Architecture
-
-1. **gRPC embedded in Runner** - Core knows about gRPC
-2. **Direct state access** - gRPC service directly accesses state managers
-3. **Single consumer** - Only TUI can connect
-4. **Tight coupling** - Adding web UI requires modifying core
-5. **No event sourcing** - Can't replay events for new consumers
-6. **No multi-transport** - Can't add Pub/Sub, IPC, etc.
 
 ---
 
@@ -146,11 +131,97 @@ This proposal outlines the transformation of the trading system to a **UI-agnost
 
 ---
 
+## Library Structure
+
+### Library: `libs/trading_networking`
+
+**Purpose**: Reusable networking infrastructure including events, commands, DTP protocol, and Gateway.
+
+**Structure**:
+```
+libs/trading_networking/
+├── Cargo.toml
+└── src/
+    ├── lib.rs
+    ├── events/
+    │   ├── mod.rs
+    │   ├── hot.rs       # HotEvent types
+    │   ├── cold.rs      # ColdEvent types
+    │   ├── hot_bus.rs   # HotEventBus implementation
+    │   └── cold_bus.rs  # ColdEventBus implementation
+    ├── commands/
+    │   ├── mod.rs
+    │   ├── router.rs    # CommandRouter trait & implementation
+    │   └── dispatcher.rs # CommandDispatcher
+    ├── dtp/
+    │   ├── mod.rs
+    │   ├── envelope.rs   # DtpEnvelope
+    │   ├── serializer.rs
+    │   └── deserializer.rs
+    └── gateway/
+        ├── mod.rs
+        ├── event_gateway.rs
+        ├── command_gateway.rs
+        ├── transports/
+        │   ├── mod.rs
+        │   ├── traits.rs      # EventTransport, CommandTransport traits
+        │   ├── grpc.rs         # gRPC transport implementation
+        │   ├── pubsub.rs       # Pub/Sub transport implementation
+        │   └── ipc.rs          # IPC transport implementation
+        └── auth.rs             # Authenticator, CommandValidator traits
+```
+
+**Dependencies**:
+- `trading_core` - domain types (Pair, Order, etc.)
+- `trading_trace` - trace context types
+- `bytes` - Bytes type for DTP payloads
+- `prost` - Protobuf serialization
+- `tonic` - gRPC framework (for gRPC transport)
+- `tokio` - async runtime
+
+**Why Gateway in Library**:
+- Gateway is part of the networking layer
+- Works with generic `EventBus` and `CommandBus` traits
+- Auth/Validation are trait-based (generic)
+- Transports work with generic DTP envelopes
+- Fully reusable across different systems
+
+**Application Provides**:
+- Trading-specific `Authenticator` implementation
+- Trading-specific `CommandValidator` implementation
+- Configuration and wiring in `src/runner/`
+
+**Usage**:
+```rust
+use trading_networking::{
+    events::{HotEventBus, ColdEventBus, HotEvent, ColdEvent},
+    commands::{CommandRouter, Command},
+    dtp::DtpEnvelope,
+    gateway::{EventGateway, CommandGateway},
+    gateway::transports::{EventTransport, CommandTransport},
+    gateway::auth::{Authenticator, CommandValidator},
+};
+```
+
+### Dependency Flow
+
+```
+trading_core (domain types)
+    ↑
+trading_trace (trace types)
+    ↑
+trading_networking (events, commands, DTP, gateway, transports)
+    ↑
+src/runner (wires everything, provides trading-specific auth/validation)
+```
+
+---
+
 ## Phase 1: Formalize Event Bus (Hot/Cold Lane Split)
 
 ### 1.1 Hot Lane Event Types (Market Data)
 
-**Location**: `libs/trading_core/src/events/hot.rs` (new module)
+**Location**: `libs/trading_networking/src/events/hot.rs`
 
 **Purpose**: Ultra-low latency market data events with minimal allocations.
 
@@ -160,6 +231,7 @@ This proposal outlines the transformation of the trading system to a **UI-agnost
 ```rust
 use bytes::Bytes;
 use std::sync::Arc;
+use trading_trace::HotTraceContext;  // From Proposal 03
 
 /// Hot lane market data event (allocation-light, compact)
 #[derive(Debug, Clone)]
@@ -175,6 +247,9 @@ pub enum HotEvent {
         timestamp: u64,
         // Full orderbook only if needed (rare) - use Arc<Bytes> for pre-serialized
         full_snapshot: Option<Arc<Bytes>>,
+        /// Trace context (optional, from Proposal 03)
+        /// Can be None initially, will be filled when traceability is implemented
+        trace_context: Option<HotTraceContext>,
     },
     /// Trade tick (minimal data)
     Trade {
@@ -183,25 +258,32 @@ pub enum HotEvent {
         quantity: Decimal,
         side: Side,
         timestamp: u64,
+        /// Trace context (optional, from Proposal 03)
+        /// Can be None initially, will be filled when traceability is implemented
+        trace_context: Option<HotTraceContext>,
     },
     /// Mark price (futures)
     MarkPrice {
         pair_id: u32,
         price: Decimal,
         timestamp: u64,
+        /// Trace context (optional, from Proposal 03)
+        trace_context: Option<HotTraceContext>,
     },
     /// Funding rate (futures)
     FundingRate {
         pair_id: u32,
         rate: Decimal,
         timestamp: u64,
+        /// Trace context (optional, from Proposal 03)
+        trace_context: Option<HotTraceContext>,
     },
 }
 ```
 
 ### 1.2 Cold Lane Event Types (State Changes)
 
-**Location**: `libs/trading_core/src/events/cold.rs` (new module)
+**Location**: `libs/trading_networking/src/events/cold.rs`
 
 **Purpose**: State change events (orders, fills, positions, risk). Lean payloads with IDs and deltas.
 
@@ -210,6 +292,7 @@ pub enum HotEvent {
 **Implementation**:
 ```rust
 use std::sync::Arc;
+use trading_core::trace::ColdTraceContext;  // From Proposal 03
 
 /// Cold lane event (state changes, wrapped in Arc for sharing)
 #[derive(Debug, Clone)]
@@ -245,23 +328,32 @@ pub enum OrderEvent {
         order_type: OrderType,
         timestamp: u64,
         // Full order only if needed - query state store instead
+        /// Trace context (optional, from Proposal 03)
+        /// Can be None initially, will be filled when traceability is implemented
+        trace_context: Option<ColdTraceContext>,
     },
     Updated {
         order_id: OrderId,
         status: OrderStatus,
         filled_amount: Decimal,
         timestamp: u64,
+        /// Trace context (optional, from Proposal 03)
+        trace_context: Option<ColdTraceContext>,
     },
     Filled {
         order_id: OrderId,
         fill_price: Decimal,
         fill_quantity: Decimal,
         timestamp: u64,
+        /// Trace context (optional, from Proposal 03)
+        trace_context: Option<ColdTraceContext>,
     },
     Cancelled {
         order_id: OrderId,
         reason_code: u16,  // Numeric code, not String
         timestamp: u64,
+        /// Trace context (optional, from Proposal 03)
+        trace_context: Option<ColdTraceContext>,
     },
 }
 
@@ -275,6 +367,8 @@ pub struct FillEvent {
     pub quantity: Decimal,
     pub fee: Decimal,
     pub timestamp: u64,
+    /// Trace context (optional, from Proposal 03)
+    pub trace_context: Option<ColdTraceContext>,
 }
 
 /// Position event (lean)
@@ -285,6 +379,8 @@ pub enum PositionEvent {
         quantity: Decimal,
         entry_price: Decimal,
         timestamp: u64,
+        /// Trace context (optional, from Proposal 03)
+        trace_context: Option<ColdTraceContext>,
     },
     Updated {
         pair_id: u32,
@@ -292,11 +388,15 @@ pub enum PositionEvent {
         avg_price: Decimal,
         unrealized_pnl: Decimal,
         timestamp: u64,
+        /// Trace context (optional, from Proposal 03)
+        trace_context: Option<ColdTraceContext>,
     },
     Closed {
         pair_id: u32,
         realized_pnl: Decimal,
         timestamp: u64,
+        /// Trace context (optional, from Proposal 03)
+        trace_context: Option<ColdTraceContext>,
     },
 }
 
@@ -308,6 +408,8 @@ pub struct BalanceEvent {
     pub used: Decimal,
     pub total: Decimal,
     pub timestamp: u64,
+    /// Trace context (optional, from Proposal 03)
+    pub trace_context: Option<ColdTraceContext>,
 }
 
 /// Strategy event (lean)
@@ -317,26 +419,53 @@ pub enum StrategyEvent {
         strategy_id: u64,  // Numeric ID
         pair_id: u32,
         timestamp: u64,
+        /// Trace context (optional, from Proposal 03)
+        trace_context: Option<ColdTraceContext>,
     },
     Stopped {
         strategy_id: u64,
         reason_code: u16,  // Numeric code
         timestamp: u64,
+        /// Trace context (optional, from Proposal 03)
+        trace_context: Option<ColdTraceContext>,
     },
     Signal {
         strategy_id: u64,
         signal_type: u8,  // Numeric signal type
         timestamp: u64,
+        /// Trace context (optional, from Proposal 03)
+        trace_context: Option<ColdTraceContext>,
     },
 }
 
 /// Level event (lean)
 #[derive(Debug, Clone)]
 pub enum LevelEvent {
-    Created { level_id: u64, pair_id: u32, timestamp: u64 },
-    Updated { level_id: u64, timestamp: u64 },
-    Deleted { level_id: u64, timestamp: u64 },
-    Filled { level_id: u64, timestamp: u64 },
+    Created { 
+        level_id: u64, 
+        pair_id: u32, 
+        timestamp: u64,
+        /// Trace context (optional, from Proposal 03)
+        trace_context: Option<ColdTraceContext>,
+    },
+    Updated { 
+        level_id: u64, 
+        timestamp: u64,
+        /// Trace context (optional, from Proposal 03)
+        trace_context: Option<ColdTraceContext>,
+    },
+    Deleted { 
+        level_id: u64, 
+        timestamp: u64,
+        /// Trace context (optional, from Proposal 03)
+        trace_context: Option<ColdTraceContext>,
+    },
+    Filled { 
+        level_id: u64, 
+        timestamp: u64,
+        /// Trace context (optional, from Proposal 03)
+        trace_context: Option<ColdTraceContext>,
+    },
 }
 
 /// Risk event (lean)
@@ -347,19 +476,32 @@ pub enum RiskEvent {
         current: Decimal,
         limit: Decimal,
         timestamp: u64,
+        /// Trace context (optional, from Proposal 03)
+        trace_context: Option<ColdTraceContext>,
     },
     CircuitBreaker {
         action: u8,  // Numeric action code
         reason_code: u16,
         timestamp: u64,
+        /// Trace context (optional, from Proposal 03)
+        trace_context: Option<ColdTraceContext>,
     },
 }
 
 /// Config event
 #[derive(Debug, Clone)]
 pub enum ConfigEvent {
-    Updated { path_hash: u64, timestamp: u64 },  // Hash path, not String
-    Reloaded { timestamp: u64 },
+    Updated { 
+        path_hash: u64, 
+        timestamp: u64,  // Hash path, not String
+        /// Trace context (optional, from Proposal 03)
+        trace_context: Option<ColdTraceContext>,
+    },
+    Reloaded { 
+        timestamp: u64,
+        /// Trace context (optional, from Proposal 03)
+        trace_context: Option<ColdTraceContext>,
+    },
 }
 
 /// Health event
@@ -368,6 +510,8 @@ pub struct HealthEvent {
     pub component_id: u8,  // Numeric component ID
     pub status: HealthStatus,
     pub timestamp: u64,
+    /// Trace context (optional, from Proposal 03)
+    pub trace_context: Option<ColdTraceContext>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -384,6 +528,8 @@ pub struct ErrorEvent {
     pub error_code: u16,  // Numeric error code
     pub severity: ErrorSeverity,
     pub timestamp: u64,
+    /// Trace context (optional, from Proposal 03)
+    pub trace_context: Option<ColdTraceContext>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -397,7 +543,7 @@ pub enum ErrorSeverity {
 
 ### 1.3 Hot Lane Bus (Market Data)
 
-**Location**: `libs/trading_core/src/events/hot_bus.rs` (new file)
+**Location**: `libs/trading_networking/src/events/hot_bus.rs`
 
 **Purpose**: Ultra-low latency channel for market data. Uses SPSC ring buffer or bounded MPSC.
 
@@ -443,7 +589,7 @@ pub enum HotEventBusError {
 
 ### 1.4 Cold Lane Bus (State Changes)
 
-**Location**: `libs/trading_core/src/events/cold_bus.rs` (new file)
+**Location**: `libs/trading_networking/src/events/cold_bus.rs`
 
 **Purpose**: Broadcast channel for state change events. Uses Arc to avoid clones.
 
@@ -597,7 +743,7 @@ impl MarketDataStatePublisher {
 
 ### 2.1 Command Type Definitions
 
-**Location**: `libs/trading_core/src/commands/mod.rs` (new module)
+**Location**: `libs/trading_networking/src/commands/mod.rs`
 
 **Purpose**: Define command types with correlation IDs and reply channels for request/response.
 
@@ -606,18 +752,23 @@ impl MarketDataStatePublisher {
 **Implementation**:
 ```rust
 use tokio::sync::oneshot;
+use trading_core::trace::{ColdTraceContext, CorrelationId};  // From Proposal 03
 
 /// Command with correlation ID and reply channel
 #[derive(Debug)]
 pub struct Command {
     /// Correlation ID (u64, 0 = none)
-    pub correlation_id: u64,
+    pub correlation_id: CorrelationId,
     
     /// Command payload
     pub payload: CommandPayload,
     
     /// Reply channel (None for fire-and-forget)
     pub reply: Option<oneshot::Sender<CommandResult>>,
+    
+    /// Trace context (optional, from Proposal 03)
+    /// Can be None initially, will be filled when traceability is implemented
+    pub trace_context: Option<ColdTraceContext>,
 }
 
 /// Command payload types
@@ -712,7 +863,7 @@ pub enum ControlCommand {
 
 ### 2.2 Command Router Trait
 
-**Location**: `libs/trading_core/src/commands/router.rs` (new file)
+**Location**: `libs/trading_networking/src/commands/router.rs`
 
 **Purpose**: Single-consumer command router that dispatches commands to specific handlers.
 
@@ -797,7 +948,7 @@ pub enum CommandRouterError {
 
 ### 2.3 Command Dispatcher
 
-**Location**: `libs/trading_core/src/commands/dispatcher.rs` (new file)
+**Location**: `libs/trading_networking/src/commands/dispatcher.rs`
 
 **Purpose**: Routes commands to specific handlers based on command type.
 
@@ -851,7 +1002,7 @@ impl CommandDispatcher {
 
 ### 3.1 Gateway Architecture
 
-**Location**: `src/gateway/` (new crate)
+**Location**: `libs/trading_networking/src/gateway/`
 
 **Purpose**: Single boundary between core and external world. Handles all serialization, networking, authentication.
 
@@ -881,7 +1032,7 @@ src/gateway/
 
 ### 3.3 Command Gateway
 
-**Location**: `src/gateway/src/command_gateway.rs`
+**Location**: `libs/trading_networking/src/gateway/command_gateway.rs`
 
 **Purpose**: Receive external commands, authenticate, validate, inject into Command Bus.
 
@@ -963,7 +1114,7 @@ pub trait CommandValidator: Send + Sync {
 
 ### 3.4 Gateway Configuration
 
-**Location**: `src/gateway/src/config.rs`
+**Location**: `libs/trading_networking/src/gateway/config.rs`
 
 **Implementation**:
 ```rust
@@ -1046,33 +1197,15 @@ pub enum PubSubProvider {
 
 A **Data Transfer Protocol (DTP)** provides a standardized message envelope that wraps all events and commands crossing the Gateway boundary. This enables versioning, observability, event sourcing, and unified handling across all transports while maintaining zero-copy performance for internal communication.
 
-### Why DTP?
-
-**Current Approach Issues**:
-- No standardized message envelope
-- No versioning mechanism
-- No correlation IDs for tracing
-- No metadata (source, destination, routing hints)
-- Each transport handles serialization differently
-- No event sourcing/replay support
-- Difficult to add new transports without duplicating serialization logic
-
-**DTP Benefits**:
-- ✅ **Unified Message Format**: Same envelope structure across all transports
-- ✅ **Versioning**: Protocol version enables evolution without breaking changes
-- ✅ **Observability**: Correlation IDs, message IDs, source/destination metadata
-- ✅ **Event Sourcing Ready**: Self-contained messages can be persisted and replayed
-- ✅ **Transport Agnostic**: Same envelope, different wire formats
-- ✅ **Performance**: Internal bus remains zero-copy (< 1μs); DTP only at Gateway boundary
-
 ### DTP Message Envelope (Fixed-Header, Allocation-Light)
 
-**Location**: `libs/trading_core/src/dtp/mod.rs` (new module)
+**Location**: `libs/trading_networking/src/dtp/mod.rs`
 
 **Key Design**: Fixed-size header with numeric IDs, TLV metadata, payload as Bytes.
 
 ```rust
 use bytes::Bytes;
+use trading_trace::TraceContext;  // From Proposal 03
 
 /// Data Transfer Protocol Message Envelope (fixed-header, allocation-light)
 #[derive(Debug, Clone)]
@@ -1103,6 +1236,10 @@ pub struct DtpEnvelope {
     
     /// Metadata (TLV format - Vec<(tag: u16, value: Bytes)>)
     pub metadata: Vec<(u16, Bytes)>,
+    
+    /// Trace context (optional, from Proposal 03)
+    /// Can be None initially, will be filled when traceability is implemented
+    pub trace_context: TraceContext,
 }
 
 /// Fixed-size header (for efficient parsing)
@@ -1353,7 +1490,7 @@ impl DtpDeserializer {
 
 ### Updated Event Gateway with DTP (Non-Blocking)
 
-**Location**: `src/gateway/src/event_gateway.rs`
+**Location**: `libs/trading_networking/src/gateway/event_gateway.rs`
 
 **Key Design**: Non-blocking fanout with per-transport bounded queues. Each transport runs its own task.
 
@@ -1502,27 +1639,12 @@ pub trait EventTransport: Send + Sync {
 }
 ```
 
-### Potential Concerns & Mitigations
-
-**Concern 1: Overhead**
-- **Mitigation**: Envelope only created at Gateway boundary (not internal). Internal buses remain low-allocation. Fixed-header format minimizes parsing overhead.
-
-**Concern 2: Complexity**
-- **Mitigation**: DTP is simple (fixed header + TLV metadata). Benefits outweigh complexity. Makes adding new transports easier.
-
-**Concern 3: Serialization Performance**
-- **Mitigation**: Single canonical format (Protobuf) eliminates format selection overhead. Protobuf is fast and compact. JSON only generated as derived stream for tooling.
-
-**Concern 4: Gateway Blocking**
-- **Mitigation**: Per-transport bounded queues with independent worker tasks. `try_send` prevents blocking. Drop/sample policy when queues are full.
-
----
 
 ## Phase 3.6: Transport Health & Metrics
 
 ### Transport Health Trait
 
-**Location**: `src/gateway/src/transports/health.rs` (new file)
+**Location**: `libs/trading_networking/src/gateway/transports/health.rs`
 
 **Purpose**: Monitor transport health and collect metrics.
 
@@ -1555,7 +1677,7 @@ pub enum ConnectionStatus {
 
 ### Backpressure Policy
 
-**Location**: `src/gateway/src/backpressure.rs` (new file)
+**Location**: `libs/trading_networking/src/gateway/backpressure.rs`
 
 **Purpose**: Configurable backpressure handling when queues are full.
 
@@ -1586,7 +1708,7 @@ pub enum EventPriority {
 
 ### Connection Management
 
-**Location**: `src/gateway/src/transports/connection.rs` (new file)
+**Location**: `libs/trading_networking/src/gateway/transports/connection.rs`
 
 **Purpose**: Reconnection logic and connection pooling.
 
@@ -1620,7 +1742,7 @@ pub struct ReconnectionConfig {
 
 ### 4.1 gRPC Transport
 
-**Location**: `src/gateway/src/transports/grpc.rs`
+**Location**: `libs/trading_networking/src/gateway/transports/grpc.rs`
 
 **Purpose**: gRPC server for TUI and other gRPC clients.
 
@@ -1663,7 +1785,7 @@ impl CommandTransport for GrpcCommandTransport {
 
 ### 4.2 Pub/Sub Transport
 
-**Location**: `src/gateway/src/transports/pubsub.rs`
+**Location**: `libs/trading_networking/src/gateway/transports/pubsub.rs`
 
 **Purpose**: Publish events to message bus (NATS, Kafka, etc.) for analytics, alerting, external consumers.
 
@@ -1690,7 +1812,7 @@ impl EventTransport for NatsEventTransport {
 
 ### 4.3 IPC Transport
 
-**Location**: `src/gateway/src/transports/ipc.rs`
+**Location**: `libs/trading_networking/src/gateway/transports/ipc.rs`
 
 **Purpose**: Unix domain sockets or shared memory for HFT daemon integration.
 
@@ -1885,7 +2007,58 @@ This ensures zero downtime migration.
 
 ---
 
+## Implementation Order & Coordination with Proposal 03
+
+### Prerequisites
+
+**This proposal (04) requires Proposal 03 (Traceability) to be designed first:**
+
+1. **Trace Types Must Be Defined** (Proposal 03, Phase 1)
+   - `HotTraceContext`, `ColdTraceContext`, `TraceContext` types must exist
+   - Types are defined in `libs/trading_core/src/trace/`
+   - **No implementation needed** - just type definitions
+
+2. **Design Networking with Trace Slots** (This Proposal, Phase 1)
+   - Design DTP Envelope with `trace_context: TraceContext` field
+   - Design Hot/Cold events with `trace_context: Option<HotTraceContext>` / `Option<ColdTraceContext>`
+   - Design Commands with `trace_context: Option<ColdTraceContext>`
+   - All optional, can be `None` initially
+
+3. **Implement Networking** (This Proposal, Phase 2-8)
+   - Implement Event Bus, Command Router, Gateway, DTP
+   - Use `None` for trace context everywhere initially
+   - Networking works independently
+
+4. **Fill Trace Slots** (Proposal 03, Phase 3+)
+   - When traceability is implemented, fill trace context slots
+   - No retrofitting needed
+
+### Key Design Principle
+
+**Define types first, design networking with slots, implement networking, then fill slots.**
+
+This ensures:
+- ✅ No retrofitting needed
+- ✅ No blocking (networking can proceed with `None`)
+- ✅ Clean integration
+- ✅ Backward compatible
+
+---
+
 ## Implementation Phases
+
+### Phase 0: Design with Trace Slots (Week 0-1)
+
+**Prerequisite**: Proposal 03 trace types must be defined first
+
+- [ ] Import trace types from Proposal 03
+- [ ] Design DTP Envelope with `trace_context: TraceContext` field
+- [ ] Design Hot Events with `trace_context: Option<HotTraceContext>` fields
+- [ ] Design Cold Events with `trace_context: Option<ColdTraceContext>` fields
+- [ ] Design Commands with `trace_context: Option<ColdTraceContext>` field
+- [ ] All trace context fields optional (can be `None`)
+
+**Note**: During implementation, use `None` for trace context. Slots will be filled when Proposal 03 is fully implemented.
 
 ### Phase 1: Event Bus Foundation (Hot/Cold Split) (Week 1-2)
 - [ ] Create `trading_core::events::hot` module (hot lane events)
@@ -1895,6 +2068,7 @@ This ensures zero downtime migration.
 - [ ] Update `ExchangeStatePublisher` to publish lean cold events
 - [ ] Update `MarketDataStatePublisher` to publish compact hot events (using HotEventTx)
 - [ ] Add numeric ID registries (pair_id, asset_id, component_id mappings)
+- [ ] **Use `None` for trace_context in all events initially** (will be filled by Proposal 03)
 - [ ] Add unit tests
 
 ### Phase 2: Command Router Foundation (Week 2-3)
@@ -1903,18 +2077,21 @@ This ensures zero downtime migration.
 - [ ] Implement `CommandRouter` trait and `MpscCommandRouter`
 - [ ] Implement `CommandDispatcher` for routing to handlers
 - [ ] Update `StrategyExecutor` to handle commands via dispatcher
+- [ ] **Use `None` for trace_context in all commands initially** (will be filled by Proposal 03)
 - [ ] Add unit tests
 
 ### Phase 3: Gateway Layer (Week 3-5)
-- [ ] Create `gateway` crate
-- [ ] Implement DTP core library (`libs/trading_core/src/dtp/`)
-  - [ ] Define `DtpEnvelope` with fixed header (numeric IDs, TLV metadata)
-  - [ ] Implement `DtpSerializer` (Protobuf only)
-  - [ ] Implement `DtpDeserializer`
-  - [ ] Add message ID generator (monotonic counter + node id)
-  - [ ] Add versioning support
+- [ ] Create `libs/trading_networking` crate with gateway module
+- [ ] Implement DTP core library (`libs/trading_networking/src/dtp/`)
+- [ ] Define `DtpEnvelope` with fixed header (numeric IDs, TLV metadata)
+- [ ] **Add `trace_context: TraceContext` field to DtpEnvelope** (from Proposal 03)
+- [ ] Implement `DtpSerializer` (Protobuf only)
+- [ ] Implement `DtpDeserializer`
+- [ ] Add message ID generator (monotonic counter + node id)
+- [ ] Add versioning support
 - [ ] Implement `EventGateway` (non-blocking, per-transport queues)
 - [ ] Implement `CommandGateway` (with DTP integration, oneshot replies)
+- [ ] **Extract/inject trace context in Gateway** (use `TraceContext::None` initially)
 - [ ] Add authentication and validation
 - [ ] Add configuration
 - [ ] Add integration tests
@@ -2010,6 +2187,396 @@ This ensures zero downtime migration.
 
 ---
 
+
+## Migration Plan
+
+### Overview
+
+This section provides a detailed, phase-by-phase migration plan for implementing the networking layer and migrating the entire system from direct channels to the Gateway architecture. The migration is designed to be **non-breaking** and **incremental**, allowing the system to continue operating during the transition.
+
+### Migration Strategy: Dual Publishing
+
+**Key Principle**: During migration, publish to both old channels and new event buses simultaneously. This ensures:
+- ✅ No breaking changes during transition
+- ✅ Gradual migration of subscribers
+- ✅ Easy rollback if issues arise
+- ✅ Zero downtime migration
+
+### Phase 0: Design with Trace Slots (Week 0-1)
+
+**Prerequisite**: Proposal 03 trace types must be defined first
+
+**Goal**: Design networking types with trace context slots (but don't implement yet)
+
+**Changes**:
+
+1. **Create event types** (`libs/trading_networking/src/events/`):
+   - `hot.rs` - HotEvent enum with `trace_context: Option<HotTraceContext>` fields
+   - `cold.rs` - ColdEvent enum with `trace_context: Option<ColdTraceContext>` fields
+   - `hot_bus.rs` - HotEventBus trait and implementation
+   - `cold_bus.rs` - ColdEventBus trait and implementation
+
+2. **Create command types** (`libs/trading_networking/src/commands/`):
+   - `mod.rs` - Command enum with `trace_context: Option<ColdTraceContext>` field
+   - `router.rs` - CommandRouter trait and implementation
+   - `dispatcher.rs` - CommandDispatcher
+
+3. **Create DTP types** (`libs/trading_networking/src/dtp/`):
+   - `mod.rs` - DTP module
+   - `envelope.rs` - DtpEnvelope with `trace_context: TraceContext` field
+   - `serializer.rs` - Serialization
+   - `deserializer.rs` - Deserialization
+
+4. **Import trace types**:
+   ```rust
+   use trading_trace::{HotTraceContext, ColdTraceContext, TraceContext};
+   ```
+
+**Files Created**: ~10 files  
+**Files Modified**: `libs/trading_core/src/lib.rs` (exports)  
+**Impact**: None (types defined, not used yet)  
+**Testing**: Unit tests for type definitions
+
+### Phase 1: Event Bus Foundation (Week 1-2)
+
+**Goal**: Implement hot/cold event buses and update publishers to dual publish
+
+**Changes**:
+
+1. **Implement HotEventBus**:
+   - SPSC or bounded MPSC channel
+   - `HotEventTx`, `HotEventRx` types
+   - `hot_event_channel(capacity)` function
+
+2. **Implement ColdEventBus**:
+   - Broadcast channel with Arc-wrapped events
+   - `ColdEventBus` trait
+   - `BroadcastColdEventBus` implementation
+   - `subscribe()` method returns receiver
+
+3. **Update ExchangeStatePublisher** (dual publish):
+   ```rust
+   impl ExchangeStatePublisher {
+       pub async fn publish_order(&self, order: &Order) {
+           // Old: publish to ExchangeUpdate channel
+           self.old_tx.send(ExchangeUpdate::Order(order.clone()))?;
+           
+           // New: publish to ColdEventBus
+           let event = Arc::new(ColdEvent::Order(OrderEvent {
+               // ... lean fields ...
+               trace_context: None,  // Will be filled by Proposal 03
+           }));
+           self.cold_event_bus.publish(event)?;
+       }
+   }
+   ```
+
+4. **Update MarketDataStatePublisher** (dual publish):
+   ```rust
+   impl MarketDataStatePublisher {
+       pub async fn publish_orderbook(&self, orderbook: &StructuredOrderbook) {
+           // Old: publish to MarketDataUpdate channel
+           self.old_tx.send(MarketDataUpdate::Orderbook { ... })?;
+           
+           // New: publish to HotEventBus
+           let event = HotEvent::Orderbook {
+               pair_id: self.pair_registry.get_id(&orderbook.pair)?,
+               best_bid: orderbook.bids.first().map(|(p, _)| *p)?,
+               best_ask: orderbook.asks.first().map(|(p, _)| *p)?,
+               trace_context: None,  // Will be filled by Proposal 03
+           };
+           self.hot_event_tx.try_send(event)?;
+       }
+   }
+   ```
+
+**Files Created**: `libs/trading_networking/src/events/hot_bus.rs`, `cold_bus.rs`  
+**Files Modified**: 
+- `src/exchange_engine/src/state/publisher.rs`
+- `src/market_data_engine/src/state/publisher.rs`
+- `src/indicator_engine/src/publisher.rs`
+
+**Impact**: Minimal (dual publishing, backward compatible)  
+**Testing**: Unit tests, integration tests
+
+### Phase 2: Command Router Foundation (Week 2-3)
+
+**Goal**: Implement command router and update command handlers
+
+**Changes**:
+
+1. **Implement CommandRouter**:
+   - MPSC channel for commands
+   - `CommandRouter` trait
+   - `MpscCommandRouter` implementation
+   - `CommandDispatcher` for routing to handlers
+
+2. **Update StrategyExecutor**:
+   - Subscribe to command router
+   - Handle commands via dispatcher
+   - Send replies via oneshot channel
+
+3. **Update gRPC handlers** (prepare for Gateway):
+   - Extract commands from gRPC requests
+   - Send to command router
+   - Wait for replies
+
+**Files Created**: `libs/trading_networking/src/commands/router.rs`, `dispatcher.rs`  
+**Files Modified**: 
+- `src/trading_engine/src/strategies/executor.rs`
+- `src/runner/src/grpc/service/*.rs`
+
+**Impact**: Moderate (new command flow, but old flow still works)  
+**Testing**: Unit tests, integration tests
+
+### Phase 3: Gateway Layer (Week 3-5)
+
+**Goal**: Create Gateway crate and implement event/command gateways
+
+**Changes**:
+
+1. **Create `libs/trading_networking` crate with gateway module**:
+   ```bash
+   cargo new --lib src/gateway
+   ```
+
+2. **Implement EventGateway**:
+   - Subscribe to hot/cold event buses
+   - Convert events to DTP envelopes
+   - Route to transports via per-transport queues
+   - Non-blocking fanout
+
+3. **Implement CommandGateway**:
+   - Receive external commands
+   - Authenticate and validate
+   - Route to Command Router
+   - Handle replies and send responses
+
+4. **Add Gateway configuration**:
+   - Transport configuration
+   - Queue sizes
+   - Backpressure policies
+
+**Files Created**: ~10 files in `src/gateway/`  
+**Files Modified**: None (new crate)  
+**Impact**: None (new code, not integrated yet)  
+**Testing**: Unit tests, integration tests
+
+### Phase 4: gRPC Transport (Week 5-6)
+
+**Goal**: Implement gRPC transport and integrate with Gateway
+
+**Changes**:
+
+1. **Implement GrpcEventTransport**:
+   - Receive DTP envelopes from Gateway
+   - Stream to gRPC clients
+   - Handle client subscriptions
+   - Manage connection lifecycle
+
+2. **Implement GrpcCommandTransport**:
+   - Receive gRPC commands
+   - Convert to internal commands
+   - Send to Command Gateway
+   - Handle replies and send gRPC responses
+
+3. **Update Runner**:
+   - Create Gateway instead of direct gRPC server
+   - Register gRPC transport with Gateway
+   - Start Gateway
+
+**Files Created**: `libs/trading_networking/src/gateway/transports/grpc.rs`  
+**Files Modified**: `src/runner/src/lib.rs`, `src/runner/src/main.rs`  
+**Impact**: Major (gRPC refactored, but TUI can work with Gateway)  
+**Testing**: Integration tests, end-to-end tests with TUI
+
+### Phase 5: Migrate Subscribers (Week 6-7)
+
+**Goal**: Migrate subscribers from old channels to new event buses
+
+**Changes**:
+
+1. **Trading Engine**:
+   - Subscribe to `ColdEventBus` instead of `ExchangeUpdate`
+   - Subscribe to `HotEventBus` instead of `MarketDataUpdate`
+   - Handle lean events, query state stores when needed
+
+2. **Indicator Engine**:
+   - Subscribe to `HotEventBus` for market data
+   - Publish to `ColdEventBus` for indicator updates
+
+3. **Risk Engine**:
+   - Subscribe to `ColdEventBus` for exchange updates
+
+**Files Modified**:
+- `src/trading_engine/src/state/subscriber.rs`
+- `src/trading_engine/src/levels/event_loop.rs`
+- `src/indicator_engine/src/subscriber.rs`
+- `src/trading_engine/src/risk/manager.rs`
+
+**Impact**: Breaking changes for subscribers, but can be done incrementally  
+**Testing**: Integration tests, end-to-end tests
+
+### Phase 6: Remove Old Channels (Week 7-8)
+
+**Goal**: Remove dual publishing and old channel types
+
+**Changes**:
+
+1. **Remove dual publishing code**:
+   - Remove old channel publishing from publishers
+   - Keep only new event bus publishing
+
+2. **Remove old channel types** (or deprecate):
+   - `ExchangeUpdate` (replaced by `ColdEvent`)
+   - `MarketDataUpdate` (replaced by `HotEvent`)
+   - Keep `IndicatorUpdate` (or migrate to `ColdEvent`)
+
+3. **Update all references**:
+   - Remove old channel receivers
+   - Update documentation
+
+**Files Modified**: All publishers, subscribers  
+**Impact**: Breaking changes (old channels removed)  
+**Testing**: Full system tests
+
+### Phase 7: Additional Transports (Week 8-9)
+
+**Goal**: Implement Pub/Sub and IPC transports (optional)
+
+**Changes**:
+
+1. **Implement PubSubTransport**:
+   - Publish DTP envelopes to Pub/Sub
+   - Subscribe to commands from Pub/Sub
+
+2. **Implement IpcTransport**:
+   - Unix domain sockets or shared memory
+   - Ultra-low latency for HFT daemon
+
+3. **Register with Gateway**:
+   - Add transports to Gateway configuration
+   - Enable/disable via config
+
+**Files Created**: `libs/trading_networking/src/gateway/transports/pubsub.rs`, `ipc.rs`  
+**Files Modified**: `libs/trading_networking/src/gateway/event_gateway.rs`, `command_gateway.rs`  
+**Impact**: None (optional transports)  
+**Testing**: Unit tests, integration tests
+
+### Phase 8: Transport Health & Observability (Week 9-10)
+
+**Goal**: Add health monitoring, metrics, backpressure, connection management
+
+**Changes**:
+
+1. **Implement TransportHealth trait**:
+   - Connection status
+   - Queue depths
+   - Message rates
+   - Error rates
+
+2. **Implement backpressure policies**:
+   - Drop, Sample, Priority, Block
+   - Configurable per transport
+
+3. **Implement connection management**:
+   - Reconnection logic
+   - Exponential backoff
+   - Circuit breakers
+   - Connection pooling
+
+4. **Add metrics**:
+   - Prometheus metrics export
+   - Health check endpoints
+
+**Files Modified**: All transports, Gateway  
+**Impact**: Adds observability (non-breaking)  
+**Testing**: Integration tests, load tests
+
+### Migration Checklist
+
+#### Phase 0: Design
+- [ ] Create event types with trace slots
+- [ ] Create command types with trace slots
+- [ ] Create DTP types with trace slots
+- [ ] Import trace types from Proposal 03
+- [ ] Unit tests
+
+#### Phase 1: Event Buses
+- [ ] Implement HotEventBus
+- [ ] Implement ColdEventBus
+- [ ] Update ExchangeStatePublisher (dual publish)
+- [ ] Update MarketDataStatePublisher (dual publish)
+- [ ] Update IndicatorPublisher (dual publish)
+- [ ] Integration tests
+
+#### Phase 2: Command Router
+- [ ] Implement CommandRouter
+- [ ] Implement CommandDispatcher
+- [ ] Update StrategyExecutor
+- [ ] Update gRPC handlers (prepare)
+- [ ] Integration tests
+
+#### Phase 3: Gateway
+- [ ] Create `libs/trading_networking` crate with gateway module
+- [ ] Implement EventGateway
+- [ ] Implement CommandGateway
+- [ ] Add configuration
+- [ ] Unit tests, integration tests
+
+#### Phase 4: gRPC Transport
+- [ ] Implement GrpcEventTransport
+- [ ] Implement GrpcCommandTransport
+- [ ] Update Runner
+- [ ] Integration tests with TUI
+
+#### Phase 5: Migrate Subscribers
+- [ ] Migrate Trading Engine
+- [ ] Migrate Indicator Engine
+- [ ] Migrate Risk Engine
+- [ ] End-to-end tests
+
+#### Phase 6: Remove Old Channels
+- [ ] Remove dual publishing
+- [ ] Remove old channel types
+- [ ] Update all references
+- [ ] Full system tests
+
+#### Phase 7: Additional Transports
+- [ ] Implement PubSubTransport (optional)
+- [ ] Implement IpcTransport (optional)
+- [ ] Register with Gateway
+- [ ] Tests
+
+#### Phase 8: Observability
+- [ ] Implement TransportHealth
+- [ ] Implement backpressure policies
+- [ ] Implement connection management
+- [ ] Add metrics
+- [ ] Tests
+
+### Risk Mitigation
+
+1. **Backward Compatibility**: Dual publishing during migration
+2. **Performance**: Benchmark at each phase, ensure targets met
+3. **Rollback**: Keep old code until migration complete
+4. **Testing**: Extensive testing at each phase
+5. **Gradual Rollout**: Migrate one component at a time
+
+### Success Criteria
+
+- ✅ Event buses functional (hot <1μs, cold <10μs)
+- ✅ Command router functional
+- ✅ Gateway layer working
+- ✅ gRPC transport working
+- ✅ TUI works without changes
+- ✅ All subscribers migrated
+- ✅ Old channels removed
+- ✅ Performance targets met
+- ✅ Documentation complete
+
+---
+
 ## Revision Summary (v2.0)
 
 This proposal has been revised based on low-latency system feedback. Key changes:
@@ -2017,36 +2584,30 @@ This proposal has been revised based on low-latency system feedback. Key changes
 ### 1. Hot/Cold Lane Separation
 - **Hot Lane**: Market data events use SPSC/bounded MPSC channels with compact structs (IDs + deltas)
 - **Cold Lane**: State change events use `broadcast::Sender<Arc<ColdEvent>>` for sharing without clones
-- **Rationale**: Market data is ultra-high frequency and needs allocation-free path; state changes are lower frequency and can use Arc
 
 ### 2. Fixed-Header DTP Envelope
 - **Numeric IDs**: `message_id: u64`, `correlation_id: u64` (not Strings)
 - **TLV Metadata**: `Vec<(u16, Bytes)>` instead of `HashMap<String, String>`
 - **Fixed Header**: Packed struct for efficient parsing
-- **Rationale**: Eliminates heap allocations per message, reduces cache misses
 
 ### 3. Command Router (Single-Consumer)
 - **Routing**: Commands routed to specific handlers, not pub-sub
 - **Request/Response**: Uses `oneshot::Sender<CommandResult>` for replies
 - **Correlation IDs**: `u64` for tracking request/response pairs
-- **Rationale**: Commands should have single execution point, not broadcast
 
 ### 4. Lean Event Payloads
 - **Hot Events**: Best bid/ask only (not full orderbook Vec)
 - **Cold Events**: IDs + key fields only (not full Order objects)
 - **Numeric Codes**: Error codes, reason codes as `u16`/`u8`, not Strings
-- **Rationale**: Reduces allocation overhead, consumers query state stores for full objects
 
 ### 5. Non-Blocking Gateway Fanout
 - **Per-Transport Queues**: Each transport has bounded `mpsc::channel`
 - **Independent Workers**: Each transport runs its own task
 - **Try-Send**: `try_send()` prevents blocking; drop/sample when full
-- **Rationale**: Prevents head-of-line blocking when one transport is slow
 
 ### 6. Single Canonical Encoding
 - **Protobuf Only**: All DTP payloads use Protobuf
 - **JSON as Derived**: JSON only generated as separate stream for tooling
-- **Rationale**: Eliminates format selection overhead, reduces maintenance burden
 
 ### Performance Characteristics
 

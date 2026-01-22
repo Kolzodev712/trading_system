@@ -7,8 +7,8 @@
 > - **03-bybit-integration.md** - Bybit unified driver (spot + futures)
 
 
-> - **03-communication-layer-hexagonal-architecture.md** - UI-agnostic architecture, Gateway layer
-> - **04-traceability-observability.md** - Comprehensive observability and distributed tracing
+> - **03-traceability-observability.md** - Comprehensive observability and distributed tracing
+> - **04-communication-layer-hexagonal-architecture.md** - UI-agnostic architecture, Gateway layer
 > - **05.01-dex-preparation.md** - DEX foundational infrastructure
 > - **05.02-solana-integration.md** - Solana DEX implementation
 > - **07-indicator-config-generator.md** - Indicator configuration generation from Python
@@ -28,8 +28,8 @@
 - **Advanced Order Types** → Proposals 01, 02, 03 (stop-loss, take-profit, trailing stop)
 - **Risk Management** → Proposals 01, 10 (circuit breakers, kill switches)
 - **Market Data** → Proposals 01, 02, 03 (funding rate, mark price, etc.)
-- **Web UI Architecture** → Proposal 03 (Gateway layer, HTTP transport)
-- **Observability** → Proposal 04 (Traceability & Observability)
+- **Observability** → Proposal 03 (Traceability & Observability)
+- **Web UI Architecture** → Proposal 04 (Gateway layer, HTTP transport)
 - **HFT System** → Proposal 10 (complete HFT daemon design)
 - **DEX Integration** → Proposals 05.01, 05.02 (Solana DEX)
 

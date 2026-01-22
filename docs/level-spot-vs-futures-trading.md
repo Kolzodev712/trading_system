@@ -1,11 +1,472 @@
 # Level-Based Trading: Spot vs Futures
 
-**Version**: 0.1  
+**Version**: 1.0  
 **Last Updated**: December 2024
 
 ## Overview
 
-This document explains how level-based trading works in the trading system for both **Spot** and **Futures** instrument types. It covers the data structures, fields, and examples used in each system, showing what information is tracked, displayed, and utilized during trading operations.
+This document provides a comprehensive guide to level-based trading in the trading system, covering both **Spot** and **Futures** instrument types. It explains real-world trading concepts, how they work in practice, all relevant terminology, and how these concepts are implemented in the system.
+
+## Table of Contents
+
+1. [Understanding Spot Trading](#understanding-spot-trading)
+2. [Understanding Futures Trading](#understanding-futures-trading)
+3. [Key Trading Terms Explained](#key-trading-terms-explained)
+4. [Real-World Trading Scenarios](#real-world-trading-scenarios)
+5. [System Implementation](#system-implementation)
+6. [Data Structures and Usage](#data-structures-and-usage)
+7. [Level Configuration Examples](#level-configuration-examples)
+
+---
+
+## Understanding Spot Trading
+
+### What is Spot Trading?
+
+**Spot trading** is the purchase or sale of financial instruments (like cryptocurrencies) for immediate delivery. When you buy BTC on the spot market, you're buying actual BTC that you own and can withdraw to your wallet.
+
+### Real-World Example: Buying Coffee
+
+Think of spot trading like buying coffee at a café:
+- You pay $5 cash → You receive a cup of coffee
+- You own the coffee → You can drink it, take it home, or give it away
+- The transaction is complete → No ongoing obligations
+
+**In Crypto Spot Trading:**
+- You pay 10,000 USDT → You receive 0.2 BTC
+- You own the BTC → You can withdraw it, hold it, or sell it later
+- The transaction is complete → You have the asset in your account
+
+### Characteristics of Spot Trading
+
+1. **Direct Ownership**: You own the actual asset
+   - If you buy 1 BTC, you have 1 BTC in your account
+   - You can withdraw it to your personal wallet
+   - You can use it for payments, staking, or other purposes
+
+2. **No Leverage**: You can only trade with what you have
+   - If you have $10,000, you can buy up to $10,000 worth of BTC
+   - No borrowing or margin trading (unless using margin features)
+
+3. **Simple Risk Profile**: 
+   - Maximum loss: The amount you invested
+   - If you buy BTC at $50,000 and it drops to $0, you lose $50,000
+   - No liquidation risk (you can't lose more than you invested)
+
+4. **Long-Only Positions**: 
+   - You can only profit if the price goes up
+   - To profit from price drops, you must sell first, then buy back later
+
+### Common Spot Trading Strategies
+
+1. **Buy and Hold (HODL)**: Buy assets and hold them long-term
+2. **Dollar-Cost Averaging (DCA)**: Buy fixed amounts at regular intervals
+3. **Grid Trading**: Place buy/sell orders at regular price intervals
+4. **Arbitrage**: Buy on one exchange, sell on another for profit
+5. **Market Making**: Provide liquidity by placing orders on both sides
+
+### How Spot Trading Works in Our System
+
+- **Balances**: Track actual assets you own (BTC, USDT, ETH, etc.)
+- **Positions**: Derived from balances (if you have 0.5 BTC balance, you have a 0.5 BTC position)
+- **Orders**: Buy/sell actual assets
+- **Risk**: Simple balance checks (do you have enough USDT to buy?)
+
+---
+
+## Understanding Futures Trading
+
+### What is Futures Trading?
+
+**Futures trading** is trading derivative contracts that represent an agreement to buy or sell an asset at a predetermined price at a future date. You don't own the underlying asset - you're trading a contract that derives its value from the asset.
+
+### Real-World Example: Buying a House Contract
+
+Think of futures like a house purchase contract:
+- You put down a $20,000 deposit (margin) → You get a contract to buy a $200,000 house
+- You don't own the house yet → You own a contract
+- If the house value increases to $250,000 → Your contract is worth more
+- If the house value drops to $150,000 → You might lose your deposit (liquidation)
+- You can close the contract anytime → Sell the contract for profit/loss
+
+**In Crypto Futures Trading:**
+- You put down $1,000 margin (10x leverage) → You get a contract for $10,000 worth of BTC
+- You don't own BTC → You have a position (long or short)
+- If BTC price increases → Your position gains value
+- If BTC price drops too much → You get liquidated (lose your margin)
+- You can close anytime → Close the position for profit/loss
+
+### Characteristics of Futures Trading
+
+1. **No Direct Ownership**: You trade contracts, not assets
+   - You can't withdraw BTC from a futures position
+   - You can only profit/loss from price movements
+   - The contract settles in cash (USDT)
+
+2. **Leverage Available**: Trade with borrowed capital
+   - With $1,000 and 10x leverage, you can control $10,000 worth of BTC
+   - Amplifies both profits and losses
+   - Common leverage: 1x to 125x (depending on exchange)
+
+3. **Long and Short Positions**:
+   - **Long**: Profit when price goes up (like buying spot)
+   - **Short**: Profit when price goes down (betting against the asset)
+   - Can switch between long/short without owning the asset
+
+4. **Liquidation Risk**: 
+   - If price moves against you too much, you get liquidated
+   - You lose your margin (the money you put up)
+   - Liquidation price depends on leverage and margin
+
+5. **Funding Rates**: 
+   - Periodic fees paid/received based on position direction
+   - Long positions pay shorts when funding rate is positive
+   - Short positions pay longs when funding rate is negative
+   - Typically every 8 hours
+
+### Common Futures Trading Strategies
+
+1. **Directional Trading**: Bet on price direction (long or short)
+2. **Hedging**: Protect spot positions by taking opposite futures positions
+3. **Arbitrage**: Exploit price differences between spot and futures
+4. **Funding Rate Arbitrage**: Profit from funding rate differences
+5. **Leverage Trading**: Use leverage to amplify returns (and risks)
+
+### How Futures Trading Works in Our System
+
+- **Futures Balance**: Tracks collateral (margin) you have available
+- **Positions**: Explicit positions (long/short) tracked separately from balance
+- **Orders**: Open/close positions (not buying/selling assets)
+- **Risk**: Margin checks, liquidation monitoring, leverage limits
+
+---
+
+## Key Trading Terms Explained
+
+### Spot Trading Terms
+
+#### Balance
+**Definition**: The actual amount of an asset you own in your account.
+
+**Real-World Analogy**: Your bank account balance - the actual money you have.
+
+**In System**: 
+- `Balance { symbol: "BTC", free: 0.5, used: 0.0, total: 0.5 }`
+- `free`: Available for new orders
+- `used`: Locked in open orders
+- `total`: Total balance (free + used)
+
+**Example**: If you have 0.5 BTC and 10,000 USDT:
+- You can buy up to 10,000 USDT worth of BTC
+- You can sell up to 0.5 BTC
+- Your position is simply your BTC balance (0.5 BTC)
+
+#### Position (Spot)
+**Definition**: Your exposure to an asset, derived from your balance.
+
+**Real-World Analogy**: If you own 10 shares of Apple stock, your position is 10 shares long.
+
+**In System**:
+- Position is calculated from balance: `Position { quantity: 0.5 }` (from 0.5 BTC balance)
+- `avg_price`: Average price you bought at
+- `unrealized_pnl`: Current profit/loss: `(current_price - avg_price) * quantity`
+
+**Example**: 
+- You bought 0.5 BTC at $50,000
+- Current price is $55,000
+- Unrealized P&L: `(55,000 - 50,000) * 0.5 = $2,500 profit`
+
+#### Order (Spot)
+**Definition**: An instruction to buy or sell an asset at a specific price.
+
+**Types**:
+- **Market Order**: Execute immediately at current market price
+- **Limit Order**: Execute only at specified price or better
+- **Stop-Loss Order**: Sell if price drops below threshold (not native in spot, must be monitored)
+
+**In System**: `Order { side: Buy, price: 50000, amount: 0.001, status: Filled }`
+
+---
+
+### Futures Trading Terms
+
+#### Margin
+**Definition**: The collateral you deposit to open and maintain a futures position.
+
+**Real-World Analogy**: A security deposit when renting an apartment - you need it to enter, and you might lose it if you break the contract.
+
+**Types**:
+- **Initial Margin**: Required to open a position
+- **Maintenance Margin**: Minimum required to keep position open
+- **Available Margin**: Margin not currently used in positions
+
+**Example**:
+- You want to open a $10,000 BTC position with 10x leverage
+- Required margin: $10,000 / 10 = $1,000
+- If you have $5,000 available margin, you can open the position
+
+**In System**: `FuturesBalance { available_balance: 5000.0, ... }`
+
+#### Leverage
+**Definition**: The multiplier that determines how much you can control with your margin.
+
+**Real-World Analogy**: Like a mortgage - you put down 10% ($20,000) to control a $200,000 house (10x leverage).
+
+**How It Works**:
+- 1x leverage: Trade with your own money (like spot)
+- 10x leverage: Control $10,000 with $1,000 margin
+- 100x leverage: Control $100,000 with $1,000 margin (very risky!)
+
+**Example**:
+- You have $1,000 margin
+- With 10x leverage, you can open a $10,000 position
+- If price moves 10% in your favor: You make $1,000 (100% return on margin)
+- If price moves 10% against you: You lose $1,000 (100% loss, liquidation risk)
+
+**In System**: `LeverageInfo { leverage: 10, max_leverage: 125 }`
+
+#### Position (Futures)
+**Definition**: Your exposure to price movements, tracked separately from your balance.
+
+**Types**:
+- **Long Position**: Profit when price goes up (like buying spot)
+- **Short Position**: Profit when price goes down (betting against the asset)
+
+**Real-World Analogy**: 
+- Long: You have a contract to buy a house at $200,000. If house value goes to $250,000, your contract is worth $50,000 more.
+- Short: You have a contract to sell a house at $200,000. If house value drops to $150,000, your contract is worth $50,000 more.
+
+**In System**:
+- `Position { quantity: 1.0 }` = 1 BTC long
+- `Position { quantity: -0.5 }` = 0.5 BTC short
+- `mark_price`: Used for P&L calculation (more accurate than last trade price)
+- `liquidation_price`: Price at which you get liquidated
+
+**Example**:
+- You open 1 BTC long at $50,000 with 10x leverage
+- Margin used: $5,000
+- If BTC goes to $55,000: Unrealized P&L = $5,000 (100% return on margin)
+- If BTC drops to $45,000: Unrealized P&L = -$5,000 (liquidation risk)
+
+#### Liquidation
+**Definition**: When your position is automatically closed because you've lost too much margin.
+
+**How It Works**:
+- You open a position with margin
+- If price moves against you, your unrealized loss increases
+- When your margin can't cover the loss anymore, exchange liquidates you
+- You lose your margin (the money you put up)
+
+**Example**:
+- You open 1 BTC long at $50,000 with 10x leverage ($5,000 margin)
+- Liquidation price: ~$45,000 (depends on maintenance margin)
+- If BTC drops to $45,000: You get liquidated, lose $5,000
+- If BTC drops to $40,000: Still liquidated at $45,000 (you don't lose more)
+
+**In System**: `Position { liquidation_price: Some(45000.0), ... }`
+
+#### Funding Rate
+**Definition**: A periodic fee paid between long and short positions to keep futures price aligned with spot price.
+
+**How It Works**:
+- Calculated every 8 hours based on price difference between futures and spot
+- If futures price > spot price: Funding rate is positive
+  - Long positions pay short positions
+- If futures price < spot price: Funding rate is negative
+  - Short positions pay long positions
+
+**Example**:
+- BTC spot price: $50,000
+- BTC futures price: $50,500
+- Funding rate: 0.01% (positive)
+- You have 1 BTC long position
+- Every 8 hours, you pay: `1 BTC * $50,000 * 0.01% = $5` to short positions
+
+**In System**: `FundingRate { rate: 0.0001, next_funding_time: 1234567890 }`
+
+#### Mark Price
+**Definition**: A fair value price used for calculating unrealized P&L and liquidation, based on spot price and funding rate.
+
+**Why It Exists**:
+- Last trade price can be manipulated (whale orders)
+- Mark price prevents unfair liquidations
+- More accurate representation of true position value
+
+**How It's Calculated**:
+- Based on spot price (index price) and funding rate
+- Updated frequently (every few seconds)
+- Used for P&L calculation instead of last trade price
+
+**In System**: `Position { mark_price: Some(51000.0), current_price: 51050.0 }`
+
+#### Margin Types
+
+**Isolated Margin**:
+- Margin is isolated per position
+- If one position gets liquidated, other positions are safe
+- Lower risk, but less capital efficient
+
+**Example**:
+- Position 1: $1,000 margin, 1 BTC long
+- Position 2: $1,000 margin, 0.5 ETH long
+- If BTC position gets liquidated, ETH position is unaffected
+
+**Cross Margin**:
+- All margin is shared across all positions
+- More capital efficient (can use margin from profitable positions)
+- Higher risk (one bad position can affect all positions)
+
+**Example**:
+- Total margin: $5,000
+- Position 1: Uses $2,000 margin, 1 BTC long
+- Position 2: Uses $3,000 margin, 0.5 ETH long
+- If BTC position loses $2,000, it affects available margin for ETH position
+
+**In System**: `Position { margin_type: Some(MarginType::Isolated), ... }`
+
+#### Position Mode
+
+**One-Way Mode**:
+- Can only have one position per pair (long OR short)
+- Simpler, easier to manage
+- Most common for retail traders
+
+**Example**:
+- You have 1 BTC long position
+- To go short, you must close the long position first
+
+**Hedge Mode**:
+- Can have both long AND short positions simultaneously
+- Used for hedging strategies
+- More complex, requires more margin
+
+**Example**:
+- You have 1 BTC long position
+- You can also have 0.5 BTC short position (hedging)
+- Net position: 0.5 BTC long
+
+**In System**: `Position { position_mode: Some(PositionMode::OneWay), ... }`
+
+---
+
+## Real-World Trading Scenarios
+
+### Scenario 1: Buying Bitcoin for Long-Term Hold
+
+**Goal**: Buy 0.5 BTC and hold it for potential price appreciation.
+
+**Spot Trading Approach**:
+1. You have $25,000 USDT in your account
+2. Place a buy order for 0.5 BTC at $50,000
+3. Order fills → You now own 0.5 BTC
+4. You can withdraw it to your wallet
+5. If BTC goes to $60,000: You have $30,000 worth (profit: $5,000)
+6. If BTC drops to $40,000: You have $20,000 worth (loss: $5,000)
+7. **Maximum loss**: $25,000 (if BTC goes to $0)
+
+**Futures Trading Approach** (Not Recommended for Long-Term Hold):
+1. You have $2,500 margin (10x leverage)
+2. Open 0.5 BTC long position at $50,000
+3. You don't own BTC, just have a position
+4. If BTC goes to $60,000: Unrealized P&L = $5,000 (200% return on margin!)
+5. If BTC drops to $40,000: Unrealized P&L = -$5,000 (liquidation risk!)
+6. **Maximum loss**: $2,500 (if liquidated), but you can't hold long-term (funding fees)
+
+**Why Spot is Better for This**: You actually own the asset, no funding fees, no liquidation risk.
+
+### Scenario 2: Short-Term Price Speculation
+
+**Goal**: Profit from BTC price dropping from $50,000 to $45,000.
+
+**Spot Trading Approach** (Limited):
+1. You must first own BTC (buy at $50,000)
+2. Then sell it (hoping to buy back lower)
+3. If price drops to $45,000: You can buy back, profit = $5,000 per BTC
+4. **Problem**: You need to own BTC first (requires capital)
+
+**Futures Trading Approach** (Better for This):
+1. You have $1,000 margin (10x leverage)
+2. Open 1 BTC short position at $50,000
+3. You don't need to own BTC
+4. If price drops to $45,000: Unrealized P&L = $5,000 (500% return on margin!)
+5. Close position → Realize profit
+6. **Advantage**: Can profit from price drops without owning the asset
+
+**Why Futures is Better for This**: Can go short easily, leverage amplifies returns.
+
+### Scenario 3: Hedging a Spot Position
+
+**Goal**: You own 1 BTC in spot, want to protect against price drops.
+
+**The Problem**:
+- You own 1 BTC bought at $50,000
+- Current price: $55,000 (unrealized profit: $5,000)
+- You're worried price might drop back to $50,000
+
+**The Solution (Futures Hedge)**:
+1. Open 1 BTC short position in futures at $55,000
+2. If price drops to $50,000:
+   - Spot position: Loses $5,000
+   - Futures short: Gains $5,000
+   - Net: Break even (protected your profit)
+3. If price goes to $60,000:
+   - Spot position: Gains $5,000
+   - Futures short: Loses $5,000
+   - Net: Break even (but you still have the BTC)
+
+**Why This Works**: Futures position offsets spot position losses.
+
+### Scenario 4: Grid Trading Strategy
+
+**Goal**: Profit from price volatility by placing orders at regular intervals.
+
+**Spot Grid Trading**:
+1. Buy orders at: $49,000, $48,000, $47,000
+2. Sell orders at: $51,000, $52,000, $53,000
+3. As price bounces, orders fill and you profit from the spread
+4. **Requirement**: You need actual BTC and USDT to place orders
+
+**Futures Grid Trading**:
+1. Same grid structure
+2. Can use leverage to control larger positions with less capital
+3. **Risk**: Funding fees eat into profits, liquidation risk if price moves too far
+
+**In Our System**: Levels can implement grid trading with indicator-based price resolution.
+
+---
+
+## System Implementation
+
+### How Spot Trading Works in the System
+
+**Data Flow**:
+1. **Exchange Engine** receives WebSocket updates → Updates `Balance`
+2. **Trading Engine** subscribes to balance updates → Derives `Position` from balance
+3. **Level Executor** resolves level → Checks balance → Places order
+4. **Order fills** → Balance updates → Position recalculated
+
+**Key Components**:
+- `ExchangeStateManager`: Manages balances from exchange
+- `TradingStateManager`: Derives positions from balances
+- `LevelExecutor`: Resolves levels, checks balances, places orders
+- `RiskManager`: Checks balance limits, position limits
+
+### How Futures Trading Works in the System
+
+**Data Flow**:
+1. **Exchange Engine** receives WebSocket updates → Updates `FuturesBalance` and `Position`
+2. **Trading Engine** subscribes to position updates → Tracks explicit positions
+3. **Level Executor** resolves level → Checks margin → Places order
+4. **Order fills** → Position created/updated → Margin locked/unlocked
+5. **Mark price updates** → Unrealized P&L recalculated → Liquidation risk monitored
+
+**Key Components**:
+- `ExchangeStateManager`: Manages futures balances and positions from exchange
+- `TradingStateManager`: Tracks explicit positions (separate from balance)
+- `LevelExecutor`: Resolves levels, checks margin, considers leverage
+- `RiskManager`: Checks margin limits, liquidation risk, leverage limits
+
+---
 
 ## Key Concepts
 
@@ -13,13 +474,13 @@ This document explains how level-based trading works in the trading system for b
 - **Ownership**: You own the actual assets (BTC, ETH, etc.)
 - **Position Representation**: Derived from balances (if you have 1 BTC balance, you have a 1 BTC position)
 - **Risk**: Lower risk - no leverage, no liquidation
-- **Use Case**: Buying/selling actual assets, simple trading strategies
+- **Use Case**: Buying/selling actual assets, simple trading strategies, long-term holding
 
 ### Futures Trading
 - **Ownership**: You trade derivative contracts (don't own the underlying asset)
 - **Position Representation**: Explicit positions tracked separately from collateral
-- **Risk**: Higher risk - leverage available, liquidation risk
-- **Use Case**: Leveraged trading, hedging, directional trading without owning assets
+- **Risk**: Higher risk - leverage available, liquidation risk, funding fees
+- **Use Case**: Leveraged trading, hedging, directional trading without owning assets, short-term speculation
 
 ## Data Structures
 

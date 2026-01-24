@@ -3,9 +3,9 @@
 **Version**: 2.0  
 **Date**: December 2024  
 **Status**: Revised (Based on Low-Latency Feedback)  
-**Prerequisites**: Proposal 03 (Traceability & Observability) - Trace types must be defined first
+**Prerequisites**: Trading Trace Library (`libs/trading_trace`) - Trace types are implemented and available
 
-**Implementation Order**: This proposal (04) comes AFTER Proposal 03 (Traceability), but can be designed in parallel once trace types are defined
+**Implementation Order**: This proposal (04) can be implemented now that trace types are available in `libs/trading_trace`
 
 ## Executive Summary
 

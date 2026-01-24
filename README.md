@@ -43,6 +43,7 @@ The Trading System is a comprehensive, production-ready trading platform that su
 - ✅ **Indicator Engine**: Real-time technical indicators (SMA, EMA, composite)
 - ✅ **Rate Limiting**: Automatic rate limit enforcement with 429 error handling
 - ✅ **Order Amendments**: Automatic order amendments when price/quantity changes (no cancel+place)
+- ✅ **Distributed Tracing**: Hybrid tracing system with OpenTelemetry integration
 - ✅ **Comprehensive Testing**: Unit tests and integration tests
 
 ## System Architecture
@@ -342,6 +343,20 @@ For detailed architecture information, see the [Architecture Documentation](#arc
 - Level editing and creation
 
 **See**: [TUI CLI Architecture](architecture/09-tui-cli.md)
+
+### Core Libraries
+
+#### Trading Trace Library
+**Purpose**: High-performance distributed tracing and observability.
+
+**Key Features**:
+- **Hybrid Tracing**: Hot path (<1μs) for high-frequency operations, Cold path (<10μs) for commands/events
+- **OpenTelemetry Integration**: Full OpenTelemetry SDK with Jaeger and Prometheus exporters
+- **Correlation IDs**: Link related operations across services
+- **Prometheus Metrics**: Pre-configured metrics for trading operations
+- **Zero-Copy Design**: Minimal allocations for maximum performance
+
+**See**: [Trading Trace Library README](libs/trading_trace/README.md) for detailed documentation, API reference, usage examples, and integration guide.
 
 ## Prerequisites & Dependencies
 
@@ -1146,6 +1161,17 @@ curl http://localhost:8080/state
 curl http://localhost:8080/positions
 ```
 
+#### Distributed Tracing
+
+The system includes comprehensive distributed tracing via the `trading_trace` library:
+
+- **Hot Path Tracing**: Ultra-lightweight tracing for high-frequency operations (market data, order updates)
+- **Cold Path Tracing**: Full OpenTelemetry integration for commands, events, and state management
+- **Jaeger Integration**: Export traces to Jaeger for visualization
+- **Prometheus Metrics**: Pre-configured metrics for trading operations
+
+**See**: [Trading Trace Library README](libs/trading_trace/README.md) for setup, configuration, and usage.
+
 #### gRPC Monitoring
 
 Use the TUI CLI for real-time monitoring:
@@ -1343,6 +1369,14 @@ For detailed architecture information, see the [architecture/](architecture/) di
 - **[Indicator Engine](architecture/04-indicator-engine.md)**: Technical indicator calculation
 - **[Risk Engine](architecture/05-risk-engine.md)**: Risk management
 - **[Asset Engine](architecture/06-asset-engine.md)**: Asset metadata caching
+
+### Core Libraries
+
+- **[Trading Trace Library](libs/trading_trace/README.md)**: High-performance distributed tracing and observability
+  - Hybrid tracing approach (hot path <1μs, cold path <10μs)
+  - OpenTelemetry integration with Jaeger and Prometheus exporters
+  - Correlation IDs and metrics support
+  - See [Trading Trace Library README](libs/trading_trace/README.md) for complete documentation
 - **[Live Config Service](architecture/07-live-config-service.md)**: Runtime configuration updates
 - **[Runner](architecture/08-runner.md)**: Application orchestrator
 - **[TUI CLI](architecture/09-tui-cli.md)**: Terminal user interface

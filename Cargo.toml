@@ -16,7 +16,7 @@ members = [
     "src/runner",
     "src/live_config",
     "src/asset_engine",
-    "cli",
+    "cli", "libs/trading_trace",
 ]
 
 [workspace.dependencies]

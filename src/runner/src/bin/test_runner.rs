@@ -173,6 +173,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         market_data_state_manager,
         asset_service: Some(asset_service),
         trading_control: None, // Created in runner functions
+        tracing_handles: None,
     };
 
     info!("✓ All services initialized successfully");

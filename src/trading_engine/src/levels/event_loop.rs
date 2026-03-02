@@ -135,7 +135,7 @@ impl LevelBasedEventLoop {
                 update = market_data_rx.recv() => {
                     tracing::debug!("[LEVELS EVENT LOOP] Received update from market_data_rx channel");
                     match update {
-                        Ok(MarketDataUpdate::Orderbook { orderbook }) => {
+                        Ok(MarketDataUpdate::Orderbook { orderbook, .. }) => {
                             tracing::debug!(
                                 "Received orderbook update for {}/{} (mid_price={:?})",
                                 orderbook.pair.base,

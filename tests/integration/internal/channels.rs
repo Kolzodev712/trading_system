@@ -23,6 +23,7 @@ async fn test_market_data_channel() {
     tx.send(
         trading_core::channels::market_data::MarketDataUpdate::Orderbook {
             orderbook: orderbook.clone(),
+            trace_context: None,
         },
     )
     .unwrap();
@@ -68,9 +69,10 @@ async fn test_exchange_channel() {
         filled_amount: dec!(0),
     };
 
-    tx.send(trading_core::channels::exchange::ExchangeUpdate::Order(
+    tx.send(trading_core::channels::exchange::ExchangeUpdate::Order {
         order,
-    ))
+        trace_context: None,
+    })
     .unwrap();
 
     let received = rx.recv().await;

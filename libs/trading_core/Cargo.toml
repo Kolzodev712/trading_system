@@ -41,6 +41,9 @@ prost-types = "0.12"
 # Logging (optional, for circuit breaker)
 tracing = "0.1.40"
 
+# Tracing (optional context on channels)
+trading_trace = { path = "../trading_trace" }
+
 # Redis (for backward compatibility during migration)
 redis = { version = "0.27.6", features = ["tokio-comp"] }
 

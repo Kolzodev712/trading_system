@@ -26,6 +26,8 @@ pub struct MonitoringService {
     pub strategy_manager: Option<Arc<RwLock<StrategyManager>>>,
     /// Instrument type (Spot or Futures) - determines which TUI view to show
     pub instrument_type: trading_core::types::common::InstrumentType,
+    /// Exchange name for CLI display (e.g. "Binance", "Bybit")
+    pub exchange: String,
 }
 
 /// Strategy information for monitoring
@@ -279,6 +281,7 @@ impl MonitoringService {
             strategies: strategy_statuses,
             orderbooks,
             instrument_type: instrument_type_str.to_string(),
+            exchange: self.exchange.clone(),
         };
 
         tracing::debug!("[gRPC] collect_monitoring_data: Returning data successfully");

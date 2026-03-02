@@ -99,6 +99,8 @@ docker run -it --rm \
   http://trading-system:50051
 ```
 
+**Optional – Standalone gRPC proxy**: The **gateway** binary can run as a separate container, proxying gRPC to the runner (e.g. `http://trading-system:50051`). Build with `Dockerfile` (runner) and a separate image for the gateway binary if you need to expose gRPC via a dedicated proxy.
+
 #### Option B: Using Docker Compose
 
 ```bash

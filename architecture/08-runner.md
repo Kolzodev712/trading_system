@@ -5,11 +5,15 @@
 
 ## Overview
 
-The Runner is the application orchestrator that initializes all services, wires them together, and provides the gRPC server for external communication (TUI CLI). It supports both strategy-based and level-based trading modes.
+The Runner is the application orchestrator that initializes all services, wires them together, and exposes external interfaces (gRPC via the gateway crate, Zenoh event/command gateway). It supports both strategy-based and level-based trading modes.
 
-## Key Principle
+## Key Principles
 
-Runner is the **orchestration layer** - it doesn't contain business logic, but coordinates all services and provides the entry point for the application.
+- **Orchestration only**: Runner does not contain business logic; it coordinates services and provides the entry point.
+- **Single entry point in lib**: The main entry point is `runner::run()` in the library; it creates `ShutdownManager`, builds all services, and calls `strategy_runner()` or `level_runner()`.
+- **Thin binary**: The `runner` binary (`main.rs`) only parses args, loads config, initializes logging/tracing and MongoDB, then calls `runner::run()`.
+- **gRPC from gateway**: All gRPC (proto, server, service handlers) lives in the **gateway** crate; the runner depends on `gateway` and spawns the gRPC server in-process.
+- **Zenoh always on**: Event gateway (hot/cold events) and Zenoh command queryable start unconditionally when the runner starts (no feature flag).
 
 ## Architecture
 
@@ -18,337 +22,184 @@ Runner is the **orchestration layer** - it doesn't contain business logic, but c
 ```
 src/runner/
 ├── src/
-│   ├── main.rs                   # Application entry point
-│   ├── lib.rs                     # Core orchestration logic
+│   ├── main.rs                   # Thin entry: config, logging, tracing, MongoDB, then runner::run()
+│   ├── lib.rs                     # run(), strategy_runner(), level_runner(), init helpers, Zenoh gateway wiring
 │   ├── config.rs                  # Configuration loading
-│   ├── shutdown.rs                # Graceful shutdown management
-│   ├── grpc/
-│   │   ├── service/
-│   │   │   ├── mod.rs            # Service orchestrator
-│   │   │   ├── monitoring.rs     # Monitoring RPC handlers
-│   │   │   ├── levels.rs          # Level management RPC handlers
-│   │   │   ├── trading_control.rs # Trading control RPC handlers
-│   │   │   └── converters.rs     # Type converters
-│   │   └── server.rs              # gRPC server setup
+│   ├── shutdown.rs                # ShutdownManager
 │   └── bin/
-│       └── test_runner.rs         # Test binary for full system testing
+│       └── test_runner.rs         # Test binary (full init, then spawns runner, runs for duration)
+```
+
+gRPC implementation is in **src/gateway/** (see gateway crate):
+
+```
+src/gateway/
+├── src/
+│   ├── main.rs                    # Standalone gRPC proxy binary (optional)
+│   ├── lib.rs                     # Re-exports grpc
+│   └── grpc/
+│       ├── mod.rs
+│       ├── proto.rs               # Generated from .proto
+│       ├── server.rs              # TradingGrpcServer
+│       ├── proxy.rs               # GatewayService (for standalone proxy)
+│       └── service/               # TradingCliServiceImpl and RPC handlers
+│           ├── mod.rs
+│           ├── monitoring.rs
+│           ├── levels.rs
+│           ├── trading_control.rs
+│           └── converters.rs
 ```
 
 ### Components
 
-#### 1. Main Entry Point (`main.rs`)
+#### 1. Main entry point (`runner::run()` in lib.rs)
 
-**Purpose**: Application entry point that parses arguments and routes to appropriate runner.
+**Purpose**: Single place that constructs `ShutdownManager`, builds all services, and runs the chosen mode.
+
+**Signature** (simplified):
+
+- `run(bot_config, mode, strategies_config, levels_config, mongo_client, tracing_handles) -> Result<()>`
 
 **Responsibilities**:
-- Parse command-line arguments (`--mode strategy|levels`)
-- Load configuration files
-- Initialize MongoDB (if enabled)
-- Initialize shared services
-- Route to `strategy_runner()` or `level_runner()`
-- Start gRPC server (if enabled)
 
-#### 2. Core Orchestration (`lib.rs`)
+- Create `ShutdownManager::new()` and call `setup_shutdown_handler()`
+- Initialize asset service, fetch asset data
+- Initialize market data engine, indicator service, exchange engine
+- Create `TradingStateManager`, call `start_trading_state_subscriber()`
+- Build `SharedServices`
+- Call `strategy_runner()` or `level_runner()` based on `mode`
 
-**Purpose**: Core orchestration logic for service initialization and coordination.
+#### 2. Binary entry point (`main.rs`)
 
-**Key Functions**:
+**Purpose**: Thin wrapper that prepares environment and calls the lib.
 
-##### Service Initialization
+**Responsibilities**:
 
-- `initialize_mongodb(config: &BotConfig) -> Option<MongoClient>` - Initialize MongoDB
-- `initialize_asset_service() -> AssetService` - Initialize asset engine
-- `fetch_asset_data(asset_service: &AssetService, config: &BotConfig)` - Fetch asset data at bootstrap
-- `initialize_market_data_engine(config: &BotConfig, channels: &ChannelConfig) -> MarketDataDriver` - Initialize market data engine
-- `initialize_indicator_service(config: &BotConfig, indicator_tx: IndicatorUpdateSender) -> IndicatorService` - Initialize indicator engine
-- `initialize_exchange_engine(config: &BotConfig, channels: &ChannelConfig) -> ExchangeStateManager` - Initialize exchange engine
-- `collect_configured_pairs(config: &BotConfig) -> Vec<Pair>` - Collect pairs from config
+- Parse command-line arguments (`--mode`, `--strategies-config`, `--levels-config`)
+- Load and validate `config/bot.json`
+- Initialize logging and tracing (including Jaeger if configured)
+- Call `initialize_mongodb()`
+- Call `runner::run(bot_config, mode, strategies_config, levels_config, mongo_client, tracing_handles)`
 
-##### Runners
+#### 3. Helper functions (lib, used by `run()` and by `test_runner`)
 
-- `strategy_runner(config: BotConfig, services: SharedServices) -> Result<()>` - Strategy mode setup
-- `level_runner(config: BotConfig, services: SharedServices) -> Result<()>` - Levels mode setup
+- **`create_shutdown_manager(capacity)`** – Returns `ShutdownManager` (used by test_runner).
+- **`start_trading_state_subscriber(trading_state_manager, shutdown_manager)`** – Spawns subscriber task.
+- **`create_strategy_persistence(mongo_client, bot_config)`** – Strategy persistence for MongoDB.
+- **`create_level_persistence(mongo_client, bot_config)`** – Level persistence for MongoDB.
+- **`setup_shutdown_handler(shutdown_manager)`** – Registers Ctrl-C to signal shutdown.
+- **`initialize_mongodb`**, **`initialize_asset_service`**, **`fetch_asset_data`**, **`initialize_market_data_engine`**, **`initialize_indicator_service`**, **`initialize_exchange_engine`** – Service bootstrap.
 
-##### Shared Services
-
-- `SharedServices` struct encapsulates common services:
-  - Trading client
-  - Execution report channel
-  - Shutdown manager
-  - Market data handle
-  - Trading WebSocket handle
-  - Indicator handle
-  - Indicator receiver (`indicator_rx`) for shared indicator channel
-
-##### Execution Report Handler
-
-- `execution_report_handler()` - Shared handler function eliminates duplication
-  - Common logic for receiving and processing execution reports
-  - Mode-specific callbacks for strategy vs levels handling
-
-#### 3. Configuration (`config.rs`)
-
-**Purpose**: Configuration loading and validation.
-
-**Configuration Files**:
-- `config/bot.json`: General bot config (system, exchange, server, redis, features, channels)
-- `config/strategies.json`: Strategy-specific config
-- `config/levels.json`: Levels-specific config
-
-**Key Structures**:
-- `BotConfig`: Main bot configuration
-- `StrategiesConfig`: Strategy-specific configuration
-- `LevelsConfig`: Levels-specific configuration (loaded from MongoDB or file)
-
-**Methods**:
-- `BotConfig::load_from_file(path: &str) -> Result<BotConfig>` - Load bot config
-- `BotConfig::validate() -> Result<()>` - Validate bot config
-- `StrategiesConfig::load_from_file(path: &str) -> Result<StrategiesConfig>` - Load strategies config
-- `LevelsConfig::load_from_mongo(mongo: &MongoClient) -> Result<LevelsConfig>` - Load levels from MongoDB
-
-#### 4. Shutdown Management (`shutdown.rs`)
+#### 4. Shutdown management (`shutdown.rs`)
 
 **Purpose**: Graceful shutdown coordination.
 
 **Components**:
-- `ShutdownManager`: Coordinates shutdown signals
-  - Broadcast channel for shutdown signals
-  - Subscribers can listen for shutdown
-  - Supports graceful shutdown of all services
 
-**Methods**:
-- `new() -> ShutdownManager` - Create new shutdown manager
-- `signal_shutdown()` - Signal shutdown to all subscribers
-- `subscribe() -> ShutdownReceiver` - Subscribe to shutdown signals
-- `wait_for_shutdown() -> impl Future` - Wait for shutdown signal
+- **`ShutdownManager`**: Broadcast channel for shutdown signals; created in `runner::run()` (or via `create_shutdown_manager()` in test_runner).
+- **Methods**: `new()`, `signal_shutdown()`, `subscribe()`, `wait_for_shutdown()`
 
-#### 5. gRPC Service (`grpc/`)
+#### 5. gRPC (gateway crate)
 
-**Purpose**: gRPC server for external communication (TUI CLI).
+**Purpose**: All gRPC surface is in the **gateway** crate; runner uses `gateway::grpc` and spawns the server.
 
-##### Service Implementation (`grpc/service/`)
+**Flow**:
 
-**Structure**:
-- `mod.rs`: Service orchestrator, defines `TradingCliServiceImpl`
-- `monitoring.rs`: Monitoring RPC handlers
-  - `collect_monitoring_data()` - Aggregate monitoring data
-  - `get_trades()` - Get recent trades
-  - `get_indicators()` - Get indicator values
-  - `get_monitoring_data()` - Get all monitoring data
-  - `stream_monitoring_data()` - Stream monitoring data updates
+- Runner builds `TradingCliServiceImpl` (from gateway) with references to its managers (level manager, strategy manager, trading state, exchange state, etc.).
+- Runner creates `TradingGrpcServer` (from gateway) and calls `start(addr)` to bind and serve.
+- TUI CLI (or any gRPC client) connects to the runner’s gRPC port (default 50051).
+- **Optional**: Run the **gateway** binary as a standalone process; it acts as a gRPC proxy forwarding to a runner (e.g. `http://runner:50051`).
 
-- `levels.rs`: Level management RPC handlers
-  - `get_levels()` - Get all levels
-  - `get_level()` - Get specific level
-  - `create_level()` - Create new level
-  - `update_level()` - Update level
-  - `delete_level()` - Delete level
-  - `toggle_level()` - Toggle level enabled/disabled
+#### 6. Zenoh gateway (in runner, using `trading_networking`)
 
-- `trading_control.rs`: Trading control RPC handlers
-  - `set_trading_enabled()` - Enable/disable global trading (legacy, for backwards compatibility)
-  - `get_trading_status()` - Get global trading status
-  - `toggle_strategy()` - Toggle individual strategy enabled/disabled (per-strategy control)
+**Purpose**: External event fanout and command handling over Zenoh.
 
-- `converters.rs`: Type converters
-  - Conversion between internal types and protobuf messages
-  - `to_proto_level()`, `from_proto_level_config()`, etc.
+**Flow**:
 
-##### Server Setup (`grpc/server.rs`)
+- Runner creates hot/cold event channels and a command router with `RunnerCommandHandler`.
+- Bridges internal engine updates (market data, exchange updates) into `HotEvent` / `ColdEvent` and sends them to the event buses.
+- Builds `EventGateway` with `ZenohEventTransport`, subscribes it to the hot/cold receivers, and spawns `gateway.run()`.
+- Spawns `serve_zenoh_commands(session, cmd_key, router)` so Zenoh clients can send commands (e.g. set trading enabled, get status, toggle strategy).
+- Zenoh is always enabled (no env flag).
 
-**Purpose**: Sets up and runs gRPC server.
+#### 7. Test binary (`bin/test_runner.rs`)
 
-**Responsibilities**:
-- Create gRPC server with service implementation
-- Bind to configured address (default: 0.0.0.0:50051)
-- Handle graceful shutdown
-
-#### 6. Test Binary (`bin/test_runner.rs`)
-
-**Purpose**: Test binary for full system testing in no-trade mode.
+**Purpose**: Full system test without placing real orders.
 
 **Features**:
-- Runs full system without placing actual trades
-- Configurable duration and verbosity
-- Supports both strategy and levels modes
-- Useful for integration testing
+
+- Uses the same init helpers as production (e.g. `create_shutdown_manager`, `start_trading_state_subscriber`, `create_*_persistence`).
+- Builds `SharedServices` and spawns `strategy_runner()` or `level_runner()` in a task.
+- Runs for a configurable duration (or until Ctrl-C), then signals shutdown and waits for the runner task.
 
 **Usage**:
+
 ```bash
 cargo run --bin test_runner -- --mode levels --duration 60 --verbose
 ```
 
 ## Data Flow
 
-### Application Startup Flow
+### Application startup (production)
 
 ```
 main.rs
-    ├── Parse arguments
-    ├── Load configuration
-    ├── Initialize MongoDB (if enabled)
-    ├── Initialize Asset Service
-    ├── Fetch asset data (bootstrap)
-    ├── Create shared indicator channel
-    ├── Initialize Market Data Engine
-    ├── Initialize Indicator Service
-    ├── Initialize Exchange Engine
-    ├── Create SharedServices
-    ├── Route to strategy_runner() or level_runner()
-    └── Start gRPC server (if enabled)
-```
-
-### Service Initialization Flow
-
-```
-initialize_*_service()
-    ├── Extract exchange config from BotConfig (internally)
-    ├── Create service instance
-    ├── Configure channels (from ChannelConfig)
-    └── Return service handle
+    ├── Parse arguments, load config
+    ├── Initialize logging and tracing
+    ├── initialize_mongodb()
+    └── runner::run(...)
+            ├── ShutdownManager::new(), setup_shutdown_handler()
+            ├── initialize_asset_service, fetch_asset_data
+            ├── initialize_market_data_engine
+            ├── initialize_indicator_service
+            ├── initialize_exchange_engine
+            ├── TradingStateManager, start_trading_state_subscriber()
+            ├── SharedServices
+            ├── strategy_runner() or level_runner()
+            │       ├── Start gRPC server (gateway::grpc)
+            │       ├── Wire Zenoh event gateway + command queryable
+            │       └── Run event loops until shutdown
+            └── trading_trace::shutdown_exporters()
 ```
 
 ## Communication
 
 ### Internal
-- **Channels**: All services communicate via broadcast channels
-- **Shared Services**: Common services passed via `SharedServices` struct
+
+- **Channels**: All services communicate via broadcast/mpsc channels.
+- **SharedServices**: Common services passed into `strategy_runner` / `level_runner`.
 
 ### External
-- **gRPC**: TUI CLI connects via gRPC
-- **MongoDB**: Configuration persistence (optional)
+
+- **gRPC**: Provided by the gateway crate; runner spawns the server. TUI CLI (and optional standalone gateway proxy) use gRPC.
+- **Zenoh**: Events (hot/cold) published; commands handled via Zenoh queryable (always on).
+- **MongoDB**: Configuration persistence.
 
 ## Configuration
 
-### Channel Configuration
-
-Centralized channel buffer sizes in `ChannelConfig`:
-- `market_data_capacity`: 1000 (default)
-- `exchange_update_capacity`: 1000 (default)
-- `indicator_update_capacity`: 1000 (default)
-- `websocket_inbound_capacity`: 1024 (default)
-- `websocket_ping_capacity`: 16 (default)
-- `websocket_outbound_rpc_capacity`: 1024 (default)
-- `live_config_request_capacity`: 100 (default)
-- `shutdown_capacity`: 1 (default)
-- `market_data_engine_buffer`: 1000 (default)
-
-### Exchange-Agnostic Design
-
-**Key Feature**: All initialization functions handle exchange config internally.
-
-**Benefits**:
-- Scalable: Adding new exchanges only requires adding branches in initialization functions
-- No exchange-specific code in `main.rs`
-- Clean separation of concerns
-
-**Example**:
-```rust
-// Exchange-agnostic initialization
-let market_data_driver = initialize_market_data_engine(&bot_config, &channels)?;
-// Function internally extracts Binance config from BotConfig
-```
-
-## Dual Mode Support
-
-### Strategy Mode
-
-**Entry Point**: `strategy_runner()`
-
-**Setup**:
-1. Load strategies config
-2. Initialize strategy executor
-3. Start strategy execution loop
-4. Handle execution reports
-
-### Levels Mode
-
-**Entry Point**: `level_runner()`
-
-**Setup**:
-1. Load levels config (from MongoDB or file)
-2. Initialize level manager
-3. Initialize level executor
-4. Start level event loop
-5. Handle execution reports
-
-## Shared Indicator Channel
-
-**Architecture**: Single channel for indicator updates created in `main.rs` before service initialization.
-
-**Flow**:
-1. Channel created in `main.rs`
-2. Sender passed to `initialize_indicator_service()`
-3. Receiver added to `SharedServices`
-4. Runners use `services.indicator_rx`
-
-**Benefit**: Prevents channel closure errors by ensuring receiver stays alive throughout application lifetime.
-
-## gRPC Server
-
-### Endpoints
-
-**Monitoring**:
-- `GetMonitoringData` - Get current monitoring data
-- `StreamMonitoringData` - Stream real-time updates
-  - Includes `instrument_type` field ("Spot" or "Futures") for TUI view selection
-  - Positions include futures-specific fields (leverage, margin, P&L, liquidation price)
-
-**Level Management**:
-- `GetLevels` - Get all levels
-- `GetLevel` - Get specific level
-- `CreateLevel` - Create new level
-- `UpdateLevel` - Update level
-- `DeleteLevel` - Delete level
-- `ToggleLevel` - Toggle level enabled/disabled
-
-**Trading Control**:
-- `SetTradingEnabled` - Enable/disable trading
-- `GetTradingStatus` - Get trading status
-
-### Data Aggregation
-
-gRPC service aggregates data from multiple sources:
-- `ExchangeStateManager`: Balances, orders, trades, positions (for futures)
-- `IndicatorService`: Indicator values
-- `TradingStateManager`: Trading state
-- `LevelManager`: Level configurations
-
-**MonitoringData Structure**:
-- `instrument_type`: "Spot" or "Futures" - determines which TUI view to show
-- `positions`: Exchange-level positions (from `ExchangeStateManager` for futures, from `TradingStateManager` for spot)
-  - Futures positions include: side, mark_price, unrealized_pnl, leverage, margin_used, liquidation_price
-  - Spot positions include: symbol, quantity, avg_price
-
-## Performance Characteristics
-
-- **Startup Time**: < 5 seconds (with MongoDB)
-- **Memory**: Efficient service initialization
-- **Channel Setup**: O(1) channel creation
+- **Channel capacities**: In `config/bot.json` under `channels` (e.g. `market_data_capacity`, `exchange_update_capacity`, `shutdown_capacity`).
+- **gRPC / health**: In `config/bot.json` under `server` (grpc bind/port, health bind/port).
+- **Zenoh**: Uses default session; keyspace can be derived from bot config (e.g. `/trading/{bot_id}/...`).
 
 ## Dependencies
 
-- All service crates (exchange_engine, market_data_engine, trading_engine, etc.)
-- `trading_core`: Types, channels, config
-- `tonic`: gRPC server
-- `mongodb`: Optional persistence
+- **gateway**: gRPC proto, server, service implementation.
+- **trading_networking** (with Zenoh feature): Events, commands, event gateway, Zenoh transport.
+- All engine crates (exchange_engine, market_data_engine, trading_engine, indicator_engine, asset_engine, live_config).
+- **trading_core**, **trading_trace**, **tokio**, **tracing**, etc.
 
 ## Testing
 
-- Integration tests for service initialization
-- Integration tests for gRPC endpoints
-- Test binary for full system testing
+- **test_runner** binary: Full system run with configurable duration; no real orders.
+- Integration tests: Service initialization, gRPC endpoints, channel behavior.
 
-## Error Handling
+## Error handling and shutdown
 
-- **Configuration Errors**: Validated at startup
-- **Service Initialization Failures**: Logged, application exits
-- **gRPC Errors**: Handled gracefully, logged
-- **Shutdown**: Graceful shutdown of all services
+- Configuration and MongoDB errors cause early exit.
+- Ctrl-C triggers `ShutdownManager::signal_shutdown()`; runners exit their loops and the process shuts down.
+- gRPC and Zenoh tasks are spawned; their errors are logged.
 
 ## Security
 
-- **API Keys**: Loaded from config, use `SecretString`
-- **gRPC**: Can add authentication if needed
-- **Configuration**: Validated before use
-
+- API keys and secrets from config (e.g. `SecretString`).
+- gRPC and Zenoh can be extended with authentication if required.

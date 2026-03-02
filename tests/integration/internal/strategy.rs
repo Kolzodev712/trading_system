@@ -72,6 +72,7 @@ async fn test_strategy_monitoring_with_position() {
         }],
         strategy_manager: None,
         instrument_type: trading_core::types::common::InstrumentType::Spot,
+        exchange: "Test".to_string(),
     };
 
     // Collect monitoring data
@@ -141,6 +142,7 @@ async fn test_strategy_monitoring_without_position() {
         }],
         strategy_manager: None,
         instrument_type: trading_core::types::common::InstrumentType::Spot,
+        exchange: "Test".to_string(),
     };
 
     // Collect monitoring data
@@ -235,6 +237,7 @@ async fn test_strategy_monitoring_with_active_orders() {
         }],
         strategy_manager: None,
         instrument_type: trading_core::types::common::InstrumentType::Spot,
+        exchange: "Test".to_string(),
     };
 
     // Collect monitoring data

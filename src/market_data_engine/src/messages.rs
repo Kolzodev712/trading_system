@@ -111,7 +111,10 @@ impl WSMessageHandler for ChannelMessageHandler {
     async fn handle_orderbook(&self, orderbook: StructuredOrderbook) -> Result<(), EngineError> {
         // ChannelMessageHandler is legacy - structured orderbook already has pair
         self.market_data_tx
-            .send(MarketDataUpdate::Orderbook { orderbook })
+            .send(MarketDataUpdate::Orderbook {
+                orderbook,
+                trace_context: None,
+            })
             .map_err(|e| {
                 EngineError::CustomError(anyhow::anyhow!(
                     "Failed to send orderbook to channel: {error}",
@@ -126,7 +129,10 @@ impl WSMessageHandler for ChannelMessageHandler {
     async fn handle_trade(&self, trade: StructuredPublicTrade) -> Result<(), EngineError> {
         // ChannelMessageHandler is legacy - structured trade already has pair
         self.market_data_tx
-            .send(MarketDataUpdate::Trade { trade })
+            .send(MarketDataUpdate::Trade {
+                trade,
+                trace_context: None,
+            })
             .map_err(|e| {
                 EngineError::CustomError(anyhow::anyhow!(
                     "Failed to send trade to channel: {error}",
@@ -207,7 +213,7 @@ mod tests {
 
         let received = rx.recv().await.unwrap();
         match received {
-            MarketDataUpdate::Orderbook { orderbook: ob } => assert_eq!(ob, orderbook),
+            MarketDataUpdate::Orderbook { orderbook: ob, .. } => assert_eq!(ob, orderbook),
             _ => panic!("Expected Orderbook variant"),
         }
     }
@@ -231,7 +237,7 @@ mod tests {
 
         let received = rx.recv().await.unwrap();
         match received {
-            MarketDataUpdate::Trade { trade: t } => assert_eq!(t, trade),
+            MarketDataUpdate::Trade { trade: t, .. } => assert_eq!(t, trade),
             _ => panic!("Expected Trade variant"),
         }
     }

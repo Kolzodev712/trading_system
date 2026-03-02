@@ -997,6 +997,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "trading_core",
+ "trading_trace",
  "url",
  "urlencoding",
  "uuid",
@@ -1873,6 +1874,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "trading_core",
+ "trading_trace",
  "url",
  "urlencoding",
  "uuid",
@@ -2202,22 +2204,9 @@ dependencies = [
  "futures-util",
  "opentelemetry",
  "opentelemetry-semantic-conventions",
- "opentelemetry_sdk 0.21.2",
+ "opentelemetry_sdk",
  "thrift",
  "tokio",
-]
-
-[[package]]
-name = "opentelemetry-prometheus"
-version = "0.13.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c7d81bc254e2d572120363a2b16cdb0d715d301b5789be0cfc26ad87e4e10e53"
-dependencies = [
- "once_cell",
- "opentelemetry_api",
- "opentelemetry_sdk 0.20.0",
- "prometheus",
- "protobuf",
 ]
 
 [[package]]
@@ -2227,39 +2216,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f5774f1ef1f982ef2a447f6ee04ec383981a3ab99c8e77a1a7b30182e65bbc84"
 dependencies = [
  "opentelemetry",
-]
-
-[[package]]
-name = "opentelemetry_api"
-version = "0.20.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8a81f725323db1b1206ca3da8bb19874bbd3f57c3bcd59471bfb04525b265b9b"
-dependencies = [
- "futures-channel",
- "futures-util",
- "indexmap 1.9.3",
- "js-sys",
- "once_cell",
- "pin-project-lite",
- "thiserror 1.0.69",
- "urlencoding",
-]
-
-[[package]]
-name = "opentelemetry_sdk"
-version = "0.20.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fa8e705a0612d48139799fcbaba0d4a90f06277153e43dd2bdc16c6f0edd8026"
-dependencies = [
- "async-trait",
- "futures-channel",
- "futures-executor",
- "futures-util",
- "once_cell",
- "opentelemetry_api",
- "ordered-float 3.9.2",
- "regex",
- "thiserror 1.0.69",
 ]
 
 [[package]]
@@ -2289,15 +2245,6 @@ name = "ordered-float"
 version = "2.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "68f19d67e5a2795c94e73e0bb1cc1a7edeb2e28efd39e2e1c9b7a40c1108b11c"
-dependencies = [
- "num-traits",
-]
-
-[[package]]
-name = "ordered-float"
-version = "3.9.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f1e1c390732d15f1d48471625cd92d154e66db2c56645e29a9cd26f4699f72dc"
 dependencies = [
  "num-traits",
 ]
@@ -2917,6 +2864,7 @@ dependencies = [
  "tracing-subscriber",
  "trading_core",
  "trading_engine",
+ "trading_trace",
  "url",
  "urlencoding",
  "uuid",
@@ -4100,7 +4048,7 @@ dependencies = [
  "js-sys",
  "once_cell",
  "opentelemetry",
- "opentelemetry_sdk 0.21.2",
+ "opentelemetry_sdk",
  "smallvec",
  "tracing",
  "tracing-core",
@@ -4153,6 +4101,7 @@ dependencies = [
  "tokio-tungstenite",
  "tonic",
  "tracing",
+ "trading_trace",
  "url",
  "urlencoding",
  "uuid",
@@ -4227,9 +4176,9 @@ dependencies = [
  "anyhow",
  "opentelemetry",
  "opentelemetry-jaeger",
- "opentelemetry-prometheus",
- "opentelemetry_sdk 0.21.2",
+ "opentelemetry_sdk",
  "parking_lot",
+ "prometheus",
  "rand 0.9.2",
  "serde",
  "serde_json",
@@ -4237,7 +4186,6 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-opentelemetry",
- "trading_core",
 ]
 
 [[package]]

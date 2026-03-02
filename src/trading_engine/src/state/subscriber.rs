@@ -63,16 +63,19 @@ impl ExchangeStateSubscriber {
     pub async fn run(&mut self) -> Result<(), EngineError> {
         loop {
             match self.exchange_update_rx.recv().await {
-                Ok(ExchangeUpdate::Order(order)) => {
+                Ok(ExchangeUpdate::Order { order, .. }) => {
                     self.handle_order_update(order).await;
                 }
-                Ok(ExchangeUpdate::Balance(balance)) => {
+                Ok(ExchangeUpdate::Balance { balance, .. }) => {
                     self.handle_balance_update(balance).await;
                 }
-                Ok(ExchangeUpdate::Trade(trade)) => {
+                Ok(ExchangeUpdate::Trade { trade, .. }) => {
                     self.handle_trade_update(trade).await;
                 }
-                Ok(ExchangeUpdate::Position(_position)) => {
+                Ok(ExchangeUpdate::Position {
+                    position: _position,
+                    ..
+                }) => {
                     // Positions are derived from balances, not directly tracked
                     // This is for future use if exchanges provide position updates
                     debug!("Received position update (derived from balances)");

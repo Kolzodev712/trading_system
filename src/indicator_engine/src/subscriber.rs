@@ -44,7 +44,7 @@ impl MarketDataSubscriber {
 
     async fn handle_update(&self, update: MarketDataUpdate) -> Result<(), SubscriberError> {
         match update {
-            MarketDataUpdate::Orderbook { orderbook } => {
+            MarketDataUpdate::Orderbook { orderbook, .. } => {
                 // Convert pair to string for calculator (only once)
                 let pair_smol = orderbook.pair.convert_to_smolstr();
                 let pair_str = pair_smol.as_str();
@@ -114,7 +114,7 @@ impl MarketDataSubscriber {
                     }
                 }
             }
-            MarketDataUpdate::Trade { trade } => {
+            MarketDataUpdate::Trade { trade, .. } => {
                 // Convert pair to string for calculator (only once)
                 let pair_smol = trade.pair.convert_to_smolstr();
                 let pair_str = pair_smol.as_str();

@@ -17,6 +17,10 @@ pub use cold::ColdTraceContext;
 pub use config::TraceConfig;
 pub use context::TraceContext;
 pub use correlation::{generate_correlation_id, CorrelationId};
-pub use exporter::{get_tracer, init_exporters, shutdown_exporters, ExporterHandles};
-pub use hot::HotTraceContext;
+#[cfg(feature = "full")]
+pub use exporter::encode_prometheus_metrics;
+pub use exporter::{
+    get_tracer, init_exporters, record_startup_span, shutdown_exporters, ExporterHandles,
+};
+pub use hot::{should_trace_hot, HotTraceContext};
 pub use metrics::{get_metrics, TradingMetrics};

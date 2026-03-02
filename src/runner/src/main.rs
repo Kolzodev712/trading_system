@@ -42,6 +42,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize logging
     initialize_logging(&bot_config);
 
+    // Initialize tracing (exporters; best-effort)
+    // When running in Docker with observability stack, set TRACE_JAEGER_AGENT_ENDPOINT=jaeger:6831
+    let mut exporters = trading_trace::TraceConfig::default().exporters;
+    if let Ok(endpoint) = std::env::var("TRACE_JAEGER_AGENT_ENDPOINT") {
+        if let Some(ref mut jaeger) = exporters.jaeger {
+            jaeger.agent_endpoint = endpoint;
+        }
+    }
+    let _tracing_handles = match trading_trace::init_exporters(
+        &exporters,
+        "trading-system",
+        Some(env!("CARGO_PKG_VERSION")),
+    ) {
+        Ok(h) => {
+            // Emit one span so "trading-system" appears in Jaeger immediately (cold path only runs on exchange updates)
+            trading_trace::record_startup_span();
+            Some(h)
+        }
+        Err(e) => {
+            tracing::warn!("Tracing exporters init failed (continuing without): {}", e);
+            None
+        }
+    };
+
     // Log startup info
     log_startup_info(&bot_config, &args.mode);
 
@@ -122,6 +146,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         market_data_state_manager,
         asset_service: Some(asset_service),
         trading_control: None, // Created in runner functions
+        tracing_handles: _tracing_handles,
     };
 
     // Route to appropriate runner
@@ -154,6 +179,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    trading_trace::shutdown_exporters();
     Ok(())
 }
 

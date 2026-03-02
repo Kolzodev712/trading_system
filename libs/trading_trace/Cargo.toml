@@ -4,16 +4,13 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-# Core dependencies
-trading_core = { path = "../trading_core" }
-
 # OpenTelemetry (for cold path)
 opentelemetry = { version = "0.21", features = ["trace", "metrics"] }
 opentelemetry_sdk = { version = "0.21", features = ["rt-tokio", "trace", "metrics"] }
 
 # OpenTelemetry exporters
 opentelemetry-jaeger = { version = "0.20", features = ["rt-tokio"], optional = true }
-opentelemetry-prometheus = { version = "0.13", optional = true }
+prometheus = { version = "0.13", optional = true }
 
 # Tracing integration
 tracing = "0.1"
@@ -38,7 +35,7 @@ anyhow = { version = "1.0", default-features = false }
 
 [features]
 default = []
-full = ["opentelemetry-jaeger", "opentelemetry-prometheus", "tracing-opentelemetry", "tokio", "serde_json"]
+full = ["opentelemetry-jaeger", "prometheus", "tracing-opentelemetry", "tokio", "serde_json"]
 
 [dev-dependencies]
 serde_json = "1.0"

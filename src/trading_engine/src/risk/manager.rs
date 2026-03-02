@@ -18,8 +18,6 @@ use trading_core::types::exchange::{Balance, OrderRequest};
 /// Risk manager - orchestrates all risk checks
 pub struct RiskManager {
     limits: RiskLimits,
-    #[allow(dead_code)]
-    metrics_calculator: RiskMetricsCalculator,
     circuit_breaker: Arc<CircuitBreaker>,
     /// Cached metrics (updated periodically)
     cached_metrics: Arc<RwLock<Option<RiskMetrics>>>,
@@ -30,7 +28,6 @@ impl RiskManager {
     pub fn new(limits: RiskLimits, _symbol_registry: Arc<SymbolRegistry>) -> Self {
         Self {
             limits,
-            metrics_calculator: RiskMetricsCalculator::new(),
             circuit_breaker: Arc::new(CircuitBreaker::new()),
             cached_metrics: Arc::new(RwLock::new(None)),
         }

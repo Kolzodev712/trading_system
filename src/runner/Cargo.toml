@@ -3,18 +3,17 @@ name = "runner"
 version = "0.1.0"
 edition = "2021"
 
-[build-dependencies]
-tonic-build = { version = "0.11", features = ["prost"] }
-
 [dependencies]
 trading_core = { path = "../../libs/trading_core" }
 trading_trace = { path = "../../libs/trading_trace", features = ["full"] }
+trading_networking = { path = "../../libs/trading_networking", features = ["zenoh"] }
 trading_engine = { path = "../trading_engine" }
 exchange_engine = { path = "../exchange_engine" }
 market_data_engine = { path = "../market_data_engine" }
 indicator_engine = { path = "../indicator_engine" }
 live_config = { path = "../live_config" }
 asset_engine = { path = "../asset_engine" }
+gateway = { path = "../gateway" }
 
 # Logging
 tracing = { workspace = true }
@@ -27,7 +26,6 @@ serde_with = { workspace = true }
 
 # Async 
 tokio = { workspace = true }
-tokio-stream = { workspace = true, features = ["net"] }
 tokio-tungstenite = { workspace = true }
 async-trait = { workspace = true }
 
@@ -65,11 +63,6 @@ redis = { workspace = true, optional = true }
 axum = { workspace = true }
 tower = { workspace = true }
 tower-http = { workspace = true }
-
-# gRPC
-tonic = { workspace = true }
-prost = { workspace = true }
-prost-types = { workspace = true }
 
 # Testing
 tokio-test = { workspace = true }

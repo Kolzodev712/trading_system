@@ -2,7 +2,6 @@
 use crate::grpc::trading_cli;
 use trading_engine::levels::{config::OrderTypeConfig, level::LevelState, Level};
 
-/// Convert LevelState to string
 pub fn level_state_to_string(state: &LevelState) -> &'static str {
     match state {
         LevelState::Created => "Created",
@@ -14,7 +13,6 @@ pub fn level_state_to_string(state: &LevelState) -> &'static str {
     }
 }
 
-/// Convert OrderTypeConfig to string
 pub fn order_type_to_string(order_type: &OrderTypeConfig) -> &'static str {
     match order_type {
         OrderTypeConfig::Limit => "Limit",
@@ -25,7 +23,6 @@ pub fn order_type_to_string(order_type: &OrderTypeConfig) -> &'static str {
     }
 }
 
-/// Format PriceConfig as string
 pub fn format_price_config(price: &trading_engine::levels::config::PriceConfig) -> String {
     match price {
         trading_engine::levels::config::PriceConfig::Fixed(d) => format!("Fixed({})", d),
@@ -49,7 +46,6 @@ pub fn format_price_config(price: &trading_engine::levels::config::PriceConfig) 
     }
 }
 
-/// Format QuantityConfig as string
 pub fn format_quantity_config(quantity: &trading_engine::levels::config::QuantityConfig) -> String {
     match quantity {
         trading_engine::levels::config::QuantityConfig::Fixed(d) => format!("Fixed({})", d),
@@ -64,13 +60,10 @@ pub fn format_quantity_config(quantity: &trading_engine::levels::config::Quantit
         trading_engine::levels::config::QuantityConfig::BalancePercent(p) => {
             format!("BalancePercent({})", p)
         }
-        trading_engine::levels::config::QuantityConfig::Notional(n) => {
-            format!("Notional({})", n)
-        }
+        trading_engine::levels::config::QuantityConfig::Notional(n) => format!("Notional({})", n),
     }
 }
 
-/// Convert Level to protobuf Level
 pub fn level_to_proto(level: &Level) -> trading_cli::Level {
     let status = level_state_to_string(&level.state).to_string();
     let symbol = trading_cli::Symbol {
@@ -86,13 +79,11 @@ pub fn level_to_proto(level: &Level) -> trading_cli::Level {
     let price_str = format_price_config(&level.config.price);
     let quantity_str = format_quantity_config(&level.config.quantity);
 
-    // Reconstruct the expanded level ID (matching how it's stored in HashMap)
-    // Format: "{base_id}_{PAIR}" e.g., "buy_level_1_ETHUSDC"
     let pair_str = level.pair.convert_to_smolstr();
     let expanded_id = format!("{}_{}", level.config.id, pair_str);
 
     let level_config = trading_cli::LevelConfig {
-        id: level.config.id.to_string(), // Base ID in config
+        id: level.config.id.to_string(),
         symbol: Some(symbol),
         side: side.to_string(),
         order_type,
@@ -122,7 +113,7 @@ pub fn level_to_proto(level: &Level) -> trading_cli::Level {
         .collect();
 
     trading_cli::Level {
-        id: expanded_id, // Use expanded ID so CLI can look it up
+        id: expanded_id,
         status,
         enabled: level.config.enabled,
         config: Some(level_config),

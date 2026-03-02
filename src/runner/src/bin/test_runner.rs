@@ -11,10 +11,10 @@
 
 use runner::config::BotConfig;
 use runner::shutdown::ShutdownManager;
+use runner::{create_shutdown_manager, setup_shutdown_handler};
 use runner::{
     fetch_asset_data, initialize_asset_service, initialize_exchange_engine,
     initialize_indicator_service, initialize_market_data_engine, initialize_mongodb,
-    setup_shutdown_handler,
 };
 use runner::{level_runner, strategy_runner, SharedServices};
 use std::sync::Arc;
@@ -90,7 +90,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("✓ MongoDB connected");
 
     // Create shutdown manager and setup Ctrl-C handler
-    let shutdown_manager = ShutdownManager::new(bot_config.channels.shutdown_capacity);
+    let shutdown_manager = create_shutdown_manager(bot_config.channels.shutdown_capacity);
     setup_shutdown_handler(shutdown_manager.clone());
     info!("✓ Shutdown manager initialized");
 

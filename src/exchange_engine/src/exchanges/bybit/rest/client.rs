@@ -39,10 +39,10 @@ struct BybitResponseWrapper {
     #[serde(default)]
     ret_msg: String,
     result: Option<Value>,
-    #[allow(dead_code)]
-    ret_ext_info: Option<Value>,
-    #[allow(dead_code)]
-    time: Option<u64>,
+    #[serde(default)]
+    _ret_ext_info: Option<Value>,
+    #[serde(default)]
+    _time: Option<u64>,
 }
 
 #[async_trait]

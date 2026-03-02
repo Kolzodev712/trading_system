@@ -1,0 +1,26 @@
+[package]
+name = "trading_networking"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+trading_core = { path = "../trading_core" }
+trading_trace = { path = "../trading_trace" }
+bytes = "1.5"
+tokio = { version = "1.32", features = ["sync", "rt"] }
+rust_decimal = { version = "1.35", features = ["serde"] }
+smol_str = "0.2"
+thiserror = "1.0"
+async-trait = "0.1"
+serde = { version = "1.0", features = ["derive"] }
+serde_bytes = "0.11"
+serde_json = "1.0"
+zenoh = { version = "1.0", optional = true }
+
+[features]
+default = []
+zenoh = ["dep:zenoh"]
+
+[dev-dependencies]
+tokio-test = "0.4"
+rust_decimal_macros = "1.35"

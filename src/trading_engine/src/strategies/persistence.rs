@@ -9,8 +9,7 @@ use trading_core::persistence::mongo::{
 /// Strategy persistence
 pub struct StrategyPersistence {
     mongo_client: MongoClient,
-    #[allow(dead_code)] // Reserved for future multi-bot filtering
-    bot_id: smol_str::SmolStr,
+    _bot_id: smol_str::SmolStr,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -30,7 +29,7 @@ impl StrategyPersistence {
     pub fn new(mongo_client: MongoClient, bot_id: impl Into<smol_str::SmolStr>) -> Self {
         Self {
             mongo_client,
-            bot_id: bot_id.into(),
+            _bot_id: bot_id.into(),
         }
     }
 

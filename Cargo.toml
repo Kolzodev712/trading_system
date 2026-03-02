@@ -8,7 +8,10 @@ edition = "2021"
 [workspace]
 members = [
     "libs/trading_core",
+    "libs/trading_networking",
+    "libs/trading_trace",
     "src/exchange_engine",
+    "src/gateway",
     "src/trading_engine",
     "src/market_data_engine",
     "src/indicator_engine",

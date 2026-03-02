@@ -55,7 +55,7 @@ impl BinanceSubscriptionHandler {
         *guard = Some(params);
     }
 
-    #[allow(dead_code)] // May be used for other RPC requests that don't need fresh signatures
+    // May be used for other RPC requests that don't need fresh signatures
     pub async fn get_session(&self) -> Result<SessionLogonParams, EngineError> {
         let guard = self.session.read().await;
         guard.clone().ok_or_else(|| {

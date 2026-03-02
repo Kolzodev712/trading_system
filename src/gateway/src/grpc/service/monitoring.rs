@@ -13,24 +13,18 @@ use trading_engine::strategies::strategy_manager::StrategyManager;
 
 use super::converters;
 
-/// Service data needed for monitoring operations
 pub struct MonitoringService {
     pub level_manager: Arc<RwLock<LevelManager>>,
     pub trading_state_manager: Arc<TradingStateManager>,
     pub exchange_state_manager: Arc<ExchangeStateManager>,
     pub market_data_state_manager: Arc<market_data_engine::state::manager::MarketDataStateManager>,
     pub indicator_calculator: Arc<indicator_engine::calculator::IndicatorCalculator>,
-    /// Strategy info (only set in strategies mode, supports multiple)
     pub strategy_infos: Vec<StrategyInfo>,
-    /// Strategy manager (only set in strategies mode, for checking enabled status)
     pub strategy_manager: Option<Arc<RwLock<StrategyManager>>>,
-    /// Instrument type (Spot or Futures) - determines which TUI view to show
     pub instrument_type: trading_core::types::common::InstrumentType,
-    /// Exchange name for CLI display (e.g. "Binance", "Bybit")
     pub exchange: String,
 }
 
-/// Strategy information for monitoring
 #[derive(Clone)]
 pub struct StrategyInfo {
     pub strategy_name: String,
@@ -39,21 +33,17 @@ pub struct StrategyInfo {
 }
 
 impl MonitoringService {
-    /// Collect monitoring data from all sources
     pub async fn collect_monitoring_data(&self) -> Result<trading_cli::MonitoringData, Status> {
         let start = std::time::Instant::now();
         debug!(
             "[gRPC] collect_monitoring_data: Starting collection ({} strategy infos)",
             self.strategy_infos.len()
         );
-        // Collect all data in parallel to avoid sequential blocking
         let ((orders, balances), positions, indicators, trades, orderbooks) = tokio::join!(
-            // Get orders and balances from ExchangeStateManager
             async {
                 let exchange_state_arc = self.exchange_state_manager.get_state();
                 let exchange_state = exchange_state_arc.read().await;
 
-                // Build order_id -> level_id mapping from LevelManager
                 let level_manager = self.level_manager.read().await;
                 let mut order_to_level: HashMap<String, (String, String)> = HashMap::new();
 
@@ -68,13 +58,12 @@ impl MonitoringService {
                         );
                     }
                 }
-                drop(level_manager); // Release lock before continuing
+                drop(level_manager);
 
                 let orders: Vec<trading_cli::Order> = exchange_state
                     .get_open_orders()
                     .iter()
                     .filter(|order| {
-                        // Use exchange_created_at if available, otherwise fallback to internal_created_at
                         let order_timestamp = order
                             .exchange_created_at
                             .unwrap_or(order.internal_created_at);
@@ -85,7 +74,7 @@ impl MonitoringService {
                         let (level_id, order_type) = order_to_level
                             .get(&order_id_str)
                             .cloned()
-                            .unwrap_or_else(|| (String::new(), "Limit".to_string())); // Default to Limit if not found
+                            .unwrap_or_else(|| (String::new(), "Limit".to_string()));
 
                         trading_cli::Order {
                             order_id: order_id_str,
@@ -104,7 +93,6 @@ impl MonitoringService {
                     })
                     .collect();
 
-                // Get balances (from WebSocket updates)
                 let balances: Vec<trading_cli::Balance> = exchange_state
                     .get_balances()
                     .iter()
@@ -112,14 +100,13 @@ impl MonitoringService {
                         asset: b.symbol.to_string(),
                         free: b.free.to_string(),
                         used: b.used.to_string(),
-                        locked: b.used.to_string(), // used is the locked amount
+                        locked: b.used.to_string(),
                         total: b.total.to_string(),
                     })
                     .collect();
 
                 (orders, balances)
             },
-            // Get positions from ExchangeStateManager (for futures) or TradingStateManager (for spot)
             async {
                 let exchange_state_arc = self.exchange_state_manager.get_state();
                 let exchange_state = exchange_state_arc.read().await;
@@ -160,7 +147,6 @@ impl MonitoringService {
                     })
                     .collect();
 
-                // Also get positions from TradingStateManager (for spot/strategy positions)
                 let trading_state_arc = self.trading_state_manager.get_state();
                 let trading_state = trading_state_arc.read().await;
                 let trading_positions: Vec<trading_cli::Position> = trading_state
@@ -170,7 +156,7 @@ impl MonitoringService {
                         symbol: pos.symbol.convert_to_smolstr().to_string(),
                         quantity: pos.quantity.to_string(),
                         avg_price: pos.avg_price.to_string(),
-                        side: String::new(), // Trading engine positions don't have side
+                        side: String::new(),
                         mark_price: String::new(),
                         unrealized_pnl: String::new(),
                         leverage: String::new(),
@@ -181,7 +167,6 @@ impl MonitoringService {
                     })
                     .collect();
 
-                // Combine both (exchange positions take precedence for same symbol)
                 let mut all_positions = exchange_positions.clone();
                 for trading_pos in trading_positions.clone() {
                     if !all_positions.iter().any(|p| p.symbol == trading_pos.symbol) {
@@ -200,28 +185,24 @@ impl MonitoringService {
 
                 all_positions
             },
-            // Get indicators
             async { self.get_indicators().await.unwrap_or_default() },
-            // Get trades
             async { self.get_trades().await.unwrap_or_default() },
-            // Get orderbooks
             async { self.get_orderbooks().await.unwrap_or_default() }
         );
 
-        // Aggregated data
         let aggregated = trading_cli::AggregatedData {
             overall: Some(trading_cli::OverallStatistics {
                 total_orders: orders.len() as i32,
                 total_positions: positions.len() as i32,
-                total_position_value: String::new(), // TODO: Calculate
-                total_pnl: String::new(),            // TODO: Calculate
+                total_position_value: String::new(),
+                total_pnl: String::new(),
                 total_balance: balances
                     .iter()
                     .find(|b| b.asset == "USDT" || b.asset == "USD")
                     .map(|b| b.total.clone())
                     .unwrap_or_default(),
-                active_pairs: 1,  // TODO: Get from config
-                active_levels: 0, // TODO: Get from LevelManager
+                active_pairs: 1,
+                active_levels: 0,
             }),
             per_pair: std::collections::HashMap::new(),
             per_level: std::collections::HashMap::new(),
@@ -235,23 +216,18 @@ impl MonitoringService {
             );
         }
 
-        // Collect strategy statuses for all strategies
         let mut strategy_statuses = Vec::new();
         for strategy_info in &self.strategy_infos {
             match self
                 .collect_strategy_status(strategy_info, &positions)
                 .await
             {
-                Some(status) => {
-                    strategy_statuses.push(status);
-                }
-                None => {
-                    tracing::warn!(
-                        "Failed to collect status for strategy {}:{}",
-                        strategy_info.strategy_name,
-                        strategy_info.symbol
-                    );
-                }
+                Some(status) => strategy_statuses.push(status),
+                None => tracing::warn!(
+                    "Failed to collect status for strategy {}:{}",
+                    strategy_info.strategy_name,
+                    strategy_info.symbol
+                ),
             }
         }
         tracing::debug!(
@@ -264,11 +240,10 @@ impl MonitoringService {
             indicators.len()
         );
 
-        // Convert instrument_type to string
         let instrument_type_str = match self.instrument_type {
             trading_core::types::common::InstrumentType::Spot => "Spot",
             trading_core::types::common::InstrumentType::Futures => "Futures",
-            trading_core::types::common::InstrumentType::Derivitives => "Futures", // Treat derivatives as futures
+            trading_core::types::common::InstrumentType::Derivitives => "Futures",
         };
 
         let data = trading_cli::MonitoringData {
@@ -288,17 +263,12 @@ impl MonitoringService {
         Ok(data)
     }
 
-    /// Get recent trades from ExchangeStateManager (already populated via WebSocket)
-    /// Only returns trades from the past 24 hours
     pub async fn get_trades(&self) -> Result<Vec<trading_cli::Trade>, Status> {
-        // Only show trades from the past 24 hours
         let twenty_four_hours_ago = hours_ago(24);
 
-        // Get trades directly from ExchangeStateManager - they're already there from WebSocket updates
         let state_arc = self.exchange_state_manager.get_state();
         let trades: Vec<trading_core::types::exchange::Trade> = {
             let exchange_state = state_arc.read().await;
-            // Clone and filter trades from the past 24 hours
             exchange_state
                 .get_trades()
                 .iter()
@@ -307,7 +277,6 @@ impl MonitoringService {
                 .collect()
         };
 
-        // Convert to protobuf format, sorted by timestamp (most recent first)
         let mut converted: Vec<trading_cli::Trade> = trades
             .iter()
             .map(|t| trading_cli::Trade {
@@ -321,18 +290,12 @@ impl MonitoringService {
             })
             .collect();
 
-        // Sort by timestamp descending (most recent first)
         converted.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
-
-        // Limit to most recent 100 trades for display (after time filtering)
         converted.truncate(100);
-
         Ok(converted)
     }
 
-    /// Get indicators from IndicatorService
     pub async fn get_indicators(&self) -> Result<Vec<trading_cli::IndicatorValue>, Status> {
-        // Access calculator directly - it's thread-safe, no locking needed
         let values = self.indicator_calculator.get_all_current_values();
 
         let mut converted: Vec<trading_cli::IndicatorValue> = values
@@ -348,21 +311,16 @@ impl MonitoringService {
             })
             .collect();
 
-        // Sort by timestamp descending and limit
         converted.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
         converted.truncate(100);
-
         Ok(converted)
     }
 
-    /// Collect strategy status information
     async fn collect_strategy_status(
         &self,
         strategy_info: &StrategyInfo,
         positions: &[trading_cli::Position],
     ) -> Option<trading_cli::StrategyStatus> {
-        // Find position for this strategy's symbol
-        // Convert Pair to string format: "BASE/QUOTE" (e.g., "ETH/USDC")
         let symbol_str = format!(
             "{}/{}",
             strategy_info.symbol.base, strategy_info.symbol.quote
@@ -373,17 +331,14 @@ impl MonitoringService {
             strategy_info.symbol,
             symbol_str
         );
-        // Position symbols might be in "ETHUSDC" format, so check both
         let symbol_no_slash = format!(
             "{}{}",
             strategy_info.symbol.base, strategy_info.symbol.quote
         );
-        let position = positions.iter().find(|p| {
-            // Try both formats: "ETHUSDC" and "ETH/USDC"
-            p.symbol == symbol_str || p.symbol == symbol_no_slash
-        });
+        let position = positions
+            .iter()
+            .find(|p| p.symbol == symbol_str || p.symbol == symbol_no_slash);
 
-        // Get active orders count for this symbol
         let trading_state_arc = self.trading_state_manager.get_state();
         let trading_state = trading_state_arc.read().await;
         let active_orders = trading_state
@@ -391,19 +346,16 @@ impl MonitoringService {
             .values()
             .filter(|o| {
                 let order_symbol: smol_str::SmolStr = o.instrument.symbol().clone();
-                // Order symbols might be in "ETHUSDC" format, so check both
                 order_symbol.as_str() == symbol_str || order_symbol.as_str() == symbol_no_slash
             })
             .count();
 
-        // Calculate P&L if we have a position
-        // TODO: Get current price from MarketDataStateManager for accurate P&L
         let (position_quantity, position_avg_price, unrealized_pnl, unrealized_pnl_percent) =
             if let Some(pos) = position {
                 (
                     pos.quantity.clone(),
                     pos.avg_price.clone(),
-                    "N/A".to_string(), // Will calculate when we have market data access
+                    "N/A".to_string(),
                     "N/A".to_string(),
                 )
             } else {
@@ -415,12 +367,9 @@ impl MonitoringService {
                 )
             };
 
-        // Get strategy ID and enabled status
         let strategy_id =
             StrategyManager::make_strategy_id(&strategy_info.strategy_name, &strategy_info.symbol);
 
-        // Get enabled status from strategy manager
-        // We use is_strategy_enabled which handles the locking internally
         let enabled = if let Some(ref strategy_manager) = self.strategy_manager {
             strategy_manager
                 .read()
@@ -428,7 +377,7 @@ impl MonitoringService {
                 .is_strategy_enabled(&strategy_id)
                 .await
         } else {
-            true // Default to enabled if strategy manager not available
+            true
         };
 
         Some(trading_cli::StrategyStatus {
@@ -442,18 +391,15 @@ impl MonitoringService {
             unrealized_pnl_percent,
             active_orders: active_orders as i32,
             max_active_orders: strategy_info.max_active_orders as i32,
-            last_signal: "None".to_string(), // TODO: Track last signal from strategy
-            signal_strength: String::new(),  // TODO: Get from strategy if available
+            last_signal: "None".to_string(),
+            signal_strength: String::new(),
         })
     }
 
-    /// Get orderbooks from MarketDataStateManager
     pub async fn get_orderbooks(&self) -> Result<Vec<trading_cli::Orderbook>, Status> {
         let state_arc = self.market_data_state_manager.get_state();
         let state = state_arc.read().await;
 
-        // Get all configured pairs from symbol registry (not just pairs with orderbooks)
-        // This ensures we show all pairs even if they haven't received updates yet
         let symbol_registry = self.market_data_state_manager.symbol_registry();
         let configured_pairs: Vec<trading_core::types::common::Pair> =
             symbol_registry.all_pairs().into_iter().cloned().collect();
@@ -463,14 +409,18 @@ impl MonitoringService {
         debug!(
             "[gRPC] get_orderbooks: Registry has {} pairs: {:?}, State has {} pairs with data: {:?}",
             configured_pairs.len(),
-            configured_pairs.iter().map(|p| format!("{}/{}", p.base, p.quote)).collect::<Vec<_>>(),
+            configured_pairs
+                .iter()
+                .map(|p| format!("{}/{}", p.base, p.quote))
+                .collect::<Vec<_>>(),
             pairs_with_data.len(),
-            pairs_with_data.iter().map(|p| format!("{}/{}", p.base, p.quote)).collect::<Vec<_>>()
+            pairs_with_data
+                .iter()
+                .map(|p| format!("{}/{}", p.base, p.quote))
+                .collect::<Vec<_>>()
         );
 
-        // Use configured pairs instead of just pairs with orderbooks
         let pairs = if configured_pairs.is_empty() {
-            // Fallback to pairs with orderbooks if registry is empty
             pairs_with_data
         } else {
             configured_pairs
@@ -479,12 +429,10 @@ impl MonitoringService {
         let mut orderbooks = Vec::new();
 
         for pair in pairs {
-            // Get orderbook if available, otherwise create empty one
             let orderbook_opt = state.get_orderbook(&pair);
 
             let (bids, asks, best_bid, best_ask, mid_price, spread, timestamp) =
                 if let Some(orderbook) = orderbook_opt {
-                    // Get top 10 bids and asks
                     let bids: Vec<trading_cli::OrderbookLevel> = orderbook
                         .bids
                         .iter()
@@ -505,7 +453,6 @@ impl MonitoringService {
                         })
                         .collect();
 
-                    // Calculate best bid/ask and spread
                     let best_bid = orderbook
                         .best_bid_price()
                         .map(|p| p.to_string())
@@ -536,7 +483,6 @@ impl MonitoringService {
                         orderbook.timestamp as i64,
                     )
                 } else {
-                    // No orderbook data yet - return empty
                     (
                         Vec::new(),
                         Vec::new(),
@@ -575,9 +521,7 @@ impl MonitoringService {
             orderbooks.len()
         );
 
-        // Sort by pair name for consistent ordering
         orderbooks.sort_by(|a, b| a.pair.cmp(&b.pair));
-
         Ok(orderbooks)
     }
 }

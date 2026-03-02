@@ -38,7 +38,6 @@ pub struct ExchangeStateManager {
     /// Trading client for REST reconciliation calls
     /// Stored here for potential future use (e.g., exposing to external callers)
     /// Currently only used by the reconciler, which receives it during construction
-    #[allow(dead_code)]
     trading_client: Arc<RwLock<dyn TradingClient<OrderRequest>>>,
 }
 

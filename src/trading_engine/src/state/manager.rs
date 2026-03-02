@@ -42,7 +42,6 @@ impl TradingStateManager {
         let subscriber = Arc::new(tokio::sync::Mutex::new(ExchangeStateSubscriber::new(
             exchange_update_rx,
             state.clone(),
-            exchange_state_manager.clone(),
         )));
         let reconciler = PositionReconciler::new(exchange_state_manager);
 

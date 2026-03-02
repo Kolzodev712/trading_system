@@ -12,7 +12,6 @@ use trading_engine::levels::{LevelExecutor, LevelManager};
 
 use super::converters;
 
-/// Service data needed for level operations
 pub struct LevelService {
     pub level_manager: Arc<RwLock<LevelManager>>,
     pub trading_client: Arc<RwLock<dyn TradingClient<OrderRequest>>>,
@@ -21,7 +20,6 @@ pub struct LevelService {
 }
 
 impl LevelService {
-    /// Get all levels
     pub async fn get_levels(
         &self,
         _request: Request<trading_cli::GetLevelsRequest>,
@@ -30,8 +28,8 @@ impl LevelService {
         let all_levels = level_manager.get_all_levels();
 
         let proto_levels: Vec<trading_cli::Level> = all_levels
-            .iter()
-            .map(|level| converters::level_to_proto(level))
+            .into_iter()
+            .map(converters::level_to_proto)
             .collect();
 
         Ok(Response::new(trading_cli::GetLevelsResponse {
@@ -39,7 +37,6 @@ impl LevelService {
         }))
     }
 
-    /// Get a single level by ID
     pub async fn get_level(
         &self,
         request: Request<trading_cli::GetLevelRequest>,
@@ -59,7 +56,6 @@ impl LevelService {
         }))
     }
 
-    /// Create a new level
     pub async fn create_level(
         &self,
         request: Request<trading_cli::CreateLevelRequest>,
@@ -69,7 +65,6 @@ impl LevelService {
             .config
             .ok_or_else(|| Status::invalid_argument("LevelConfig is required"))?;
 
-        // Validate required fields
         if config.id.is_empty() {
             return Err(Status::invalid_argument("Level ID is required"));
         }
@@ -84,7 +79,6 @@ impl LevelService {
             ));
         }
 
-        // Parse price config (only Fixed for now)
         let price_config = if config.price.is_empty() {
             return Err(Status::invalid_argument("Price is required"));
         } else if let Some(price_str) = config.price.strip_prefix("Fixed(") {
@@ -107,7 +101,6 @@ impl LevelService {
             ));
         };
 
-        // Parse quantity config (only Fixed for now)
         let quantity_config = if config.quantity.is_empty() {
             return Err(Status::invalid_argument("Quantity is required"));
         } else if let Some(qty_str) = config.quantity.strip_prefix("Fixed(") {
@@ -130,16 +123,12 @@ impl LevelService {
             ));
         };
 
-        // Parse side
         let side = match config.side.as_str() {
             "Buy" => trading_core::types::common::Side::Buy,
             "Sell" => trading_core::types::common::Side::Sell,
-            _ => {
-                return Err(Status::invalid_argument("Side must be 'Buy' or 'Sell'"));
-            }
+            _ => return Err(Status::invalid_argument("Side must be 'Buy' or 'Sell'")),
         };
 
-        // Parse order type
         let order_type = match config.order_type.as_str() {
             "Limit" => trading_engine::levels::config::OrderTypeConfig::Limit,
             "Market" => trading_engine::levels::config::OrderTypeConfig::Market,
@@ -154,7 +143,6 @@ impl LevelService {
             }
         };
 
-        // Parse risk limits
         let daily_loss_limit = if !config.risk_limit.is_empty() {
             Some(
                 rust_decimal::Decimal::from_str_exact(&config.risk_limit)
@@ -174,7 +162,6 @@ impl LevelService {
             None
         };
 
-        // Build LevelConfig (pair-agnostic)
         let level_config = trading_engine::levels::config::LevelConfig {
             id: SmolStr::new(&config.id),
             name: None,
@@ -198,13 +185,11 @@ impl LevelService {
             group: None,
         };
 
-        // Convert symbol to Pair
         let pair = trading_core::types::common::Pair {
             base: SmolStr::new(&symbol.base),
             quote: SmolStr::new(&symbol.quote),
         };
 
-        // Add level via LevelManager (with pair)
         let mut level_manager = self.level_manager.write().await;
         level_manager
             .add_level(level_config.clone(), pair)
@@ -218,7 +203,6 @@ impl LevelService {
         }))
     }
 
-    /// Update an existing level
     pub async fn update_level(
         &self,
         request: Request<trading_cli::UpdateLevelRequest>,
@@ -232,17 +216,12 @@ impl LevelService {
             .get_level_mut(&level_id)
             .ok_or_else(|| Status::not_found(format!("Level {} not found", req.level_id)))?;
 
-        // Update fields from the provided config
         if let Some(config) = req.config {
-            // Update enabled state
             level.config.enabled = config.enabled;
 
-            // Update risk limits if provided
             if !config.risk_limit.is_empty() {
                 match rust_decimal::Decimal::from_str_exact(&config.risk_limit) {
-                    Ok(decimal) => {
-                        level.config.risk.daily_loss_limit = Some(decimal);
-                    }
+                    Ok(decimal) => level.config.risk.daily_loss_limit = Some(decimal),
                     Err(e) => {
                         return Err(Status::invalid_argument(format!(
                             "Invalid risk_limit format: {}",
@@ -254,9 +233,7 @@ impl LevelService {
 
             if !config.max_position_size.is_empty() {
                 match rust_decimal::Decimal::from_str_exact(&config.max_position_size) {
-                    Ok(decimal) => {
-                        level.config.risk.max_position = Some(decimal);
-                    }
+                    Ok(decimal) => level.config.risk.max_position = Some(decimal),
                     Err(e) => {
                         return Err(Status::invalid_argument(format!(
                             "Invalid max_position_size format: {}",
@@ -266,11 +243,9 @@ impl LevelService {
                 }
             }
 
-            // Update lifecycle settings
             level.config.lifecycle.auto_repost = config.repost_on_fill;
             level.config.lifecycle.auto_repost_on_cancel = config.repost_on_cancel;
 
-            // Update price if it's a Fixed value (parse from string like "Fixed(123.45)")
             if !config.price.is_empty() {
                 if let Some(price_str) = config.price.strip_prefix("Fixed(") {
                     if let Some(price_str) = price_str.strip_suffix(')') {
@@ -291,7 +266,6 @@ impl LevelService {
                 }
             }
 
-            // Update quantity if it's a Fixed value (parse from string like "Fixed(0.001)")
             if !config.quantity.is_empty() {
                 if let Some(qty_str) = config.quantity.strip_prefix("Fixed(") {
                     if let Some(qty_str) = qty_str.strip_suffix(')') {
@@ -313,11 +287,9 @@ impl LevelService {
             }
         }
 
-        // Clone config before dropping the level reference
         let updated_config = level.config.clone();
-        let _ = level; // Drop the mutable reference to level
+        let _ = level;
 
-        // Persist to MongoDB via LevelManager
         level_manager
             .update_level_config(&level_id, updated_config)
             .await
@@ -330,7 +302,6 @@ impl LevelService {
         }))
     }
 
-    /// Toggle level enabled/disabled
     pub async fn toggle_level(
         &self,
         request: Request<trading_cli::ToggleLevelRequest>,
@@ -340,21 +311,18 @@ impl LevelService {
 
         let mut level_manager = self.level_manager.write().await;
 
-        // Get current enabled state to determine what to do
         let current_enabled = level_manager
             .get_level(&level_id)
             .map(|l| l.config.enabled)
             .ok_or_else(|| Status::not_found(format!("Level {} not found", req.level_id)))?;
 
-        // Check global trading control - if disabled, prevent enabling individual levels
         let global_trading_enabled = self.trading_control.is_enabled().await;
         if !global_trading_enabled && req.enabled {
             return Err(Status::failed_precondition(
-                "Cannot enable individual level when global trading is disabled. Enable global trading first."
+                "Cannot enable individual level when global trading is disabled. Enable global trading first.",
             ));
         }
 
-        // Only toggle if the requested state is different from current
         if current_enabled != req.enabled {
             if req.enabled {
                 level_manager
@@ -362,24 +330,17 @@ impl LevelService {
                     .await
                     .map_err(|e| Status::internal(format!("Failed to enable level: {}", e)))?;
             } else {
-                // When disabling, cancel orders for this level only
-                // Get the level to access its active orders
                 let level_for_cancel = level_manager
                     .get_level(&level_id)
                     .cloned()
                     .ok_or_else(|| Status::not_found(format!("Level {} not found", level_id)))?;
 
-                // Check if there are orders to cancel (either in active_orders or on exchange)
                 let orders_in_level = level_for_cancel.active_orders.len();
-
-                // Also check ExchangeStateManager for OPEN orders on this pair that might belong to this level
-                // Only count open orders (New, PartiallyFilled) - not cancelled/filled orders
-                let orders_on_exchange = {
-                    self.exchange_state_manager
-                        .get_open_orders_for_pair(&level_for_cancel.pair)
-                        .await
-                        .len()
-                };
+                let orders_on_exchange = self
+                    .exchange_state_manager
+                    .get_open_orders_for_pair(&level_for_cancel.pair)
+                    .await
+                    .len();
 
                 if orders_in_level > 0 || orders_on_exchange > 0 {
                     tracing::info!(
@@ -392,19 +353,17 @@ impl LevelService {
                     );
 
                     if orders_in_level > 0 {
-                        // Cancel individual orders for this level
                         let executor = LevelExecutor::new(
                             self.trading_client.clone(),
-                            None, // asset_service not needed for cancellation
+                            None,
                             trading_core::types::common::Exchange::Binance,
-                            trading_core::types::common::InstrumentType::Spot, // Default to Spot for cancellation
-                            rust_decimal::Decimal::new(1, 5), // config_min_order_size
-                            rust_decimal::Decimal::new(1, 5), // config_step_size
-                            rust_decimal::Decimal::new(1, 2), // config_tick_size
-                            rust_decimal::Decimal::new(5, 0), // config_min_notional
+                            trading_core::types::common::InstrumentType::Spot,
+                            rust_decimal::Decimal::new(1, 5),
+                            rust_decimal::Decimal::new(1, 5),
+                            rust_decimal::Decimal::new(1, 2),
+                            rust_decimal::Decimal::new(5, 0),
                         );
 
-                        // Cancel orders with timeout to prevent blocking the gRPC handler
                         match tokio::time::timeout(
                             tokio::time::Duration::from_secs(5),
                             executor.cancel_level_orders(&level_for_cancel),
@@ -433,10 +392,6 @@ impl LevelService {
                         }
                     }
 
-                    // If there are open orders on exchange but not in active_orders, use cancel_all_orders as fallback
-                    // This handles the case where an order was placed but not tracked in active_orders
-                    // NOTE: This will cancel ALL orders for the pair, not just this level's orders
-                    // This is a limitation - ideally we'd track which orders belong to which level
                     if orders_on_exchange > 0 && orders_in_level == 0 {
                         tracing::info!(
                             "[gRPC] Level {} has {} open order(s) on exchange but not in active_orders, using cancel_all_orders as fallback (WARNING: will cancel ALL orders for {}/{})",
@@ -445,9 +400,8 @@ impl LevelService {
                             level_for_cancel.pair.base,
                             level_for_cancel.pair.quote
                         );
-                        // Clone the pair before releasing the lock
                         let pair_to_cancel = level_for_cancel.pair.clone();
-                        drop(level_for_cancel); // Release level lock before acquiring trading_client lock
+                        drop(level_for_cancel);
 
                         tracing::info!(
                             "[gRPC] Calling cancel_all_orders for {}/{}...",
@@ -455,7 +409,6 @@ impl LevelService {
                             pair_to_cancel.quote
                         );
 
-                        // Clone what we need and release the lock quickly to avoid blocking
                         let trading_client_arc = Arc::clone(&self.trading_client);
                         let pair_clone = pair_to_cancel.clone();
                         let cancel_result = async move {
@@ -473,7 +426,6 @@ impl LevelService {
                                 );
                             }
                             Err(e) => {
-                                // Check if error is "Unknown order sent" - this means orders were already cancelled
                                 let error_msg = format!("{}", e);
                                 if error_msg.contains("Unknown order")
                                     || error_msg.contains("-2011")
@@ -503,16 +455,8 @@ impl LevelService {
                                 }
                             }
                         }
-                    } else if orders_on_exchange == 0 && orders_in_level == 0 {
-                        tracing::debug!(
-                            "[gRPC] Level {} has no open orders to cancel (level has {}, exchange has {})",
-                            level_id,
-                            orders_in_level,
-                            orders_on_exchange
-                        );
                     }
 
-                    // Clear active orders from the level
                     if let Some(level) = level_manager.get_level_mut(&level_id) {
                         level.active_orders.clear();
                     }
@@ -525,7 +469,6 @@ impl LevelService {
                     );
                 }
 
-                // Now disable the level
                 level_manager
                     .disable_level(&level_id)
                     .await

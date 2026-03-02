@@ -1414,6 +1414,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "gateway"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "clap",
+ "exchange_engine",
+ "indicator_engine",
+ "market_data_engine",
+ "prost",
+ "prost-types",
+ "rust_decimal",
+ "smol_str",
+ "tokio",
+ "tokio-stream",
+ "tonic",
+ "tonic-build",
+ "tracing",
+ "tracing-subscriber",
+ "trading_core",
+ "trading_engine",
+]
+
+[[package]]
 name = "generic-array"
 version = "0.14.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3656,14 +3680,13 @@ dependencies = [
  "clap",
  "exchange_engine",
  "futures-util",
+ "gateway",
  "hex",
  "hmac",
  "indicator_engine",
  "live_config",
  "market_data_engine",
  "pem",
- "prost",
- "prost-types",
  "redis",
  "reqwest",
  "ring 0.17.14",
@@ -3675,17 +3698,15 @@ dependencies = [
  "smol_str",
  "thiserror 1.0.69",
  "tokio",
- "tokio-stream",
  "tokio-test",
  "tokio-tungstenite 0.14.0",
- "tonic",
- "tonic-build",
  "tower 0.4.13",
  "tower-http",
  "tracing",
  "tracing-subscriber",
  "trading_core",
  "trading_engine",
+ "trading_networking",
  "trading_trace",
  "url",
  "urlencoding",

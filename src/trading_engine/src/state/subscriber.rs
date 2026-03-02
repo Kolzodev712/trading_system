@@ -4,14 +4,12 @@
 //! This is how TradingState stays in sync with ExchangeStateManager.
 
 use crate::state::TradingState;
-use exchange_engine::state::manager::ExchangeStateManager;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, warn};
 use trading_core::{
     channels::exchange::ExchangeUpdate,
     error::EngineError,
-    registry::symbol::SymbolRegistry,
     types::exchange::{Balance, Order, Trade},
 };
 
@@ -22,14 +20,6 @@ pub struct ExchangeStateSubscriber {
 
     /// Trading state to update
     trading_state: Arc<RwLock<TradingState>>,
-
-    /// Exchange state manager (for reconciliation and lookups)
-    #[allow(dead_code)] // Reserved for future use (balance-based position derivation)
-    exchange_state_manager: Arc<ExchangeStateManager>,
-
-    /// Symbol registry for Symbol↔Pair conversions
-    #[allow(dead_code)] // Reserved for future use (balance-based position derivation)
-    symbol_registry: Arc<SymbolRegistry>,
 }
 
 impl ExchangeStateSubscriber {
@@ -38,22 +28,13 @@ impl ExchangeStateSubscriber {
     /// # Arguments
     /// * `exchange_update_rx` - Receiver for ExchangeStateManager updates
     /// * `trading_state` - Trading state to update
-    /// * `exchange_state_manager` - Exchange state manager for lookups
     pub fn new(
         exchange_update_rx: trading_core::channels::exchange::ExchangeUpdateReceiver,
         trading_state: Arc<RwLock<TradingState>>,
-        exchange_state_manager: Arc<ExchangeStateManager>,
     ) -> Self {
-        // Get symbol registry from exchange state
-        // We'll need to extract it from the exchange state or pass it separately
-        // For now, create an empty one - we'll update this when we have access
-        let symbol_registry = Arc::new(SymbolRegistry::new());
-
         Self {
             exchange_update_rx,
             trading_state,
-            exchange_state_manager,
-            symbol_registry,
         }
     }
 

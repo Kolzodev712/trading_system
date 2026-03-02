@@ -1,6 +1,7 @@
 pub mod config;
-pub mod grpc;
 pub mod shutdown;
+
+pub use gateway::grpc;
 
 use asset_engine::AssetService;
 use indicator_engine::IndicatorService;
@@ -8,10 +9,11 @@ use market_data_engine::{
     config::{ExchangeConfig as MDExchangeConfig, MarketDataConfig},
     driver::{MarketDataDriver, Method},
 };
+use std::collections::HashSet;
 use tokio::sync::Mutex;
 
 use crate::config::{BotConfig, StrategiesConfig};
-use crate::grpc::server::TradingGrpcServer;
+use crate::grpc::TradingGrpcServer;
 use crate::shutdown::ShutdownManager;
 use live_config::{LiveConfigClient, LiveConfigService};
 use std::path::Path;
@@ -29,9 +31,193 @@ use trading_engine::levels::{
     CancellationManager, IndicatorSubscriber, LevelBasedEventLoop, LevelExecutor, LevelManager,
 };
 use trading_engine::risk::RiskManager;
+use trading_engine::state::manager::TradingStateManager;
 use trading_engine::strategies::{
     BuyLowSellHigh, StrategyExecutor, StrategyManager, StrategyManagerWrapper,
 };
+use trading_networking::commands::{
+    Command, CommandDispatcher, CommandHandler, CommandPayload, CommandResponse, MpscCommandRouter,
+};
+use trading_networking::events::{cold_event_bus, hot_event_channel};
+use trading_networking::gateway::backpressure::BackpressurePolicy;
+use trading_networking::gateway::command_gateway::serve_zenoh_commands;
+use trading_networking::gateway::event_gateway::EventGateway;
+use trading_networking::gateway::transports::zenoh::{
+    open_default_session, ZenohEventTransport, ZenohKeyspace,
+};
+
+struct RunnerCommandHandler {
+    trading_control: Arc<trading_core::grpc::TradingControl>,
+    trading_state_manager: Arc<trading_engine::state::manager::TradingStateManager>,
+    exchange_state_manager: Arc<exchange_engine::state::manager::ExchangeStateManager>,
+    level_manager: Arc<RwLock<trading_engine::levels::LevelManager>>,
+    strategy_manager:
+        Option<Arc<RwLock<trading_engine::strategies::strategy_manager::StrategyManager>>>,
+}
+
+#[async_trait::async_trait]
+impl CommandHandler for RunnerCommandHandler {
+    async fn handle(&self, command: Command) -> Result<CommandResponse, String> {
+        match command.payload {
+            CommandPayload::SetTradingEnabled { enabled } => {
+                let mut active_order_ids_set = HashSet::new();
+                let mut pairs_with_orders_set = HashSet::new();
+
+                {
+                    let state_arc = self.trading_state_manager.get_state();
+                    let state = state_arc.read().await;
+                    for order in state.active_orders.values() {
+                        active_order_ids_set.insert(order.order_id.clone());
+                    }
+                }
+
+                {
+                    let exchange_state_arc = self.exchange_state_manager.get_state();
+                    let exchange_state = exchange_state_arc.read().await;
+                    for order in exchange_state.get_open_orders() {
+                        active_order_ids_set.insert(order.order_id.clone());
+                        if let Some(pair) = exchange_state
+                            .symbol_registry()
+                            .get_pair(&order.instrument.symbol().into())
+                        {
+                            pairs_with_orders_set.insert(pair.clone());
+                        }
+                    }
+                }
+
+                {
+                    let level_manager = self.level_manager.read().await;
+                    for level in level_manager.get_all_levels() {
+                        for order_id in &level.active_orders {
+                            active_order_ids_set.insert(order_id.clone());
+                            pairs_with_orders_set.insert(level.pair.clone());
+                        }
+                    }
+                }
+
+                let active_order_ids: Vec<_> = active_order_ids_set.into_iter().collect();
+                let pairs_with_orders: Vec<_> = pairs_with_orders_set.into_iter().collect();
+
+                let cancelled = self
+                    .trading_control
+                    .set_enabled(enabled, active_order_ids, pairs_with_orders)
+                    .await
+                    .map_err(|e| e.to_string())?;
+
+                Ok(CommandResponse {
+                    success: true,
+                    message: Some(if enabled {
+                        "Trading enabled".to_string()
+                    } else {
+                        format!("Trading disabled. Cancelled {} orders.", cancelled.len())
+                    }),
+                    data: None,
+                })
+            }
+            CommandPayload::GetTradingStatus => {
+                let enabled = self.trading_control.is_enabled().await;
+                Ok(CommandResponse {
+                    success: true,
+                    message: Some(format!("enabled={}", enabled)),
+                    data: None,
+                })
+            }
+            CommandPayload::ToggleStrategy {
+                strategy_name,
+                symbol,
+                enabled,
+            } => {
+                let Some(ref strategy_manager) = self.strategy_manager else {
+                    return Err("Strategy manager not available".to_string());
+                };
+
+                let parts: Vec<&str> = symbol.split('/').collect();
+                if parts.len() != 2 {
+                    return Err("Invalid symbol format; expected BASE/QUOTE".to_string());
+                }
+                let pair = trading_core::types::common::Pair::new(parts[0], parts[1]);
+                let strategy_id = StrategyManager::make_strategy_id(&strategy_name, &pair);
+
+                let global_trading_enabled = self.trading_control.is_enabled().await;
+                if !global_trading_enabled && enabled {
+                    return Err(
+                        "Cannot enable strategy when global trading is disabled".to_string()
+                    );
+                }
+
+                let current_enabled = strategy_manager
+                    .read()
+                    .await
+                    .is_strategy_enabled(&strategy_id)
+                    .await;
+                if current_enabled != enabled {
+                    strategy_manager
+                        .write()
+                        .await
+                        .set_strategy_enabled(&strategy_id, enabled)
+                        .await;
+                }
+
+                Ok(CommandResponse {
+                    success: true,
+                    message: Some(format!(
+                        "strategy {} {}",
+                        strategy_id,
+                        if enabled { "enabled" } else { "disabled" }
+                    )),
+                    data: None,
+                })
+            }
+            CommandPayload::GetLevels
+            | CommandPayload::GetLevel { .. }
+            | CommandPayload::CreateLevel { .. }
+            | CommandPayload::UpdateLevel { .. }
+            | CommandPayload::DeleteLevel { .. }
+            | CommandPayload::ToggleLevel { .. } => Err("command not implemented".to_string()),
+        }
+    }
+}
+
+async fn maybe_start_zenoh_gateway(
+    hot_rx: trading_networking::events::HotEventRx,
+    cold_bus: trading_networking::events::ColdEventBus,
+    router: Arc<MpscCommandRouter>,
+) {
+    let enabled = std::env::var("ZENOH_ENABLED")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+    if !enabled {
+        return;
+    }
+
+    let session = match open_default_session().await {
+        Ok(s) => s,
+        Err(e) => {
+            warn!("Zenoh session open failed: {e}");
+            return;
+        }
+    };
+    let keyspace = ZenohKeyspace::default();
+    let transport = Arc::new(ZenohEventTransport::new(session.clone(), keyspace.clone()));
+
+    let mut gateway = EventGateway::new(
+        BackpressurePolicy::Sample { every_nth: 1 },
+        BackpressurePolicy::Drop,
+    );
+    let _health = gateway.add_transport("zenoh", transport, 1024);
+
+    let cold_rx = cold_bus.subscribe();
+    tokio::spawn(async move {
+        gateway.run(hot_rx, cold_rx).await;
+    });
+
+    let cmd_key = keyspace.commands_key;
+    tokio::spawn(async move {
+        if let Err(e) = serve_zenoh_commands(&session, &cmd_key, router).await {
+            tracing::warn!("Zenoh command gateway stopped: {e}");
+        }
+    });
+}
 
 /// Shared execution report handler
 /// Processes execution reports from the exchange and calls the provided handler function
@@ -304,6 +490,91 @@ pub async fn strategy_runner(
     let grpc_handle = grpc_server.start(grpc_addr).await?;
     info!("gRPC server started on {}", grpc_addr);
 
+    let (hot_tx, hot_rx) = hot_event_channel(bot_config.channels.market_data_capacity);
+    let cold_bus = cold_event_bus(bot_config.channels.exchange_update_capacity);
+
+    let (router, cmd_rx) = MpscCommandRouter::new(1024);
+    let router = Arc::new(router);
+
+    let handler = RunnerCommandHandler {
+        trading_control: Arc::clone(&trading_control),
+        trading_state_manager: Arc::clone(&services.trading_state_manager),
+        exchange_state_manager: Arc::clone(&services.exchange_state_manager),
+        level_manager: Arc::clone(&dummy_level_manager),
+        strategy_manager: Some(Arc::clone(&strategy_manager_arc)),
+    };
+    let mut dispatcher = CommandDispatcher::new(cmd_rx, Box::new(handler));
+    tokio::spawn(async move {
+        dispatcher.run().await;
+    });
+
+    let hot_tx_for_bridge = hot_tx.clone();
+    let mut md_rx = services.market_data_rx.resubscribe();
+    let mut shutdown_rx_md = services.shutdown_manager.subscribe();
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                update = md_rx.recv() => {
+                    match update {
+                        Ok(trading_core::channels::market_data::MarketDataUpdate::Orderbook { orderbook, trace_context }) => {
+                            let event = trading_networking::events::HotEvent::orderbook_from_structured(&orderbook, trace_context);
+                            let _ = hot_tx_for_bridge.try_send(event);
+                        }
+                        Ok(trading_core::channels::market_data::MarketDataUpdate::Trade { trade, trace_context }) => {
+                            let event = trading_networking::events::HotEvent::Trade {
+                                pair: trade.pair.clone(),
+                                price: trade.price,
+                                quantity: trade.quantity,
+                                timestamp: trade.timestamp,
+                                trade_id: trade.trade_id.clone(),
+                                trace_context,
+                            };
+                            let _ = hot_tx_for_bridge.try_send(event);
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                            tracing::warn!("[zenoh bridge] market data lagged; skipped {}", skipped);
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                    }
+                }
+                _ = shutdown_rx_md.recv() => break,
+            }
+        }
+    });
+
+    let cold_bus_for_bridge = cold_bus.clone();
+    let mut ex_rx = services.exec_report_rx.resubscribe();
+    let mut shutdown_rx_ex = services.shutdown_manager.subscribe();
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                update = ex_rx.recv() => {
+                    match update {
+                        Ok(trading_core::channels::exchange::ExchangeUpdate::Order { order, trace_context }) => {
+                            let _ = cold_bus_for_bridge.publish(Arc::new(trading_networking::events::ColdEvent::Order { order, trace_context }));
+                        }
+                        Ok(trading_core::channels::exchange::ExchangeUpdate::Balance { balance, trace_context }) => {
+                            let _ = cold_bus_for_bridge.publish(Arc::new(trading_networking::events::ColdEvent::Balance { balance, trace_context }));
+                        }
+                        Ok(trading_core::channels::exchange::ExchangeUpdate::Position { position, trace_context }) => {
+                            let _ = cold_bus_for_bridge.publish(Arc::new(trading_networking::events::ColdEvent::Position { position, trace_context }));
+                        }
+                        Ok(trading_core::channels::exchange::ExchangeUpdate::Trade { trade, trace_context }) => {
+                            let _ = cold_bus_for_bridge.publish(Arc::new(trading_networking::events::ColdEvent::Trade { trade, trace_context }));
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                            tracing::warn!("[zenoh bridge] exchange updates lagged; skipped {}", skipped);
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                    }
+                }
+                _ = shutdown_rx_ex.recv() => break,
+            }
+        }
+    });
+
+    maybe_start_zenoh_gateway(hot_rx, cold_bus, router).await;
+
     // Pass all pairs to executor (no .first() - single source of truth)
     let executor = StrategyExecutor::new(
         strategy_wrapper.clone(),
@@ -550,6 +821,91 @@ pub async fn level_runner(
     let grpc_server = TradingGrpcServer::from_service(grpc_service);
     let grpc_handle = grpc_server.start(grpc_addr).await?;
     info!("gRPC server started on {}", grpc_addr);
+
+    let (hot_tx, hot_rx) = hot_event_channel(bot_config.channels.market_data_capacity);
+    let cold_bus = cold_event_bus(bot_config.channels.exchange_update_capacity);
+
+    let (router, cmd_rx) = MpscCommandRouter::new(1024);
+    let router = Arc::new(router);
+
+    let handler = RunnerCommandHandler {
+        trading_control: Arc::clone(&trading_control),
+        trading_state_manager: Arc::clone(&services.trading_state_manager),
+        exchange_state_manager: Arc::clone(&services.exchange_state_manager),
+        level_manager: Arc::clone(&level_manager),
+        strategy_manager: None,
+    };
+    let mut dispatcher = CommandDispatcher::new(cmd_rx, Box::new(handler));
+    tokio::spawn(async move {
+        dispatcher.run().await;
+    });
+
+    let hot_tx_for_bridge = hot_tx.clone();
+    let mut md_rx = services.market_data_rx.resubscribe();
+    let mut shutdown_rx_md = services.shutdown_manager.subscribe();
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                update = md_rx.recv() => {
+                    match update {
+                        Ok(trading_core::channels::market_data::MarketDataUpdate::Orderbook { orderbook, trace_context }) => {
+                            let event = trading_networking::events::HotEvent::orderbook_from_structured(&orderbook, trace_context);
+                            let _ = hot_tx_for_bridge.try_send(event);
+                        }
+                        Ok(trading_core::channels::market_data::MarketDataUpdate::Trade { trade, trace_context }) => {
+                            let event = trading_networking::events::HotEvent::Trade {
+                                pair: trade.pair.clone(),
+                                price: trade.price,
+                                quantity: trade.quantity,
+                                timestamp: trade.timestamp,
+                                trade_id: trade.trade_id.clone(),
+                                trace_context,
+                            };
+                            let _ = hot_tx_for_bridge.try_send(event);
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                            tracing::warn!("[zenoh bridge] market data lagged; skipped {}", skipped);
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                    }
+                }
+                _ = shutdown_rx_md.recv() => break,
+            }
+        }
+    });
+
+    let cold_bus_for_bridge = cold_bus.clone();
+    let mut ex_rx = services.exec_report_rx.resubscribe();
+    let mut shutdown_rx_ex = services.shutdown_manager.subscribe();
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                update = ex_rx.recv() => {
+                    match update {
+                        Ok(trading_core::channels::exchange::ExchangeUpdate::Order { order, trace_context }) => {
+                            let _ = cold_bus_for_bridge.publish(Arc::new(trading_networking::events::ColdEvent::Order { order, trace_context }));
+                        }
+                        Ok(trading_core::channels::exchange::ExchangeUpdate::Balance { balance, trace_context }) => {
+                            let _ = cold_bus_for_bridge.publish(Arc::new(trading_networking::events::ColdEvent::Balance { balance, trace_context }));
+                        }
+                        Ok(trading_core::channels::exchange::ExchangeUpdate::Position { position, trace_context }) => {
+                            let _ = cold_bus_for_bridge.publish(Arc::new(trading_networking::events::ColdEvent::Position { position, trace_context }));
+                        }
+                        Ok(trading_core::channels::exchange::ExchangeUpdate::Trade { trade, trace_context }) => {
+                            let _ = cold_bus_for_bridge.publish(Arc::new(trading_networking::events::ColdEvent::Trade { trade, trace_context }));
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                            tracing::warn!("[zenoh bridge] exchange updates lagged; skipped {}", skipped);
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                    }
+                }
+                _ = shutdown_rx_ex.recv() => break,
+            }
+        }
+    });
+
+    maybe_start_zenoh_gateway(hot_rx, cold_bus, router).await;
 
     // Wrap risk_manager in Arc<RwLock<>> for LiveConfig service
     let risk_limits_for_live_config = risk_manager.get_limits().clone();
@@ -826,6 +1182,157 @@ pub fn setup_shutdown_handler(shutdown_manager: ShutdownManager) {
         info!("Ctrl-C received, initiating graceful shutdown");
         shutdown_manager.signal_shutdown();
     });
+}
+
+/// Create a shutdown manager for the runner. Use this from binaries so the lib
+/// constructs and uses `ShutdownManager` (avoids dead_code in the library).
+pub fn create_shutdown_manager(capacity: usize) -> ShutdownManager {
+    ShutdownManager::new(capacity)
+}
+
+/// Start Trading State Manager subscriber (used by `run` and by binaries that build services themselves).
+pub fn start_trading_state_subscriber(
+    trading_state_manager: Arc<TradingStateManager>,
+    shutdown_manager: ShutdownManager,
+) {
+    let mut shutdown_rx = shutdown_manager.subscribe();
+    tokio::spawn(async move {
+        tokio::select! {
+            result = trading_state_manager.start_subscriber() => {
+                if let Err(e) = result {
+                    error!("TradingStateManager subscriber error: {e}");
+                }
+            }
+            _ = shutdown_rx.recv() => {
+                info!("TradingStateManager subscriber shutting down");
+            }
+        }
+    });
+}
+
+/// Create strategy persistence if MongoDB is enabled (used by `run` and by binaries).
+pub fn create_strategy_persistence(
+    mongo_client: Option<&Arc<MongoClient>>,
+    bot_config: &BotConfig,
+) -> Option<Arc<trading_engine::strategies::persistence::StrategyPersistence>> {
+    mongo_client.map(|client| {
+        Arc::new(
+            trading_engine::strategies::persistence::StrategyPersistence::new(
+                client.as_ref().clone(),
+                bot_config.mongo.bot_id.clone(),
+            ),
+        )
+    })
+}
+
+/// Create level persistence if MongoDB is enabled (used by `run` and by binaries).
+pub fn create_level_persistence(
+    mongo_client: Option<&Arc<MongoClient>>,
+    bot_config: &BotConfig,
+) -> Option<Arc<trading_engine::levels::persistence::LevelPersistence>> {
+    mongo_client.map(|client| {
+        Arc::new(trading_engine::levels::persistence::LevelPersistence::new(
+            client.as_ref().clone(),
+            bot_config.mongo.bot_id.clone(),
+        ))
+    })
+}
+
+/// Main entry point: creates shutdown manager, builds services, and runs the chosen runner.
+/// Call this from the runner binary so that `ShutdownManager` is constructed in the lib.
+pub async fn run(
+    bot_config: BotConfig,
+    mode: String,
+    strategies_config: String,
+    levels_config: String,
+    mongo_client: Arc<MongoClient>,
+    tracing_handles: Option<trading_trace::ExporterHandles>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let shutdown_manager = ShutdownManager::new(bot_config.channels.shutdown_capacity);
+    setup_shutdown_handler(shutdown_manager.clone());
+
+    let asset_service =
+        initialize_asset_service(bot_config.exchange_engine.exchange.clone()).await?;
+    let configured_pairs = bot_config.get_pairs()?;
+    if configured_pairs.is_empty() {
+        return Err("No pairs configured in bot.json".into());
+    }
+    fetch_asset_data(
+        &asset_service,
+        bot_config.exchange_engine.exchange.clone(),
+        &configured_pairs,
+    )
+    .await;
+
+    let (_, market_data_rx, market_data_handle, market_data_state_manager) =
+        initialize_market_data_engine(&bot_config, &shutdown_manager)?;
+    tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+    info!("Market Data Engine: WebSocket subscribed to orderbook stream");
+
+    let (indicator_tx, indicator_rx) = trading_core::channels::indicators::indicator_update_channel(
+        bot_config.channels.indicator_update_capacity,
+    );
+    let (indicator_service, indicator_handle, indicator_calculator) = initialize_indicator_service(
+        &bot_config,
+        &mongo_client,
+        market_data_rx.resubscribe(),
+        indicator_tx,
+        &shutdown_manager,
+        configured_pairs.as_slice(),
+    )
+    .await?;
+
+    let (exchange_state_manager, exchange_update_rx, trading_client) =
+        initialize_exchange_engine(&bot_config, &shutdown_manager).await?;
+
+    let trading_state_manager = Arc::new(TradingStateManager::new(
+        exchange_update_rx.resubscribe(),
+        exchange_state_manager.clone(),
+    ));
+    start_trading_state_subscriber(trading_state_manager.clone(), shutdown_manager.clone());
+
+    let services = SharedServices {
+        trading_client,
+        exec_report_rx: exchange_update_rx.resubscribe(),
+        market_data_rx: market_data_rx.resubscribe(),
+        indicator_rx,
+        indicator_service,
+        indicator_calculator,
+        shutdown_manager,
+        market_data_handle,
+        trading_ws_handle: tokio::spawn(async {}),
+        indicator_handle,
+        trading_state_manager,
+        exchange_state_manager,
+        market_data_state_manager,
+        asset_service: Some(asset_service),
+        trading_control: None,
+        tracing_handles,
+    };
+
+    match mode.as_str() {
+        "strategies" => {
+            let strategy_persistence =
+                create_strategy_persistence(Some(&mongo_client), &bot_config);
+            strategy_runner(
+                bot_config,
+                strategies_config,
+                services,
+                strategy_persistence,
+            )
+            .await?;
+        }
+        "levels" => {
+            let level_persistence = create_level_persistence(Some(&mongo_client), &bot_config);
+            level_runner(bot_config, levels_config, services, level_persistence).await?;
+        }
+        _ => {
+            return Err(format!("Unknown mode: {}. Use 'strategies' or 'levels'", mode).into());
+        }
+    }
+
+    trading_trace::shutdown_exporters();
+    Ok(())
 }
 
 /// Initialize Asset Service and register exchange client

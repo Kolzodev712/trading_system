@@ -1,5 +1,5 @@
+use super::client::BinanceWSClient;
 use super::types::user_data::events::ParsedBinanceMessage;
-use super::{client::BinanceWSClient, subscriber::BinanceSubscriptionHandler};
 use crate::exchanges::binance::authenticator::BinanceAuthenticator;
 use crate::exchanges::binance::config::BinanceConfig;
 use crate::state::manager::ExchangeStateManager;
@@ -19,11 +19,7 @@ use trading_core::types::{
 /// This connection is long-lived and independent from RPC operations
 #[derive(Debug)]
 pub struct BinanceStreamingClient {
-    #[allow(dead_code)]
-    config: BinanceConfig,
     pub(crate) ws_client: BinanceWSClient,
-    #[allow(dead_code)]
-    subscription_handler: BinanceSubscriptionHandler,
     state_manager: Arc<tokio::sync::Mutex<Option<Arc<ExchangeStateManager>>>>,
     event_tx: Arc<Mutex<Option<mpsc::Sender<ParsedBinanceMessage>>>>,
     inbound_capacity: usize,
@@ -34,12 +30,9 @@ impl BinanceStreamingClient {
         let signer = BinanceAuthenticator::new(config.api_key.clone(), config.secret.clone());
         let session = Arc::new(RwLock::new(None));
         let ws_client = BinanceWSClient::new(signer.clone(), session.clone());
-        let subscription_handler = BinanceSubscriptionHandler::new(signer, session);
 
         Self {
-            config,
             ws_client,
-            subscription_handler,
             state_manager: Arc::new(tokio::sync::Mutex::new(None)),
             event_tx: Arc::new(Mutex::new(None)),
             inbound_capacity,

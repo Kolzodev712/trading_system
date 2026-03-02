@@ -1,6 +1,7 @@
 //! Shared popup rendering functions for Spot and Futures monitor screens
 use crate::app::App;
 use crate::error::CliError;
+use crate::screens::shared::panels;
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
@@ -190,12 +191,8 @@ pub fn render_strategy_details_popup(frame: &mut Frame, app: &App) -> Result<(),
             .block(Block::default().borders(Borders::BOTTOM));
         frame.render_widget(header, chunks[0]);
 
-        // Content
-        let content_info = format_strategy_info(strategy);
-        let content_paragraph = Paragraph::new(content_info)
-            .wrap(Wrap { trim: true })
-            .block(Block::default().title("Strategy Information"));
-        frame.render_widget(content_paragraph, chunks[1]);
+        // Content: use shared strategy details panel
+        panels::render_strategy_details(frame, chunks[1], app)?;
     } else {
         let error_msg = Paragraph::new("No strategy details available")
             .alignment(Alignment::Center)
@@ -282,52 +279,6 @@ fn format_level_config_info(level: &crate::client::trading_cli::Level) -> String
 
         info.push(format!("Repost on Fill: {}", config.repost_on_fill));
         info.push(format!("Repost on Cancel: {}", config.repost_on_cancel));
-    }
-
-    info.join("\n")
-}
-
-fn format_strategy_info(strategy: &crate::client::trading_cli::StrategyStatus) -> String {
-    let mut info = Vec::new();
-
-    info.push(format!("Strategy Name: {}", strategy.strategy_name));
-    info.push(format!("Symbol: {}", strategy.symbol));
-    info.push(String::new());
-
-    info.push("Position:".to_string());
-    if strategy.position_quantity != "0" && strategy.position_quantity != "0.0" {
-        info.push(format!("  Quantity: {}", strategy.position_quantity));
-        info.push(format!("  Average Price: {}", strategy.position_avg_price));
-    } else {
-        info.push("  No open position".to_string());
-    }
-    info.push(String::new());
-
-    info.push("P&L:".to_string());
-    if strategy.unrealized_pnl != "N/A" && strategy.unrealized_pnl != "0" {
-        info.push(format!(
-            "  Unrealized: {} ({})",
-            strategy.unrealized_pnl, strategy.unrealized_pnl_percent
-        ));
-    } else {
-        info.push("  N/A".to_string());
-    }
-    info.push(String::new());
-
-    info.push("Orders:".to_string());
-    info.push(format!(
-        "  Active: {}/{}",
-        strategy.active_orders, strategy.max_active_orders
-    ));
-    info.push(String::new());
-
-    if !strategy.last_signal.is_empty() && strategy.last_signal != "None" {
-        info.push(format!("Last Signal: {}", strategy.last_signal));
-        if !strategy.signal_strength.is_empty() {
-            info.push(format!("Signal Strength: {}", strategy.signal_strength));
-        }
-    } else {
-        info.push("Last Signal: None".to_string());
     }
 
     info.join("\n")

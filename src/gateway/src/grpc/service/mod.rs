@@ -4,15 +4,13 @@ mod levels;
 mod monitoring;
 mod trading_control;
 
-// Re-export StrategyInfo and MonitoringService for use in other modules
 pub use monitoring::{MonitoringService, StrategyInfo};
 
 use async_trait::async_trait;
 use exchange_engine::state::manager::ExchangeStateManager;
 use indicator_engine::IndicatorService;
 use std::sync::Arc;
-use tokio::sync::Mutex;
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
 use tonic::{Request, Response, Status};
 use trading_core::grpc::TradingControl;
 use trading_core::traits::TradingClient;
@@ -21,11 +19,9 @@ use trading_engine::levels::LevelManager;
 use trading_engine::state::manager::TradingStateManager;
 use trading_engine::strategies::strategy_manager::StrategyManager;
 
-// Import the generated protobuf code
 use crate::grpc::trading_cli;
 use crate::grpc::trading_cli::trading_cli_service_server::TradingCliService;
 
-/// Trading CLI Service Implementation
 pub struct TradingCliServiceImpl {
     level_manager: Arc<RwLock<LevelManager>>,
     trading_state_manager: Arc<TradingStateManager>,
@@ -34,15 +30,10 @@ pub struct TradingCliServiceImpl {
     exchange_state_manager: Arc<ExchangeStateManager>,
     market_data_state_manager: Arc<market_data_engine::state::manager::MarketDataStateManager>,
     indicator_service: Arc<Mutex<IndicatorService>>,
-    // Store calculator directly - it's thread-safe, no locking needed for reads
     indicator_calculator: Arc<indicator_engine::calculator::IndicatorCalculator>,
-    /// Strategy infos (only set in strategies mode, supports multiple)
     strategy_infos: Vec<monitoring::StrategyInfo>,
-    /// Strategy manager (only set in strategies mode, for toggling individual strategies)
     strategy_manager: Option<Arc<RwLock<StrategyManager>>>,
-    /// Instrument type (Spot or Futures) - determines which TUI view to show
     instrument_type: trading_core::types::common::InstrumentType,
-    /// Exchange name for CLI display (e.g. "Binance", "Bybit")
     exchange: String,
 }
 
@@ -69,12 +60,11 @@ impl TradingCliServiceImpl {
             indicator_calculator,
             strategy_infos: Vec::new(),
             strategy_manager: None,
-            instrument_type: trading_core::types::common::InstrumentType::Spot, // Default to Spot
+            instrument_type: trading_core::types::common::InstrumentType::Spot,
             exchange: "Unknown".to_string(),
         }
     }
 
-    /// Set strategy info (called in strategies mode)
     pub fn with_strategy_info(
         mut self,
         strategy_name: String,
@@ -89,19 +79,16 @@ impl TradingCliServiceImpl {
         self
     }
 
-    /// Set multiple strategy infos (called in strategies mode with multiple strategies)
     pub fn with_strategy_infos(mut self, strategy_infos: Vec<monitoring::StrategyInfo>) -> Self {
         self.strategy_infos = strategy_infos;
         self
     }
 
-    /// Set strategy manager (for toggling individual strategies)
     pub fn with_strategy_manager(mut self, strategy_manager: Arc<RwLock<StrategyManager>>) -> Self {
         self.strategy_manager = Some(strategy_manager);
         self
     }
 
-    /// Set instrument type (Spot or Futures)
     pub fn with_instrument_type(
         mut self,
         instrument_type: trading_core::types::common::InstrumentType,
@@ -110,13 +97,11 @@ impl TradingCliServiceImpl {
         self
     }
 
-    /// Set exchange name for CLI display (e.g. "Binance", "Bybit")
     pub fn with_exchange(mut self, exchange: impl Into<String>) -> Self {
         self.exchange = exchange.into();
         self
     }
 
-    /// Clone self for use in streaming tasks
     fn clone_for_streaming(&self) -> Self {
         Self {
             level_manager: self.level_manager.clone(),
@@ -134,7 +119,6 @@ impl TradingCliServiceImpl {
         }
     }
 
-    /// Get monitoring service helper
     fn monitoring_service(&self) -> monitoring::MonitoringService {
         monitoring::MonitoringService {
             level_manager: self.level_manager.clone(),
@@ -149,7 +133,6 @@ impl TradingCliServiceImpl {
         }
     }
 
-    /// Get level service helper
     fn level_service(&self) -> levels::LevelService {
         levels::LevelService {
             level_manager: self.level_manager.clone(),
@@ -159,7 +142,6 @@ impl TradingCliServiceImpl {
         }
     }
 
-    /// Get trading control service helper
     fn trading_control_service(&self) -> trading_control::TradingControlService {
         trading_control::TradingControlService {
             trading_control: self.trading_control.clone(),
@@ -172,7 +154,6 @@ impl TradingCliServiceImpl {
 
 #[async_trait]
 impl TradingCliService for TradingCliServiceImpl {
-    /// Set trading enabled/disabled
     async fn set_trading_enabled(
         &self,
         request: Request<trading_cli::SetTradingEnabledRequest>,
@@ -182,7 +163,6 @@ impl TradingCliService for TradingCliServiceImpl {
             .await
     }
 
-    /// Get trading status
     async fn get_trading_status(
         &self,
         request: Request<trading_cli::GetTradingStatusRequest>,
@@ -192,7 +172,6 @@ impl TradingCliService for TradingCliServiceImpl {
             .await
     }
 
-    /// Get all levels
     async fn get_levels(
         &self,
         request: Request<trading_cli::GetLevelsRequest>,
@@ -200,7 +179,6 @@ impl TradingCliService for TradingCliServiceImpl {
         self.level_service().get_levels(request).await
     }
 
-    /// Get a single level by ID
     async fn get_level(
         &self,
         request: Request<trading_cli::GetLevelRequest>,
@@ -208,7 +186,6 @@ impl TradingCliService for TradingCliServiceImpl {
         self.level_service().get_level(request).await
     }
 
-    /// Create a new level
     async fn create_level(
         &self,
         request: Request<trading_cli::CreateLevelRequest>,
@@ -216,7 +193,6 @@ impl TradingCliService for TradingCliServiceImpl {
         self.level_service().create_level(request).await
     }
 
-    /// Update an existing level
     async fn update_level(
         &self,
         request: Request<trading_cli::UpdateLevelRequest>,
@@ -224,7 +200,6 @@ impl TradingCliService for TradingCliServiceImpl {
         self.level_service().update_level(request).await
     }
 
-    /// Delete a level (not yet implemented)
     async fn delete_level(
         &self,
         _request: Request<trading_cli::DeleteLevelRequest>,
@@ -232,7 +207,6 @@ impl TradingCliService for TradingCliServiceImpl {
         Err(Status::unimplemented("Not yet implemented"))
     }
 
-    /// Toggle level enabled/disabled
     async fn toggle_level(
         &self,
         request: Request<trading_cli::ToggleLevelRequest>,
@@ -240,19 +214,17 @@ impl TradingCliService for TradingCliServiceImpl {
         self.level_service().toggle_level(request).await
     }
 
-    /// Toggle strategy enabled/disabled
     async fn toggle_strategy(
         &self,
         request: Request<trading_cli::ToggleStrategyRequest>,
     ) -> Result<Response<trading_cli::ToggleStrategyResponse>, Status> {
+        // keep exact behavior from runner version
         let req = request.into_inner();
 
-        // Get strategy manager
         let strategy_manager = self.strategy_manager.as_ref().ok_or_else(|| {
             Status::failed_precondition("Strategy manager not available (not in strategies mode)")
         })?;
 
-        // Parse symbol from "BASE/QUOTE" format
         let parts: Vec<&str> = req.symbol.split('/').collect();
         if parts.len() != 2 {
             return Err(Status::invalid_argument(format!(
@@ -263,22 +235,19 @@ impl TradingCliService for TradingCliServiceImpl {
         let symbol = trading_core::types::common::Pair::new(parts[0], parts[1]);
         let strategy_id = StrategyManager::make_strategy_id(&req.strategy_name, &symbol);
 
-        // Check global trading control - if disabled, prevent enabling individual strategies
         let global_trading_enabled = self.trading_control.is_enabled().await;
         if !global_trading_enabled && req.enabled {
             return Err(Status::failed_precondition(
-                "Cannot enable individual strategy when global trading is disabled. Enable global trading first."
+                "Cannot enable individual strategy when global trading is disabled. Enable global trading first.",
             ));
         }
 
-        // Get current enabled state
         let current_enabled = strategy_manager
             .read()
             .await
             .is_strategy_enabled(&strategy_id)
             .await;
 
-        // Only toggle if the requested state is different from current
         if current_enabled != req.enabled {
             strategy_manager
                 .write()
@@ -286,14 +255,11 @@ impl TradingCliService for TradingCliServiceImpl {
                 .set_strategy_enabled(&strategy_id, req.enabled)
                 .await;
 
-            // If disabling, cancel active orders for this strategy's symbol
             let mut cancelled_orders = Vec::new();
             if !req.enabled {
                 let trading_state_arc = self.trading_state_manager.get_state();
                 let trading_state = trading_state_arc.read().await;
 
-                // Find and cancel orders for this symbol
-                // Order symbols might be in "ETHUSDC" format, so check both formats
                 let symbol_str = req.symbol.clone();
                 let symbol_no_slash = symbol_str.replace('/', "");
                 let active_order_ids: Vec<_> = trading_state
@@ -309,7 +275,6 @@ impl TradingCliService for TradingCliServiceImpl {
 
                 drop(trading_state);
 
-                // Cancel orders
                 if !active_order_ids.is_empty() {
                     let trading_client = self.trading_client.read().await;
                     for order_id in active_order_ids {
@@ -368,7 +333,6 @@ impl TradingCliService for TradingCliServiceImpl {
         }
     }
 
-    /// Get monitoring data (one-shot)
     async fn get_monitoring_data(
         &self,
         _request: Request<trading_cli::GetMonitoringDataRequest>,
@@ -384,7 +348,6 @@ impl TradingCliService for TradingCliServiceImpl {
         Result<trading_cli::MonitoringDataUpdate, Status>,
     >;
 
-    /// Stream monitoring data updates
     async fn stream_monitoring_data(
         &self,
         _request: Request<trading_cli::StreamMonitoringDataRequest>,
@@ -393,21 +356,17 @@ impl TradingCliService for TradingCliServiceImpl {
         let service = self.clone_for_streaming();
 
         tokio::spawn(async move {
-            // Add panic handler to catch silent failures
             std::panic::set_hook(Box::new(|panic_info| {
                 tracing::error!(
                     "[gRPC] stream_monitoring_data: PANIC in streaming task: {:?}",
                     panic_info
                 );
             }));
-            // Use longer interval to reduce load - 1 second instead of 500ms
             let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(1));
-            // Skip the first tick which happens immediately
             interval.tick().await;
             loop {
                 interval.tick().await;
 
-                // Collect data with timeout to avoid hanging forever
                 let collect_result = tokio::time::timeout(
                     std::time::Duration::from_secs(5),
                     service.monitoring_service().collect_monitoring_data(),
@@ -416,10 +375,6 @@ impl TradingCliService for TradingCliServiceImpl {
 
                 match collect_result {
                     Ok(Ok(data)) => {
-                        let _strategy_count = data.strategies.len();
-                        let _order_count = data.orders.len();
-                        let _balance_count = data.balances.len();
-
                         let timestamp = std::time::SystemTime::now()
                             .duration_since(std::time::UNIX_EPOCH)
                             .unwrap()
@@ -430,16 +385,11 @@ impl TradingCliService for TradingCliServiceImpl {
                             timestamp,
                         };
 
-                        match tx.send(Ok(update)).await {
-                            Ok(_) => {
-                                // Data sent successfully
-                            }
-                            Err(_) => {
-                                tracing::debug!(
-                                    "[gRPC] stream_monitoring_data: receiver dropped, stopping"
-                                );
-                                break; // Receiver dropped
-                            }
+                        if tx.send(Ok(update)).await.is_err() {
+                            tracing::debug!(
+                                "[gRPC] stream_monitoring_data: receiver dropped, stopping"
+                            );
+                            break;
                         }
                     }
                     Ok(Err(e)) => {
@@ -459,7 +409,6 @@ impl TradingCliService for TradingCliServiceImpl {
                         tracing::error!(
                             "[gRPC] stream_monitoring_data: collect_monitoring_data timed out after 5 seconds"
                         );
-                        // Continue instead of breaking - maybe next time it will work
                         continue;
                     }
                 }

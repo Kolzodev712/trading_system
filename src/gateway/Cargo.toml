@@ -1,0 +1,28 @@
+[package]
+name = "gateway"
+version = "0.1.0"
+edition = "2021"
+
+[build-dependencies]
+tonic-build = { workspace = true }
+
+[dependencies]
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+clap = { version = "4.4", features = ["derive"] }
+prost = { workspace = true }
+prost-types = { workspace = true }
+rust_decimal = { workspace = true }
+smol_str = { workspace = true }
+tokio = { workspace = true }
+tokio-stream = { workspace = true }
+tonic = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
+
+trading_core = { path = "../../libs/trading_core" }
+trading_engine = { path = "../trading_engine" }
+exchange_engine = { path = "../exchange_engine" }
+market_data_engine = { path = "../market_data_engine" }
+indicator_engine = { path = "../indicator_engine" }
+

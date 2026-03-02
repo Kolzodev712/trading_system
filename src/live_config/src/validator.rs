@@ -11,8 +11,7 @@ use trading_engine::risk::RiskManager;
 
 pub struct ConfigValidator {
     level_manager: Arc<RwLock<LevelManager>>,
-    #[allow(dead_code)]
-    pub(crate) risk_manager: Arc<RwLock<RiskManager>>,
+    pub(crate) _risk_manager: Arc<RwLock<RiskManager>>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -40,7 +39,7 @@ impl ConfigValidator {
     ) -> Self {
         Self {
             level_manager,
-            risk_manager,
+            _risk_manager: risk_manager,
         }
     }
 

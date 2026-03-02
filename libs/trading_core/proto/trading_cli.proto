@@ -153,6 +153,7 @@ message MonitoringData {
     repeated StrategyStatus strategies = 7; // Strategy info (only present in strategies mode, supports multiple)
     repeated Orderbook orderbooks = 8; // Orderbook data for all pairs
     string instrument_type = 9; // "Spot" or "Futures" - determines which view to show in TUI
+    string exchange = 10;       // "Binance" or "Bybit" - for display in CLI
 }
 
 message Order {

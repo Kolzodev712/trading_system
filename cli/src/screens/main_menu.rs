@@ -125,7 +125,7 @@ impl MainMenuScreen {
             Span::styled(mode_label, Style::default().fg(Color::Cyan)),
             Span::from("  │  "),
             Span::styled("Exchange: ", Style::default().fg(Color::DarkGray)),
-            Span::styled("Binance", Style::default().fg(Color::Cyan)),
+            Span::styled(app.exchange_name(), Style::default().fg(Color::Cyan)),
         ])];
         let footer_paragraph = Paragraph::new(footer_text)
             .alignment(Alignment::Center)

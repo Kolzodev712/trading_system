@@ -9,6 +9,7 @@ use trading_core::{
     error::EngineError,
     types::exchange::{Balance, Order, Position, Trade},
 };
+use trading_trace::{get_tracer, ColdTraceContext};
 
 /// Publisher for exchange state updates via broadcast channels
 ///
@@ -33,8 +34,17 @@ impl ExchangeStatePublisher {
     pub async fn publish_order(&self, order: &Order) -> Result<(), EngineError> {
         use trading_core::channels::exchange::ExchangeUpdate;
 
+        let tracer = get_tracer("exchange-engine");
+        let mut ctx = ColdTraceContext::new_root_with_tracer(&tracer, "exchange.order", None);
+        ctx.set_attribute("order_id", order.order_id.as_str().to_string());
+        let to_send = ctx.clone();
+        ctx.end();
+
         self.exchange_update_tx
-            .send(ExchangeUpdate::Order(order.clone()))
+            .send(ExchangeUpdate::Order {
+                order: order.clone(),
+                trace_context: Some(to_send),
+            })
             .map_err(|e| {
                 warn!(
                     "Failed to publish order update: channel closed or lagged ({} receivers)",
@@ -57,8 +67,17 @@ impl ExchangeStatePublisher {
     pub async fn publish_balance(&self, balance: &Balance) -> Result<(), EngineError> {
         use trading_core::channels::exchange::ExchangeUpdate;
 
+        let tracer = get_tracer("exchange-engine");
+        let mut ctx = ColdTraceContext::new_root_with_tracer(&tracer, "exchange.balance", None);
+        ctx.set_attribute("symbol", balance.symbol.as_ref().to_string());
+        let to_send = ctx.clone();
+        ctx.end();
+
         self.exchange_update_tx
-            .send(ExchangeUpdate::Balance(balance.clone()))
+            .send(ExchangeUpdate::Balance {
+                balance: balance.clone(),
+                trace_context: Some(to_send),
+            })
             .map_err(|e| {
                 warn!(
                     "Failed to publish balance update: channel closed or lagged ({} receivers)",
@@ -80,8 +99,17 @@ impl ExchangeStatePublisher {
     pub async fn publish_trade(&self, trade: &Trade) -> Result<(), EngineError> {
         use trading_core::channels::exchange::ExchangeUpdate;
 
+        let tracer = get_tracer("exchange-engine");
+        let mut ctx = ColdTraceContext::new_root_with_tracer(&tracer, "exchange.trade", None);
+        ctx.set_attribute("trade_id", trade.trade_id.as_str().to_string());
+        let to_send = ctx.clone();
+        ctx.end();
+
         self.exchange_update_tx
-            .send(ExchangeUpdate::Trade(trade.clone()))
+            .send(ExchangeUpdate::Trade {
+                trade: trade.clone(),
+                trace_context: Some(to_send),
+            })
             .map_err(|e| {
                 warn!(
                     "Failed to publish trade update: channel closed or lagged ({} receivers)",
@@ -101,8 +129,23 @@ impl ExchangeStatePublisher {
     pub async fn publish_position(&self, position: &Position) -> Result<(), EngineError> {
         use trading_core::channels::exchange::ExchangeUpdate;
 
+        let tracer = get_tracer("exchange-engine");
+        let mut ctx = ColdTraceContext::new_root_with_tracer(&tracer, "exchange.position", None);
+        ctx.set_attribute(
+            "pair",
+            format!(
+                "{}{}",
+                position.instrument.pair.base, position.instrument.pair.quote
+            ),
+        );
+        let to_send = ctx.clone();
+        ctx.end();
+
         self.exchange_update_tx
-            .send(ExchangeUpdate::Position(position.clone()))
+            .send(ExchangeUpdate::Position {
+                position: position.clone(),
+                trace_context: Some(to_send),
+            })
             .map_err(|e| {
                 warn!(
                     "Failed to publish position update: channel closed or lagged ({} receivers)",
@@ -170,7 +213,10 @@ mod tests {
             .unwrap();
 
         match update {
-            trading_core::channels::exchange::ExchangeUpdate::Order(published_order) => {
+            trading_core::channels::exchange::ExchangeUpdate::Order {
+                order: published_order,
+                ..
+            } => {
                 assert_eq!(published_order.order_id, order.order_id);
             }
             _ => panic!("Expected Order update"),

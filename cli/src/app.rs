@@ -437,6 +437,21 @@ impl App {
             .unwrap_or(false)
     }
 
+    /// Exchange name from server (e.g. "Binance", "Bybit"), or "—" if not yet loaded
+    pub fn exchange_name(&self) -> &str {
+        self.monitoring_data
+            .as_ref()
+            .and_then(|md| {
+                let s = md.exchange.as_str();
+                if s.is_empty() {
+                    None
+                } else {
+                    Some(s)
+                }
+            })
+            .unwrap_or("—")
+    }
+
     pub fn strategies(&self) -> Option<&Vec<crate::client::trading_cli::StrategyStatus>> {
         self.strategies.as_ref()
     }

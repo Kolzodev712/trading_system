@@ -42,6 +42,8 @@ pub struct TradingCliServiceImpl {
     strategy_manager: Option<Arc<RwLock<StrategyManager>>>,
     /// Instrument type (Spot or Futures) - determines which TUI view to show
     instrument_type: trading_core::types::common::InstrumentType,
+    /// Exchange name for CLI display (e.g. "Binance", "Bybit")
+    exchange: String,
 }
 
 impl TradingCliServiceImpl {
@@ -68,6 +70,7 @@ impl TradingCliServiceImpl {
             strategy_infos: Vec::new(),
             strategy_manager: None,
             instrument_type: trading_core::types::common::InstrumentType::Spot, // Default to Spot
+            exchange: "Unknown".to_string(),
         }
     }
 
@@ -107,6 +110,12 @@ impl TradingCliServiceImpl {
         self
     }
 
+    /// Set exchange name for CLI display (e.g. "Binance", "Bybit")
+    pub fn with_exchange(mut self, exchange: impl Into<String>) -> Self {
+        self.exchange = exchange.into();
+        self
+    }
+
     /// Clone self for use in streaming tasks
     fn clone_for_streaming(&self) -> Self {
         Self {
@@ -121,6 +130,7 @@ impl TradingCliServiceImpl {
             strategy_infos: self.strategy_infos.clone(),
             strategy_manager: self.strategy_manager.clone(),
             instrument_type: self.instrument_type.clone(),
+            exchange: self.exchange.clone(),
         }
     }
 
@@ -135,6 +145,7 @@ impl TradingCliServiceImpl {
             strategy_infos: self.strategy_infos.clone(),
             strategy_manager: self.strategy_manager.clone(),
             instrument_type: self.instrument_type.clone(),
+            exchange: self.exchange.clone(),
         }
     }
 

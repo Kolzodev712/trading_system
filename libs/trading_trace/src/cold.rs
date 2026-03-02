@@ -1,10 +1,10 @@
 //! Cold path trace context with OpenTelemetry integration.
 
+use opentelemetry::global::BoxedSpan;
 use opentelemetry::{
     trace::{Span as SpanTrait, Status, Tracer as TracerTrait},
     KeyValue,
 };
-use opentelemetry_sdk::trace::Span as SdkSpan;
 use std::borrow::Cow;
 
 use crate::{constants::ATTR_CORRELATION_ID, CorrelationId};
@@ -13,7 +13,7 @@ use crate::{constants::ATTR_CORRELATION_ID, CorrelationId};
 pub struct ColdTraceContext {
     pub correlation_id: Option<CorrelationId>,
     pub operation: Cow<'static, str>,
-    span: Option<SdkSpan>,
+    span: Option<BoxedSpan>,
 }
 
 impl Clone for ColdTraceContext {
@@ -39,7 +39,7 @@ impl ColdTraceContext {
     }
 
     pub fn new_root_with_tracer(
-        tracer: &impl TracerTrait<Span = SdkSpan>,
+        tracer: &impl TracerTrait<Span = BoxedSpan>,
         operation: &'static str,
         correlation_id: Option<CorrelationId>,
     ) -> Self {
@@ -66,7 +66,7 @@ impl ColdTraceContext {
 
     pub fn child_with_tracer(
         &self,
-        tracer: &impl TracerTrait<Span = SdkSpan>,
+        tracer: &impl TracerTrait<Span = BoxedSpan>,
         operation: &'static str,
     ) -> Self {
         let span = tracer.start(operation);
@@ -102,7 +102,7 @@ impl ColdTraceContext {
         }
     }
 
-    pub fn span(&self) -> Option<&SdkSpan> {
+    pub fn span(&self) -> Option<&BoxedSpan> {
         self.span.as_ref()
     }
 }

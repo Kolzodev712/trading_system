@@ -3,6 +3,7 @@
 use crate::{ColdTraceContext, HotTraceContext};
 
 #[derive(Debug, Clone, Default)]
+#[allow(clippy::large_enum_variant)]
 pub enum TraceContext {
     Hot(HotTraceContext),
     Cold(ColdTraceContext),

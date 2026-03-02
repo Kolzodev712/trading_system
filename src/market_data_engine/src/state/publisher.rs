@@ -9,6 +9,10 @@ use trading_core::{
     error::EngineError,
     types::market_data::{StructuredOrderbook, StructuredPublicTrade},
 };
+use trading_trace::{should_trace_hot, HotTraceContext};
+
+/// Default hot-path sample rate (1 in N updates get trace context)
+const DEFAULT_HOT_SAMPLE_RATE: u32 = 100;
 
 /// Publisher for market data state updates via broadcast channels
 ///
@@ -18,12 +22,23 @@ use trading_core::{
 pub struct MarketDataStatePublisher {
     /// Broadcast channel sender for market data updates
     market_data_tx: MarketDataUpdateSender,
+    /// Sample rate for hot-path tracing (1 in N). 0 = disabled.
+    hot_sample_rate: u32,
 }
 
 impl MarketDataStatePublisher {
     /// Create a new publisher with a channel sender
     pub fn new(market_data_tx: MarketDataUpdateSender) -> Self {
-        Self { market_data_tx }
+        Self {
+            market_data_tx,
+            hot_sample_rate: DEFAULT_HOT_SAMPLE_RATE,
+        }
+    }
+
+    /// Create a new publisher with a custom hot-path sample rate
+    pub fn with_sample_rate(mut self, sample_rate: u32) -> Self {
+        self.hot_sample_rate = sample_rate;
+        self
     }
 
     /// Publish an orderbook update via broadcast channel
@@ -37,9 +52,16 @@ impl MarketDataStatePublisher {
         &self,
         orderbook: &StructuredOrderbook,
     ) -> Result<(), EngineError> {
+        let trace_context = if self.hot_sample_rate > 0 && should_trace_hot(self.hot_sample_rate) {
+            Some(HotTraceContext::new())
+        } else {
+            None
+        };
+
         self.market_data_tx
             .send(MarketDataUpdate::Orderbook {
                 orderbook: orderbook.clone(),
+                trace_context,
             })
             .map_err(|e| {
                 warn!(
@@ -68,9 +90,16 @@ impl MarketDataStatePublisher {
     /// # Errors
     /// Returns an error if the channel is closed (all receivers dropped)
     pub async fn publish_trade(&self, trade: &StructuredPublicTrade) -> Result<(), EngineError> {
+        let trace_context = if self.hot_sample_rate > 0 && should_trace_hot(self.hot_sample_rate) {
+            Some(HotTraceContext::new())
+        } else {
+            None
+        };
+
         self.market_data_tx
             .send(MarketDataUpdate::Trade {
                 trade: trade.clone(),
+                trace_context,
             })
             .map_err(|e| {
                 warn!(
@@ -131,6 +160,7 @@ mod tests {
         match update {
             MarketDataUpdate::Orderbook {
                 orderbook: published_orderbook,
+                ..
             } => {
                 assert_eq!(published_orderbook, orderbook);
             }
@@ -154,6 +184,7 @@ mod tests {
         match update {
             MarketDataUpdate::Trade {
                 trade: published_trade,
+                ..
             } => {
                 assert_eq!(published_trade, trade);
             }

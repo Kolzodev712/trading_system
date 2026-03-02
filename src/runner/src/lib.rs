@@ -47,7 +47,10 @@ async fn execution_report_handler<F, Fut>(
         tokio::select! {
             update = exchange_update_rx.recv() => {
                 match update {
-                    Ok(trading_core::channels::exchange::ExchangeUpdate::Order(order)) => {
+                    Ok(trading_core::channels::exchange::ExchangeUpdate::Order {
+                        order,
+                        ..
+                    }) => {
                         if let Err(e) = handler(order).await {
                             error!("Error handling execution report: {e}");
                         }
@@ -89,6 +92,8 @@ pub struct SharedServices {
     pub market_data_state_manager: Arc<market_data_engine::state::manager::MarketDataStateManager>,
     pub asset_service: Option<Arc<AssetService>>,
     pub trading_control: Option<Arc<trading_core::grpc::TradingControl>>,
+    /// Tracing exporter handles (for /metrics endpoint when present).
+    pub tracing_handles: Option<trading_trace::ExporterHandles>,
 }
 
 /// Run strategies mode
@@ -292,7 +297,8 @@ pub async fn strategy_runner(
     )
     .with_strategy_infos(monitoring_strategy_infos)
     .with_strategy_manager(strategy_manager_arc.clone())
-    .with_instrument_type(instrument_type.clone());
+    .with_instrument_type(instrument_type.clone())
+    .with_exchange(format!("{:?}", bot_config.exchange_engine.exchange));
 
     let grpc_server = TradingGrpcServer::from_service(grpc_service);
     let grpc_handle = grpc_server.start(grpc_addr).await?;
@@ -339,6 +345,16 @@ pub async fn strategy_runner(
     // Get TradingState from TradingStateManager for health server
     let trading_state_for_health = services.trading_state_manager.get_state();
     let health_server = TradingHealthServer::new(trading_state_for_health);
+    let health_server = if let Some(ref h) = services.tracing_handles {
+        let handles = h.clone();
+        health_server.with_metrics(Arc::new(move || {
+            trading_trace::encode_prometheus_metrics(&handles)
+                .unwrap_or_default()
+                .into_bytes()
+        }))
+    } else {
+        health_server
+    };
     let server_config = bot_config.server.clone();
     let mut shutdown_rx_health = services.shutdown_manager.subscribe();
     let health_handle = tokio::spawn(async move {
@@ -528,7 +544,8 @@ pub async fn level_runner(
         services.indicator_calculator.clone(),
         trading_control.clone(),
     )
-    .with_instrument_type(instrument_type.clone());
+    .with_instrument_type(instrument_type.clone())
+    .with_exchange(format!("{:?}", bot_config.exchange_engine.exchange));
 
     let grpc_server = TradingGrpcServer::from_service(grpc_service);
     let grpc_handle = grpc_server.start(grpc_addr).await?;
@@ -664,6 +681,16 @@ pub async fn level_runner(
 
     // Set up health server using TradingStateManager's state
     let health_server = TradingHealthServer::new(services.trading_state_manager.get_state());
+    let health_server = if let Some(ref h) = services.tracing_handles {
+        let handles = h.clone();
+        health_server.with_metrics(Arc::new(move || {
+            trading_trace::encode_prometheus_metrics(&handles)
+                .unwrap_or_default()
+                .into_bytes()
+        }))
+    } else {
+        health_server
+    };
     let server_config = bot_config.server.clone();
     let mut shutdown_rx_health = services.shutdown_manager.subscribe();
     let health_handle = tokio::spawn(async move {

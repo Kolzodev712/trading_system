@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Smart rebuild script - rebuilds trading-system and CLI only if changes detected
-# Usage: ./rebuild.sh [--no-cache] [--force] [--cli-only] [--system-only]
+# Usage: ./rebuild.sh [--no-cache] [--force] [--cli-only] [--system-only] [--observability]
 
 set -e
 
@@ -13,6 +13,7 @@ NO_CACHE=false
 FORCE=false
 CLI_ONLY=false
 SYSTEM_ONLY=false
+OBSERVABILITY=false
 
 # Parse arguments
 for arg in "$@"; do
@@ -33,13 +34,23 @@ for arg in "$@"; do
             SYSTEM_ONLY=true
             shift
             ;;
+        --observability)
+            OBSERVABILITY=true
+            shift
+            ;;
         *)
             echo "Unknown option: $arg"
-            echo "Usage: $0 [--no-cache] [--force] [--cli-only] [--system-only]"
+            echo "Usage: $0 [--no-cache] [--force] [--cli-only] [--system-only] [--observability]"
             exit 1
             ;;
     esac
 done
+
+# Compose file(s) for docker-compose commands
+COMPOSE_FILES="-f docker-compose.yml"
+if [[ "$OBSERVABILITY" == "true" ]]; then
+    COMPOSE_FILES="-f docker-compose.yml -f docker-compose.observability.yml"
+fi
 
 # Function to check if files changed for a service
 check_changes() {
@@ -151,9 +162,9 @@ rebuild_service() {
     else
         echo "🔨 Building trading-system image..."
         if [[ "$NO_CACHE" == "true" ]]; then
-            docker-compose build --no-cache trading-system
+            docker-compose $COMPOSE_FILES build --no-cache trading-system
         else
-            docker-compose build trading-system
+            docker-compose $COMPOSE_FILES build trading-system
         fi
     fi
 }
@@ -198,9 +209,9 @@ if [[ "$REBUILD_SYSTEM" == "true" ]]; then
     echo ""
     echo "🛑 Stopping and removing containers..."
     # Use docker-compose down to properly clean up all containers and avoid ContainerConfig errors
-    docker-compose down 2>/dev/null || true
+    docker-compose $COMPOSE_FILES down 2>/dev/null || true
     # Also remove containers directly as fallback (handles stale containers)
-    docker rm -f trading-system trading-system-mongodb 2>/dev/null || true
+    docker rm -f trading-system trading-system-mongodb trading-jaeger trading-prometheus trading-grafana 2>/dev/null || true
 fi
 
 # Rebuild services
@@ -212,27 +223,37 @@ if [[ "$REBUILD_CLI" == "true" ]]; then
     rebuild_service "cli"
 fi
 
-# Start containers if we rebuilt system
+# Start containers if we rebuilt system, OR if user asked for observability (bring up full stack)
 if [[ "$REBUILD_SYSTEM" == "true" ]]; then
     echo ""
     echo "🚀 Starting containers..."
     # Use up -d to start all services (MongoDB will start first due to depends_on)
     # Don't use --force-recreate here since we already did docker-compose down
-    docker-compose up -d
+    docker-compose $COMPOSE_FILES up -d
     
     echo "📊 Waiting for services to be ready..."
     sleep 5
     
     echo "📋 Container status:"
-    docker-compose ps
+    docker-compose $COMPOSE_FILES ps
+elif [[ "$OBSERVABILITY" == "true" ]]; then
+    echo ""
+    echo "🚀 Starting full stack (with observability)..."
+    docker-compose $COMPOSE_FILES up -d
+    echo "📋 Container status:"
+    docker-compose $COMPOSE_FILES ps
 fi
 
 echo ""
 echo "✅ Rebuild complete!"
 echo ""
-if [[ "$REBUILD_SYSTEM" == "true" ]]; then
+if [[ "$REBUILD_SYSTEM" == "true" ]] || [[ "$OBSERVABILITY" == "true" ]]; then
     echo "To view logs:"
-    echo "  docker-compose logs -f trading-system"
+    echo "  docker-compose $COMPOSE_FILES logs -f trading-system"
+    if [[ "$OBSERVABILITY" == "true" ]]; then
+        echo ""
+        echo "Observability: Jaeger http://localhost:16686 | Grafana http://localhost:3000 | Prometheus http://localhost:9090"
+    fi
 fi
 if [[ "$REBUILD_CLI" == "true" ]]; then
     echo "CLI image rebuilt. To run TUI:"

@@ -55,8 +55,10 @@ This directory contains detailed architectural documentation for each service an
 
 8. **[Runner](08-runner.md)**
    - Application orchestrator
+   - Entry point: `runner::run()` in lib; thin `main.rs` binary
+   - gRPC via **gateway** crate (in-process or optional standalone proxy)
+   - Zenoh event gateway and command queryable (always on)
    - Service initialization and coordination
-   - gRPC server for external communication
 
 9. **[TUI CLI](09-tui-cli.md)**
    - Terminal user interface
@@ -83,8 +85,14 @@ This directory contains detailed architectural documentation for each service an
 ### Communication
 
 - **Channels**: Ultra-low latency (< 1μs) in-process communication
-- **gRPC**: External communication (TUI CLI)
+- **gRPC**: External communication (TUI CLI); implementation in **gateway** crate; runner spawns server or uses standalone gateway proxy
+- **Zenoh**: External events (hot/cold) and commands (queryable); always on when runner is active
 - **REST API**: Exchange communication (account data, market data)
+
+### Gateways and external interfaces
+
+- **Gateway crate** (`src/gateway`): Owns all gRPC (proto, server, service handlers). Runner uses it to expose the TUI CLI API; optional standalone binary for gRPC proxy.
+- **Trading networking** (`libs/trading_networking`): Event gateway and Zenoh transport (events + commands). Runner wires it and starts Zenoh on every run.
 
 ### Key Principles
 
@@ -150,7 +158,6 @@ All services are configured via:
 
 ## Related Documentation
 
-- [Architecture Summary](../ARCHITECTURE.md): Complete system overview
-- [Docker Guide](DOCKER.md): Docker deployment guide
 - [README](../README.md): User guide and usage instructions
+- [Docker Guide](DOCKER.md): Docker deployment guide
 

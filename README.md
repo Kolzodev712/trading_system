@@ -222,7 +222,7 @@ sequenceDiagram
 ### Communication Patterns
 
 - **In-Process**: Broadcast channels (ultra-low latency, < 1μs)
-- **External**: gRPC (for TUI CLI communication)
+- **External**: gRPC (TUI CLI and optional standalone proxy); Zenoh (events and commands, always on when runner is active)
 - **Exchange**: WebSocket + REST API (for exchange communication)
 
 ### View Interactive Diagrams
@@ -323,13 +323,14 @@ For detailed architecture information, see the [Architecture Documentation](#arc
 **See**: [Live Config Service Architecture](architecture/07-live-config-service.md)
 
 #### 8. Runner
-**Purpose**: Application orchestrator and gRPC server.
+**Purpose**: Application orchestrator; runs the trading loop and exposes external interfaces.
 
 **Key Features**:
-- Service initialization and coordination
-- Dual mode support (strategies/levels)
-- gRPC server for external communication
-- Graceful shutdown management
+- **Entry point**: `runner::run()` in the library creates shutdown manager, builds services, and runs strategy or level runner; the `runner` binary is a thin wrapper (config, logging, MongoDB init, then `run()`).
+- **Dual mode**: Strategies or levels.
+- **gRPC**: Uses the **gateway** crate for all gRPC (proto, server, service handlers). The runner spawns the gRPC server in-process; an optional **standalone gateway binary** can proxy gRPC to a remote runner.
+- **Zenoh**: Event gateway (hot/cold events) and command queryable (enable/disable trading, status, strategy toggle) are always on; no feature flag.
+- Graceful shutdown via `ShutdownManager`.
 
 **See**: [Runner Architecture](architecture/08-runner.md)
 
@@ -357,6 +358,22 @@ For detailed architecture information, see the [Architecture Documentation](#arc
 - **Zero-Copy Design**: Minimal allocations for maximum performance
 
 **See**: [Trading Trace Library README](libs/trading_trace/README.md) for detailed documentation, API reference, usage examples, and integration guide.
+
+#### Gateway (gRPC and external interfaces)
+**Purpose**: Owns all gRPC surface (protocol, server, service handlers) and optional standalone proxy.
+
+**Key Features**:
+- **gRPC**: Proto definitions, `TradingGrpcServer`, `TradingCliServiceImpl` (monitoring, levels, trading control). The runner depends on the gateway crate and spawns the gRPC server in-process.
+- **Standalone proxy**: The `gateway` binary can run as a separate process, forwarding gRPC to a runner instance (e.g. for multi-tenant or network isolation).
+- **Layout**: `src/gateway/` with `grpc/` (proto, server, proxy, service); other protocol modules can be added alongside.
+
+#### Trading Networking Library
+**Purpose**: External event and command layer (Zenoh transport).
+
+**Key Features**:
+- **Events**: Hot (market data) and cold (state) event types and buses; `EventGateway` fans out to transports (e.g. Zenoh).
+- **Commands**: Command payloads, router, dispatcher; Zenoh queryable for remote control (enable/disable trading, status, strategy toggle).
+- **Zenoh**: Always on when the runner starts; publishes events and handles command queries via `libs/trading_networking` (Zenoh feature).
 
 ## Prerequisites & Dependencies
 
@@ -1403,7 +1420,7 @@ For detailed architecture information, see the [architecture/](architecture/) di
 - **[TUI CLI](architecture/09-tui-cli.md)**: Terminal user interface
 - **[Architecture README](architecture/README.md)**: Architecture overview and principles
 
-For complete system architecture, see [proposals/00-ARCHITECTURE-SUMMARY.md](proposals/00-ARCHITECTURE-SUMMARY.md).
+- **[Architecture README](architecture/README.md)**: Architecture overview and principles
 
 ## Authors
 

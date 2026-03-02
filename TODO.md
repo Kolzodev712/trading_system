@@ -8,7 +8,7 @@
 
 
 > - ~~**03-traceability-observability.md**~~ - ✅ **COMPLETED** - Implemented as `libs/trading_trace` library
-> - **04-communication-layer-hexagonal-architecture.md** - UI-agnostic architecture, Gateway layer
+> - ~~**04-communication-layer-hexagonal-architecture.md**~~ - ✅ **COMPLETED** - Gateway crate (gRPC), `libs/trading_networking` (Zenoh events/commands); proposal doc removed after implementation
 > - **05.01-dex-preparation.md** - DEX foundational infrastructure
 > - **05.02-solana-integration.md** - Solana DEX implementation
 > - **07-indicator-config-generator.md** - Indicator configuration generation from Python
@@ -29,7 +29,7 @@
 - **Risk Management** → Proposals 01, 10 (circuit breakers, kill switches)
 - **Market Data** → Proposals 01, 02, 03 (funding rate, mark price, etc.)
 - **Observability** → ✅ **COMPLETED** - Implemented as `libs/trading_trace` library (see [README](libs/trading_trace/README.md))
-- **Web UI Architecture** → Proposal 04 (Gateway layer, HTTP transport)
+- **Web UI Architecture** → Proposal 04 (Gateway layer) ✅ **Implemented**: Gateway crate for gRPC, trading_networking for Zenoh events/commands
 - **HFT System** → Proposal 10 (complete HFT daemon design)
 - **DEX Integration** → Proposals 05.01, 05.02 (Solana DEX)
 

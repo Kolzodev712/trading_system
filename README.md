@@ -1172,6 +1172,27 @@ The system includes comprehensive distributed tracing via the `trading_trace` li
 
 **See**: [Trading Trace Library README](libs/trading_trace/README.md) for setup, configuration, and usage.
 
+#### Observability stack (Jaeger + Grafana)
+
+To run Jaeger, Prometheus, and Grafana alongside the trading system:
+
+1. **Start the trading system and observability stack** (Docker). Use the rebuild script so the app sends traces to Jaeger:
+   ```bash
+   ./scripts/rebuild.sh --observability
+   ```
+   Or manually: `docker-compose -f docker-compose.yml -f docker-compose.observability.yml up -d`.  
+   The observability compose file sets `TRACE_JAEGER_AGENT_ENDPOINT=jaeger:6831` on the trading-system so it can reach the Jaeger agent inside Docker.
+
+2. **See traces in Jaeger**: Open http://localhost:16686 → **Search**. Choose service **trading-system** and click **Find Traces**. Traces appear when the app does work (e.g. exchange updates, level/strategy events). If you see no traces, ensure the stack was started with the observability compose file (so the endpoint is set) and that the trading system is running and connected to an exchange.
+
+3. **See traces in Grafana**: Open http://localhost:3000 (login `admin` / `admin`) → **Explore** (compass icon) → select **Jaeger** as data source → choose service **trading-system** and run a query.
+
+4. **Prometheus**: http://localhost:9090 — scrapes `GET /metrics` from the app. The app exposes `trading_system_info`, `trading_system_start_timestamp_seconds`, etc.
+
+5. **See metrics in Grafana**: Open http://localhost:3000 → **Explore** → select **Prometheus** → run a query, e.g. `trading_system_info` or `time() - trading_system_start_timestamp_seconds` (uptime in seconds). To build a dashboard: **Dashboards** → **New** → **Add visualization** → choose Prometheus and a metric.
+
+Config: `observability/prometheus.yml`, `observability/grafana/provisioning/datasources/datasources.yml`.
+
 #### gRPC Monitoring
 
 Use the TUI CLI for real-time monitoring:

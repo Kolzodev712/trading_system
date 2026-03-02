@@ -3,6 +3,7 @@
 //! Uses broadcast channels for fan-out to multiple consumers (Trading Engine, Indicator Engine, etc.)
 use crate::types::market_data::{StructuredOrderbook, StructuredPublicTrade};
 use tokio::sync::broadcast;
+use trading_trace::HotTraceContext;
 
 /// Market data update message (individual updates, not batches)
 #[derive(Debug, Clone)]
@@ -11,11 +12,17 @@ pub enum MarketDataUpdate {
     Orderbook {
         /// Orderbook data with pair
         orderbook: StructuredOrderbook,
+        /// Optional trace context (hot path, sampled)
+        #[allow(clippy::type_complexity)]
+        trace_context: Option<HotTraceContext>,
     },
     /// Public trade update (already contains pair information)
     Trade {
         /// Trade data with pair
         trade: StructuredPublicTrade,
+        /// Optional trace context (hot path, sampled)
+        #[allow(clippy::type_complexity)]
+        trace_context: Option<HotTraceContext>,
     },
 }
 
@@ -59,6 +66,7 @@ mod tests {
         // Send orderbook update
         tx.send(MarketDataUpdate::Orderbook {
             orderbook: orderbook.clone(),
+            trace_context: None,
         })
         .unwrap();
 
@@ -68,8 +76,8 @@ mod tests {
 
         match (received1, received2) {
             (
-                MarketDataUpdate::Orderbook { orderbook: ob1 },
-                MarketDataUpdate::Orderbook { orderbook: ob2 },
+                MarketDataUpdate::Orderbook { orderbook: ob1, .. },
+                MarketDataUpdate::Orderbook { orderbook: ob2, .. },
             ) => {
                 assert_eq!(ob1, orderbook);
                 assert_eq!(ob2, orderbook);
@@ -95,12 +103,13 @@ mod tests {
 
         tx.send(MarketDataUpdate::Trade {
             trade: trade.clone(),
+            trace_context: None,
         })
         .unwrap();
 
         let received = rx.recv().await.unwrap();
         match received {
-            MarketDataUpdate::Trade { trade: t } => assert_eq!(t, trade),
+            MarketDataUpdate::Trade { trade: t, .. } => assert_eq!(t, trade),
             _ => panic!("Expected Trade variant"),
         }
     }
@@ -125,6 +134,7 @@ mod tests {
 
         tx.send(MarketDataUpdate::Orderbook {
             orderbook: orderbook.clone(),
+            trace_context: None,
         })
         .unwrap();
 

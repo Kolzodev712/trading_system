@@ -1,17 +1,6 @@
 use runner::config::BotConfig;
-use runner::shutdown::ShutdownManager;
-use runner::{
-    fetch_asset_data, initialize_asset_service, initialize_exchange_engine,
-    initialize_indicator_service, initialize_market_data_engine, initialize_mongodb,
-    setup_shutdown_handler,
-};
-use runner::{level_runner, strategy_runner, SharedServices};
-use std::sync::Arc;
-use tracing::{error, info};
-use trading_core::persistence::mongo::client::MongoClient;
-use trading_engine::state::manager::TradingStateManager;
-
-mod shutdown;
+use runner::{initialize_mongodb, run};
+use tracing::info;
 
 use clap::Parser;
 
@@ -35,28 +24,23 @@ struct Args {
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
 
-    // Load and validate bot configuration
     let bot_config = BotConfig::load_from_file("config/bot.json")?;
     bot_config.validate()?;
 
-    // Initialize logging
     initialize_logging(&bot_config);
 
-    // Initialize tracing (exporters; best-effort)
-    // When running in Docker with observability stack, set TRACE_JAEGER_AGENT_ENDPOINT=jaeger:6831
     let mut exporters = trading_trace::TraceConfig::default().exporters;
     if let Ok(endpoint) = std::env::var("TRACE_JAEGER_AGENT_ENDPOINT") {
         if let Some(ref mut jaeger) = exporters.jaeger {
             jaeger.agent_endpoint = endpoint;
         }
     }
-    let _tracing_handles = match trading_trace::init_exporters(
+    let tracing_handles = match trading_trace::init_exporters(
         &exporters,
         "trading-system",
         Some(env!("CARGO_PKG_VERSION")),
     ) {
         Ok(h) => {
-            // Emit one span so "trading-system" appears in Jaeger immediately (cold path only runs on exchange updates)
             trading_trace::record_startup_span();
             Some(h)
         }
@@ -66,124 +50,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
-    // Log startup info
     log_startup_info(&bot_config, &args.mode);
 
-    // Initialize MongoDB - REQUIRED for trading system
     let mongo_client = initialize_mongodb(&bot_config).await?;
 
-    // Create shutdown manager and setup Ctrl-C handler
-    let shutdown_manager = ShutdownManager::new(bot_config.channels.shutdown_capacity);
-    setup_shutdown_handler(shutdown_manager.clone());
-
-    // Initialize Asset Service
-    let asset_service =
-        initialize_asset_service(bot_config.exchange_engine.exchange.clone()).await?;
-
-    // Get pairs from exchange config
-    let configured_pairs = bot_config.get_pairs()?;
-    if configured_pairs.is_empty() {
-        return Err("No pairs configured in bot.json".into());
-    }
-    fetch_asset_data(
-        &asset_service,
-        bot_config.exchange_engine.exchange.clone(),
-        &configured_pairs.clone(),
+    run(
+        bot_config,
+        args.mode,
+        args.strategies_config,
+        args.levels_config,
+        mongo_client,
+        tracing_handles,
     )
-    .await;
-
-    // Initialize Market Data Engine
-    let (_, market_data_rx, market_data_handle, market_data_state_manager) =
-        initialize_market_data_engine(&bot_config, &shutdown_manager)?;
-
-    // Wait for market data to start
-    tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-    info!("Market Data Engine: WebSocket subscribed to orderbook stream");
-
-    // Create indicator update channel (shared between service and runners)
-    let (indicator_tx, indicator_rx) = trading_core::channels::indicators::indicator_update_channel(
-        bot_config.channels.indicator_update_capacity,
-    );
-
-    // Initialize Indicator Service (requires MongoDB)
-    let (indicator_service, indicator_handle, indicator_calculator) = initialize_indicator_service(
-        &bot_config,
-        &mongo_client,
-        market_data_rx.resubscribe(),
-        indicator_tx,
-        &shutdown_manager,
-        configured_pairs.as_slice(),
-    )
-    .await?;
-
-    // Initialize Exchange Engine (pass pairs from bot config)
-    let (exchange_state_manager, exchange_update_rx, trading_client) =
-        initialize_exchange_engine(&bot_config, &shutdown_manager).await?;
-
-    // Create Trading State Manager
-    let trading_state_manager = Arc::new(TradingStateManager::new(
-        exchange_update_rx.resubscribe(),
-        exchange_state_manager.clone(),
-    ));
-
-    // Start Trading State Manager subscriber
-    start_trading_state_subscriber(trading_state_manager.clone(), shutdown_manager.clone());
-
-    // Create SharedServices
-    let services = SharedServices {
-        trading_client,
-        exec_report_rx: exchange_update_rx.resubscribe(),
-        market_data_rx: market_data_rx.resubscribe(),
-        indicator_rx,
-        indicator_service,
-        indicator_calculator,
-        shutdown_manager,
-        market_data_handle,
-        trading_ws_handle: tokio::spawn(async {}), // Dummy handle
-        indicator_handle,
-        trading_state_manager,
-        exchange_state_manager,
-        market_data_state_manager,
-        asset_service: Some(asset_service),
-        trading_control: None, // Created in runner functions
-        tracing_handles: _tracing_handles,
-    };
-
-    // Route to appropriate runner
-    match args.mode.as_str() {
-        "strategies" => {
-            let strategy_persistence =
-                create_strategy_persistence(Some(&mongo_client), &bot_config);
-            strategy_runner(
-                bot_config.clone(),
-                args.strategies_config,
-                services,
-                strategy_persistence,
-            )
-            .await?;
-        }
-        "levels" => {
-            let level_persistence = create_level_persistence(Some(&mongo_client), &bot_config);
-            level_runner(
-                bot_config.clone(),
-                args.levels_config,
-                services,
-                level_persistence,
-            )
-            .await?;
-        }
-        _ => {
-            return Err(
-                format!("Unknown mode: {}. Use 'strategies' or 'levels'", args.mode).into(),
-            );
-        }
-    }
-
-    trading_trace::shutdown_exporters();
-    Ok(())
+    .await
 }
 
-/// Initialize logging subsystem
 fn initialize_logging(bot_config: &BotConfig) {
     let log_level = match bot_config.system.log_level.as_str() {
         "trace" => tracing::Level::TRACE,
@@ -201,7 +82,6 @@ fn initialize_logging(bot_config: &BotConfig) {
     );
 }
 
-/// Log startup information
 fn log_startup_info(bot_config: &BotConfig, mode: &str) {
     info!("=== Starting Trading System ===");
     info!("Mode: {}", mode);
@@ -217,52 +97,4 @@ fn log_startup_info(bot_config: &BotConfig, mode: &str) {
             "disabled".to_string()
         }
     );
-}
-
-/// Start Trading State Manager subscriber
-fn start_trading_state_subscriber(
-    trading_state_manager: Arc<TradingStateManager>,
-    shutdown_manager: ShutdownManager,
-) {
-    let mut shutdown_rx = shutdown_manager.subscribe();
-    tokio::spawn(async move {
-        tokio::select! {
-            result = trading_state_manager.start_subscriber() => {
-                if let Err(e) = result {
-                    error!("TradingStateManager subscriber error: {e}");
-                }
-            }
-            _ = shutdown_rx.recv() => {
-                info!("TradingStateManager subscriber shutting down");
-            }
-        }
-    });
-}
-
-/// Create strategy persistence if MongoDB is enabled
-fn create_strategy_persistence(
-    mongo_client: Option<&Arc<MongoClient>>,
-    bot_config: &BotConfig,
-) -> Option<Arc<trading_engine::strategies::persistence::StrategyPersistence>> {
-    mongo_client.map(|client| {
-        Arc::new(
-            trading_engine::strategies::persistence::StrategyPersistence::new(
-                client.as_ref().clone(),
-                bot_config.mongo.bot_id.clone(),
-            ),
-        )
-    })
-}
-
-/// Create level persistence if MongoDB is enabled
-fn create_level_persistence(
-    mongo_client: Option<&Arc<MongoClient>>,
-    bot_config: &BotConfig,
-) -> Option<Arc<trading_engine::levels::persistence::LevelPersistence>> {
-    mongo_client.map(|client| {
-        Arc::new(trading_engine::levels::persistence::LevelPersistence::new(
-            client.as_ref().clone(),
-            bot_config.mongo.bot_id.clone(),
-        ))
-    })
 }

@@ -4,6 +4,7 @@ mod dispatcher;
 mod router;
 
 pub use dispatcher::CommandDispatcher;
+pub use dispatcher::CommandHandler;
 pub use router::{CommandRouter, CommandRouterError, MpscCommandRouter};
 
 use serde::{Deserialize, Serialize};

@@ -9,7 +9,6 @@ use trading_core::grpc::TradingControl;
 use trading_engine::levels::LevelManager;
 use trading_engine::state::manager::TradingStateManager;
 
-/// Service data needed for trading control operations
 pub struct TradingControlService {
     pub trading_control: Arc<TradingControl>,
     pub trading_state_manager: Arc<TradingStateManager>,
@@ -18,7 +17,6 @@ pub struct TradingControlService {
 }
 
 impl TradingControlService {
-    /// Set trading enabled/disabled
     pub async fn set_trading_enabled(
         &self,
         request: Request<trading_cli::SetTradingEnabledRequest>,
@@ -29,15 +27,9 @@ impl TradingControlService {
             req.enabled
         );
 
-        // Get ALL active order IDs from multiple sources:
-        // 1. TradingStateManager (orders we placed)
-        // 2. ExchangeStateManager (all open orders on exchange)
-        // 3. LevelManager (orders tracked by levels)
-        // Use a HashSet to deduplicate
         let mut active_order_ids_set = HashSet::new();
         let mut pairs_with_orders_set = HashSet::new();
 
-        // Get orders from TradingStateManager
         let mut trading_state_count = 0;
         {
             let state_arc = self.trading_state_manager.get_state();
@@ -48,15 +40,12 @@ impl TradingControlService {
             }
         }
 
-        // Get orders and pairs from ExchangeStateManager (all open orders on exchange)
-        // This is the authoritative source for pairs with orders
         let mut exchange_state_count = 0;
         {
             let exchange_state_arc = self.exchange_state_manager.get_state();
             let exchange_state = exchange_state_arc.read().await;
             for order in exchange_state.get_open_orders() {
                 active_order_ids_set.insert(order.order_id.clone());
-                // Extract pair from symbol using symbol registry
                 if let Some(pair) = exchange_state
                     .symbol_registry()
                     .get_pair(&order.instrument.symbol().into())
@@ -67,8 +56,6 @@ impl TradingControlService {
             }
         }
 
-        // Get orders from LevelManager (orders tracked by levels)
-        // Also add pairs from levels (in case they have orders but ExchangeStateManager doesn't have them yet)
         let mut level_manager_count = 0;
         {
             let level_manager = self.level_manager.read().await;
@@ -126,7 +113,6 @@ impl TradingControlService {
         }
     }
 
-    /// Get trading status
     pub async fn get_trading_status(
         &self,
         _request: Request<trading_cli::GetTradingStatusRequest>,

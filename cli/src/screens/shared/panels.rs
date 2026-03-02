@@ -327,8 +327,7 @@ pub fn render_strategy(frame: &mut Frame, area: Rect, app: &App) -> Result<(), C
     Ok(())
 }
 
-/// Render the strategy details panel (for selected strategy)
-#[allow(dead_code)]
+/// Render the strategy details panel (for selected strategy). Used by the strategy details popup.
 pub fn render_strategy_details(frame: &mut Frame, area: Rect, app: &App) -> Result<(), CliError> {
     let strategy = app.selected_strategy();
     let trading_status = app.trading_status();

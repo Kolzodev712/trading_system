@@ -27,12 +27,7 @@ pub(crate) struct PendingRequest {
 /// This connection can be shorter-lived and reconnected independently
 #[derive(Debug)]
 pub struct BinanceRpcClient {
-    #[allow(dead_code)]
-    config: BinanceConfig,
-    #[allow(dead_code)]
-    ws_client: BinanceWSClient,
-    #[allow(dead_code)]
-    subscription_handler: BinanceSubscriptionHandler,
+    pub(crate) ws_client: BinanceWSClient,
     pub(crate) rpc_request_tx: Arc<Mutex<Option<mpsc::Sender<BinanceRpcRequest>>>>,
     pub(crate) pending_rpc_requests: Arc<Mutex<HashMap<String, PendingRequest>>>,
     outbound_rpc_capacity: usize,
@@ -45,7 +40,7 @@ impl BinanceRpcClient {
         let signer = BinanceAuthenticator::new(config.api_key.clone(), config.secret.clone());
         let session = Arc::new(RwLock::new(None));
         let ws_client = BinanceWSClient::new(signer.clone(), session.clone());
-        let subscription_handler = BinanceSubscriptionHandler::new(signer, session);
+        let _ = BinanceSubscriptionHandler::new(signer, session);
 
         let rate_limiter = Arc::new(BinanceRateLimiter::new());
         // Initialize with default limits
@@ -55,9 +50,7 @@ impl BinanceRpcClient {
         });
 
         let client = Self {
-            config,
             ws_client,
-            subscription_handler,
             rpc_request_tx: Arc::new(Mutex::new(None)),
             pending_rpc_requests: Arc::new(Mutex::new(HashMap::new())),
             outbound_rpc_capacity,

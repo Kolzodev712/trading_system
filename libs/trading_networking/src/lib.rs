@@ -18,6 +18,7 @@
 pub mod commands;
 pub mod error;
 pub mod events;
+pub mod gateway;
 pub mod payload;
 
 #[cfg(feature = "zenoh")]

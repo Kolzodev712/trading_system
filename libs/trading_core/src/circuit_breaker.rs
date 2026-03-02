@@ -9,8 +9,7 @@ pub struct CircuitBreaker {
     last_failure_time: std::sync::Mutex<Option<Instant>>,
     failure_threshold: u32,
     timeout: Duration,
-    #[allow(dead_code)] // Reserved for future use
-    half_open_timeout: Duration,
+    _half_open_timeout: Duration,
     state: std::sync::Mutex<CircuitState>,
 }
 
@@ -28,7 +27,7 @@ impl CircuitBreaker {
             last_failure_time: std::sync::Mutex::new(None),
             failure_threshold,
             timeout: Duration::from_secs(timeout_secs),
-            half_open_timeout: Duration::from_secs(timeout_secs / 2),
+            _half_open_timeout: Duration::from_secs(timeout_secs / 2),
             state: std::sync::Mutex::new(CircuitState::Closed),
         }
     }

@@ -25,8 +25,6 @@ use trading_core::{
 /// Enhanced "Buy Low, Sell High" strategy with all improvements
 pub struct BuyLowSellHigh {
     state: TradingState,
-    #[allow(dead_code)] // Reserved for future use
-    trading_client: Arc<RwLock<dyn TradingClient<OrderRequest>>>,
     symbol: Pair,
 
     // Asset service for exchange-agnostic trading rules
@@ -71,7 +69,7 @@ pub struct BuyLowSellHigh {
 impl BuyLowSellHigh {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        trading_client: Arc<RwLock<dyn TradingClient<OrderRequest>>>,
+        _trading_client: Arc<RwLock<dyn TradingClient<OrderRequest>>>,
         symbol: Pair,
         base_position_size: Decimal,
         max_position: Decimal,
@@ -92,7 +90,6 @@ impl BuyLowSellHigh {
     ) -> Self {
         Self {
             state: TradingState::new(),
-            trading_client,
             symbol,
             asset_service,
             exchange,

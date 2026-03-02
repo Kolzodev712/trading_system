@@ -35,21 +35,6 @@ impl CommandDispatcher {
     }
 }
 
-/// No-op handler for testing or placeholder (returns success with no data).
-#[allow(dead_code)]
-pub struct NoOpCommandHandler;
-
-#[async_trait]
-impl CommandHandler for NoOpCommandHandler {
-    async fn handle(&self, _command: Command) -> Result<CommandResponse, String> {
-        Ok(CommandResponse {
-            success: true,
-            message: Some("no-op".to_string()),
-            data: None,
-        })
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

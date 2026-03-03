@@ -3,7 +3,7 @@
 **Version**: 1.0  
 **Date**: December 2024  
 **Status**: Draft  
-**Prerequisites**: Proposal 07 (Indicator Config Generator)
+**Prerequisites**: Proposal 01 (Indicator Config Generator)
 
 ## Executive Summary
 

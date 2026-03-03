@@ -1,22 +1,22 @@
 # Trading System - TODO & Improvement Roadmap
 
-> **Note**: This file has been superseded by the comprehensive proposal documents. All architectural decisions, implementation plans, and feature roadmaps are now documented in the `proposals/` directory.
+> **Note**: Architectural decisions and feature roadmaps are documented in the **`proposals/`** directory. Significant changes and implementation tracking can also be recorded in **`design-log/`** (see `.cursor/rules/design-log.mdc`).
 >
-> **Current Proposals**:
-> - **01-futures-integration.md** - Futures types, traits, and infrastructure
-> - **03-bybit-integration.md** - Bybit unified driver (spot + futures)
-
-
-> - ~~**03-traceability-observability.md**~~ - ✅ **COMPLETED** - Implemented as `libs/trading_trace` library
-> - ~~**04-communication-layer-hexagonal-architecture.md**~~ - ✅ **COMPLETED** - Gateway crate (gRPC), `libs/trading_networking` (Zenoh events/commands); proposal doc removed after implementation
-> - **05.01-dex-preparation.md** - DEX foundational infrastructure
-> - **05.02-solana-integration.md** - Solana DEX implementation
-> - **07-indicator-config-generator.md** - Indicator configuration generation from Python
-> - **08-strategy-engine.md** - Strategy DSL and IR interpreter
-> - **09-private-crate-registry.md** - Private crate distribution
-> - **10-hft-subsystem.md** - High-frequency trading daemon
+> **Current proposals** (in `proposals/`):
+> - **01-indicator-config-generator.md** - Indicator configuration generation from Python
+> - **02-strategy-engine.md** - Strategy DSL and IR interpreter
+> - **03-dex-preparation.md** - DEX foundational infrastructure
+> - **04-solana-integration.md** - Solana DEX implementation
+> - **05-future-enhancements.md** - Future enhancements (OCO, TWAP, etc.)
+> - **06-private-crate-registry.md** - Private crate distribution
+> - **07-hft-subsystem.md** - High-frequency trading daemon
 >
-> For implementation tasks and tracking, refer to the individual proposals and their implementation phases.
+> **Completed (no proposal file in repo)**:
+> - Futures integration, Bybit integration → implemented in `exchange_engine` (Binance + Bybit)
+> - Traceability/observability → `libs/trading_trace`
+> - Communication layer / gateway → `src/gateway` (gRPC), `libs/trading_networking` (Zenoh events/commands)
+>
+> For implementation tasks, refer to the individual proposals and to design logs when using the design-log workflow.
 
 ---
 
@@ -31,18 +31,18 @@
 - **Observability** → ✅ **COMPLETED** - Implemented as `libs/trading_trace` library (see [README](libs/trading_trace/README.md))
 - **Web UI Architecture** → Proposal 04 (Gateway layer) ✅ **Implemented**: Gateway crate for gRPC, trading_networking for Zenoh events/commands
 - **HFT System** → Proposal 10 (complete HFT daemon design)
-- **DEX Integration** → Proposals 05.01, 05.02 (Solana DEX)
+- **DEX Integration** → Proposals 03, 04 (Solana DEX)
 
 ### 🔮 Future Enhancements (Not Yet in Proposals)
 
-These items are planned but not yet detailed in proposals. They can be added as new proposals or enhancements to existing ones:
+Planned but not yet fully detailed; can be new proposals or extensions (see **05-future-enhancements.md**):
 
-- **OCO, TWAP, VWAP Orders** - Advanced order types (mentioned in Proposal 01 future enhancements)
-- **Commercial Features** - Multi-tenancy, licensing, billing (separate concern, future proposal)
-- **Advanced Error Handling** - Implementation details (handled during implementation phase)
-- **Performance Optimizations** - Exchange-specific optimizations (implementation details)
+- **OCO, TWAP, VWAP Orders** - Advanced order types
+- **Commercial Features** - Multi-tenancy, licensing, billing (separate concern)
+- **Advanced Error Handling** - Implementation-phase details
+- **Performance Optimizations** - Exchange-specific optimizations
 
 ---
 
-**Last Updated**: December 2024  
-**Status**: Superseded by proposal documents
+**Last Updated**: March 2025  
+**Status**: Proposals in `proposals/`; implementation notes in `design-log/` when using design-log workflow.

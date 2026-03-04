@@ -1,0 +1,39 @@
+{
+  "system": {
+    "log_level": "info",
+    "shutdown_timeout_secs": 30
+  },
+  "exchange_engine": {
+    "exchange": "Paper",
+    "config": {
+      "paper_exchange_url": "ws://127.0.0.1:19999/ws",
+      "pairs": [
+        { "base": "BTC", "quote": "USDT" },
+        { "base": "ETH", "quote": "USDT" }
+      ],
+      "instrument_type": "Spot"
+    }
+  },
+  "server": {
+    "bind_address": "0.0.0.0",
+    "port": 8080
+  },
+  "redis": {
+    "url": "",
+    "enabled": false
+  },
+  "features": {
+    "enable_reconciliation": true
+  },
+  "reconciliation": {
+    "exchange_level_interval_ms": 180000,
+    "trading_level_interval_ms": 180000,
+    "enabled": true
+  },
+  "mongo": {
+    "connection_string": "mongodb://localhost:27017",
+    "database": "trading_system",
+    "bot_id": "main_bot",
+    "enabled": true
+  }
+}

@@ -1,6 +1,9 @@
 use trading_core::{error::EngineError, types::common::Exchange};
 
-use super::exchanges::{binance::config::BinanceConfig, bybit::config::BybitConfig};
+use super::exchanges::{
+    binance::config::BinanceConfig, bybit::config::BybitConfig,
+    k_paper::config::PaperConfig as KPaperConfig,
+};
 use serde::{Deserialize, Serialize};
 
 pub trait ConfigGetter<T> {
@@ -30,6 +33,7 @@ impl MarketDataConfig {
 pub enum ExchangeConfig {
     Binance(BinanceConfig),
     Bybit(BybitConfig),
+    Paper(KPaperConfig),
 }
 
 impl ConfigGetter<BinanceConfig> for ExchangeConfig {
@@ -49,6 +53,17 @@ impl ConfigGetter<BybitConfig> for ExchangeConfig {
             ExchangeConfig::Bybit(config) => Ok(config),
             _ => Err(EngineError::CustomError(anyhow::anyhow!(
                 "Expected Bybit config, got different exchange"
+            ))),
+        }
+    }
+}
+
+impl ConfigGetter<KPaperConfig> for ExchangeConfig {
+    fn get_config(self) -> Result<KPaperConfig, EngineError> {
+        match self {
+            ExchangeConfig::Paper(config) => Ok(config),
+            _ => Err(EngineError::CustomError(anyhow::anyhow!(
+                "Expected Paper (k-paper) config, got different exchange"
             ))),
         }
     }
@@ -98,7 +113,7 @@ mod tests {
                 assert_eq!(binance_config.base_delay, None);
                 assert_eq!(binance_config.max_delay, None);
             }
-            ExchangeConfig::Bybit(_) => {
+            ExchangeConfig::Bybit(_) | ExchangeConfig::Paper(_) => {
                 panic!("Expected Binance config in test");
             }
         }

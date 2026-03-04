@@ -185,6 +185,11 @@ impl LevelBasedEventLoop {
         orderbook: &StructuredOrderbook,
         indicator_cache: &Arc<RwLock<HashMap<SmolStr, IndicatorValue>>>,
     ) -> Result<(), EngineError> {
+        // When trading is disabled, skip resolve/risk/post entirely (no "blocked by risk" spam)
+        if !self.level_executor.is_trading_enabled().await {
+            return Ok(());
+        }
+
         // Get indicators from cache (read fresh each time to avoid stale data)
         let _indicators: HashMap<SmolStr, IndicatorValue> = {
             let cache = indicator_cache.read().await;
@@ -234,7 +239,7 @@ impl LevelBasedEventLoop {
                         .collect::<Vec<_>>()
                 );
             } else {
-                tracing::info!(
+                tracing::debug!(
                     "No levels ready to post for {}/{} (checking level states...)",
                     orderbook.pair.base,
                     orderbook.pair.quote
@@ -243,7 +248,7 @@ impl LevelBasedEventLoop {
                     if level.pair.base == orderbook.pair.base
                         && level.pair.quote == orderbook.pair.quote
                     {
-                        tracing::info!(
+                        tracing::debug!(
                             "Level {}: state={:?}, enabled={}, active_orders={}, pair={}/{}",
                             level.config.id,
                             level.state,

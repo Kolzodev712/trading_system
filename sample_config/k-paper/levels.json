@@ -1,0 +1,73 @@
+{
+  "levels": [
+    {
+      "id": "buy_level_1",
+      "name": "Buy at SMA-0.5%",
+      "side": "Buy",
+      "order_type": "Limit",
+      "quantity": {
+        "type": "Fixed",
+        "value": "0.002"
+      },
+      "price": {
+        "Indicator": {
+          "indicator_name": "sma_20",
+          "offset_type": "PercentBelow",
+          "offset_value": "0.5"
+        }
+      },
+      "risk": {
+        "max_position": "0.01",
+        "max_orders": 2,
+        "daily_loss_limit": "50.0"
+      },
+      "lifecycle": {
+        "auto_repost": true,
+        "auto_repost_on_cancel": true,
+        "max_reposts": 5,
+        "repost_delay_secs": 5,
+        "repost_conditions": []
+      },
+      "enabled": true,
+      "group": "main_strategy"
+    },
+    {
+      "id": "sell_level_1",
+      "name": "Sell at SMA+0.5%",
+      "side": "Sell",
+      "order_type": "Limit",
+      "quantity": {
+        "type": "Fixed",
+        "value": "0.002"
+      },
+      "price": {
+        "Indicator": {
+          "indicator_name": "sma_20",
+          "offset_type": "PercentAbove",
+          "offset_value": "0.5"
+        }
+      },
+      "risk": {
+        "max_position": "0.01",
+        "max_orders": 2
+      },
+      "lifecycle": {
+        "auto_repost": true,
+        "auto_repost_on_cancel": true,
+        "max_reposts": 5,
+        "repost_delay_secs": 5
+      },
+      "enabled": true,
+      "group": "main_strategy"
+    }
+  ],
+  "risk_limits": {
+    "total_max_position": "0.1",
+    "max_total_orders": 20,
+    "daily_loss_limit_all_pairs": "500.0",
+    "daily_loss_limit_per_pair": {
+      "BTCUSDT": "200.0",
+      "ETHUSDT": "200.0"
+    }
+  }
+}

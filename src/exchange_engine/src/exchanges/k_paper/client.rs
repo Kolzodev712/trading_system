@@ -1,0 +1,646 @@
+//! k-paper WebSocket client: connects to k-paper, maps messages to channels, implements TradingClient.
+
+use std::collections::HashMap;
+use std::sync::Arc;
+
+use async_trait::async_trait;
+use futures_util::{SinkExt, StreamExt};
+use rust_decimal::Decimal;
+use tokio::sync::{mpsc, oneshot, RwLock};
+use tokio_tungstenite::tungstenite::Message;
+use tracing::{error, info, warn};
+use trading_core::channels::market_data::{MarketDataUpdate, MarketDataUpdateSender};
+use trading_core::error::EngineError;
+use trading_core::traits::TradingClient;
+use trading_core::types::common::{Exchange, Instrument, InstrumentType, OrderId, Pair, Side};
+use trading_core::types::exchange::{
+    Balance, BulkAmendRequest, BulkAmendResponse, BulkOrderRequest, BulkOrderResponse, Order,
+    OrderRequest, Trade,
+};
+
+use super::config::PaperConfig;
+use super::map::{
+    balance_to_core, execution_ack_to_order, execution_to_order, execution_to_trade,
+    orderbook_to_structured, position_to_core, public_trade_to_structured, to_instrument_id,
+};
+use super::messages::{DecimalOrStr, KPaperCommand, KPaperMessage, KPaperPlaceOrderRequest};
+
+/// Config for k-paper connection (internal use).
+#[derive(Debug, Clone)]
+pub struct KPaperConfig {
+    pub url: String,
+    pub pairs: Vec<Pair>,
+    pub instrument_type: InstrumentType,
+}
+
+impl From<PaperConfig> for KPaperConfig {
+    fn from(c: PaperConfig) -> Self {
+        KPaperConfig {
+            url: c.paper_exchange_url,
+            pairs: c.pairs,
+            instrument_type: c.instrument_type,
+        }
+    }
+}
+
+/// Shared state for the recv loop and TradingClient.
+#[derive(Default)]
+pub struct KPaperState {
+    balances: Vec<Balance>,
+    positions: Vec<trading_core::types::exchange::Position>,
+    open_orders: HashMap<OrderId, Order>,
+    trades: Vec<Trade>,
+    /// Single in-flight place_order: fulfilled when we get the next execution (ack has quantity=0).
+    pending_place: Option<(oneshot::Sender<Result<Order, EngineError>>, OrderRequest)>,
+    /// Single in-flight cancel: fulfilled when we get CancelAck.
+    pending_cancel: Option<oneshot::Sender<Result<(), EngineError>>>,
+    /// Single in-flight amend: fulfilled when we get AmendAck.
+    pending_amend: Option<oneshot::Sender<Result<Order, EngineError>>>,
+}
+
+/// k-paper client: implements TradingClient. Exchange updates are driven via run_websocket_loop (caller passes ExchangeStateManager).
+pub struct KPaperClient {
+    config: KPaperConfig,
+    command_tx: mpsc::UnboundedSender<KPaperCommand>,
+    state: Arc<RwLock<KPaperState>>,
+}
+
+impl std::fmt::Debug for KPaperClient {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("KPaperClient")
+            .field("config", &self.config)
+            .finish_non_exhaustive()
+    }
+}
+
+impl KPaperClient {
+    /// Create a new k-paper client. Start the recv loop via run_websocket_loop (e.g. from PaperDriver).
+    pub fn new(config: KPaperConfig) -> (Self, mpsc::UnboundedReceiver<KPaperCommand>) {
+        let (command_tx, command_rx) = mpsc::unbounded_channel();
+        let client = Self {
+            config: config.clone(),
+            command_tx: command_tx.clone(),
+            state: Arc::new(RwLock::new(KPaperState::default())),
+        };
+        (client, command_rx)
+    }
+
+    /// Get a clone of state for the recv task.
+    pub fn state(&self) -> Arc<RwLock<KPaperState>> {
+        Arc::clone(&self.state)
+    }
+
+    /// Get config for the recv task.
+    pub fn config(&self) -> &KPaperConfig {
+        &self.config
+    }
+
+    /// Send a command (used by TradingClient methods).
+    fn send_command(&self, cmd: KPaperCommand) -> Result<(), EngineError> {
+        self.command_tx.send(cmd).map_err(|e| {
+            EngineError::CustomError(anyhow::anyhow!("k-paper command channel closed: {}", e))
+        })
+    }
+}
+
+#[async_trait]
+impl TradingClient<OrderRequest> for KPaperClient {
+    fn exchange_id(&self) -> Exchange {
+        Exchange::Paper
+    }
+
+    async fn test_open_order(&self, _req: OrderRequest) -> Result<(), EngineError> {
+        Ok(())
+    }
+
+    async fn open_order(&self, req: OrderRequest) -> Result<Order, EngineError> {
+        let (tx, rx) = oneshot::channel();
+        {
+            let mut state = self.state.write().await;
+            if state.pending_place.is_some() {
+                return Err(EngineError::CustomError(anyhow::anyhow!(
+                    "k-paper: only one in-flight place_order supported"
+                )));
+            }
+            state.pending_place = Some((tx, req.clone()));
+        }
+
+        let instrument_id = to_instrument_id(&req.instrument.pair);
+        let side = format!("{}", req.side);
+        let order_type = match req.order_type {
+            trading_core::types::common::OrderType::Limit => "Limit",
+            trading_core::types::common::OrderType::Market => "Market",
+            _ => "Limit",
+        };
+        let quantity = DecimalOrStr::Num(req.amount);
+        let limit_price = match req.order_type {
+            trading_core::types::common::OrderType::Market => None,
+            _ => Some(DecimalOrStr::Num(req.price)),
+        };
+        let client_order_id = Some(vec![uuid::Uuid::new_v4().to_string()]);
+
+        let cmd = KPaperCommand::PlaceOrder {
+            request: KPaperPlaceOrderRequest {
+                instrument_id: instrument_id.to_string(),
+                side,
+                order_type: order_type.to_string(),
+                quantity,
+                limit_price,
+                client_order_id,
+            },
+        };
+        self.send_command(cmd)?;
+
+        let timeout_dur = tokio::time::Duration::from_secs(15);
+        match tokio::time::timeout(timeout_dur, rx).await {
+            Ok(Ok(Ok(order))) => Ok(order),
+            Ok(Ok(Err(e))) => Err(e),
+            Ok(Err(_)) => Err(EngineError::CustomError(anyhow::anyhow!(
+                "k-paper: pending place dropped"
+            ))),
+            Err(_) => {
+                let mut state = self.state.write().await;
+                state.pending_place = None;
+                Err(EngineError::CustomError(anyhow::anyhow!(
+                    "k-paper: open_order timeout (15s)"
+                )))
+            }
+        }
+    }
+
+    async fn cancel_order_by_id(&self, order_id: OrderId) -> Result<(), EngineError> {
+        let (tx, rx) = oneshot::channel();
+        {
+            let mut state = self.state.write().await;
+            if state.pending_cancel.is_some() {
+                return Err(EngineError::CustomError(anyhow::anyhow!(
+                    "k-paper: only one in-flight cancel supported"
+                )));
+            }
+            state.pending_cancel = Some(tx);
+        }
+        self.send_command(KPaperCommand::CancelOrder {
+            order_id: order_id.as_str().to_string(),
+        })?;
+        let timeout_dur = tokio::time::Duration::from_secs(10);
+        match tokio::time::timeout(timeout_dur, rx).await {
+            Ok(Ok(Ok(()))) => Ok(()),
+            Ok(Ok(Err(e))) => Err(e),
+            Ok(Err(_)) => {
+                let mut state = self.state.write().await;
+                state.pending_cancel = None;
+                Err(EngineError::CustomError(anyhow::anyhow!(
+                    "k-paper: cancel ack channel dropped"
+                )))
+            }
+            Err(_) => {
+                let mut state = self.state.write().await;
+                state.pending_cancel = None;
+                Err(EngineError::CustomError(anyhow::anyhow!(
+                    "k-paper: cancel_order timeout (10s) waiting for CancelAck"
+                )))
+            }
+        }
+    }
+
+    async fn cancel_all_orders(&self, pair: &Pair) -> Result<(), EngineError> {
+        let order_ids: Vec<OrderId> = {
+            let state = self.state.read().await;
+            state
+                .open_orders
+                .values()
+                .filter(|o| o.instrument.pair == *pair)
+                .map(|o| o.order_id.clone())
+                .collect()
+        };
+        for id in order_ids {
+            let _ = self.cancel_order_by_id(id).await;
+        }
+        Ok(())
+    }
+
+    async fn fetch_balance(&self) -> Result<Vec<Balance>, EngineError> {
+        let state = self.state.read().await;
+        Ok(state.balances.clone())
+    }
+
+    async fn fetch_open_orders(&self) -> Result<Vec<Order>, EngineError> {
+        let state = self.state.read().await;
+        Ok(state.open_orders.values().cloned().collect())
+    }
+
+    async fn fetch_trades(&self, pair: Option<&Pair>) -> Result<Vec<Trade>, EngineError> {
+        let state = self.state.read().await;
+        Ok(state
+            .trades
+            .iter()
+            .filter(|t| pair.is_none_or(|p| t.pair == *p))
+            .cloned()
+            .collect())
+    }
+
+    async fn fetch_market_data_snapshot(&self, _pair: &Pair) -> Result<(), EngineError> {
+        Ok(())
+    }
+
+    async fn amend_order(
+        &self,
+        order_id: OrderId,
+        new_request: OrderRequest,
+    ) -> Result<Order, EngineError> {
+        let (tx, rx) = oneshot::channel();
+        {
+            let mut state = self.state.write().await;
+            if state.pending_amend.is_some() {
+                return Err(EngineError::CustomError(anyhow::anyhow!(
+                    "k-paper: only one in-flight amend supported"
+                )));
+            }
+            state.pending_amend = Some(tx);
+        }
+        self.send_command(KPaperCommand::AmendOrder {
+            order_id: order_id.as_str().to_string(),
+            quantity: Some(DecimalOrStr::Num(new_request.amount)),
+            limit_price: Some(DecimalOrStr::Num(new_request.price)),
+        })?;
+        let timeout_dur = tokio::time::Duration::from_secs(10);
+        match tokio::time::timeout(timeout_dur, rx).await {
+            Ok(Ok(Ok(order))) => Ok(order),
+            Ok(Ok(Err(e))) => Err(e),
+            Ok(Err(_)) => {
+                let mut state = self.state.write().await;
+                state.pending_amend = None;
+                Err(EngineError::CustomError(anyhow::anyhow!(
+                    "k-paper: amend ack channel dropped"
+                )))
+            }
+            Err(_) => {
+                let mut state = self.state.write().await;
+                state.pending_amend = None;
+                Err(EngineError::CustomError(anyhow::anyhow!(
+                    "k-paper: amend_order timeout (10s) waiting for AmendAck"
+                )))
+            }
+        }
+    }
+
+    /// No native bulk; k-paper does not support bulk. Fallback: single-op loop (trait requirement).
+    async fn bulk_open_orders(
+        &self,
+        req: BulkOrderRequest,
+    ) -> Result<BulkOrderResponse, EngineError> {
+        let mut results = Vec::new();
+        let mut success_count = 0usize;
+        let mut failure_count = 0usize;
+        for (idx, order_req) in req.requests.into_iter().enumerate() {
+            match self.open_order(order_req).await {
+                Ok(order) => {
+                    results.push(trading_core::types::exchange::BulkOperationResult {
+                        success: true,
+                        data: Some(order),
+                        error: None,
+                        index: idx,
+                    });
+                    success_count += 1;
+                }
+                Err(e) => {
+                    results.push(trading_core::types::exchange::BulkOperationResult {
+                        success: false,
+                        data: None,
+                        error: Some(e.to_string()),
+                        index: idx,
+                    });
+                    failure_count += 1;
+                }
+            }
+        }
+        Ok(BulkOrderResponse {
+            results,
+            success_count,
+            failure_count,
+        })
+    }
+
+    /// No native bulk; k-paper does not support bulk. Fallback: single-op loop (trait requirement).
+    async fn bulk_amend_orders(
+        &self,
+        req: BulkAmendRequest,
+    ) -> Result<BulkAmendResponse, EngineError> {
+        let mut results = Vec::new();
+        let mut amended_orders = Vec::new();
+        let mut failed_amendments = Vec::new();
+        for (idx, amendment) in req.amendments.into_iter().enumerate() {
+            match self
+                .amend_order(amendment.order_id.clone(), amendment.new_request)
+                .await
+            {
+                Ok(order) => {
+                    results.push(trading_core::types::exchange::BulkOperationResult {
+                        success: true,
+                        data: Some(order.clone()),
+                        error: None,
+                        index: idx,
+                    });
+                    amended_orders.push(order);
+                }
+                Err(e) => {
+                    let msg = e.to_string();
+                    results.push(trading_core::types::exchange::BulkOperationResult {
+                        success: false,
+                        data: None,
+                        error: Some(msg.clone()),
+                        index: idx,
+                    });
+                    failed_amendments.push((amendment.order_id, msg));
+                }
+            }
+        }
+        Ok(BulkAmendResponse {
+            results,
+            amended_orders,
+            failed_amendments,
+        })
+    }
+}
+
+/// Optional signal fired when the first balance message is received (so callers can wait for snapshot).
+pub type BalanceReadySender =
+    Option<Arc<tokio::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>>>;
+
+/// Run the k-paper WebSocket loop: connect, then process incoming messages and outgoing commands.
+/// Pass None for market_data_tx when this connection is exchange-only (MD comes from market_data_engine).
+/// If balance_ready is Some, it is signalled when the first balance message is processed.
+pub async fn run_websocket_loop(
+    config: KPaperConfig,
+    mut command_rx: mpsc::UnboundedReceiver<KPaperCommand>,
+    state: Arc<RwLock<KPaperState>>,
+    market_data_tx: Option<MarketDataUpdateSender>,
+    exchange_state_manager: Arc<crate::state::manager::ExchangeStateManager>,
+    mut shutdown_rx: tokio::sync::broadcast::Receiver<()>,
+    balance_ready: BalanceReadySender,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    info!("k-paper: connecting to {}", config.url);
+    let (ws_stream, _) = tokio_tungstenite::connect_async(&config.url).await?;
+    info!("k-paper: connected to {}", config.url);
+    let (mut write, mut read) = ws_stream.split();
+
+    let snapshot_cmd = serde_json::to_string(&KPaperCommand::GetAccountSnapshot)
+        .map_err(|e| format!("serialize get_account_snapshot: {}", e))?;
+    let instrument_type = config.instrument_type.clone();
+    let mut recv_count: u64 = 0;
+    let mut snapshot_sent = false;
+
+    loop {
+        tokio::select! {
+            _ = shutdown_rx.recv() => {
+                info!("k-paper: shutdown signal received");
+                break;
+            }
+            msg = read.next() => {
+                let msg = match msg {
+                    Some(Ok(Message::Text(text))) => text,
+                    Some(Ok(Message::Close(_))) => {
+                        info!("k-paper: server closed connection");
+                        break;
+                    }
+                    Some(Err(e)) => {
+                        error!("k-paper: WebSocket error: {}", e);
+                        break;
+                    }
+                    Some(Ok(_)) => continue,
+                    None => break,
+                };
+                recv_count += 1;
+                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&msg) {
+                    let typ = v.get("type").and_then(|t| t.as_str()).unwrap_or("?");
+                    if recv_count == 1 {
+                        info!("k-paper exchange: first message received (type={}), read loop active", typ);
+                    }
+                    tracing::debug!("k-paper exchange: recv #{} type={}", recv_count, typ);
+                }
+                if let Err(e) = handle_message(
+                    &msg,
+                    &state,
+                    market_data_tx.as_ref(),
+                    &exchange_state_manager,
+                    &instrument_type,
+                    balance_ready.as_ref(),
+                ).await {
+                    warn!("k-paper: handle_message error: {} (raw type from JSON may not match)", e);
+                }
+                // Request snapshot after first message so we don't miss server-pushed connected/balance (read-before-send).
+                if !snapshot_sent {
+                    snapshot_sent = true;
+                    if let Err(e) = write.send(Message::Text(snapshot_cmd.clone())).await {
+                        error!("k-paper: send get_account_snapshot: {}", e);
+                        break;
+                    }
+                    info!("k-paper: sent get_account_snapshot (after first read)");
+                }
+            }
+            cmd = command_rx.recv() => {
+                let cmd = match cmd {
+                    Some(c) => c,
+                    None => break,
+                };
+                if let KPaperCommand::PlaceOrder { request } = &cmd {
+                    info!(
+                        "k-paper: sent place_order instrument={} side={} qty={:?}",
+                        request.instrument_id, request.side, request.quantity
+                    );
+                }
+                let json = serde_json::to_string(&cmd).map_err(|e| format!("serialize: {}", e))?;
+                write
+                    .send(Message::Text(json))
+                    .await
+                    .map_err(|e| format!("send: {}", e))?;
+            }
+        }
+    }
+    Ok(())
+}
+
+async fn handle_message(
+    text: &str,
+    state: &Arc<RwLock<KPaperState>>,
+    market_data_tx: Option<&MarketDataUpdateSender>,
+    exchange_state_manager: &crate::state::manager::ExchangeStateManager,
+    instrument_type: &InstrumentType,
+    balance_ready: Option<&Arc<tokio::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>>>,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let msg: KPaperMessage = match serde_json::from_str(text) {
+        Ok(m) => m,
+        Err(e) => {
+            let raw_type = serde_json::from_str::<serde_json::Value>(text)
+                .ok()
+                .and_then(|v| v.get("type").cloned());
+            warn!(
+                "k-paper: failed to parse message (type={:?}): {}",
+                raw_type, e
+            );
+            return Err(e.into());
+        }
+    };
+    match msg {
+        KPaperMessage::Connected(_) => {
+            info!("k-paper: received connected (WebSocket live)");
+        }
+        KPaperMessage::Orderbook(ob) => {
+            if let Some(tx) = market_data_tx {
+                if let Some(book) = orderbook_to_structured(&ob) {
+                    let _ = tx.send(MarketDataUpdate::Orderbook {
+                        orderbook: book,
+                        trace_context: None,
+                    });
+                }
+            }
+        }
+        KPaperMessage::PublicTrade(t) => {
+            if let Some(tx) = market_data_tx {
+                if let Some(trade) = public_trade_to_structured(&t) {
+                    let _ = tx.send(MarketDataUpdate::Trade {
+                        trade,
+                        trace_context: None,
+                    });
+                }
+            }
+        }
+        KPaperMessage::Execution(exec) => {
+            info!(
+                "k-paper: received Execution order_id={} instrument_id={}",
+                exec.order_id, exec.instrument_id
+            );
+            let exec_qty = exec.quantity.to_decimal().unwrap_or(Decimal::ZERO);
+            let is_reject = exec
+                .reject_reason
+                .as_ref()
+                .map(|s| !s.is_empty())
+                .unwrap_or(false);
+            let is_ack = !is_reject && exec_qty.is_zero();
+
+            let mut st = state.write().await;
+            let (order, pending_tx) = if is_ack {
+                // Order accepted (quantity=0): build Order from ack + stored request
+                if let Some((tx, req)) = st.pending_place.take() {
+                    let order = execution_ack_to_order(&exec, &req, instrument_type.clone());
+                    (order, Some(tx))
+                } else {
+                    (None, None)
+                }
+            } else {
+                let order = execution_to_order(&exec, instrument_type.clone());
+                let pending_tx = st.pending_place.take().map(|(tx, _)| tx);
+                (order, pending_tx)
+            };
+
+            if let Some(ref o) = order {
+                let _ = exchange_state_manager.update_order(o.clone()).await;
+            }
+            let order_id = OrderId::new(exec.order_id.clone().into());
+            if let Some(o) = order.clone() {
+                if is_reject || o.status == trading_core::types::common::OrderStatus::Filled {
+                    st.open_orders.remove(&order_id);
+                } else {
+                    st.open_orders.insert(order_id.clone(), o);
+                }
+            }
+            // Only add trade for fills (not for ack with quantity=0)
+            if !is_ack {
+                if let Some(t) = execution_to_trade(&exec) {
+                    let _ = exchange_state_manager.add_trade(t.clone()).await;
+                    st.trades.push(t);
+                }
+            }
+            if let Some(tx) = pending_tx {
+                let result = order.map(Ok).unwrap_or_else(|| {
+                    Err(EngineError::CustomError(anyhow::anyhow!(
+                        "{}",
+                        exec.reject_reason.as_deref().unwrap_or("rejected")
+                    )))
+                });
+                let _ = tx.send(result);
+            }
+        }
+        KPaperMessage::Balance(b) => {
+            if let Some(guard) = balance_ready {
+                if let Some(tx) = guard.lock().await.take() {
+                    let _ = tx.send(());
+                }
+            }
+            let balance = balance_to_core(&b);
+            info!(
+                "k-paper: balance update {} free={} used={} total={}",
+                balance.symbol, balance.free, balance.used, balance.total
+            );
+            let _ = exchange_state_manager.update_balance(balance.clone()).await;
+            let mut st = state.write().await;
+            if let Some(pos) = st.balances.iter().position(|x| x.symbol == balance.symbol) {
+                st.balances[pos] = balance;
+            } else {
+                st.balances.push(balance);
+            }
+        }
+        KPaperMessage::Position(pos) => {
+            if let Some(p) = position_to_core(&pos, instrument_type.clone()) {
+                let _ = exchange_state_manager.update_position(p.clone()).await;
+                let mut st = state.write().await;
+                let key = p.instrument.pair.clone();
+                if let Some(idx) = st.positions.iter().position(|x| x.instrument.pair == key) {
+                    st.positions[idx] = p;
+                } else {
+                    st.positions.push(p);
+                }
+            }
+        }
+        KPaperMessage::CancelAck(ack) => {
+            let order_id = OrderId::new(ack.order_id.clone().into());
+            let mut st = state.write().await;
+            st.open_orders.remove(&order_id);
+            if let Some(pending) = st.pending_cancel.take() {
+                let _ = pending.send(Ok(()));
+            }
+        }
+        KPaperMessage::AmendAck(ack) => {
+            let order_id = OrderId::new(ack.order_id.clone().into());
+            let mut st = state.write().await;
+            let order = st.open_orders.get(&order_id).cloned().unwrap_or_else(|| {
+                // Placeholder if order not in state (e.g. already filled)
+                Order {
+                    order_id: order_id.clone(),
+                    client_order_id: None,
+                    instrument: Instrument::new(instrument_type.clone(), Pair::new("BTC", "USDT")),
+                    side: Side::Buy,
+                    price: Decimal::ZERO,
+                    amount: Decimal::ZERO,
+                    internal_created_at: 0,
+                    exchange_created_at: None,
+                    status: trading_core::types::common::OrderStatus::New,
+                    filled_amount: Decimal::ZERO,
+                }
+            });
+            if let Some(pending) = st.pending_amend.take() {
+                let _ = pending.send(Ok(order));
+            }
+        }
+        KPaperMessage::Error(e) => {
+            warn!("k-paper error: {}", e.message);
+            let mut st = state.write().await;
+            if let Some((tx, _)) = st.pending_place.take() {
+                let _ = tx.send(Err(EngineError::CustomError(anyhow::anyhow!(
+                    "{}", e.message
+                ))));
+            }
+            if let Some(pending) = st.pending_cancel.take() {
+                let _ = pending.send(Err(EngineError::CustomError(anyhow::anyhow!(
+                    "{}", e.message
+                ))));
+            }
+            if let Some(pending) = st.pending_amend.take() {
+                let _ = pending.send(Err(EngineError::CustomError(anyhow::anyhow!(
+                    "{}", e.message
+                ))));
+            }
+        }
+    }
+    Ok(())
+}

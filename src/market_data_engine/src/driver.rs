@@ -1,7 +1,9 @@
 use super::{config::MarketDataConfig, messages::StateManagerMessageHandler};
 use crate::{
     config::ExchangeConfig,
-    exchanges::{binance::client::BinanceClient, bybit::client::BybitClient},
+    exchanges::{
+        binance::client::BinanceClient, bybit::client::BybitClient, k_paper::client::PaperClient,
+    },
     state::manager::MarketDataStateManager,
 };
 use std::sync::Arc;
@@ -93,6 +95,14 @@ impl MarketDataDriver {
                     channels.market_data_engine_buffer,
                     Some(message_handler),
                     bybit_config.pairs.clone(), // Use pairs from config
+                )))
+            }
+            ExchangeConfig::Paper(paper_config) => {
+                let message_handler = Box::new(StateManagerMessageHandler::new(state_manager));
+                Ok(Box::new(PaperClient::new(
+                    paper_config.clone(),
+                    Some(message_handler),
+                    paper_config.pairs.clone(),
                 )))
             }
         }

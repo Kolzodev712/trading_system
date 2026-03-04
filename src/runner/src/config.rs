@@ -309,6 +309,12 @@ impl BotConfig {
                         .map_err(|e| format!("Failed to deserialize Bybit config: {e}"))?;
                 Ok(bybit_config.pairs)
             }
+            Exchange::Paper => {
+                let paper_config: exchange_engine::exchanges::k_paper::PaperConfig =
+                    serde_json::from_value(self.exchange_engine.config.clone())
+                        .map_err(|e| format!("Failed to deserialize Paper config: {e}"))?;
+                Ok(paper_config.pairs)
+            }
             Exchange::Unsupported => Err("Unsupported exchange".into()),
         }
     }
@@ -323,6 +329,12 @@ impl BotConfig {
                     serde_json::from_value(self.exchange_engine.config.clone())
                         .map_err(|e| format!("Failed to deserialize Bybit config: {e}"))?;
                 Ok(bybit_config.instrument_type)
+            }
+            Exchange::Paper => {
+                let paper_config: exchange_engine::exchanges::k_paper::PaperConfig =
+                    serde_json::from_value(self.exchange_engine.config.clone())
+                        .map_err(|e| format!("Failed to deserialize Paper config: {e}"))?;
+                Ok(paper_config.instrument_type)
             }
             Exchange::Unsupported => Ok(InstrumentType::Spot), // Default to Spot
         }

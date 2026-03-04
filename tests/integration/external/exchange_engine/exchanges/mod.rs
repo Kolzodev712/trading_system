@@ -6,5 +6,5 @@
 #[cfg(test)]
 pub mod binance;
 
-// Future exchanges will be added here:
-// pub mod bybit;
+#[cfg(test)]
+pub mod bybit;

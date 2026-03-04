@@ -2,6 +2,7 @@ use trading_core::{error::EngineError, types::common::Exchange};
 
 use super::exchanges::binance::config::BinanceConfig;
 use super::exchanges::bybit::config::BybitConfig;
+use super::exchanges::k_paper::config::PaperConfig;
 use serde::{Deserialize, Serialize};
 
 pub trait ConfigGetter<T> {
@@ -27,6 +28,7 @@ impl ExchangeEngineConfig {
 pub enum ExchangeConfig {
     Binance(BinanceConfig),
     Bybit(BybitConfig),
+    Paper(PaperConfig),
 }
 
 impl ConfigGetter<BinanceConfig> for ExchangeConfig {
@@ -46,6 +48,17 @@ impl ConfigGetter<BybitConfig> for ExchangeConfig {
             ExchangeConfig::Bybit(config) => Ok(config),
             _ => Err(EngineError::CustomError(anyhow::anyhow!(
                 "Expected Bybit config"
+            ))),
+        }
+    }
+}
+
+impl ConfigGetter<PaperConfig> for ExchangeConfig {
+    fn get_config(self) -> Result<PaperConfig, EngineError> {
+        match self {
+            ExchangeConfig::Paper(config) => Ok(config),
+            _ => Err(EngineError::CustomError(anyhow::anyhow!(
+                "Expected Paper config"
             ))),
         }
     }

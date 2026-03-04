@@ -298,6 +298,7 @@ pub struct MillisecondTimestamp(pub u64);
 pub enum Exchange {
     Binance,
     Bybit,
+    Paper,
     Unsupported,
 }
 

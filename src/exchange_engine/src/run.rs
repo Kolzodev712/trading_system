@@ -11,6 +11,7 @@ use crate::config::{ExchangeConfig, ExchangeEngineConfig};
 use crate::state::manager::ExchangeStateManager;
 use std::sync::Arc;
 use tokio::sync::broadcast;
+use tokio::sync::mpsc;
 use trading_core::config::ChannelConfig;
 use trading_core::traits::ExchangeDriver;
 use trading_core::{
@@ -74,9 +75,26 @@ pub async fn run(
     enum ExchangeClient {
         Binance(crate::exchanges::binance::client::BinanceClient),
         Bybit(crate::exchanges::bybit::client::BybitClient),
+        Paper(
+            crate::exchanges::k_paper::KPaperConfig,
+            Arc<tokio::sync::RwLock<crate::exchanges::k_paper::client::KPaperState>>,
+            mpsc::UnboundedReceiver<crate::exchanges::k_paper::messages::KPaperCommand>,
+        ),
     }
 
     let (trading_client, exchange_client) = match &config.exchange_config {
+        ExchangeConfig::Paper(paper_config) => {
+            let kpaper_config = crate::exchanges::k_paper::KPaperConfig::from(paper_config.clone());
+            let (client, command_rx) =
+                crate::exchanges::k_paper::KPaperClient::new(kpaper_config.clone());
+            let state = client.state();
+            let trading_client: Arc<tokio::sync::RwLock<dyn TradingClient<OrderRequest>>> =
+                Arc::new(tokio::sync::RwLock::new(client));
+            (
+                trading_client,
+                ExchangeClient::Paper(kpaper_config, state, command_rx),
+            )
+        }
         ExchangeConfig::Binance(binance_config) => {
             let client = crate::exchanges::binance::client::BinanceClient::new(
                 binance_config.clone(),
@@ -149,7 +167,11 @@ pub async fn run(
     enum ExchangeDriverEnum {
         Binance(crate::exchanges::binance::driver::BinanceDriver),
         Bybit(crate::exchanges::bybit::driver::BybitDriver),
+        Paper(crate::exchanges::k_paper::PaperDriver),
     }
+
+    // Paper only: signal when first balance message is received (used in readiness wait below)
+    let mut paper_balance_ready_rx: Option<tokio::sync::oneshot::Receiver<()>> = None;
 
     let driver = match exchange_client {
         ExchangeClient::Binance(binance_client) => {
@@ -166,12 +188,24 @@ pub async fn run(
                 trading_client.clone(),
             )?)
         }
+        ExchangeClient::Paper(kpaper_config, state, command_rx) => {
+            let (balance_ready_tx, balance_ready_rx) = tokio::sync::oneshot::channel();
+            paper_balance_ready_rx = Some(balance_ready_rx);
+            ExchangeDriverEnum::Paper(crate::exchanges::k_paper::PaperDriver::new(
+                kpaper_config,
+                state,
+                command_rx,
+                state_manager.clone(),
+                trading_client.clone(),
+                Some(balance_ready_tx),
+            ))
+        }
     };
 
     // Store client reference for readiness checking before moving driver
     let binance_client_for_readiness = match &driver {
         ExchangeDriverEnum::Binance(d) => Some(d.client().clone()),
-        ExchangeDriverEnum::Bybit(_) => None,
+        ExchangeDriverEnum::Bybit(_) | ExchangeDriverEnum::Paper(_) => None,
     };
 
     // 6. Power up the integration: Start the driver's event loop
@@ -182,6 +216,7 @@ pub async fn run(
         let result = match driver {
             ExchangeDriverEnum::Binance(mut d) => d.run(shutdown_rx_for_driver).await,
             ExchangeDriverEnum::Bybit(mut d) => d.run(shutdown_rx_for_driver).await,
+            ExchangeDriverEnum::Paper(mut d) => d.run(shutdown_rx_for_driver).await,
         };
         if let Err(e) = result {
             tracing::error!("Exchange driver error: {}", e);
@@ -197,8 +232,8 @@ pub async fn run(
 
     // Wait for connection to be ready
     // For Binance, we check the RPC channel directly
-    // For Bybit, we check the connection state via the driver
-    match config.exchange_config {
+    // For Bybit/Paper, we give the driver a moment to start
+    match &config.exchange_config {
         ExchangeConfig::Binance(_) => {
             if let Some(client) = binance_client_for_readiness {
                 // Check if RPC channel is ready AND open (not just set)
@@ -221,12 +256,27 @@ pub async fn run(
             }
         }
         ExchangeConfig::Bybit(_) => {
-            // For Bybit, we need to check connection readiness via a different mechanism
-            // Since we can't access the driver after moving it, we'll just wait a bit
-            // The driver will establish connections in the background
-            tracing::info!("Bybit driver starting, connections will be established in background");
-            // Give it a moment to start
+            tracing::info!(
+                "Exchange driver starting, connections will be established in background"
+            );
             tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+        }
+        ExchangeConfig::Paper(_) => {
+            tracing::info!("Paper driver starting, waiting for initial balance snapshot...");
+            tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+            if let Some(rx) = paper_balance_ready_rx.take() {
+                match tokio::time::timeout(tokio::time::Duration::from_secs(15), rx).await {
+                    Ok(Ok(())) => {
+                        tracing::info!("Paper: received initial balance snapshot, proceeding");
+                    }
+                    Ok(Err(_)) => {}
+                    Err(_) => {
+                        tracing::warn!(
+                            "Paper: timeout (15s) waiting for initial balance snapshot, proceeding anyway"
+                        );
+                    }
+                }
+            }
         }
     }
 

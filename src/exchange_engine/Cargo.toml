@@ -7,6 +7,7 @@ edition = "2021"
 
 [dependencies]
 trading_core = { path = "../../libs/trading_core" }
+market_data_engine = { path = "../market_data_engine" }
 trading_trace = { path = "../../libs/trading_trace" }
 
 # Logging

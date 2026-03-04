@@ -18,7 +18,10 @@ use trading_core::{
 };
 
 use exchange_engine::{
-    exchanges::binance::{client::BinanceClient, config::BinanceConfig},
+    exchanges::{
+        binance::{client::BinanceClient, config::BinanceConfig},
+        bybit::{client::BybitClient, config::BybitConfig},
+    },
     state::manager::ExchangeStateManager,
 };
 
@@ -75,7 +78,17 @@ impl ExchangeClientBuilder {
                 )))
             }
             Exchange::Bybit => {
-                todo!("Bybit exchange clients not yet implemented in tests")
+                let bybit_config = self.create_bybit_config();
+                Arc::new(RwLock::new(BybitClient::new(
+                    bybit_config,
+                    self.channels.websocket_inbound_capacity,
+                    self.channels.websocket_ping_capacity,
+                    self.channels.websocket_outbound_rpc_capacity,
+                    self.channels.shutdown_capacity,
+                )))
+            }
+            Exchange::Paper => {
+                todo!("Paper exchange clients not yet implemented in tests")
             }
             Exchange::Unsupported => {
                 panic!("Unsupported exchange cannot be used in tests")
@@ -113,6 +126,20 @@ impl ExchangeClientBuilder {
             limit: None,
             base_delay: None,
             max_delay: None,
+        }
+    }
+
+    fn create_bybit_config(&self) -> BybitConfig {
+        use exchange_engine::exchanges::bybit::config::{BybitCredentials, BybitRateLimiterConfig};
+        BybitConfig {
+            pairs: self.config.pairs.clone(),
+            instrument_type: trading_core::types::common::InstrumentType::Spot,
+            credentials: BybitCredentials {
+                api_key: SecretString::from(self.config.api_key.as_str()),
+                api_secret: SecretString::from(self.config.secret_key.as_str()),
+            },
+            testnet: false,
+            rate_limiter: BybitRateLimiterConfig::default(),
         }
     }
 }
@@ -168,6 +195,9 @@ impl MarketDataClientBuilder {
 
                 Box::new(BybitClient::new(config, self.buffer_size, None, vec![]))
             }
+            Exchange::Paper => {
+                todo!("Paper exchange clients not yet implemented in tests")
+            }
             Exchange::Unsupported => {
                 panic!("Unsupported exchange cannot be used in tests")
             }
@@ -211,6 +241,9 @@ impl MarketDataClientBuilder {
                 let client = BybitClient::new(config, self.buffer_size, handler, vec![]);
                 Box::new(client)
             }
+            Exchange::Paper => {
+                todo!("Paper exchange clients not yet implemented in tests")
+            }
             Exchange::Unsupported => {
                 panic!("Unsupported exchange cannot be used in tests")
             }
@@ -240,6 +273,9 @@ impl AssetDataClientBuilder {
             Exchange::Bybit => {
                 use asset_engine::exchanges::bybit::BybitPublicClient;
                 Arc::new(BybitPublicClient::new("https://api.bybit.com".to_string()))
+            }
+            Exchange::Paper => {
+                todo!("Paper exchange clients not yet implemented in tests")
             }
             Exchange::Unsupported => {
                 panic!("Unsupported exchange cannot be used in tests")

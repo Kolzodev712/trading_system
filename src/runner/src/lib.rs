@@ -1264,10 +1264,53 @@ pub async fn run(
     )
     .await;
 
-    let (_, market_data_rx, market_data_handle, market_data_state_manager) =
-        initialize_market_data_engine(&bot_config, &shutdown_manager)?;
-    tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-    info!("Market Data Engine: WebSocket subscribed to orderbook stream");
+    // For Paper: start exchange_engine first so its WebSocket connects before market_data and
+    // receives the account snapshot (k-paper may send snapshot only to the first connection).
+    let (
+        _,
+        market_data_rx,
+        market_data_handle,
+        market_data_state_manager,
+        exchange_state_manager,
+        exchange_update_rx,
+        trading_client,
+    ) = if bot_config.exchange_engine.exchange == Exchange::Paper {
+        let (exchange_state_manager, exchange_update_rx, trading_client) =
+            initialize_exchange_engine(&bot_config, &shutdown_manager).await?;
+        let (_, market_data_rx, market_data_handle, market_data_state_manager) =
+            initialize_market_data_engine(&bot_config, &shutdown_manager)?;
+        (
+            (),
+            market_data_rx,
+            market_data_handle,
+            market_data_state_manager,
+            exchange_state_manager,
+            exchange_update_rx,
+            trading_client,
+        )
+    } else {
+        let (_, market_data_rx, market_data_handle, market_data_state_manager) =
+            initialize_market_data_engine(&bot_config, &shutdown_manager)?;
+        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+        info!("Market Data Engine: WebSocket subscribed to orderbook stream");
+
+        let (exchange_state_manager, exchange_update_rx, trading_client) =
+            initialize_exchange_engine(&bot_config, &shutdown_manager).await?;
+        (
+            (),
+            market_data_rx,
+            market_data_handle,
+            market_data_state_manager,
+            exchange_state_manager,
+            exchange_update_rx,
+            trading_client,
+        )
+    };
+
+    if bot_config.exchange_engine.exchange != Exchange::Paper {
+        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+        info!("Market Data Engine: WebSocket subscribed to orderbook stream");
+    }
 
     let (indicator_tx, indicator_rx) = trading_core::channels::indicators::indicator_update_channel(
         bot_config.channels.indicator_update_capacity,
@@ -1281,9 +1324,6 @@ pub async fn run(
         configured_pairs.as_slice(),
     )
     .await?;
-
-    let (exchange_state_manager, exchange_update_rx, trading_client) =
-        initialize_exchange_engine(&bot_config, &shutdown_manager).await?;
 
     let trading_state_manager = Arc::new(TradingStateManager::new(
         exchange_update_rx.resubscribe(),
@@ -1366,6 +1406,9 @@ pub async fn initialize_asset_service(
                 )
                 .await
                 .map_err(|e| format!("Failed to register Bybit client: {e}"))?;
+        }
+        Exchange::Paper => {
+            // No REST asset client for paper; asset_service stays empty
         }
         Exchange::Unsupported => {
             return Err("Unsupported exchange for Asset Engine".into());
@@ -1482,6 +1525,21 @@ pub fn initialize_market_data_engine(
                     max_delay: config_json.get("maxDelay").and_then(|v| v.as_u64()),
                     category,
                 }),
+            }
+        }
+        Exchange::Paper => {
+            let paper_config: exchange_engine::exchanges::k_paper::PaperConfig =
+                serde_json::from_value(bot_config.exchange_engine.config.clone())
+                    .map_err(|e| format!("Failed to deserialize Paper config: {e}"))?;
+            MarketDataConfig {
+                redis_url: None,
+                exchange: bot_config.exchange_engine.exchange.clone(),
+                exchange_config: MDExchangeConfig::Paper(
+                    market_data_engine::exchanges::k_paper::config::PaperConfig {
+                        url: paper_config.paper_exchange_url,
+                        pairs: pairs.clone(),
+                    },
+                ),
             }
         }
         Exchange::Unsupported => {
@@ -1775,6 +1833,23 @@ pub async fn initialize_exchange_engine(
             let exchange_config = ExchangeEngineConfig {
                 exchange: Exchange::Bybit,
                 exchange_config: exchange_engine::config::ExchangeConfig::Bybit(bybit_config),
+            };
+
+            (exchange_config, pairs)
+        }
+        Exchange::Paper => {
+            let paper_config: exchange_engine::exchanges::k_paper::PaperConfig =
+                serde_json::from_value(bot_config.exchange_engine.config.clone())
+                    .map_err(|e| format!("Failed to deserialize Paper config: {e}"))?;
+
+            if paper_config.pairs.is_empty() {
+                return Err("No pairs configured in paper config".into());
+            }
+
+            let pairs = paper_config.pairs.clone();
+            let exchange_config = ExchangeEngineConfig {
+                exchange: Exchange::Paper,
+                exchange_config: exchange_engine::config::ExchangeConfig::Paper(paper_config),
             };
 
             (exchange_config, pairs)

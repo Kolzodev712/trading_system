@@ -9,8 +9,7 @@ use trading_core::types::exchange::{Balance, Order, OrderRequest, Position, Trad
 use trading_core::types::market_data::{StructuredOrderbook, StructuredPublicTrade};
 
 use super::messages::{
-    DecimalOrStr, KPaperBalance, KPaperExecution, KPaperOrderbook, KPaperPosition,
-    KPaperPublicTrade,
+    KPaperBalance, KPaperExecution, KPaperOrderbook, KPaperPosition, KPaperPublicTrade,
 };
 
 /// Parse k-paper instrument_id (e.g. "BTC-USDT") to Pair.
@@ -42,10 +41,6 @@ pub fn timestamp_u64_to_iso(secs: u64) -> String {
         .unwrap_or_else(|| "1970-01-01T00:00:00Z".to_string())
 }
 
-fn decimal_or_str(d: &DecimalOrStr) -> Decimal {
-    d.to_decimal().unwrap_or(Decimal::ZERO)
-}
-
 fn side_from_str(s: &str) -> Side {
     if s.eq_ignore_ascii_case("buy") {
         Side::Buy
@@ -57,16 +52,8 @@ fn side_from_str(s: &str) -> Side {
 /// Convert k-paper orderbook to StructuredOrderbook.
 pub fn orderbook_to_structured(ob: &KPaperOrderbook) -> Option<StructuredOrderbook> {
     let pair = parse_instrument_id(ob.instrument_id.as_str())?;
-    let bids: Vec<(Decimal, Decimal)> = ob
-        .bids
-        .iter()
-        .map(|l| (decimal_or_str(&l.price), decimal_or_str(&l.quantity)))
-        .collect();
-    let asks: Vec<(Decimal, Decimal)> = ob
-        .asks
-        .iter()
-        .map(|l| (decimal_or_str(&l.price), decimal_or_str(&l.quantity)))
-        .collect();
+    let bids: Vec<(Decimal, Decimal)> = ob.bids.iter().map(|l| (l.price, l.quantity)).collect();
+    let asks: Vec<(Decimal, Decimal)> = ob.asks.iter().map(|l| (l.price, l.quantity)).collect();
     let timestamp = timestamp_iso_to_u64_secs(ob.timestamp.as_str());
     Some(StructuredOrderbook {
         pair,
@@ -81,8 +68,8 @@ pub fn public_trade_to_structured(t: &KPaperPublicTrade) -> Option<StructuredPub
     let pair = parse_instrument_id(t.instrument_id.as_str())?;
     Some(StructuredPublicTrade {
         pair,
-        price: decimal_or_str(&t.price),
-        quantity: decimal_or_str(&t.quantity),
+        price: t.price,
+        quantity: t.quantity,
         timestamp: timestamp_iso_to_u64_secs(t.timestamp.as_str()),
         is_market_maker: false,
         trade_id: Some(t.trade_id.clone().into()),
@@ -98,7 +85,7 @@ pub fn execution_ack_to_order(
 ) -> Option<Order> {
     let pair = parse_instrument_id(exec.instrument_id.as_str())?;
     let instrument = Instrument::new(instrument_type, pair);
-    let price = decimal_or_str(&exec.price);
+    let price = exec.price;
     let timestamp_secs = timestamp_iso_to_u64_secs(exec.timestamp.as_str());
     let timestamp_ms = timestamp_secs.saturating_mul(1000);
     Some(Order {
@@ -123,8 +110,8 @@ pub fn execution_to_order(
 ) -> Option<Order> {
     let pair = parse_instrument_id(exec.instrument_id.as_str())?;
     let instrument = Instrument::new(instrument_type, pair);
-    let price = decimal_or_str(&exec.price);
-    let quantity = decimal_or_str(&exec.quantity);
+    let price = exec.price;
+    let quantity = exec.quantity;
     let status = if exec
         .reject_reason
         .as_ref()
@@ -162,15 +149,11 @@ pub fn execution_to_trade(exec: &KPaperExecution) -> Option<Trade> {
         trade_id,
         order_id: OrderId::new(exec.order_id.clone().into()),
         pair,
-        price: decimal_or_str(&exec.price),
-        quantity: decimal_or_str(&exec.quantity),
+        price: exec.price,
+        quantity: exec.quantity,
         side: side_from_str(exec.side.as_str()),
         timestamp: timestamp_ms,
-        fee: exec
-            .fee
-            .as_ref()
-            .map(decimal_or_str)
-            .unwrap_or(Decimal::ZERO),
+        fee: exec.fee.unwrap_or(Decimal::ZERO),
         fee_currency: Symbol::from("USDT"),
     })
 }
@@ -179,9 +162,9 @@ pub fn execution_to_trade(exec: &KPaperExecution) -> Option<Trade> {
 pub fn balance_to_core(b: &KPaperBalance) -> Balance {
     Balance {
         symbol: Symbol::from(b.asset.as_str()),
-        free: decimal_or_str(&b.available),
-        used: decimal_or_str(&b.locked),
-        total: decimal_or_str(&b.total),
+        free: b.available,
+        used: b.locked,
+        total: b.total,
     }
 }
 
@@ -189,13 +172,9 @@ pub fn balance_to_core(b: &KPaperBalance) -> Balance {
 pub fn position_to_core(pos: &KPaperPosition, instrument_type: InstrumentType) -> Option<Position> {
     let pair = parse_instrument_id(pos.instrument_id.as_str())?;
     let instrument = Instrument::new(instrument_type, pair);
-    let quantity = decimal_or_str(&pos.quantity);
-    let entry_price = decimal_or_str(&pos.entry_price);
-    let unrealized_pnl = pos
-        .unrealized_pnl
-        .as_ref()
-        .map(decimal_or_str)
-        .unwrap_or(Decimal::ZERO);
+    let quantity = pos.quantity;
+    let entry_price = pos.entry_price;
+    let unrealized_pnl = pos.unrealized_pnl.unwrap_or(Decimal::ZERO);
     Some(Position {
         instrument,
         quantity,
@@ -213,4 +192,82 @@ pub fn position_to_core(pos: &KPaperPosition, instrument_type: InstrumentType) -
         margin_type: None,
         liquidation_price: None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use trading_core::types::common::Instrument;
+
+    #[test]
+    fn parse_instrument_id_ok() {
+        assert_eq!(
+            parse_instrument_id("BTC-USDT"),
+            Some(Pair::new("BTC", "USDT"))
+        );
+        assert_eq!(
+            parse_instrument_id("ETH-USDT"),
+            Some(Pair::new("ETH", "USDT"))
+        );
+    }
+
+    #[test]
+    fn parse_instrument_id_invalid() {
+        assert_eq!(parse_instrument_id("BTC"), None);
+        assert_eq!(parse_instrument_id(""), None);
+    }
+
+    #[test]
+    fn to_instrument_id_roundtrip() {
+        let pair = Pair::new("BTC", "USDT");
+        let id = to_instrument_id(&pair);
+        assert_eq!(id.as_str(), "BTC-USDT");
+        assert_eq!(parse_instrument_id(&id), Some(pair));
+    }
+
+    #[test]
+    fn balance_to_core_ok() {
+        let b = KPaperBalance {
+            asset: "USDT".to_string(),
+            available: Decimal::new(1000, 0),
+            locked: Decimal::new(100, 0),
+            total: Decimal::new(1100, 0),
+        };
+        let core = balance_to_core(&b);
+        assert_eq!(core.symbol, Symbol::from("USDT"));
+        assert_eq!(core.free, Decimal::new(1000, 0));
+        assert_eq!(core.used, Decimal::new(100, 0));
+        assert_eq!(core.total, Decimal::new(1100, 0));
+    }
+
+    #[test]
+    fn execution_ack_to_order_ok() {
+        use trading_core::types::exchange::OrderRequest;
+        let exec = KPaperExecution {
+            order_id: "ord-1".to_string(),
+            trade_id: None,
+            instrument_id: "BTC-USDT".to_string(),
+            side: "Buy".to_string(),
+            price: Decimal::new(50000, 0),
+            quantity: Decimal::ZERO,
+            fee: None,
+            timestamp: "2026-01-01T00:00:00Z".to_string(),
+            reject_reason: None,
+            client_order_id: None,
+        };
+        let req = OrderRequest {
+            instrument: Instrument::new(InstrumentType::Spot, Pair::new("BTC", "USDT")),
+            side: trading_core::types::common::Side::Buy,
+            order_type: trading_core::types::common::OrderType::Limit,
+            price: Decimal::new(50000, 0),
+            amount: Decimal::new(2, 3),
+            timestamp: None,
+            exchange_params: std::collections::HashMap::new(),
+        };
+        let order = execution_ack_to_order(&exec, &req, InstrumentType::Spot).unwrap();
+        assert_eq!(order.order_id.as_str(), "ord-1");
+        assert_eq!(order.instrument.pair, Pair::new("BTC", "USDT"));
+        assert_eq!(order.status, OrderStatus::New);
+        assert_eq!(order.amount, Decimal::new(2, 3));
+    }
 }

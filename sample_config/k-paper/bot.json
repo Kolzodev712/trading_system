@@ -6,7 +6,7 @@
   "exchange_engine": {
     "exchange": "Paper",
     "config": {
-      "paper_exchange_url": "ws://127.0.0.1:19999/ws",
+      "paper_exchange_url": "ws://127.0.0.1:19999/ws/trade",
       "pairs": [
         { "base": "BTC", "quote": "USDT" },
         { "base": "ETH", "quote": "USDT" }

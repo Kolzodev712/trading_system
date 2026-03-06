@@ -10,6 +10,7 @@ use tracing::{debug, warn};
 use trading_core::{
     channels::exchange::ExchangeUpdate,
     error::EngineError,
+    types::common::OrderStatus,
     types::exchange::{Balance, Order, Trade},
 };
 
@@ -80,21 +81,36 @@ impl ExchangeStateSubscriber {
     /// Handle order update from ExchangeStateManager
     ///
     /// Only updates TradingState if this is an order we placed (tracked in active_orders).
+    /// Terminal statuses (Filled, Canceled, Rejected, Expired) remove the order from active_orders.
     async fn handle_order_update(&self, order: Order) {
         let mut state = self.trading_state.write().await;
 
-        // Only update if this is our order (we track it in active_orders)
-        if state.active_orders.contains_key(&order.order_id) {
-            state.add_order(order.clone());
+        if !state.active_orders.contains_key(&order.order_id) {
             debug!(
-                "Updated trading state with order: {}",
+                "Ignoring order update (not our order): {}",
+                order.order_id.as_str()
+            );
+            return;
+        }
+
+        let is_terminal = matches!(
+            order.status,
+            OrderStatus::Filled
+                | OrderStatus::Canceled
+                | OrderStatus::Rejected
+                | OrderStatus::Expired
+        );
+        if is_terminal {
+            state.remove_order(&order.order_id);
+            debug!(
+                "Removed order from trading state (terminal status {:?}): {}",
+                order.status,
                 order.order_id.as_str()
             );
         } else {
-            // This is an order from exchange that we didn't place
-            // We don't track it in TradingState (only track orders we placed)
+            state.add_order(order.clone());
             debug!(
-                "Ignoring order update (not our order): {}",
+                "Updated trading state with order: {}",
                 order.order_id.as_str()
             );
         }

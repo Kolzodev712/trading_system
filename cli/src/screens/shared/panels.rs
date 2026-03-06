@@ -8,6 +8,20 @@ use ratatui::{
     Frame,
 };
 
+fn level_enabled_indicator(
+    level_enabled: bool,
+    global_trading_enabled: bool,
+) -> (&'static str, Color) {
+    if !level_enabled {
+        ("✗", Color::Red)
+    } else if global_trading_enabled {
+        ("✓", Color::Green)
+    } else {
+        // Level is enabled, but globally paused/disabled.
+        ("⏸", Color::Yellow)
+    }
+}
+
 /// Render the orders panel
 pub fn render_orders(frame: &mut Frame, area: Rect, app: &App) -> Result<(), CliError> {
     let data = app.monitoring_data();
@@ -64,6 +78,7 @@ pub fn render_orders(frame: &mut Frame, area: Rect, app: &App) -> Result<(), Cli
 pub fn render_levels(frame: &mut Frame, area: Rect, app: &App) -> Result<(), CliError> {
     let levels = app.levels();
     let selected_idx = app.selected_level_index();
+    let global_trading_enabled = app.trading_status();
     let rows = if let Some(levels_vec) = levels {
         if levels_vec.is_empty() {
             vec![Row::new(vec![Cell::from("No active levels")])]
@@ -100,9 +115,8 @@ pub fn render_levels(frame: &mut Frame, area: Rect, app: &App) -> Result<(), Cli
                         "N/A".to_string()
                     };
 
-                    // Level enabled state (separate from global trading enabled)
-                    let enabled_text = if l.enabled { "✓" } else { "✗" };
-                    let enabled_color = if l.enabled { Color::Green } else { Color::Red };
+                    let (enabled_text, enabled_color) =
+                        level_enabled_indicator(l.enabled, global_trading_enabled);
 
                     // Highlight selected row
                     let row_style = if is_selected {
@@ -163,6 +177,27 @@ pub fn render_levels(frame: &mut Frame, area: Rect, app: &App) -> Result<(), Cli
         );
     frame.render_widget(table, area);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn level_indicator_respects_global_trading_disabled() {
+        assert_eq!(level_enabled_indicator(true, false), ("⏸", Color::Yellow));
+    }
+
+    #[test]
+    fn level_indicator_shows_enabled_only_when_global_enabled() {
+        assert_eq!(level_enabled_indicator(true, true), ("✓", Color::Green));
+    }
+
+    #[test]
+    fn level_indicator_shows_disabled_when_level_disabled() {
+        assert_eq!(level_enabled_indicator(false, true), ("✗", Color::Red));
+        assert_eq!(level_enabled_indicator(false, false), ("✗", Color::Red));
+    }
 }
 
 /// Render the balances panel

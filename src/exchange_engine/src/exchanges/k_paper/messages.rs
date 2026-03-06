@@ -6,6 +6,47 @@
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 
+/// Deserialize a decimal from either a JSON string or number (always stored as Decimal).
+mod decimal_flexible {
+    use rust_decimal::Decimal;
+    use serde::{Deserialize, Deserializer};
+
+    pub fn deserialize<'de, D>(d: D) -> Result<Decimal, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let v = serde_json::Value::deserialize(d)?;
+        match v {
+            serde_json::Value::String(s) => s.parse().map_err(serde::de::Error::custom),
+            serde_json::Value::Number(n) => n.to_string().parse().map_err(serde::de::Error::custom),
+            _ => Err(serde::de::Error::custom(
+                "decimal: expected string or number",
+            )),
+        }
+    }
+
+    pub fn opt_deserialize<'de, D>(d: D) -> Result<Option<Decimal>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let v = Option::<serde_json::Value>::deserialize(d)?;
+        match v {
+            None => Ok(None),
+            Some(serde_json::Value::String(s)) => {
+                s.parse().map(Some).map_err(serde::de::Error::custom)
+            }
+            Some(serde_json::Value::Number(n)) => n
+                .to_string()
+                .parse()
+                .map(Some)
+                .map_err(serde::de::Error::custom),
+            Some(_) => Err(serde::de::Error::custom(
+                "decimal: expected null, string or number",
+            )),
+        }
+    }
+}
+
 /// Top-level message: we dispatch by `type` field.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -58,31 +99,19 @@ pub struct KPaperOrderbook {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KPaperPriceLevel {
-    pub price: DecimalOrStr,
-    pub quantity: DecimalOrStr,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(untagged)]
-pub enum DecimalOrStr {
-    Num(Decimal),
-    Str(String),
-}
-
-impl DecimalOrStr {
-    pub fn to_decimal(&self) -> Result<Decimal, rust_decimal::Error> {
-        match self {
-            DecimalOrStr::Num(d) => Ok(*d),
-            DecimalOrStr::Str(s) => s.parse(),
-        }
-    }
+    #[serde(deserialize_with = "decimal_flexible::deserialize")]
+    pub price: Decimal,
+    #[serde(deserialize_with = "decimal_flexible::deserialize")]
+    pub quantity: Decimal,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KPaperPublicTrade {
     pub instrument_id: String,
-    pub price: DecimalOrStr,
-    pub quantity: DecimalOrStr,
+    #[serde(deserialize_with = "decimal_flexible::deserialize")]
+    pub price: Decimal,
+    #[serde(deserialize_with = "decimal_flexible::deserialize")]
+    pub quantity: Decimal,
     pub side: String, // "Buy" | "Sell"
     pub timestamp: String,
     pub trade_id: String,
@@ -95,10 +124,12 @@ pub struct KPaperExecution {
     pub trade_id: Option<String>,
     pub instrument_id: String,
     pub side: String,
-    pub price: DecimalOrStr,
-    pub quantity: DecimalOrStr,
-    #[serde(default)]
-    pub fee: Option<DecimalOrStr>,
+    #[serde(deserialize_with = "decimal_flexible::deserialize")]
+    pub price: Decimal,
+    #[serde(deserialize_with = "decimal_flexible::deserialize")]
+    pub quantity: Decimal,
+    #[serde(default, deserialize_with = "decimal_flexible::opt_deserialize")]
+    pub fee: Option<Decimal>,
     pub timestamp: String,
     #[serde(default)]
     pub reject_reason: Option<String>,
@@ -110,19 +141,24 @@ pub struct KPaperExecution {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KPaperBalance {
     pub asset: String,
-    pub available: DecimalOrStr,
-    pub locked: DecimalOrStr,
-    pub total: DecimalOrStr,
+    #[serde(deserialize_with = "decimal_flexible::deserialize")]
+    pub available: Decimal,
+    #[serde(deserialize_with = "decimal_flexible::deserialize")]
+    pub locked: Decimal,
+    #[serde(deserialize_with = "decimal_flexible::deserialize")]
+    pub total: Decimal,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KPaperPosition {
     pub instrument_id: String,
     pub side: String,
-    pub quantity: DecimalOrStr,
-    pub entry_price: DecimalOrStr,
-    #[serde(default)]
-    pub unrealized_pnl: Option<DecimalOrStr>,
+    #[serde(deserialize_with = "decimal_flexible::deserialize")]
+    pub quantity: Decimal,
+    #[serde(deserialize_with = "decimal_flexible::deserialize")]
+    pub entry_price: Decimal,
+    #[serde(default, deserialize_with = "decimal_flexible::opt_deserialize")]
+    pub unrealized_pnl: Option<Decimal>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -148,9 +184,9 @@ pub enum KPaperCommand {
     AmendOrder {
         order_id: String,
         #[serde(skip_serializing_if = "Option::is_none")]
-        quantity: Option<DecimalOrStr>,
+        quantity: Option<Decimal>,
         #[serde(skip_serializing_if = "Option::is_none")]
-        limit_price: Option<DecimalOrStr>,
+        limit_price: Option<Decimal>,
     },
 }
 
@@ -159,10 +195,77 @@ pub struct KPaperPlaceOrderRequest {
     pub instrument_id: String,
     pub side: String,       // "Buy" | "Sell"
     pub order_type: String, // "Limit" | "Market"
-    pub quantity: DecimalOrStr,
+    pub quantity: Decimal,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub limit_price: Option<DecimalOrStr>,
+    pub limit_price: Option<Decimal>,
     /// One-element array for idempotency, or null
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client_order_id: Option<Vec<String>>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn deserialize_connected() {
+        let json = r#"{"type":"connected"}"#;
+        let msg: KPaperMessage = serde_json::from_str(json).unwrap();
+        match &msg {
+            KPaperMessage::Connected(_) => {}
+            _ => panic!("expected Connected"),
+        }
+    }
+
+    #[test]
+    fn deserialize_balance() {
+        let json = r#"{"type":"balance","asset":"USDT","available":"1000000","locked":"0","total":"1000000"}"#;
+        let msg: KPaperMessage = serde_json::from_str(json).unwrap();
+        match &msg {
+            KPaperMessage::Balance(b) => {
+                assert_eq!(b.asset, "USDT");
+                assert_eq!(b.total, rust_decimal::Decimal::new(1000000, 0));
+            }
+            _ => panic!("expected Balance"),
+        }
+    }
+
+    #[test]
+    fn deserialize_execution_ack() {
+        let json = r#"{"type":"execution","order_id":"ord-1","instrument_id":"BTC-USDT","side":"Buy","price":50000,"quantity":0,"timestamp":"2026-01-01T00:00:00Z","reject_reason":null}"#;
+        let msg: KPaperMessage = serde_json::from_str(json).unwrap();
+        match &msg {
+            KPaperMessage::Execution(e) => {
+                assert_eq!(e.order_id, "ord-1");
+                assert_eq!(e.instrument_id, "BTC-USDT");
+                assert!(e.quantity.is_zero());
+                assert!(e.reject_reason.is_none());
+            }
+            _ => panic!("expected Execution"),
+        }
+    }
+
+    #[test]
+    fn serialize_place_order() {
+        let cmd = KPaperCommand::PlaceOrder {
+            request: KPaperPlaceOrderRequest {
+                instrument_id: "BTC-USDT".to_string(),
+                side: "Buy".to_string(),
+                order_type: "Limit".to_string(),
+                quantity: rust_decimal::Decimal::new(2, 3),
+                limit_price: Some(rust_decimal::Decimal::new(50000, 0)),
+                client_order_id: None,
+            },
+        };
+        let json = serde_json::to_string(&cmd).unwrap();
+        assert!(json.contains("\"type\":\"place_order\""));
+        assert!(json.contains("BTC-USDT"));
+    }
+
+    #[test]
+    fn serialize_get_account_snapshot() {
+        let cmd = KPaperCommand::GetAccountSnapshot;
+        let json = serde_json::to_string(&cmd).unwrap();
+        assert_eq!(json, r#"{"type":"get_account_snapshot"}"#);
+    }
 }

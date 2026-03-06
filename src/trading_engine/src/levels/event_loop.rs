@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio::time::{interval, Duration};
+use trading_core::channels::exchange::{ExchangeUpdate, ExchangeUpdateReceiver};
 use trading_core::channels::market_data::{MarketDataUpdate, MarketDataUpdateReceiver};
 use trading_core::error::EngineError;
 use trading_core::traits::TradingClient;
@@ -27,6 +28,7 @@ pub struct LevelBasedEventLoop {
     trading_client: Arc<RwLock<dyn TradingClient<OrderRequest>>>,
     trading_state_manager: Arc<crate::state::manager::TradingStateManager>,
     market_data_rx: MarketDataUpdateReceiver,
+    exchange_update_rx: ExchangeUpdateReceiver,
     pairs: Vec<Pair>,
     reconciliation_interval_secs: u64,
     /// Last seen prices for periodic risk checks (one per pair)
@@ -44,6 +46,7 @@ impl LevelBasedEventLoop {
         indicator_subscriber: Arc<RwLock<IndicatorSubscriber>>,
         trading_client: Arc<RwLock<dyn TradingClient<OrderRequest>>>,
         market_data_rx: MarketDataUpdateReceiver,
+        exchange_update_rx: ExchangeUpdateReceiver,
         pairs: Vec<Pair>,
         trading_state_manager: Arc<crate::state::manager::TradingStateManager>,
         reconciliation_interval_secs: u64,
@@ -57,6 +60,7 @@ impl LevelBasedEventLoop {
             trading_client,
             trading_state_manager,
             market_data_rx,
+            exchange_update_rx,
             pairs,
             reconciliation_interval_secs,
             last_prices: Arc::new(RwLock::new(HashMap::new())),
@@ -119,18 +123,38 @@ impl LevelBasedEventLoop {
         let subscriber_cache = self.indicator_subscriber.read().await.cache();
         tracing::info!("[LEVELS EVENT LOOP] Subscriber cache obtained");
 
-        // Consume market data updates from channel
+        // Consume market data and exchange updates from channels
         tracing::info!("[LEVELS EVENT LOOP] Resubscribing to market_data_rx...");
         let mut market_data_rx = self.market_data_rx.resubscribe();
+        let mut exchange_update_rx = self.exchange_update_rx.resubscribe();
         tracing::info!("[LEVELS EVENT LOOP] Market data resubscribe complete");
         let mut periodic_timer = interval(Duration::from_secs(1)); // Check every second
         tracing::info!("[LEVELS EVENT LOOP] Periodic timer created");
 
         tracing::info!(
-            "[LEVELS EVENT LOOP] Starting event loop, waiting for market data updates..."
+            "[LEVELS EVENT LOOP] Starting event loop, waiting for market data and exchange updates..."
         );
         loop {
             tokio::select! {
+                // Handle exchange order updates (fills, cancels) so levels clear active_orders
+                exchange_update = exchange_update_rx.recv() => {
+                    match exchange_update {
+                        Ok(ExchangeUpdate::Order { order, .. }) => {
+                            if let Err(e) = self.handle_execution_report(&order).await {
+                                tracing::error!("Error handling execution report: {}", e);
+                            }
+                        }
+                        Ok(_) => { /* ignore Balance, Trade, Position */ }
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                            tracing::warn!("Exchange update receiver lagged, skipped {} messages", skipped);
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                            tracing::warn!("Exchange update channel closed");
+                            return Ok(());
+                        }
+                    }
+                }
+
                 // Handle market data updates from channel
                 update = market_data_rx.recv() => {
                     tracing::debug!("[LEVELS EVENT LOOP] Received update from market_data_rx channel");

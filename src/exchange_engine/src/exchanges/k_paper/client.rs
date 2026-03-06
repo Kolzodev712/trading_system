@@ -12,7 +12,9 @@ use tracing::{error, info, warn};
 use trading_core::channels::market_data::{MarketDataUpdate, MarketDataUpdateSender};
 use trading_core::error::EngineError;
 use trading_core::traits::TradingClient;
-use trading_core::types::common::{Exchange, Instrument, InstrumentType, OrderId, Pair, Side};
+use trading_core::types::common::{
+    Exchange, Instrument, InstrumentType, OrderId, OrderStatus, Pair, Side,
+};
 use trading_core::types::exchange::{
     Balance, BulkAmendRequest, BulkAmendResponse, BulkOrderRequest, BulkOrderResponse, Order,
     OrderRequest, Trade,
@@ -23,7 +25,7 @@ use super::map::{
     balance_to_core, execution_ack_to_order, execution_to_order, execution_to_trade,
     orderbook_to_structured, position_to_core, public_trade_to_structured, to_instrument_id,
 };
-use super::messages::{DecimalOrStr, KPaperCommand, KPaperMessage, KPaperPlaceOrderRequest};
+use super::messages::{KPaperCommand, KPaperMessage, KPaperPlaceOrderRequest};
 
 /// Config for k-paper connection (internal use).
 #[derive(Debug, Clone)]
@@ -132,10 +134,10 @@ impl TradingClient<OrderRequest> for KPaperClient {
             trading_core::types::common::OrderType::Market => "Market",
             _ => "Limit",
         };
-        let quantity = DecimalOrStr::Num(req.amount);
+        let quantity = req.amount;
         let limit_price = match req.order_type {
             trading_core::types::common::OrderType::Market => None,
-            _ => Some(DecimalOrStr::Num(req.price)),
+            _ => Some(req.price),
         };
         let client_order_id = Some(vec![uuid::Uuid::new_v4().to_string()]);
 
@@ -260,8 +262,8 @@ impl TradingClient<OrderRequest> for KPaperClient {
         }
         self.send_command(KPaperCommand::AmendOrder {
             order_id: order_id.as_str().to_string(),
-            quantity: Some(DecimalOrStr::Num(new_request.amount)),
-            limit_price: Some(DecimalOrStr::Num(new_request.price)),
+            quantity: Some(new_request.amount),
+            limit_price: Some(new_request.price),
         })?;
         let timeout_dur = tokio::time::Duration::from_secs(10);
         match tokio::time::timeout(timeout_dur, rx).await {
@@ -510,7 +512,7 @@ async fn handle_message(
                 "k-paper: received Execution order_id={} instrument_id={}",
                 exec.order_id, exec.instrument_id
             );
-            let exec_qty = exec.quantity.to_decimal().unwrap_or(Decimal::ZERO);
+            let exec_qty = exec.quantity;
             let is_reject = exec
                 .reject_reason
                 .as_ref()
@@ -562,11 +564,6 @@ async fn handle_message(
             }
         }
         KPaperMessage::Balance(b) => {
-            if let Some(guard) = balance_ready {
-                if let Some(tx) = guard.lock().await.take() {
-                    let _ = tx.send(());
-                }
-            }
             let balance = balance_to_core(&b);
             info!(
                 "k-paper: balance update {} free={} used={} total={}",
@@ -578,6 +575,12 @@ async fn handle_message(
                 st.balances[pos] = balance;
             } else {
                 st.balances.push(balance);
+            }
+            // Signal after state is updated so waiters see balances
+            if let Some(guard) = balance_ready {
+                if let Some(tx) = guard.lock().await.take() {
+                    let _ = tx.send(());
+                }
             }
         }
         KPaperMessage::Position(pos) => {
@@ -595,9 +598,18 @@ async fn handle_message(
         KPaperMessage::CancelAck(ack) => {
             let order_id = OrderId::new(ack.order_id.clone().into());
             let mut st = state.write().await;
+            let cancelled_order = st.open_orders.get(&order_id).map(|o| {
+                let mut ord = o.clone();
+                ord.status = OrderStatus::Canceled;
+                ord
+            });
             st.open_orders.remove(&order_id);
             if let Some(pending) = st.pending_cancel.take() {
                 let _ = pending.send(Ok(()));
+            }
+            drop(st);
+            if let Some(order) = cancelled_order {
+                let _ = exchange_state_manager.update_order(order).await;
             }
         }
         KPaperMessage::AmendAck(ack) => {

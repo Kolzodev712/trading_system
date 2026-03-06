@@ -8,3 +8,6 @@ pub mod binance;
 
 #[cfg(test)]
 pub mod bybit;
+
+#[cfg(test)]
+pub mod k_paper;

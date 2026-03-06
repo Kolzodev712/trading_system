@@ -1015,7 +1015,7 @@ pub async fn level_runner(
     let indicator_subscriber = Arc::new(RwLock::new(subscriber));
 
     // Create level-based event loop
-    // Pass all pairs from bot config for reconciliation
+    // Pass all pairs from bot config for reconciliation and exchange update rx so levels receive Order (e.g. Canceled) and clear active_orders
     let trading_reconciliation_interval_secs =
         bot_config.reconciliation.trading_level_interval_ms / 1000;
     let event_loop = LevelBasedEventLoop::new(
@@ -1026,6 +1026,7 @@ pub async fn level_runner(
         indicator_subscriber,
         services.trading_client.clone(),
         services.market_data_rx.resubscribe(),
+        services.exec_report_rx.resubscribe(),
         configured_pairs.clone(),
         services.trading_state_manager.clone(),
         trading_reconciliation_interval_secs,

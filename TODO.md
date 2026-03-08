@@ -46,3 +46,17 @@ Planned but not yet fully detailed; can be new proposals or extensions (see **05
 
 **Last Updated**: March 2025  
 **Status**: Proposals in `proposals/`; implementation notes in `design-log/` when using design-log workflow.
+
+
+
+Traders's advice:
+
+### Trim config and allocate most of the strategy logic instead of hardcoded config. It should be defined from the script. Only bare rudiments should remain in the system config. 
+
+### There should be a clear separation between execution layer (pair data and market info) and strategy computation layer (the strategy desicions and)
+
+Goals:
+
+Selling the system,
+Selling the system + consultancy and tech support => A specialized team of a trader, dev and infra guys or something
+Trade ourselves => dont

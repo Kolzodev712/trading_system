@@ -7,7 +7,7 @@ use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 
 /// Deserialize a decimal from either a JSON string or number (always stored as Decimal).
-mod decimal_flexible {
+pub(crate) mod decimal_flexible {
     use rust_decimal::Decimal;
     use serde::{Deserialize, Deserializer};
 

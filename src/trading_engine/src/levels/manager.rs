@@ -514,7 +514,8 @@ mod tests {
         let result = manager.add_level(config.clone(), pair).await;
         assert!(result.is_ok());
 
-        let level = manager.get_level(&SmolStr::new("test_level"));
+        let level_id = SmolStr::new("test_level_BTCUSDT");
+        let level = manager.get_level(&level_id);
         assert!(level.is_some());
         assert_eq!(level.unwrap().config.id, SmolStr::new("test_level"));
     }

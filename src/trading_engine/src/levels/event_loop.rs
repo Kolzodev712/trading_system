@@ -864,14 +864,17 @@ impl LevelBasedEventLoop {
 
     /// Handle execution report
     pub async fn handle_execution_report(&self, order: &Order) -> Result<(), EngineError> {
-        // Find level that owns this order
+        // Find level that owns this order. LevelManager keys are expanded (e.g. buy_level_1_BTCUSDT).
         let level_id = {
             let manager = self.level_manager.read().await;
             manager
                 .get_all_levels()
                 .iter()
                 .find(|level| level.active_orders.contains(&order.order_id))
-                .map(|level| level.config.id.clone())
+                .map(|level| {
+                    let pair_str = level.pair.convert_to_smolstr();
+                    smol_str::SmolStr::new(format!("{}_{}", level.config.id, pair_str))
+                })
         };
 
         if let Some(level_id) = level_id {

@@ -95,8 +95,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("✓ Shutdown manager initialized");
 
     // Initialize Asset Service
+    let paper_rest_base = match bot_config.exchange_engine.exchange {
+        trading_core::types::common::Exchange::Paper => serde_json::from_value::<
+            exchange_engine::exchanges::k_paper::PaperConfig,
+        >(
+            bot_config.exchange_engine.config.clone()
+        )
+        .ok()
+        .map(|c| exchange_engine::exchanges::k_paper::ws_url_to_http_base(&c.paper_exchange_url)),
+        _ => None,
+    };
     let asset_service =
-        initialize_asset_service(bot_config.exchange_engine.exchange.clone()).await?;
+        initialize_asset_service(bot_config.exchange_engine.exchange.clone(), paper_rest_base)
+            .await?;
     info!("✓ Asset service initialized");
 
     // Get pairs from exchange config

@@ -12,7 +12,7 @@ use trading_core::{
     types::common::{Exchange, Pair},
 };
 
-use super::config::PaperConfig;
+use super::config::{to_market_ws_url, PaperConfig};
 use super::map::{orderbook_to_structured, public_trade_to_structured};
 use super::messages::{KPaperOrderbook, KPaperPublicTrade};
 
@@ -39,11 +39,12 @@ impl PaperClient {
             Some(h) => h,
             None => return Err(EngineError::NoMessageHandler),
         };
-        info!("k-paper market data: connecting to {}", self.config.url);
-        let (ws_stream, _) = tokio_tungstenite::connect_async(&self.config.url)
+        let url = to_market_ws_url(&self.config.url);
+        info!("k-paper market data: connecting to {}", url);
+        let (ws_stream, _) = tokio_tungstenite::connect_async(&url)
             .await
             .map_err(|e| EngineError::CustomError(anyhow::anyhow!("k-paper connect: {}", e)))?;
-        info!("k-paper market data: connected to {}", self.config.url);
+        info!("k-paper market data: connected to {}", url);
         let (mut _write, mut read) = ws_stream.split();
 
         while let Some(msg) = read.next().await {

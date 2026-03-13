@@ -1252,8 +1252,20 @@ pub async fn run(
     let shutdown_manager = ShutdownManager::new(bot_config.channels.shutdown_capacity);
     setup_shutdown_handler(shutdown_manager.clone());
 
+    let paper_rest_base =
+        match bot_config.exchange_engine.exchange {
+            Exchange::Paper => serde_json::from_value::<
+                exchange_engine::exchanges::k_paper::PaperConfig,
+            >(bot_config.exchange_engine.config.clone())
+            .ok()
+            .map(|c| {
+                exchange_engine::exchanges::k_paper::ws_url_to_http_base(&c.paper_exchange_url)
+            }),
+            _ => None,
+        };
     let asset_service =
-        initialize_asset_service(bot_config.exchange_engine.exchange.clone()).await?;
+        initialize_asset_service(bot_config.exchange_engine.exchange.clone(), paper_rest_base)
+            .await?;
     let configured_pairs = bot_config.get_pairs()?;
     if configured_pairs.is_empty() {
         return Err("No pairs configured in bot.json".into());
@@ -1376,9 +1388,11 @@ pub async fn run(
     Ok(())
 }
 
-/// Initialize Asset Service and register exchange client
+/// Initialize Asset Service and register exchange client.
+/// For Paper, `paper_rest_base` must be Some (HTTP base URL derived from paper_exchange_url).
 pub async fn initialize_asset_service(
     exchange: Exchange,
+    paper_rest_base: Option<String>,
 ) -> Result<Arc<AssetService>, Box<dyn std::error::Error>> {
     info!("Initializing Asset Engine...");
     let asset_service = Arc::new(AssetService::new());
@@ -1409,7 +1423,16 @@ pub async fn initialize_asset_service(
                 .map_err(|e| format!("Failed to register Bybit client: {e}"))?;
         }
         Exchange::Paper => {
-            // No REST asset client for paper; asset_service stays empty
+            let base_url = paper_rest_base.ok_or(
+                "Paper exchange requires paper_rest_base (HTTP base URL) for asset engine",
+            )?;
+            asset_service
+                .register_exchange(
+                    exchange,
+                    Arc::new(asset_engine::exchanges::KPaperPublicClient::new(base_url)),
+                )
+                .await
+                .map_err(|e| format!("Failed to register k-paper asset client: {e}"))?;
         }
         Exchange::Unsupported => {
             return Err("Unsupported exchange for Asset Engine".into());
@@ -1537,7 +1560,7 @@ pub fn initialize_market_data_engine(
                 exchange: bot_config.exchange_engine.exchange.clone(),
                 exchange_config: MDExchangeConfig::Paper(
                     market_data_engine::exchanges::k_paper::config::PaperConfig {
-                        url: paper_config.paper_exchange_url,
+                        url: paper_config.paper_exchange_url.clone(),
                         pairs: pairs.clone(),
                     },
                 ),

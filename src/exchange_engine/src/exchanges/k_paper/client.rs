@@ -1,10 +1,12 @@
 //! k-paper WebSocket client: connects to k-paper, maps messages to channels, implements TradingClient.
+//! REST is used for fetch_balance, fetch_open_orders, fetch_trades (reconciliation).
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use futures_util::{SinkExt, StreamExt};
+use reqwest::Client as HttpClient;
 use rust_decimal::Decimal;
 use tokio::sync::{mpsc, oneshot, RwLock};
 use tokio_tungstenite::tungstenite::Message;
@@ -26,6 +28,10 @@ use super::map::{
     orderbook_to_structured, position_to_core, public_trade_to_structured, to_instrument_id,
 };
 use super::messages::{KPaperCommand, KPaperMessage, KPaperPlaceOrderRequest};
+use super::rest::{
+    rest_balance_to_core, rest_order_to_core, rest_trade_to_core, ws_url_to_http_base, RestBalance,
+    RestOrder, RestTrade,
+};
 
 /// Config for k-paper connection (internal use).
 #[derive(Debug, Clone)]
@@ -61,10 +67,13 @@ pub struct KPaperState {
 }
 
 /// k-paper client: implements TradingClient. Exchange updates are driven via run_websocket_loop (caller passes ExchangeStateManager).
+/// REST base URL is used for fetch_balance, fetch_open_orders, fetch_trades.
 pub struct KPaperClient {
     config: KPaperConfig,
     command_tx: mpsc::UnboundedSender<KPaperCommand>,
     state: Arc<RwLock<KPaperState>>,
+    rest_base: String,
+    http_client: HttpClient,
 }
 
 impl std::fmt::Debug for KPaperClient {
@@ -77,12 +86,16 @@ impl std::fmt::Debug for KPaperClient {
 
 impl KPaperClient {
     /// Create a new k-paper client. Start the recv loop via run_websocket_loop (e.g. from PaperDriver).
+    /// REST base URL is derived from the WebSocket URL for reconciliation endpoints.
     pub fn new(config: KPaperConfig) -> (Self, mpsc::UnboundedReceiver<KPaperCommand>) {
         let (command_tx, command_rx) = mpsc::unbounded_channel();
+        let rest_base = ws_url_to_http_base(&config.url);
         let client = Self {
             config: config.clone(),
             command_tx: command_tx.clone(),
             state: Arc::new(RwLock::new(KPaperState::default())),
+            rest_base: rest_base.clone(),
+            http_client: HttpClient::new(),
         };
         (client, command_rx)
     }
@@ -222,23 +235,78 @@ impl TradingClient<OrderRequest> for KPaperClient {
     }
 
     async fn fetch_balance(&self) -> Result<Vec<Balance>, EngineError> {
-        let state = self.state.read().await;
-        Ok(state.balances.clone())
+        let url = format!("{}/balances", self.rest_base);
+        let res =
+            self.http_client.get(&url).send().await.map_err(|e| {
+                EngineError::CustomError(anyhow::anyhow!("REST GET /balances: {}", e))
+            })?;
+        if !res.status().is_success() {
+            let status = res.status();
+            let body = res.text().await.unwrap_or_default();
+            return Err(EngineError::CustomError(anyhow::anyhow!(
+                "REST GET /balances: {} {}",
+                status,
+                body
+            )));
+        }
+        let rest_balances: Vec<RestBalance> = res
+            .json()
+            .await
+            .map_err(|e| EngineError::CustomError(anyhow::anyhow!("REST balances JSON: {}", e)))?;
+        Ok(rest_balances.iter().map(rest_balance_to_core).collect())
     }
 
     async fn fetch_open_orders(&self) -> Result<Vec<Order>, EngineError> {
-        let state = self.state.read().await;
-        Ok(state.open_orders.values().cloned().collect())
+        let url = format!("{}/open_orders", self.rest_base);
+        let res = self.http_client.get(&url).send().await.map_err(|e| {
+            EngineError::CustomError(anyhow::anyhow!("REST GET /open_orders: {}", e))
+        })?;
+        if !res.status().is_success() {
+            let status = res.status();
+            let body = res.text().await.unwrap_or_default();
+            return Err(EngineError::CustomError(anyhow::anyhow!(
+                "REST GET /open_orders: {} {}",
+                status,
+                body
+            )));
+        }
+        let rest_orders: Vec<RestOrder> = res.json().await.map_err(|e| {
+            EngineError::CustomError(anyhow::anyhow!("REST open_orders JSON: {}", e))
+        })?;
+        let instrument_type = self.config.instrument_type.clone();
+        Ok(rest_orders
+            .iter()
+            .filter_map(|o| rest_order_to_core(o, instrument_type.clone()))
+            .collect())
     }
 
     async fn fetch_trades(&self, pair: Option<&Pair>) -> Result<Vec<Trade>, EngineError> {
-        let state = self.state.read().await;
-        Ok(state
-            .trades
-            .iter()
-            .filter(|t| pair.is_none_or(|p| t.pair == *p))
-            .cloned()
-            .collect())
+        let mut url = format!("{}/trades", self.rest_base);
+        if let Some(p) = pair {
+            let instrument_id = format!("{}-{}", p.base, p.quote);
+            url.push_str(&format!(
+                "?instrument_id={}",
+                urlencoding::encode(&instrument_id)
+            ));
+        }
+        let res =
+            self.http_client.get(&url).send().await.map_err(|e| {
+                EngineError::CustomError(anyhow::anyhow!("REST GET /trades: {}", e))
+            })?;
+        if !res.status().is_success() {
+            let status = res.status();
+            let body = res.text().await.unwrap_or_default();
+            return Err(EngineError::CustomError(anyhow::anyhow!(
+                "REST GET /trades: {} {}",
+                status,
+                body
+            )));
+        }
+        let rest_trades: Vec<RestTrade> = res
+            .json()
+            .await
+            .map_err(|e| EngineError::CustomError(anyhow::anyhow!("REST trades JSON: {}", e)))?;
+        Ok(rest_trades.iter().filter_map(rest_trade_to_core).collect())
     }
 
     async fn fetch_market_data_snapshot(&self, _pair: &Pair) -> Result<(), EngineError> {

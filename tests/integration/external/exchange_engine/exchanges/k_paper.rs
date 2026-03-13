@@ -1,6 +1,7 @@
 //! k-paper Exchange Engine External Integration Tests
 //!
-//! Tests the k-paper client against a running k-paper server (WebSocket).
+//! Tests the k-paper client against a running k-paper server (WebSocket + REST).
+//! Order flow uses WebSocket (/ws/trade). fetch_balance, fetch_open_orders, fetch_trades use REST.
 //! All tests are #[ignore] and require the server to be running.
 //!
 //! Run with: cargo test --test integration integration::external::exchange_engine::exchanges::k_paper -- --ignored

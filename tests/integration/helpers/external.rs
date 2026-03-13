@@ -275,7 +275,9 @@ impl AssetDataClientBuilder {
                 Arc::new(BybitPublicClient::new("https://api.bybit.com".to_string()))
             }
             Exchange::Paper => {
-                todo!("Paper exchange clients not yet implemented in tests")
+                let base_url = std::env::var("PAPER_REST_BASE")
+                    .unwrap_or_else(|_| "http://127.0.0.1:19999".to_string());
+                Arc::new(asset_engine::exchanges::KPaperPublicClient::new(base_url))
             }
             Exchange::Unsupported => {
                 panic!("Unsupported exchange cannot be used in tests")

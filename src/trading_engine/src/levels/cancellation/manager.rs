@@ -5,9 +5,9 @@ use smol_str::SmolStr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use trading_core::error::EngineError;
-use trading_core::traits::TradingClient;
 use trading_core::types::exchange::BulkCancelRequest;
 use trading_core::types::exchange::{Balance, OrderRequest};
+use trading_core::venue::cex::traits::TradingClient;
 
 /// Cancellation condition
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -68,7 +68,7 @@ impl CancellationManager {
                     // For now, simplified check
                     if daily_pnl < Decimal::ZERO {
                         // Could trigger cancellation if loss is too high
-                        // This will be fully implemented in Proposal 06 (HFT subsystem) / future risk work
+                        // This will be fully implemented in Proposal 05 (HFT subsystem) / future risk work
                     }
                 }
                 CancellationCondition::TotalPositionExceeded(_limit) => {

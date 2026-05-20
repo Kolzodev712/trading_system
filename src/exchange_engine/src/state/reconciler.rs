@@ -8,11 +8,11 @@ use tokio::sync::RwLock;
 use tracing::{error, info};
 use trading_core::{
     error::EngineError,
-    traits::TradingClient,
     types::{
         common::Pair,
         exchange::{Balance, Order, OrderRequest, Trade},
     },
+    venue::cex::traits::TradingClient,
 };
 
 use super::state::ExchangeState;

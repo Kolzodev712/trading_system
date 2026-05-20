@@ -17,8 +17,8 @@ use std::{fs, sync::Arc};
 use tokio::sync::{broadcast, RwLock};
 use tracing::{error, info};
 use trading_core::{
-    channels::exchange::cex_venue_update_channel, config::ChannelConfig,
-    registry::symbol::SymbolRegistry, traits::TradingClient, types::exchange::OrderRequest,
+    config::ChannelConfig, registry::symbol::SymbolRegistry, types::exchange::OrderRequest,
+    venue::cex::channels::cex_venue_update_channel, venue::cex::traits::TradingClient,
 };
 
 fn load_paper_config() -> Result<PaperConfig, Box<dyn std::error::Error>> {

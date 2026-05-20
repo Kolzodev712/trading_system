@@ -204,6 +204,24 @@ jobs:
       - name: Cargo check
         run: just check
 
+  platform-config-smoke:
+    name: Platform config smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install protobuf compiler
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+
+      - name: Runner config smoke tests
+        run: cargo test -p runner --lib config_smoke_tests
+
+      - name: Venue import hygiene (src/)
+        run: bash .cursor/tools/check_venue_imports.sh
+
   indicator-config:
     name: Indicator Config
     runs-on: ubuntu-latest

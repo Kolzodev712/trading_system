@@ -13,13 +13,13 @@ use std::sync::Arc;
 use tokio::sync::broadcast;
 use tokio::sync::mpsc;
 use trading_core::config::ChannelConfig;
-use trading_core::traits::ExchangeDriver;
+use trading_core::venue::cex::traits::ExchangeDriver;
 use trading_core::{
-    channels::exchange::cex_venue_update_channel,
     error::EngineError,
     registry::symbol::SymbolRegistry,
-    traits::TradingClient,
     types::{common::Pair, exchange::OrderRequest},
+    venue::cex::channels::cex_venue_update_channel,
+    venue::cex::traits::TradingClient,
 };
 
 /// Run the exchange engine main event loop
@@ -52,7 +52,7 @@ pub async fn run(
 ) -> Result<
     (
         Arc<ExchangeStateManager>,
-        trading_core::channels::exchange::CexVenueUpdateReceiver,
+        trading_core::venue::cex::channels::CexVenueUpdateReceiver,
         Arc<tokio::sync::RwLock<dyn TradingClient<OrderRequest>>>,
     ),
     EngineError,

@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 use trading_core::venue::{VenueId, VenueMode};
 
-/// DEX engine configuration (chain-specific `config` is opaque JSON until Proposal 02).
+/// DEX engine configuration (chain-specific `config` is opaque JSON until Proposal 01).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DexEngineConfig {
     pub venue: VenueId,

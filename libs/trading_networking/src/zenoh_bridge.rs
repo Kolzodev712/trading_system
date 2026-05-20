@@ -5,7 +5,7 @@
 
 use crate::commands::{CommandPayload, CommandResponse};
 use crate::error::NetworkError;
-use crate::events::{ColdEvent, HotEvent};
+use crate::events::{ColdEvent, DexColdEvent, HotEvent};
 use crate::payload;
 use async_trait::async_trait;
 use std::sync::Arc;
@@ -35,6 +35,19 @@ pub async fn publish_cold_event(
     event: &ColdEvent,
 ) -> Result<(), NetworkError> {
     let payload_bytes = payload::serialize_cold_event(event)?;
+    session
+        .put(key_expr, payload_bytes.as_ref())
+        .await
+        .map_err(NetworkError::Zenoh)
+}
+
+/// Publish a DEX cold event to the given key expression.
+pub async fn publish_dex_cold_event(
+    session: &zenoh::Session,
+    key_expr: &str,
+    event: &DexColdEvent,
+) -> Result<(), NetworkError> {
+    let payload_bytes = payload::serialize_dex_cold_event(event)?;
     session
         .put(key_expr, payload_bytes.as_ref())
         .await

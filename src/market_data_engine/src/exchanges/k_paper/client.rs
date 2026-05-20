@@ -8,8 +8,8 @@ use tokio_tungstenite::tungstenite::Message;
 use tracing::{error, info, warn};
 use trading_core::{
     error::EngineError,
-    traits::MarketDataClient,
     types::common::{Exchange, Pair},
+    venue::cex::traits::MarketDataClient,
 };
 
 use super::config::{to_market_ws_url, PaperConfig};

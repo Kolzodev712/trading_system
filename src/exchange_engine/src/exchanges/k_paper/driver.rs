@@ -6,9 +6,11 @@ use async_trait::async_trait;
 use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc, RwLock};
 use tracing::info;
-use trading_core::traits::exchange_driver::ConnectionState;
-use trading_core::traits::ExchangeDriver;
-use trading_core::{error::EngineError, traits::TradingClient, types::exchange::OrderRequest};
+use trading_core::venue::cex::traits::ConnectionState;
+use trading_core::venue::cex::traits::ExchangeDriver;
+use trading_core::{
+    error::EngineError, types::exchange::OrderRequest, venue::cex::traits::TradingClient,
+};
 
 /// Paper exchange driver: runs k-paper WebSocket loop (exchange-only; MD from market_data_engine).
 pub struct PaperDriver {

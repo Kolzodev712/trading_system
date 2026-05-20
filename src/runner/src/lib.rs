@@ -31,14 +31,37 @@ use trading_networking::gateway::transports::zenoh::{
 
 pub mod commands;
 pub mod dex_runner;
+pub mod event_bridge;
 pub mod init;
 pub mod level_runner;
+pub mod platform_health;
+pub mod platform_metrics;
 pub mod strategy_runner;
 pub mod venue;
+
+/// Build Prometheus scrape bytes (OTEL registry + platform counters).
+pub fn build_metrics_provider(
+    tracing_handles: Option<trading_trace::ExporterHandles>,
+    venue_mode: VenueMode,
+) -> Arc<dyn Fn() -> Vec<u8> + Send + Sync> {
+    Arc::new(move || {
+        let mut out = tracing_handles
+            .as_ref()
+            .map(trading_trace::encode_prometheus_metrics)
+            .transpose()
+            .ok()
+            .flatten()
+            .unwrap_or_default()
+            .into_bytes();
+        out.extend_from_slice(platform_metrics::encode_platform_metrics(venue_mode).as_bytes());
+        out
+    })
+}
 
 pub(crate) async fn maybe_start_zenoh_gateway(
     hot_rx: trading_networking::events::HotEventRx,
     cold_bus: trading_networking::events::ColdEventBus,
+    dex_bus: trading_networking::events::DexColdEventBus,
     router: Arc<MpscCommandRouter>,
 ) {
     let enabled = std::env::var("ZENOH_ENABLED")
@@ -65,8 +88,9 @@ pub(crate) async fn maybe_start_zenoh_gateway(
     let _health = gateway.add_transport("zenoh", transport, 1024);
 
     let cold_rx = cold_bus.subscribe();
+    let dex_rx = dex_bus.subscribe();
     tokio::spawn(async move {
-        gateway.run(hot_rx, cold_rx).await;
+        gateway.run(hot_rx, cold_rx, dex_rx).await;
     });
 
     let cmd_key = keyspace.commands_key;
@@ -108,6 +132,9 @@ pub async fn run(
     mongo_client: Arc<MongoClient>,
     tracing_handles: Option<trading_trace::ExporterHandles>,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    bot_config.validate()?;
+    bot_config.validate_for_runner(&mode)?;
+
     let shutdown_manager = ShutdownManager::new(bot_config.channels.shutdown_capacity);
     init::setup_shutdown_handler(shutdown_manager.clone());
 
@@ -266,9 +293,6 @@ pub async fn run(
             .await?;
         }
         "levels" => {
-            if services.venue.mode() != VenueMode::Cex {
-                return Err("levels mode requires venue.mode \"cex\"".into());
-            }
             let level_persistence =
                 init::create_level_persistence(Some(&mongo_client), &bot_config);
             level_runner(bot_config, levels_config, services, level_persistence).await?;

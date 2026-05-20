@@ -87,10 +87,15 @@ indicator-config-check: generate-indicators
 indicator-test:
     cd python && uv sync --quiet && uv run --with pytest pytest indicator_config_generator/tests -q
 
+# Venue import hygiene (no traits shim / legacy exchange channel paths in src/)
+check-venue-imports:
+    bash .cursor/tools/check_venue_imports.sh
+
 # Full CI check (what CI runs)
 ci:
     # Run all CI checks locally
     just fmt-check
+    just check-venue-imports
     just clippy-strict
     just check
     just test

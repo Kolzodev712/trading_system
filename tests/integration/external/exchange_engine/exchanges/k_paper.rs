@@ -11,14 +11,14 @@
 use std::sync::Arc;
 use tokio::sync::{broadcast, RwLock};
 use trading_core::{
-    channels::exchange::cex_venue_update_channel,
     config::ChannelConfig,
     registry::symbol::SymbolRegistry,
-    traits::TradingClient,
     types::{
         common::{Instrument, InstrumentType, OrderType, Pair, Side},
         exchange::OrderRequest,
     },
+    venue::cex::channels::cex_venue_update_channel,
+    venue::cex::traits::TradingClient,
 };
 
 use exchange_engine::exchanges::k_paper::{

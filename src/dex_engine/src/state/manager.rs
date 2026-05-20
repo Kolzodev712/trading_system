@@ -31,9 +31,10 @@ impl DexStateManager {
             let mut guard = self.state.write();
             guard.wallet = wallet.clone();
         }
-        let _ = self
-            .publisher
-            .publish(DexVenueUpdate::WalletBalance { balances: wallet });
+        let _ = self.publisher.publish(DexVenueUpdate::WalletBalance {
+            balances: wallet,
+            trace_context: None,
+        });
     }
 
     pub fn publish(&self, update: DexVenueUpdate) -> Result<(), DexError> {
@@ -44,6 +45,9 @@ impl DexStateManager {
         &self,
         result: trading_core::venue::dex::types::ExecutionResult,
     ) -> Result<(), DexError> {
-        self.publish(DexVenueUpdate::ExecutionResult { result })
+        self.publish(DexVenueUpdate::ExecutionResult {
+            result,
+            trace_context: None,
+        })
     }
 }

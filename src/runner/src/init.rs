@@ -564,7 +564,7 @@ pub async fn initialize_exchange_engine(
 ) -> Result<
     (
         Arc<exchange_engine::state::manager::ExchangeStateManager>,
-        trading_core::channels::exchange::CexVenueUpdateReceiver,
+        trading_core::venue::cex::channels::CexVenueUpdateReceiver,
         Arc<RwLock<dyn TradingClient<OrderRequest>>>,
     ),
     Box<dyn std::error::Error>,

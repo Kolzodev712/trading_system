@@ -3,7 +3,7 @@ use crate::state::TradingState;
 use axum::{
     extract::State,
     http::{header, StatusCode},
-    response::IntoResponse,
+    response::{IntoResponse, Response},
     routing::get,
     Json, Router,
 };
@@ -17,6 +17,9 @@ pub struct HealthState {
     pub trading_state: Arc<RwLock<TradingState>>,
     /// If set, GET /metrics will return Prometheus exposition format.
     pub metrics_provider: Option<Arc<dyn Fn() -> Vec<u8> + Send + Sync>>,
+    /// If set, `/health` returns 503 when this returns false.
+    pub readiness: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
+    pub readiness_detail: Option<Arc<dyn Fn() -> String + Send + Sync>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -24,6 +27,8 @@ struct HealthResponse {
     status: String,
     timestamp: String,
     uptime_secs: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    detail: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -67,6 +72,8 @@ pub struct HealthServer {
     trading_state: Arc<RwLock<TradingState>>,
     /// If set, GET /metrics will return Prometheus metrics.
     metrics_provider: Option<Arc<dyn Fn() -> Vec<u8> + Send + Sync>>,
+    readiness: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
+    readiness_detail: Option<Arc<dyn Fn() -> String + Send + Sync>>,
 }
 
 impl HealthServer {
@@ -74,12 +81,25 @@ impl HealthServer {
         Self {
             trading_state,
             metrics_provider: None,
+            readiness: None,
+            readiness_detail: None,
         }
     }
 
     /// Add a Prometheus metrics endpoint. The closure will be called on each GET /metrics.
     pub fn with_metrics(mut self, provider: Arc<dyn Fn() -> Vec<u8> + Send + Sync>) -> Self {
         self.metrics_provider = Some(provider);
+        self
+    }
+
+    /// When the checker returns false, GET `/health` responds with 503.
+    pub fn with_readiness(
+        mut self,
+        checker: Arc<dyn Fn() -> bool + Send + Sync>,
+        detail: Option<Arc<dyn Fn() -> String + Send + Sync>>,
+    ) -> Self {
+        self.readiness = Some(checker);
+        self.readiness_detail = detail;
         self
     }
 
@@ -91,6 +111,8 @@ impl HealthServer {
         let state = Arc::new(HealthState {
             trading_state: Arc::clone(&self.trading_state),
             metrics_provider: self.metrics_provider.clone(),
+            readiness: self.readiness.clone(),
+            readiness_detail: self.readiness_detail.clone(),
         });
 
         let app = Router::new()
@@ -112,12 +134,24 @@ impl HealthServer {
     }
 }
 
-async fn health_check() -> Json<HealthResponse> {
-    Json(HealthResponse {
-        status: "healthy".to_string(),
+async fn health_check(State(state): State<Arc<HealthState>>) -> Response {
+    let ready = state.readiness.as_ref().map(|f| f()).unwrap_or(true);
+    let detail = state.readiness_detail.as_ref().map(|f| f());
+    let body = HealthResponse {
+        status: if ready {
+            "healthy".to_string()
+        } else {
+            "unhealthy".to_string()
+        },
         timestamp: chrono::Utc::now().to_rfc3339(),
         uptime_secs: None,
-    })
+        detail,
+    };
+    if ready {
+        (StatusCode::OK, Json(body)).into_response()
+    } else {
+        (StatusCode::SERVICE_UNAVAILABLE, Json(body)).into_response()
+    }
 }
 
 async fn serve_metrics(State(state): State<Arc<HealthState>>) -> impl IntoResponse {

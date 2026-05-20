@@ -6,7 +6,7 @@ use trading_core::venue::dex::types::{DexWalletBalances, ExecutionResult};
 use trading_core::venue::dex::{DexError, TradeCommand};
 use trading_core::venue::VenueId;
 
-/// Compile-time stub until `chains/solana` (Proposal 02).
+/// Compile-time stub until `chains/solana` (Proposal 01).
 pub struct MockVenueProvider;
 
 #[async_trait]

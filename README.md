@@ -222,7 +222,7 @@ sequenceDiagram
 ### Communication Patterns
 
 - **In-Process**: Broadcast channels (ultra-low latency, < 1μs)
-- **External**: gRPC (TUI CLI and optional standalone proxy); Zenoh (events and commands, always on when runner is active)
+- **External**: gRPC (TUI CLI and optional standalone proxy); Zenoh (events and commands, **opt-in** via `ZENOH_ENABLED=1`, default off)
 - **Exchange**: WebSocket + REST API (for exchange communication)
 
 ### View Interactive Diagrams
@@ -329,7 +329,7 @@ For detailed architecture information, see the [Architecture Documentation](#arc
 - **Entry point**: `runner::run()` in the library creates shutdown manager, builds services, and runs strategy or level runner; the `runner` binary is a thin wrapper (config, logging, MongoDB init, then `run()`).
 - **Dual mode**: Strategies or levels.
 - **gRPC**: Uses the **gateway** crate for all gRPC (proto, server, service handlers). The runner spawns the gRPC server in-process; an optional **standalone gateway binary** can proxy gRPC to a remote runner.
-- **Zenoh**: Event gateway (hot/cold events) and command queryable (enable/disable trading, status, strategy toggle) are always on; no feature flag.
+- **Zenoh**: Event gateway (hot/cold/**dex cold** events) and command queryable when `ZENOH_ENABLED=1` or `true`; off by default for local dev.
 - Graceful shutdown via `ShutdownManager`.
 
 **See**: [Runner Architecture](architecture/08-runner.md)
@@ -371,9 +371,9 @@ For detailed architecture information, see the [Architecture Documentation](#arc
 **Purpose**: External event and command layer (Zenoh transport).
 
 **Key Features**:
-- **Events**: Hot (market data) and cold (state) event types and buses; `EventGateway` fans out to transports (e.g. Zenoh).
+- **Events**: Hot (market data), cold (CEX state), and `DexColdEvent` (DEX state); `EventGateway` fans out to transports (e.g. Zenoh).
 - **Commands**: Command payloads, router, dispatcher; Zenoh queryable for remote control (enable/disable trading, status, strategy toggle).
-- **Zenoh**: Always on when the runner starts; publishes events and handles command queries via `libs/trading_networking` (Zenoh feature).
+- **Zenoh**: Opt-in (`ZENOH_ENABLED=1`); unified bridge in `runner::event_bridge`. See [Platform data plane](docs/PLATFORM_DATA_PLANE.md).
 
 ## Prerequisites & Dependencies
 

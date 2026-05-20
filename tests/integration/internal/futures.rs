@@ -5,12 +5,12 @@
 
 use crate::helpers::internal::MockTradingClient;
 use rust_decimal::Decimal;
-use trading_core::traits::TradingClient;
 use trading_core::types::common::{Instrument, InstrumentType, OrderType, Pair, Side, Symbol};
 use trading_core::types::exchange::{OrderRequest, Position};
 use trading_core::types::futures::{
     FuturesBalance, FuturesOrderRequest, LeverageInfo, MarginType, PositionMode,
 };
+use trading_core::venue::cex::traits::TradingClient;
 
 #[tokio::test]
 async fn test_mock_trading_client_futures_methods() {

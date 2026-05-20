@@ -11,7 +11,7 @@ use exchange_engine::exchanges::bybit::{client::BybitClient, config::BybitConfig
 use std::{fs, sync::Arc};
 use tokio::sync::RwLock;
 use tracing::{error, info};
-use trading_core::traits::TradingClient;
+use trading_core::venue::cex::traits::TradingClient;
 
 fn load_bybit_config() -> Result<BybitConfig, Box<dyn std::error::Error>> {
     // Load from bot.json which has the new structure

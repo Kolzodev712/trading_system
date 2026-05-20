@@ -15,11 +15,14 @@ use trading_engine::strategies::{
     BuyLowSellHigh, StrategyExecutor, StrategyManager, StrategyManagerWrapper,
 };
 use trading_networking::commands::{CommandDispatcher, MpscCommandRouter};
-use trading_networking::events::{cold_event_bus, hot_event_channel};
+
+use crate::event_bridge::{start_event_bridge, EventBridgeInputs};
+use crate::platform_health::PlatformReadiness;
+use crate::{build_metrics_provider, maybe_start_zenoh_gateway};
 
 /// Processes execution reports from the exchange and calls the provided handler function
 async fn execution_report_handler<F, Fut>(
-    mut exchange_update_rx: trading_core::channels::exchange::CexVenueUpdateReceiver,
+    mut exchange_update_rx: trading_core::venue::cex::channels::CexVenueUpdateReceiver,
     mut shutdown_rx: tokio::sync::broadcast::Receiver<()>,
     handler: F,
 ) where
@@ -30,7 +33,7 @@ async fn execution_report_handler<F, Fut>(
         tokio::select! {
             update = exchange_update_rx.recv() => {
                 match update {
-                    Ok(trading_core::channels::exchange::CexVenueUpdate::Order {
+                    Ok(trading_core::venue::cex::channels::CexVenueUpdate::Order {
                         order,
                         ..
                     }) => {
@@ -269,9 +272,6 @@ pub async fn strategy_runner(
     let grpc_handle = grpc_server.start(grpc_addr).await?;
     info!("gRPC server started on {}", grpc_addr);
 
-    let (hot_tx, hot_rx) = hot_event_channel(bot_config.channels.market_data_capacity);
-    let cold_bus = cold_event_bus(bot_config.channels.cex_venue_update_capacity);
-
     let (router, cmd_rx) = MpscCommandRouter::new(1024);
     let router = Arc::new(router);
 
@@ -290,73 +290,16 @@ pub async fn strategy_runner(
         dispatcher.run().await;
     });
 
-    let hot_tx_for_bridge = hot_tx.clone();
-    let mut md_rx = services.market_data_rx.resubscribe();
-    let mut shutdown_rx_md = services.shutdown_manager.subscribe();
-    tokio::spawn(async move {
-        loop {
-            tokio::select! {
-                update = md_rx.recv() => {
-                    match update {
-                        Ok(trading_core::channels::market_data::MarketDataUpdate::Orderbook { orderbook, trace_context }) => {
-                            let event = trading_networking::events::HotEvent::orderbook_from_structured(&orderbook, trace_context);
-                            let _ = hot_tx_for_bridge.try_send(event);
-                        }
-                        Ok(trading_core::channels::market_data::MarketDataUpdate::DexAccountHealth { .. }) => {}
-                        Ok(trading_core::channels::market_data::MarketDataUpdate::Trade { trade, trace_context }) => {
-                            let event = trading_networking::events::HotEvent::Trade {
-                                pair: trade.pair.clone(),
-                                price: trade.price,
-                                quantity: trade.quantity,
-                                timestamp: trade.timestamp,
-                                trade_id: trade.trade_id.clone(),
-                                trace_context,
-                            };
-                            let _ = hot_tx_for_bridge.try_send(event);
-                        }
-                        Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
-                            tracing::warn!("[zenoh bridge] market data lagged; skipped {}", skipped);
-                        }
-                        Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
-                    }
-                }
-                _ = shutdown_rx_md.recv() => break,
-            }
-        }
+    let bridge = start_event_bridge(EventBridgeInputs {
+        market_data_rx: services.market_data_rx.resubscribe(),
+        cex_update_rx: Some(services.exec_report_rx()?.resubscribe()),
+        dex_update_rx: services.venue.dex_update_rx(),
+        shutdown_manager: &services.shutdown_manager,
+        md_capacity: bot_config.channels.market_data_capacity,
+        cex_capacity: bot_config.channels.cex_venue_update_capacity,
+        dex_capacity: bot_config.channels.dex_venue_update_capacity,
     });
-
-    let cold_bus_for_bridge = cold_bus.clone();
-    let mut ex_rx = services.exec_report_rx()?.resubscribe();
-    let mut shutdown_rx_ex = services.shutdown_manager.subscribe();
-    tokio::spawn(async move {
-        loop {
-            tokio::select! {
-                update = ex_rx.recv() => {
-                    match update {
-                        Ok(trading_core::channels::exchange::CexVenueUpdate::Order { order, trace_context }) => {
-                            let _ = cold_bus_for_bridge.publish(Arc::new(trading_networking::events::ColdEvent::Order { order, trace_context }));
-                        }
-                        Ok(trading_core::channels::exchange::CexVenueUpdate::Balance { balance, trace_context }) => {
-                            let _ = cold_bus_for_bridge.publish(Arc::new(trading_networking::events::ColdEvent::Balance { balance, trace_context }));
-                        }
-                        Ok(trading_core::channels::exchange::CexVenueUpdate::Position { position, trace_context }) => {
-                            let _ = cold_bus_for_bridge.publish(Arc::new(trading_networking::events::ColdEvent::Position { position, trace_context }));
-                        }
-                        Ok(trading_core::channels::exchange::CexVenueUpdate::Trade { trade, trace_context }) => {
-                            let _ = cold_bus_for_bridge.publish(Arc::new(trading_networking::events::ColdEvent::Trade { trade, trace_context }));
-                        }
-                        Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
-                            tracing::warn!("[zenoh bridge] exchange updates lagged; skipped {}", skipped);
-                        }
-                        Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
-                    }
-                }
-                _ = shutdown_rx_ex.recv() => break,
-            }
-        }
-    });
-
-    crate::maybe_start_zenoh_gateway(hot_rx, cold_bus, router).await;
+    maybe_start_zenoh_gateway(bridge.hot_rx, bridge.cold_bus, bridge.dex_bus, router).await;
 
     // Pass all pairs to executor (no .first() - single source of truth)
     let executor = StrategyExecutor::new(
@@ -405,17 +348,29 @@ pub async fn strategy_runner(
         .clone()
         .ok_or("Trading state requires venue.mode \"cex\"")?
         .get_state();
-    let health_server = TradingHealthServer::new(trading_state_for_health);
-    let health_server = if let Some(ref h) = services.tracing_handles {
-        let handles = h.clone();
-        health_server.with_metrics(Arc::new(move || {
-            trading_trace::encode_prometheus_metrics(&handles)
-                .unwrap_or_default()
-                .into_bytes()
-        }))
-    } else {
-        health_server
+    let readiness = PlatformReadiness {
+        venue_mode: bot_config.venue.mode,
+        started_at: std::time::SystemTime::now(),
+        exchange_state_manager: services.exchange_state_manager().ok(),
+        market_data_state_manager: Some(services.market_data_state_manager.clone()),
+        configured_pairs: configured_pairs.clone(),
+        dex_ready: services.venue.dex_state_manager().is_some(),
+        mongo_enabled: bot_config.mongo.enabled,
     };
+    let readiness_check = {
+        let r = readiness.clone();
+        Arc::new(move || r.is_ready()) as Arc<dyn Fn() -> bool + Send + Sync>
+    };
+    let readiness_detail = {
+        let r = readiness;
+        Arc::new(move || r.status_detail()) as Arc<dyn Fn() -> String + Send + Sync>
+    };
+    let health_server = TradingHealthServer::new(trading_state_for_health)
+        .with_readiness(readiness_check, Some(readiness_detail))
+        .with_metrics(build_metrics_provider(
+            services.tracing_handles.clone(),
+            bot_config.venue.mode,
+        ));
     let server_config = bot_config.server.clone();
     let mut shutdown_rx_health = services.shutdown_manager.subscribe();
     let health_handle = tokio::spawn(async move {

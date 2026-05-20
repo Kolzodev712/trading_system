@@ -1,5 +1,6 @@
 pub mod chains;
 pub mod config;
+pub mod monitoring;
 pub mod run;
 pub mod runtime;
 pub mod state;

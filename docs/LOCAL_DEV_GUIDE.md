@@ -14,7 +14,11 @@ Use **three terminals**. Start services in order: k-paper → runner → CLI.
 
 The CLI does **not** connect to k-paper. The runner connects to k-paper using `config/bot.json` → `paper_exchange_url`.
 
-**Health HTTP** (runner): `8080` from `bot.json` → `server.port` — not used by the CLI.
+**Health HTTP** (runner): `bot.json` → `server.port` (e.g. `8080`) — not used by the CLI.
+
+- `GET /health` — returns **503** when CEX-critical dependencies are down (`venue.mode` `cex` or `both`). Body includes `detail` with readiness breakdown.
+- `GET /metrics` — Prometheus text when trace exporters enable Prometheus; includes `venue_mode`, `dex_execute_*`, `broadcast_lag_total` counters.
+- **Zenoh** (optional): set `ZENOH_ENABLED=1` to export hot/cold/dex-cold events. Default is off. See [Platform data plane](PLATFORM_DATA_PLANE.md) and [Venue modes](VENUE_MODES.md).
 
 ## Prerequisites
 

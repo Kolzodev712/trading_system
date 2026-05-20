@@ -13,7 +13,6 @@ use tokio_tungstenite::tungstenite::Message;
 use tracing::{error, info, warn};
 use trading_core::channels::market_data::{MarketDataUpdate, MarketDataUpdateSender};
 use trading_core::error::EngineError;
-use trading_core::traits::TradingClient;
 use trading_core::types::common::{
     Exchange, Instrument, InstrumentType, OrderId, OrderStatus, Pair, Side,
 };
@@ -21,6 +20,7 @@ use trading_core::types::exchange::{
     Balance, BulkAmendRequest, BulkAmendResponse, BulkOrderRequest, BulkOrderResponse, Order,
     OrderRequest, Trade,
 };
+use trading_core::venue::cex::traits::TradingClient;
 
 use super::config::PaperConfig;
 use super::map::{

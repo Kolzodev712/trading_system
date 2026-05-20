@@ -9,11 +9,11 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use trading_core::error::EngineError;
-use trading_core::traits::TradingClient;
 use trading_core::types::common::{Exchange, InstrumentType};
 use trading_core::types::exchange::BulkCancelRequest;
 use trading_core::types::exchange::OrderRequest;
 use trading_core::types::market_data::Orderbook;
+use trading_core::venue::cex::traits::TradingClient;
 
 /// Executes levels by resolving indicator values and placing orders
 pub struct LevelExecutor {

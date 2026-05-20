@@ -10,7 +10,6 @@
 //!   cargo run --bin test_runner -- --mode levels --duration 30
 
 use runner::config::BotConfig;
-use runner::shutdown::ShutdownManager;
 use runner::{create_shutdown_manager, setup_shutdown_handler};
 use runner::{
     fetch_asset_data, initialize_asset_service, initialize_indicator_service,

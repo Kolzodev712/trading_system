@@ -1,5 +1,5 @@
 use crate::error::NetworkError;
-use crate::events::{ColdEvent, HotEvent};
+use crate::events::{ColdEvent, DexColdEvent, HotEvent};
 use crate::gateway::transports::EventTransport;
 use crate::zenoh_bridge;
 use async_trait::async_trait;
@@ -52,6 +52,14 @@ impl ZenohKeyspace {
             self.cold_key(event).trim_start_matches('/')
         )
     }
+
+    pub fn dex_cold_key(&self, event: &DexColdEvent) -> &'static str {
+        match event {
+            DexColdEvent::WalletBalance { .. } => "dex_cold/wallet_balance",
+            DexColdEvent::PendingTransaction { .. } => "dex_cold/pending_transaction",
+            DexColdEvent::ExecutionResult { .. } => "dex_cold/execution_result",
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -82,6 +90,17 @@ impl EventTransport for ZenohEventTransport {
             self.keyspace.cold_key(&event)
         );
         zenoh_bridge::publish_cold_event(&self.session, &key, event.as_ref())
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    async fn publish_dex_cold(&self, event: Arc<DexColdEvent>) -> Result<(), String> {
+        let key = format!(
+            "{}/{}",
+            self.keyspace.prefix,
+            self.keyspace.dex_cold_key(&event)
+        );
+        zenoh_bridge::publish_dex_cold_event(&self.session, &key, event.as_ref())
             .await
             .map_err(|e| e.to_string())
     }

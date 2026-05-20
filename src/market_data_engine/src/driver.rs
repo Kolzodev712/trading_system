@@ -11,7 +11,7 @@ use tracing::error;
 use trading_core::config::ChannelConfig;
 use trading_core::{
     channels::market_data::MarketDataUpdateSender, error::EngineError,
-    registry::symbol::SymbolRegistry, traits::MarketDataClient, types::common::Pair,
+    registry::symbol::SymbolRegistry, types::common::Pair, venue::cex::traits::MarketDataClient,
 };
 
 #[derive(Debug, Clone)]

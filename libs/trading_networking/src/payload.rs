@@ -2,7 +2,7 @@
 
 use crate::commands::CommandPayload;
 use crate::error::NetworkError;
-use crate::events::{ColdEvent, HotEvent};
+use crate::events::{ColdEvent, DexColdEvent, HotEvent};
 use bytes::Bytes;
 
 /// Serialize a hot event to bytes (JSON).
@@ -36,6 +36,19 @@ pub fn deserialize_hot_event(payload: &[u8]) -> Result<HotEvent, NetworkError> {
 pub fn deserialize_cold_event(payload: &[u8]) -> Result<ColdEvent, NetworkError> {
     serde_json::from_slice(payload)
         .map_err(|e| NetworkError::DeserializationFailed(format!("cold event: {}", e)))
+}
+
+/// Serialize a DEX cold event to bytes (JSON).
+pub fn serialize_dex_cold_event(event: &DexColdEvent) -> Result<Bytes, NetworkError> {
+    serde_json::to_vec(event)
+        .map(Bytes::from)
+        .map_err(|e| NetworkError::SerializationFailed(format!("dex cold event: {}", e)))
+}
+
+/// Deserialize a DEX cold event from bytes.
+pub fn deserialize_dex_cold_event(payload: &[u8]) -> Result<DexColdEvent, NetworkError> {
+    serde_json::from_slice(payload)
+        .map_err(|e| NetworkError::DeserializationFailed(format!("dex cold event: {}", e)))
 }
 
 /// Deserialize a command payload from bytes.
@@ -111,6 +124,28 @@ mod tests {
                 assert_eq!(b.total, balance.total);
             }
             _ => panic!("expected Balance variant"),
+        }
+    }
+
+    #[test]
+    fn dex_cold_event_roundtrip() {
+        use trading_core::venue::dex::types::ExecutionResult;
+        let result = ExecutionResult {
+            signature: smol_str::SmolStr::new("sig1"),
+            status: trading_core::venue::dex::types::TxStatus::Confirmed,
+            error: None,
+        };
+        let event = DexColdEvent::ExecutionResult {
+            result: result.clone(),
+            trace_context: None,
+        };
+        let bytes = serialize_dex_cold_event(&event).unwrap();
+        let decoded = deserialize_dex_cold_event(&bytes).unwrap();
+        match decoded {
+            DexColdEvent::ExecutionResult { result: r, .. } => {
+                assert_eq!(r.signature, result.signature);
+            }
+            _ => panic!("variant mismatch"),
         }
     }
 

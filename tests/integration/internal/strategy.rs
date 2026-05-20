@@ -18,11 +18,13 @@ async fn test_strategy_monitoring_with_position() {
 
     // Create exchange state manager first (needed for trading state manager)
     let (exchange_tx, exchange_rx) =
-        trading_core::channels::exchange::cex_venue_update_channel(100);
+        trading_core::venue::cex::channels::cex_venue_update_channel(100);
     let symbol_registry = Arc::new(SymbolRegistry::new());
     let trading_client: Arc<
         tokio::sync::RwLock<
-            dyn trading_core::traits::TradingClient<trading_core::types::exchange::OrderRequest>,
+            dyn trading_core::venue::cex::traits::TradingClient<
+                trading_core::types::exchange::OrderRequest,
+            >,
         >,
     > = Arc::new(tokio::sync::RwLock::new(MockTradingClient::new()));
 
@@ -97,11 +99,13 @@ async fn test_strategy_monitoring_with_position() {
 async fn test_strategy_monitoring_without_position() {
     // Create exchange state manager first
     let (exchange_tx, exchange_rx) =
-        trading_core::channels::exchange::cex_venue_update_channel(100);
+        trading_core::venue::cex::channels::cex_venue_update_channel(100);
     let symbol_registry = Arc::new(SymbolRegistry::new());
     let trading_client: Arc<
         tokio::sync::RwLock<
-            dyn trading_core::traits::TradingClient<trading_core::types::exchange::OrderRequest>,
+            dyn trading_core::venue::cex::traits::TradingClient<
+                trading_core::types::exchange::OrderRequest,
+            >,
         >,
     > = Arc::new(tokio::sync::RwLock::new(MockTradingClient::new()));
 
@@ -191,11 +195,13 @@ async fn test_strategy_monitoring_with_active_orders() {
 
     // Create exchange state manager first
     let (exchange_tx, exchange_rx) =
-        trading_core::channels::exchange::cex_venue_update_channel(100);
+        trading_core::venue::cex::channels::cex_venue_update_channel(100);
     let symbol_registry = Arc::new(SymbolRegistry::new());
     let trading_client: Arc<
         tokio::sync::RwLock<
-            dyn trading_core::traits::TradingClient<trading_core::types::exchange::OrderRequest>,
+            dyn trading_core::venue::cex::traits::TradingClient<
+                trading_core::types::exchange::OrderRequest,
+            >,
         >,
     > = Arc::new(tokio::sync::RwLock::new(MockTradingClient::new()));
 

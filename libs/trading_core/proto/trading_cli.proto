@@ -154,6 +154,23 @@ message MonitoringData {
     repeated Orderbook orderbooks = 8; // Orderbook data for all pairs
     string instrument_type = 9; // "Spot" or "Futures" - determines which view to show in TUI
     string exchange = 10;       // "Binance" or "Bybit" - for display in CLI
+    DexVenueSnapshot dex = 11;  // Present when DEX engine is active
+}
+
+message DexVenueSnapshot {
+    repeated DexBalance balances = 1;
+    repeated DexPendingTransaction pending_transactions = 2;
+    string venue = 3;
+}
+
+message DexBalance {
+    string mint = 1;
+    string amount = 2;
+}
+
+message DexPendingTransaction {
+    string signature = 1;
+    string status = 2;
 }
 
 message Order {

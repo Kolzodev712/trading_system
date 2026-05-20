@@ -11,6 +11,7 @@ members = [
     "libs/trading_networking",
     "libs/trading_trace",
     "src/exchange_engine",
+    "src/dex_engine",
     "src/gateway",
     "src/trading_engine",
     "src/market_data_engine",

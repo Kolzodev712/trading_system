@@ -8,6 +8,7 @@ use tracing::{error, info, warn};
 use crate::config::BotConfig;
 use crate::shutdown::ShutdownManager;
 
+use crate::venue::{CexVenueHandle, DexVenueHandle, VenueInterface};
 use asset_engine::AssetService;
 use indicator_engine::IndicatorService;
 use market_data_engine::{
@@ -15,9 +16,10 @@ use market_data_engine::{
     driver::{MarketDataDriver, Method},
 };
 use trading_core::persistence::mongo::client::MongoClient;
-use trading_core::traits::TradingClient;
 use trading_core::types::common::{Exchange, Pair};
-use trading_core::types::exchange::OrderRequest;
+use trading_core::venue::cex::traits::TradingClient;
+use trading_core::venue::cex::types::exchange::OrderRequest;
+use trading_core::venue::{venue_id_from_exchange, VenueMode};
 use trading_engine::state::manager::TradingStateManager;
 
 /// Initialize MongoDB connection
@@ -477,6 +479,84 @@ pub async fn initialize_indicator_service(
     ))
 }
 
+/// Build CEX handles (`exchange_engine`).
+pub async fn build_cex_handle(
+    bot_config: &BotConfig,
+    shutdown_manager: &ShutdownManager,
+) -> Result<CexVenueHandle, Box<dyn std::error::Error>> {
+    let (exchange_state_manager, cex_update_rx, trading_client) =
+        initialize_exchange_engine(bot_config, shutdown_manager).await?;
+    Ok(CexVenueHandle {
+        venue_id: venue_id_from_exchange(bot_config.exchange_engine.exchange.clone()),
+        exchange_state_manager,
+        trading_client,
+        cex_update_rx,
+    })
+}
+
+/// Build DEX handles (`dex_engine`, mock provider until Solana).
+pub async fn build_dex_handle(
+    bot_config: &BotConfig,
+    dex_config: dex_engine::DexEngineConfig,
+    shutdown_manager: &ShutdownManager,
+) -> Result<DexVenueHandle, Box<dyn std::error::Error>> {
+    info!(
+        "Starting DEX Engine (venue: {:?}, chain: {:?})...",
+        dex_config.venue, dex_config.chain
+    );
+    let reconciliation_enabled =
+        bot_config.features.enable_reconciliation && bot_config.reconciliation.enabled;
+    let reconciliation_interval_secs = bot_config.reconciliation.exchange_level_interval_ms / 1000;
+    let shutdown_rx = shutdown_manager.subscribe();
+    let runtime = dex_engine::run(
+        dex_config.clone(),
+        bot_config.channels.clone(),
+        shutdown_rx,
+        reconciliation_interval_secs,
+        reconciliation_enabled,
+    )
+    .await
+    .map_err(|e| format!("DEX engine failed to start: {e}"))?;
+    let dex_update_rx = runtime.update_rx.resubscribe();
+    info!("DEX Engine: bootstrap completed");
+    Ok(DexVenueHandle {
+        venue_id: dex_config.venue,
+        runtime,
+        dex_update_rx,
+    })
+}
+
+/// Build the active [`VenueInterface`] from `bot.json` (`venue.mode`).
+pub async fn initialize_venue(
+    bot_config: &BotConfig,
+    shutdown_manager: &ShutdownManager,
+) -> Result<VenueInterface, Box<dyn std::error::Error>> {
+    match bot_config.venue.mode {
+        VenueMode::Cex => Ok(VenueInterface::Cex(
+            build_cex_handle(bot_config, shutdown_manager).await?,
+        )),
+        VenueMode::Dex => {
+            let dex_config = bot_config
+                .dex_engine
+                .clone()
+                .ok_or("dex_engine config required when venue.mode is dex")?;
+            Ok(VenueInterface::Dex(
+                build_dex_handle(bot_config, dex_config, shutdown_manager).await?,
+            ))
+        }
+        VenueMode::Both => {
+            let dex_config = bot_config
+                .dex_engine
+                .clone()
+                .ok_or("dex_engine config required when venue.mode is both")?;
+            Ok(VenueInterface::Both {
+                cex: build_cex_handle(bot_config, shutdown_manager).await?,
+                dex: build_dex_handle(bot_config, dex_config, shutdown_manager).await?,
+            })
+        }
+    }
+}
+
 /// Initialize Exchange Engine
 pub async fn initialize_exchange_engine(
     bot_config: &BotConfig,
@@ -484,7 +564,7 @@ pub async fn initialize_exchange_engine(
 ) -> Result<
     (
         Arc<exchange_engine::state::manager::ExchangeStateManager>,
-        trading_core::channels::exchange::ExchangeUpdateReceiver,
+        trading_core::channels::exchange::CexVenueUpdateReceiver,
         Arc<RwLock<dyn TradingClient<OrderRequest>>>,
     ),
     Box<dyn std::error::Error>,

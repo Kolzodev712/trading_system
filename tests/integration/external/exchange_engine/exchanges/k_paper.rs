@@ -11,7 +11,7 @@
 use std::sync::Arc;
 use tokio::sync::{broadcast, RwLock};
 use trading_core::{
-    channels::exchange::exchange_update_channel,
+    channels::exchange::cex_venue_update_channel,
     config::ChannelConfig,
     registry::symbol::SymbolRegistry,
     traits::TradingClient,
@@ -46,7 +46,7 @@ async fn spawn_paper_client(
         Arc::new(RwLock::new(client));
 
     let channels = ChannelConfig::default();
-    let (exchange_update_tx, _rx) = exchange_update_channel(channels.exchange_update_capacity);
+    let (exchange_update_tx, _rx) = cex_venue_update_channel(channels.cex_venue_update_capacity);
     let symbol_registry = Arc::new(SymbolRegistry::from_pairs(pairs));
     let state_manager = Arc::new(exchange_engine::state::manager::ExchangeStateManager::new(
         exchange_update_tx,

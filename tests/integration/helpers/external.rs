@@ -6,7 +6,7 @@
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use trading_core::{
-    channels::exchange::exchange_update_channel,
+    channels::exchange::cex_venue_update_channel,
     config::ChannelConfig,
     registry::symbol::SymbolRegistry,
     secret::SecretString,
@@ -101,9 +101,9 @@ impl ExchangeClientBuilder {
         &self,
     ) -> (
         ExchangeStateManager,
-        trading_core::channels::exchange::ExchangeUpdateReceiver,
+        trading_core::channels::exchange::CexVenueUpdateReceiver,
     ) {
-        let (tx, rx) = exchange_update_channel(self.channels.exchange_update_capacity);
+        let (tx, rx) = cex_venue_update_channel(self.channels.cex_venue_update_capacity);
         let symbol_registry = Arc::new(SymbolRegistry::from_pairs(self.config.pairs.clone()));
         let trading_client = self.build_trading_client();
 

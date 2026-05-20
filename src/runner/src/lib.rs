@@ -14,9 +14,12 @@ use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
 use tracing::{info, warn};
 use trading_core::persistence::mongo::client::MongoClient;
-use trading_core::traits::TradingClient;
 use trading_core::types::common::Exchange;
-use trading_core::types::exchange::OrderRequest;
+use trading_core::venue::cex::traits::TradingClient;
+use trading_core::venue::cex::types::exchange::OrderRequest;
+use trading_core::venue::VenueMode;
+
+use crate::venue::VenueInterface;
 use trading_engine::state::manager::TradingStateManager;
 use trading_networking::commands::MpscCommandRouter;
 use trading_networking::gateway::backpressure::BackpressurePolicy;
@@ -27,9 +30,11 @@ use trading_networking::gateway::transports::zenoh::{
 };
 
 pub mod commands;
+pub mod dex_runner;
 pub mod init;
 pub mod level_runner;
 pub mod strategy_runner;
+pub mod venue;
 
 pub(crate) async fn maybe_start_zenoh_gateway(
     hot_rx: trading_networking::events::HotEventRx,
@@ -74,8 +79,7 @@ pub(crate) async fn maybe_start_zenoh_gateway(
 
 /// Shared services needed for both modes
 pub struct SharedServices {
-    pub trading_client: Arc<RwLock<dyn TradingClient<OrderRequest>>>,
-    pub exec_report_rx: trading_core::channels::exchange::ExchangeUpdateReceiver,
+    pub venue: venue::VenueInterface,
     pub market_data_rx: trading_core::channels::market_data::MarketDataUpdateReceiver,
     pub indicator_rx: trading_core::channels::indicators::IndicatorUpdateReceiver,
     pub indicator_service: Arc<Mutex<IndicatorService>>,
@@ -86,8 +90,7 @@ pub struct SharedServices {
     pub market_data_handle: JoinHandle<()>,
     pub trading_ws_handle: JoinHandle<()>,
     pub indicator_handle: JoinHandle<()>,
-    pub trading_state_manager: Arc<trading_engine::state::manager::TradingStateManager>,
-    pub exchange_state_manager: Arc<exchange_engine::state::manager::ExchangeStateManager>,
+    pub trading_state_manager: Option<Arc<trading_engine::state::manager::TradingStateManager>>,
     pub market_data_state_manager: Arc<market_data_engine::state::manager::MarketDataStateManager>,
     pub asset_service: Option<Arc<AssetService>>,
     pub trading_control: Option<Arc<trading_core::grpc::TradingControl>>,
@@ -124,61 +127,84 @@ pub async fn run(
         paper_rest_base,
     )
     .await?;
-    let configured_pairs = bot_config.get_pairs()?;
-    if configured_pairs.is_empty() {
-        return Err("No pairs configured in bot.json".into());
-    }
-    init::fetch_asset_data(
-        &asset_service,
-        bot_config.exchange_engine.exchange.clone(),
-        &configured_pairs,
-    )
-    .await;
+    let needs_cex_md = matches!(bot_config.venue.mode, VenueMode::Cex | VenueMode::Both);
 
-    // For Paper: start exchange_engine first so its WebSocket connects before market_data and
-    // receives the account snapshot (k-paper may send snapshot only to the first connection).
-    let (
-        _,
-        market_data_rx,
-        market_data_handle,
-        market_data_state_manager,
-        exchange_state_manager,
-        exchange_update_rx,
-        trading_client,
-    ) = if bot_config.exchange_engine.exchange == Exchange::Paper {
-        let (exchange_state_manager, exchange_update_rx, trading_client) =
-            init::initialize_exchange_engine(&bot_config, &shutdown_manager).await?;
-        let (_, market_data_rx, market_data_handle, market_data_state_manager) =
-            init::initialize_market_data_engine(&bot_config, &shutdown_manager)?;
-        (
-            (),
-            market_data_rx,
-            market_data_handle,
-            market_data_state_manager,
-            exchange_state_manager,
-            exchange_update_rx,
-            trading_client,
+    let configured_pairs = if needs_cex_md {
+        let pairs = bot_config.get_pairs()?;
+        if pairs.is_empty() {
+            return Err("No pairs configured in bot.json".into());
+        }
+        init::fetch_asset_data(
+            &asset_service,
+            bot_config.exchange_engine.exchange.clone(),
+            &pairs,
         )
+        .await;
+        pairs
     } else {
-        let (_, market_data_rx, market_data_handle, market_data_state_manager) =
-            init::initialize_market_data_engine(&bot_config, &shutdown_manager)?;
-        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-        info!("Market Data Engine: WebSocket subscribed to orderbook stream");
+        Vec::new()
+    };
 
-        let (exchange_state_manager, exchange_update_rx, trading_client) =
-            init::initialize_exchange_engine(&bot_config, &shutdown_manager).await?;
+    let (venue, market_data_rx, market_data_handle, market_data_state_manager) = if needs_cex_md {
+        if bot_config.exchange_engine.exchange == Exchange::Paper {
+            let cex = init::build_cex_handle(&bot_config, &shutdown_manager).await?;
+            let (_, market_data_rx, market_data_handle, market_data_state_manager) =
+                init::initialize_market_data_engine(&bot_config, &shutdown_manager)?;
+            let venue = if bot_config.venue.mode == VenueMode::Both {
+                let dex_config = bot_config
+                    .dex_engine
+                    .clone()
+                    .ok_or("dex_engine required when venue.mode is both")?;
+                let dex =
+                    init::build_dex_handle(&bot_config, dex_config, &shutdown_manager).await?;
+                VenueInterface::Both { cex, dex }
+            } else {
+                VenueInterface::Cex(cex)
+            };
+            (
+                venue,
+                market_data_rx,
+                market_data_handle,
+                market_data_state_manager,
+            )
+        } else {
+            let (_, market_data_rx, market_data_handle, market_data_state_manager) =
+                init::initialize_market_data_engine(&bot_config, &shutdown_manager)?;
+            tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+            info!("Market Data Engine: WebSocket subscribed to orderbook stream");
+            let venue = init::initialize_venue(&bot_config, &shutdown_manager).await?;
+            (
+                venue,
+                market_data_rx,
+                market_data_handle,
+                market_data_state_manager,
+            )
+        }
+    } else {
+        let venue = init::initialize_venue(&bot_config, &shutdown_manager).await?;
+        let (market_data_tx, market_data_rx) =
+            trading_core::channels::market_data::market_data_update_channel(
+                bot_config.channels.market_data_capacity,
+            );
+        let symbol_registry = Arc::new(trading_core::registry::symbol::SymbolRegistry::from_pairs(
+            vec![],
+        ));
+        let market_data_state_manager = Arc::new(
+            market_data_engine::state::manager::MarketDataStateManager::new(
+                market_data_tx.clone(),
+                symbol_registry,
+            ),
+        );
+        let market_data_handle = tokio::spawn(async {});
         (
-            (),
+            venue,
             market_data_rx,
             market_data_handle,
             market_data_state_manager,
-            exchange_state_manager,
-            exchange_update_rx,
-            trading_client,
         )
     };
 
-    if bot_config.exchange_engine.exchange != Exchange::Paper {
+    if needs_cex_md && bot_config.exchange_engine.exchange != Exchange::Paper {
         tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
         info!("Market Data Engine: WebSocket subscribed to orderbook stream");
     }
@@ -197,15 +223,20 @@ pub async fn run(
         )
         .await?;
 
-    let trading_state_manager = Arc::new(TradingStateManager::new(
-        exchange_update_rx.resubscribe(),
-        exchange_state_manager.clone(),
-    ));
-    init::start_trading_state_subscriber(trading_state_manager.clone(), shutdown_manager.clone());
+    let trading_state_manager = match &venue {
+        VenueInterface::Cex(cex) | VenueInterface::Both { cex, .. } => {
+            let tsm = Arc::new(TradingStateManager::new(
+                cex.cex_update_rx.resubscribe(),
+                cex.exchange_state_manager.clone(),
+            ));
+            init::start_trading_state_subscriber(tsm.clone(), shutdown_manager.clone());
+            Some(tsm)
+        }
+        VenueInterface::Dex { .. } => None,
+    };
 
     let services = SharedServices {
-        trading_client,
-        exec_report_rx: exchange_update_rx.resubscribe(),
+        venue,
         market_data_rx: market_data_rx.resubscribe(),
         indicator_rx,
         indicator_service,
@@ -216,7 +247,6 @@ pub async fn run(
         trading_ws_handle: tokio::spawn(async {}),
         indicator_handle,
         trading_state_manager,
-        exchange_state_manager,
         market_data_state_manager,
         asset_service: Some(asset_service),
         trading_control: None,
@@ -236,12 +266,23 @@ pub async fn run(
             .await?;
         }
         "levels" => {
+            if services.venue.mode() != VenueMode::Cex {
+                return Err("levels mode requires venue.mode \"cex\"".into());
+            }
             let level_persistence =
                 init::create_level_persistence(Some(&mongo_client), &bot_config);
             level_runner(bot_config, levels_config, services, level_persistence).await?;
         }
+        "dex" => {
+            if !matches!(services.venue.mode(), VenueMode::Dex | VenueMode::Both) {
+                return Err("dex mode requires venue.mode \"dex\" or \"both\"".into());
+            }
+            dex_runner(bot_config, services).await?;
+        }
         _ => {
-            return Err(format!("Unknown mode: {}. Use 'strategies' or 'levels'", mode).into());
+            return Err(
+                format!("Unknown mode: {mode}. Use 'strategies', 'levels', or 'dex'").into(),
+            );
         }
     }
 
@@ -249,12 +290,37 @@ pub async fn run(
     Ok(())
 }
 
+impl SharedServices {
+    pub fn trading_client(&self) -> Result<Arc<RwLock<dyn TradingClient<OrderRequest>>>, String> {
+        self.venue
+            .trading_client()
+            .ok_or_else(|| "levels/strategies require venue.mode \"cex\"".to_string())
+    }
+
+    pub fn exchange_state_manager(
+        &self,
+    ) -> Result<Arc<exchange_engine::state::manager::ExchangeStateManager>, String> {
+        self.venue
+            .exchange_state_manager()
+            .ok_or_else(|| "CEX exchange state requires venue.mode \"cex\"".to_string())
+    }
+
+    pub fn exec_report_rx(
+        &self,
+    ) -> Result<trading_core::venue::cex::channels::CexVenueUpdateReceiver, String> {
+        self.venue
+            .cex_update_rx()
+            .ok_or_else(|| "CEX execution reports require venue.mode \"cex\"".to_string())
+    }
+}
+
+pub use dex_runner::dex_runner;
 /// Re-export init helpers and runners so binaries and tests can use `runner::initialize_mongodb` etc.
 pub use init::{
-    create_level_persistence, create_shutdown_manager, create_strategy_persistence,
-    fetch_asset_data, initialize_asset_service, initialize_exchange_engine,
-    initialize_indicator_service, initialize_market_data_engine, initialize_mongodb,
-    setup_shutdown_handler, start_trading_state_subscriber,
+    build_cex_handle, build_dex_handle, create_level_persistence, create_shutdown_manager,
+    create_strategy_persistence, fetch_asset_data, initialize_asset_service,
+    initialize_exchange_engine, initialize_indicator_service, initialize_market_data_engine,
+    initialize_mongodb, initialize_venue, setup_shutdown_handler, start_trading_state_subscriber,
 };
 pub use level_runner::level_runner;
 pub use strategy_runner::strategy_runner;

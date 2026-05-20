@@ -11,10 +11,18 @@ pub struct ChannelConfig {
     #[serde(default = "default_market_data_capacity")]
     pub market_data_capacity: usize,
 
-    /// Exchange update channel (broadcast) - used for orders, balances, positions, trades
+    /// CEX venue update channel (broadcast) - orders, balances, positions, trades
     /// Default: 1000 (high-frequency updates)
-    #[serde(default = "default_exchange_update_capacity")]
-    pub exchange_update_capacity: usize,
+    #[serde(
+        default = "default_cex_venue_update_capacity",
+        alias = "cex_venue_update_capacity"
+    )]
+    pub cex_venue_update_capacity: usize,
+
+    /// DEX venue update channel (broadcast) - wallet, pending txs, execution results
+    /// Default: 256
+    #[serde(default = "default_dex_venue_update_capacity")]
+    pub dex_venue_update_capacity: usize,
 
     /// Indicator update channel (broadcast) - used for indicator value updates
     /// Default: 1000 (high-frequency updates)
@@ -56,8 +64,12 @@ fn default_market_data_capacity() -> usize {
     1000
 }
 
-fn default_exchange_update_capacity() -> usize {
+fn default_cex_venue_update_capacity() -> usize {
     1000
+}
+
+fn default_dex_venue_update_capacity() -> usize {
+    256
 }
 
 fn default_indicator_update_capacity() -> usize {
@@ -92,7 +104,8 @@ impl Default for ChannelConfig {
     fn default() -> Self {
         Self {
             market_data_capacity: default_market_data_capacity(),
-            exchange_update_capacity: default_exchange_update_capacity(),
+            cex_venue_update_capacity: default_cex_venue_update_capacity(),
+            dex_venue_update_capacity: default_dex_venue_update_capacity(),
             indicator_update_capacity: default_indicator_update_capacity(),
             websocket_inbound_capacity: default_websocket_inbound_capacity(),
             websocket_ping_capacity: default_websocket_ping_capacity(),

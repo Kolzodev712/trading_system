@@ -102,7 +102,7 @@ pub fn execution_ack_to_order(
     })
 }
 
-/// Convert k-paper execution to Order (for ExchangeUpdate::Order).
+/// Convert k-paper execution to Order (for CexVenueUpdate::Order).
 /// Filled or rejected; we use Filled when reject_reason is null.
 pub fn execution_to_order(
     exec: &KPaperExecution,
@@ -139,7 +139,7 @@ pub fn execution_to_order(
     })
 }
 
-/// Convert k-paper execution to Trade (for ExchangeUpdate::Trade).
+/// Convert k-paper execution to Trade (for CexVenueUpdate::Trade).
 pub fn execution_to_trade(exec: &KPaperExecution) -> Option<Trade> {
     let pair = parse_instrument_id(exec.instrument_id.as_str())?;
     let trade_id = exec.trade_id.as_deref().unwrap_or("").to_string().into();

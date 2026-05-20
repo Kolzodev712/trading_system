@@ -15,7 +15,7 @@ use tokio::sync::mpsc;
 use trading_core::config::ChannelConfig;
 use trading_core::traits::ExchangeDriver;
 use trading_core::{
-    channels::exchange::exchange_update_channel,
+    channels::exchange::cex_venue_update_channel,
     error::EngineError,
     registry::symbol::SymbolRegistry,
     traits::TradingClient,
@@ -25,7 +25,7 @@ use trading_core::{
 /// Run the exchange engine main event loop
 ///
 /// This is the main event loop for the exchange engine. It:
-/// 1. Creates channels for sending data to other services (exchange_update_channel)
+/// 1. Creates channels for sending data to other services (cex_venue_update_channel)
 /// 2. Creates and configures the state manager
 /// 3. Configures reconciliation:
 ///    - Performs initial bootstrap reconciliation (REST calls)
@@ -52,7 +52,7 @@ pub async fn run(
 ) -> Result<
     (
         Arc<ExchangeStateManager>,
-        trading_core::channels::exchange::ExchangeUpdateReceiver,
+        trading_core::channels::exchange::CexVenueUpdateReceiver,
         Arc<tokio::sync::RwLock<dyn TradingClient<OrderRequest>>>,
     ),
     EngineError,
@@ -65,7 +65,7 @@ pub async fn run(
 
     // 1. Establish channels to send data to other services
     let (exchange_update_tx, exchange_update_rx) =
-        exchange_update_channel(channels.exchange_update_capacity);
+        cex_venue_update_channel(channels.cex_venue_update_capacity);
 
     // Use provided pairs for symbol registry (pairs come from bot config)
     let symbol_registry = Arc::new(SymbolRegistry::from_pairs(pairs.clone()));

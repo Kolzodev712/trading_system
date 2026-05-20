@@ -4,6 +4,7 @@ use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 use trading_core::types::common::{Exchange, InstrumentType, Pair};
+use trading_core::venue::VenueMode;
 
 /// General bot configuration - system-wide settings, not trading-specific
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -11,9 +12,17 @@ pub struct BotConfig {
     /// System-wide settings
     pub system: SystemConfig,
 
-    /// Exchange engine configuration
+    /// Primary venue mode (CEX vs DEX). Defaults to CEX when omitted.
+    #[serde(default)]
+    pub venue: VenueConfig,
+
+    /// CEX exchange engine configuration (required when `venue.mode` is `cex`)
     #[serde(rename = "exchange_engine")]
     pub exchange_engine: ExchangeConfig,
+
+    /// DEX engine configuration (required when `venue.mode` is `dex`)
+    #[serde(default)]
+    pub dex_engine: Option<dex_engine::DexEngineConfig>,
 
     /// HTTP server configuration
     pub server: ServerConfig,
@@ -37,6 +46,25 @@ pub struct BotConfig {
     /// Channel configuration (buffer sizes for internal communication)
     #[serde(default)]
     pub channels: ChannelConfig,
+}
+
+/// Venue selection for this process.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VenueConfig {
+    #[serde(default = "default_venue_mode_cex")]
+    pub mode: VenueMode,
+}
+
+fn default_venue_mode_cex() -> VenueMode {
+    VenueMode::Cex
+}
+
+impl Default for VenueConfig {
+    fn default() -> Self {
+        Self {
+            mode: VenueMode::Cex,
+        }
+    }
 }
 
 /// System-wide settings
@@ -288,6 +316,17 @@ impl BotConfig {
         // Basic validation - can be extended
         if self.server.port == 0 {
             return Err("Server port must be greater than zero".to_string());
+        }
+        match self.venue.mode {
+            VenueMode::Cex => {}
+            VenueMode::Dex | VenueMode::Both => {
+                if self.dex_engine.is_none() {
+                    return Err(
+                        "dex_engine config is required when venue.mode is \"dex\" or \"both\""
+                            .to_string(),
+                    );
+                }
+            }
         }
         // Redis validation removed - channels are used for internal communication
         // Redis is only needed if Web UI feature is enabled (future)

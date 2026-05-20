@@ -1037,6 +1037,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "dex_engine"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "parking_lot",
+ "rust_decimal",
+ "serde",
+ "serde_json",
+ "smol_str",
+ "tokio",
+ "tracing",
+ "trading_core",
+]
+
+[[package]]
 name = "digest"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1421,6 +1436,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "clap",
+ "dex_engine",
  "exchange_engine",
  "indicator_engine",
  "market_data_engine",
@@ -3680,6 +3696,7 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "clap",
+ "dex_engine",
  "exchange_engine",
  "futures-util",
  "gateway",
@@ -5235,6 +5252,7 @@ dependencies = [
  "axum 0.7.9",
  "base64 0.22.1",
  "chrono",
+ "dex_engine",
  "exchange_engine",
  "futures-util",
  "hex",

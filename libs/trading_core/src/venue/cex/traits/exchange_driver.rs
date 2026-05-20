@@ -4,8 +4,8 @@
 //! for running their event loops and managing WebSocket connections.
 
 use crate::error::EngineError;
-use crate::traits::TradingClient;
-use crate::types::exchange::OrderRequest;
+use crate::venue::cex::traits::TradingClient;
+use crate::venue::cex::types::exchange::OrderRequest;
 use async_trait::async_trait;
 use std::sync::Arc;
 use tokio::sync::broadcast;

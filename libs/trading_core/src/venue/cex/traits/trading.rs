@@ -1,10 +1,10 @@
 //! Trading client trait
 use crate::error::EngineError;
 use crate::types::common::{Exchange, OrderId, Pair};
-use crate::types::exchange::{Balance, Order, OrderRequest, Trade};
 use crate::types::futures::{
     FuturesBalance, FuturesOrderRequest, LeverageInfo, MarginType, PositionMode,
 };
+use crate::venue::cex::types::exchange::{Balance, Order, OrderRequest, Trade};
 use async_trait::async_trait;
 use std::fmt::Debug;
 
@@ -84,16 +84,16 @@ where
     /// implement a fallback to single operations.
     async fn bulk_open_orders(
         &self,
-        req: crate::types::exchange::BulkOrderRequest,
-    ) -> Result<crate::types::exchange::BulkOrderResponse, EngineError>;
+        req: crate::venue::cex::types::exchange::BulkOrderRequest,
+    ) -> Result<crate::venue::cex::types::exchange::BulkOrderResponse, EngineError>;
 
     /// Bulk cancel multiple orders by their IDs.
     /// Exchange implementations should try bulk first, fall back to single operations.
     /// Default implementation falls back to single operations.
     async fn bulk_cancel_orders(
         &self,
-        req: crate::types::exchange::BulkCancelRequest,
-    ) -> Result<crate::types::exchange::BulkCancelResponse, EngineError> {
+        req: crate::venue::cex::types::exchange::BulkCancelRequest,
+    ) -> Result<crate::venue::cex::types::exchange::BulkCancelResponse, EngineError> {
         // Default: fall back to single operations
         let mut results = Vec::new();
         let mut cancelled_ids = Vec::new();
@@ -102,7 +102,7 @@ where
         for (idx, order_id) in req.order_ids.into_iter().enumerate() {
             match self.cancel_order_by_id(order_id.clone()).await {
                 Ok(_) => {
-                    results.push(crate::types::exchange::BulkOperationResult {
+                    results.push(crate::venue::cex::types::exchange::BulkOperationResult {
                         success: true,
                         data: Some(order_id.clone()),
                         error: None,
@@ -112,7 +112,7 @@ where
                 }
                 Err(e) => {
                     let error_msg = format!("{}", e);
-                    results.push(crate::types::exchange::BulkOperationResult {
+                    results.push(crate::venue::cex::types::exchange::BulkOperationResult {
                         success: false,
                         data: None,
                         error: Some(error_msg.clone()),
@@ -123,7 +123,7 @@ where
             }
         }
 
-        Ok(crate::types::exchange::BulkCancelResponse {
+        Ok(crate::venue::cex::types::exchange::BulkCancelResponse {
             results,
             cancelled_ids,
             failed_ids,
@@ -137,8 +137,8 @@ where
     /// implement a fallback to single operations.
     async fn bulk_amend_orders(
         &self,
-        req: crate::types::exchange::BulkAmendRequest,
-    ) -> Result<crate::types::exchange::BulkAmendResponse, EngineError>;
+        req: crate::venue::cex::types::exchange::BulkAmendRequest,
+    ) -> Result<crate::venue::cex::types::exchange::BulkAmendResponse, EngineError>;
 
     // ===== FUTURES METHODS (Optional) =====
     // All have default implementations that return "not supported"
@@ -149,7 +149,9 @@ where
 
     /// Fetch all open futures positions
     /// Default implementation returns "not supported"
-    async fn fetch_positions(&self) -> Result<Vec<crate::types::exchange::Position>, EngineError> {
+    async fn fetch_positions(
+        &self,
+    ) -> Result<Vec<crate::venue::cex::types::exchange::Position>, EngineError> {
         Err(EngineError::NotSupported(
             "Futures positions not supported".into(),
         ))
@@ -160,7 +162,7 @@ where
     async fn fetch_position(
         &self,
         _pair: &InstrumentId,
-    ) -> Result<Option<crate::types::exchange::Position>, EngineError> {
+    ) -> Result<Option<crate::venue::cex::types::exchange::Position>, EngineError> {
         Err(EngineError::NotSupported(
             "Futures positions not supported".into(),
         ))
@@ -318,8 +320,8 @@ mod tests {
 
         async fn bulk_open_orders(
             &self,
-            req: crate::types::exchange::BulkOrderRequest,
-        ) -> Result<crate::types::exchange::BulkOrderResponse, EngineError> {
+            req: crate::venue::cex::types::exchange::BulkOrderRequest,
+        ) -> Result<crate::venue::cex::types::exchange::BulkOrderResponse, EngineError> {
             // Fallback to single operations
             let mut results = Vec::new();
             let mut success_count = 0;
@@ -328,7 +330,7 @@ mod tests {
             for (idx, order_req) in req.requests.into_iter().enumerate() {
                 match self.open_order(order_req).await {
                     Ok(order) => {
-                        results.push(crate::types::exchange::BulkOperationResult {
+                        results.push(crate::venue::cex::types::exchange::BulkOperationResult {
                             success: true,
                             data: Some(order),
                             error: None,
@@ -337,7 +339,7 @@ mod tests {
                         success_count += 1;
                     }
                     Err(e) => {
-                        results.push(crate::types::exchange::BulkOperationResult {
+                        results.push(crate::venue::cex::types::exchange::BulkOperationResult {
                             success: false,
                             data: None,
                             error: Some(format!("{}", e)),
@@ -348,7 +350,7 @@ mod tests {
                 }
             }
 
-            Ok(crate::types::exchange::BulkOrderResponse {
+            Ok(crate::venue::cex::types::exchange::BulkOrderResponse {
                 results,
                 success_count,
                 failure_count,
@@ -357,8 +359,8 @@ mod tests {
 
         async fn bulk_cancel_orders(
             &self,
-            req: crate::types::exchange::BulkCancelRequest,
-        ) -> Result<crate::types::exchange::BulkCancelResponse, EngineError> {
+            req: crate::venue::cex::types::exchange::BulkCancelRequest,
+        ) -> Result<crate::venue::cex::types::exchange::BulkCancelResponse, EngineError> {
             // Fallback to single operations
             let mut results = Vec::new();
             let mut cancelled_ids = Vec::new();
@@ -367,7 +369,7 @@ mod tests {
             for (idx, order_id) in req.order_ids.into_iter().enumerate() {
                 match self.cancel_order_by_id(order_id.clone()).await {
                     Ok(_) => {
-                        results.push(crate::types::exchange::BulkOperationResult {
+                        results.push(crate::venue::cex::types::exchange::BulkOperationResult {
                             success: true,
                             data: Some(order_id.clone()),
                             error: None,
@@ -377,7 +379,7 @@ mod tests {
                     }
                     Err(e) => {
                         let error_msg = format!("{}", e);
-                        results.push(crate::types::exchange::BulkOperationResult {
+                        results.push(crate::venue::cex::types::exchange::BulkOperationResult {
                             success: false,
                             data: None,
                             error: Some(error_msg.clone()),
@@ -388,7 +390,7 @@ mod tests {
                 }
             }
 
-            Ok(crate::types::exchange::BulkCancelResponse {
+            Ok(crate::venue::cex::types::exchange::BulkCancelResponse {
                 results,
                 cancelled_ids,
                 failed_ids,
@@ -397,8 +399,8 @@ mod tests {
 
         async fn bulk_amend_orders(
             &self,
-            req: crate::types::exchange::BulkAmendRequest,
-        ) -> Result<crate::types::exchange::BulkAmendResponse, EngineError> {
+            req: crate::venue::cex::types::exchange::BulkAmendRequest,
+        ) -> Result<crate::venue::cex::types::exchange::BulkAmendResponse, EngineError> {
             // Fallback to single operations
             let mut results = Vec::new();
             let mut amended_orders = Vec::new();
@@ -410,7 +412,7 @@ mod tests {
                     .await
                 {
                     Ok(order) => {
-                        results.push(crate::types::exchange::BulkOperationResult {
+                        results.push(crate::venue::cex::types::exchange::BulkOperationResult {
                             success: true,
                             data: Some(order.clone()),
                             error: None,
@@ -420,7 +422,7 @@ mod tests {
                     }
                     Err(e) => {
                         let error_msg = format!("{}", e);
-                        results.push(crate::types::exchange::BulkOperationResult {
+                        results.push(crate::venue::cex::types::exchange::BulkOperationResult {
                             success: false,
                             data: None,
                             error: Some(error_msg.clone()),
@@ -431,7 +433,7 @@ mod tests {
                 }
             }
 
-            Ok(crate::types::exchange::BulkAmendResponse {
+            Ok(crate::venue::cex::types::exchange::BulkAmendResponse {
                 results,
                 amended_orders,
                 failed_amendments,

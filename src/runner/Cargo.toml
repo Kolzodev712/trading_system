@@ -9,6 +9,7 @@ trading_trace = { path = "../../libs/trading_trace", features = ["full"] }
 trading_networking = { path = "../../libs/trading_networking", features = ["zenoh"] }
 trading_engine = { path = "../trading_engine" }
 exchange_engine = { path = "../exchange_engine" }
+dex_engine = { path = "../dex_engine" }
 market_data_engine = { path = "../market_data_engine" }
 indicator_engine = { path = "../indicator_engine" }
 live_config = { path = "../live_config" }

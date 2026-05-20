@@ -126,6 +126,7 @@ impl MarketDataSubscriber {
                     .update(pair_str, price_point)
                     .map_err(SubscriberError::CalculatorError)?;
             }
+            MarketDataUpdate::DexAccountHealth { .. } => {}
         }
 
         Ok(())

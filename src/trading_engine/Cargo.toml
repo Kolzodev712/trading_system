@@ -9,6 +9,7 @@ edition = "2021"
 trading_core = { path = "../../libs/trading_core" }
 indicator_engine = { path = "../indicator_engine" }
 exchange_engine = { path = "../exchange_engine" }
+dex_engine = { path = "../dex_engine" }
 asset_engine = { path = "../asset_engine" }
 # Note: Trading Engine communicates with Exchange Engine via channels,
 # but needs exchange_engine dependency for type references (ExchangeStateManager)

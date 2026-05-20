@@ -13,8 +13,9 @@ use runner::config::BotConfig;
 use runner::shutdown::ShutdownManager;
 use runner::{create_shutdown_manager, setup_shutdown_handler};
 use runner::{
-    fetch_asset_data, initialize_asset_service, initialize_exchange_engine,
-    initialize_indicator_service, initialize_market_data_engine, initialize_mongodb,
+    fetch_asset_data, initialize_asset_service, initialize_indicator_service,
+    initialize_market_data_engine, initialize_mongodb, initialize_venue,
+    start_trading_state_subscriber,
 };
 use runner::{level_runner, strategy_runner, SharedServices};
 use std::sync::Arc;
@@ -152,26 +153,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .await?;
     info!("✓ Indicator service initialized");
 
-    // Initialize Exchange Engine
-    let (exchange_state_manager, exchange_update_rx, trading_client) =
-        initialize_exchange_engine(&bot_config, &shutdown_manager).await?;
-    info!("✓ Exchange engine initialized");
+    let venue = initialize_venue(&bot_config, &shutdown_manager).await?;
+    info!("✓ Venue initialized ({:?})", venue.mode());
 
-    // Create Trading State Manager
-    let trading_state_manager = Arc::new(TradingStateManager::new(
-        exchange_update_rx.resubscribe(),
-        exchange_state_manager.clone(),
-    ));
-    info!("✓ Trading state manager initialized");
+    let trading_state_manager = match &venue {
+        runner::venue::VenueInterface::Cex(cex)
+        | runner::venue::VenueInterface::Both { cex, .. } => {
+            let tsm = Arc::new(TradingStateManager::new(
+                cex.cex_update_rx.resubscribe(),
+                cex.exchange_state_manager.clone(),
+            ));
+            start_trading_state_subscriber(tsm.clone(), shutdown_manager.clone());
+            info!("✓ Trading state manager initialized");
+            Some(tsm)
+        }
+        runner::venue::VenueInterface::Dex { .. } => None,
+    };
 
-    // Start Trading State Manager subscriber
-    start_trading_state_subscriber(trading_state_manager.clone(), shutdown_manager.clone());
-    info!("✓ Trading state subscriber started");
-
-    // Create SharedServices
     let services = SharedServices {
-        trading_client,
-        exec_report_rx: exchange_update_rx.resubscribe(),
+        venue,
         market_data_rx: market_data_rx.resubscribe(),
         indicator_rx,
         indicator_service,
@@ -179,13 +179,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         indicator_calculator,
         shutdown_manager: shutdown_manager.clone(),
         market_data_handle,
-        trading_ws_handle: tokio::spawn(async {}), // Dummy handle
+        trading_ws_handle: tokio::spawn(async {}),
         indicator_handle,
         trading_state_manager,
-        exchange_state_manager,
         market_data_state_manager,
         asset_service: Some(asset_service),
-        trading_control: None, // Created in runner functions
+        trading_control: None,
         tracing_handles: None,
     };
 
@@ -259,26 +258,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     info!("=== Test run completed ===");
     Ok(())
-}
-
-/// Start Trading State Manager subscriber
-fn start_trading_state_subscriber(
-    trading_state_manager: Arc<TradingStateManager>,
-    shutdown_manager: ShutdownManager,
-) {
-    let mut shutdown_rx = shutdown_manager.subscribe();
-    tokio::spawn(async move {
-        tokio::select! {
-            result = trading_state_manager.start_subscriber() => {
-                if let Err(e) = result {
-                    error!("TradingStateManager subscriber error: {e}");
-                }
-            }
-            _ = shutdown_rx.recv() => {
-                info!("TradingStateManager subscriber shutting down");
-            }
-        }
-    });
 }
 
 /// Create level persistence if MongoDB is enabled

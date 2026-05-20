@@ -2,6 +2,7 @@
 //!
 //! Uses broadcast channels for fan-out to multiple consumers (Trading Engine, Indicator Engine, etc.)
 use crate::types::market_data::{StructuredOrderbook, StructuredPublicTrade};
+use crate::venue::dex::market_data::DexAccountHealth;
 use tokio::sync::broadcast;
 use trading_trace::HotTraceContext;
 
@@ -21,6 +22,12 @@ pub enum MarketDataUpdate {
         /// Trade data with pair
         trade: StructuredPublicTrade,
         /// Optional trace context (hot path, sampled)
+        #[allow(clippy::type_complexity)]
+        trace_context: Option<HotTraceContext>,
+    },
+    /// DEX on-chain account health (liquidation signals; no CEX orderbook semantics).
+    DexAccountHealth {
+        health: DexAccountHealth,
         #[allow(clippy::type_complexity)]
         trace_context: Option<HotTraceContext>,
     },

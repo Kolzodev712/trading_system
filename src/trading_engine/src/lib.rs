@@ -1,3 +1,4 @@
+pub mod dex;
 pub mod health;
 pub mod levels;
 pub mod order_validation;

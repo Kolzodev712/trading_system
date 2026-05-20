@@ -1,0 +1,18 @@
+[package]
+name = "dex_engine"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+trading_core = { path = "../../libs/trading_core" }
+async-trait = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+smol_str = { workspace = true }
+rust_decimal = { workspace = true }
+parking_lot = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }

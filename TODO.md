@@ -3,7 +3,7 @@
 > **Note**: Architectural decisions and feature roadmaps are documented in the **`proposals/`** directory. Significant changes and implementation tracking can also be recorded in **`design-log/`** (see `.cursor/rules/design-log.mdc`).
 >
 > **Current proposals** (in `proposals/`, in roadmap order):
-> - **01-dex-preparation.md** - DEX foundational infrastructure
+> - **01-dex-preparation.md** - Venue split: `trading_core::venue`, `dex_engine`, CEX unchanged
 > - **02-solana-integration.md** - Solana DEX implementation
 > - **03-strategy-engine.md** - Strategy DSL and IR interpreter
 > - **04-future-enhancements.md** - Future enhancements (OCO, TWAP, etc.)

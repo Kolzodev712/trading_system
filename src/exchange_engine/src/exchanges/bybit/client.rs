@@ -35,7 +35,6 @@ use trading_core::{
     error::EngineError,
     registry::symbol::SymbolRegistry,
     rest::HttpMethod,
-    traits::TradingClient,
     types::{
         common::{InstrumentType, OrderId, OrderStatus, OrderType, Pair},
         exchange::{
@@ -44,6 +43,7 @@ use trading_core::{
             OrderRequest, Trade,
         },
     },
+    venue::cex::traits::TradingClient,
 };
 
 use super::common_types::{BybitCategory, BybitOrderType, BybitSide};

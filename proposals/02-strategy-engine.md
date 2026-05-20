@@ -3,7 +3,7 @@
 **Version**: 1.0  
 **Date**: December 2024  
 **Status**: Draft  
-**Prerequisites**: Indicator config generator (implemented — [design log 001](../.cursor/design-log/001-indicator-config-generator.md)). For DEX/Solana strategies, [Proposal 01](01-dex-preparation.md) and [Proposal 02](02-solana-integration.md) apply first; CEX-only strategies do not require them.
+**Prerequisites**: Indicator config generator (implemented — [design log 001](../.cursor/design-log/001-indicator-config-generator.md)). For DEX/Solana strategies: design logs [002](../.cursor/design-log/002-dex-preparation.md) + [003](../.cursor/design-log/003-production-platform-readiness.md) (shipped), then [Proposal 01 — Solana](01-solana-integration.md). CEX-only strategies do not require Solana.
 
 ## Executive Summary
 

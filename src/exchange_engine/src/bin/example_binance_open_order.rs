@@ -18,7 +18,7 @@ use rust_decimal::Decimal;
 use std::{fs, sync::Arc};
 use tokio::sync::RwLock;
 use tracing::{error, info};
-use trading_core::traits::PrivateDataClient;
+use trading_core::venue::cex::traits::PrivateDataClient;
 
 fn load_binance_config(file_path: &str) -> Result<BinanceConfig, Box<dyn std::error::Error>> {
     let config_data = fs::read_to_string(file_path)?;

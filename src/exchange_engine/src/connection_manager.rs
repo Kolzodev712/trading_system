@@ -9,7 +9,7 @@ use tokio::sync::RwLock;
 use tokio::time::interval;
 use tracing::{error, info};
 use trading_core::error::EngineError;
-use trading_core::traits::exchange_driver::ConnectionState;
+use trading_core::venue::cex::traits::ConnectionState;
 
 /// Connection state manager
 #[derive(Debug, Clone)]

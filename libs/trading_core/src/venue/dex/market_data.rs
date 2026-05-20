@@ -1,4 +1,4 @@
-//! DEX-specific market data payloads (chain-agnostic; Solana fills these in Proposal 02).
+//! DEX-specific market data payloads (chain-agnostic; Solana fills these in Proposal 01).
 
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};

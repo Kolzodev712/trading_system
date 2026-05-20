@@ -10,9 +10,11 @@ use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::{broadcast, oneshot, RwLock};
 use tracing::{debug, info, warn};
-use trading_core::traits::exchange_driver::ConnectionState;
-use trading_core::traits::ExchangeDriver;
-use trading_core::{error::EngineError, traits::TradingClient, types::exchange::OrderRequest};
+use trading_core::venue::cex::traits::ConnectionState;
+use trading_core::venue::cex::traits::ExchangeDriver;
+use trading_core::{
+    error::EngineError, types::exchange::OrderRequest, venue::cex::traits::TradingClient,
+};
 
 /// Binance exchange driver
 ///

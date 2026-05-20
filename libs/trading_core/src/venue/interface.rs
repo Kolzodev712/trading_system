@@ -16,7 +16,7 @@ use crate::venue::dex::channels::{
 pub enum VenueMode {
     Cex,
     Dex,
-    /// CEX and DEX stacks in one process (no Solana chain until Proposal 02).
+    /// CEX and DEX stacks in one process (no Solana chain until Proposal 01).
     #[serde(alias = "dual", alias = "both")]
     Both,
 }

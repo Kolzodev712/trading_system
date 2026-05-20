@@ -12,8 +12,8 @@ use tokio::signal;
 use tracing::{error, info};
 use trading_core::{
     error::EngineError,
-    traits::MarketDataClient,
     types::market_data::{StructuredOrderbook, StructuredPublicTrade},
+    venue::cex::traits::MarketDataClient,
 };
 
 #[derive(Debug)]

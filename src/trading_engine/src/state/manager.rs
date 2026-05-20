@@ -10,7 +10,7 @@ use exchange_engine::state::manager::ExchangeStateManager;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use trading_core::{
-    channels::exchange::CexVenueUpdateReceiver, error::EngineError, types::common::Pair,
+    error::EngineError, types::common::Pair, venue::cex::channels::CexVenueUpdateReceiver,
 };
 
 /// Manages trading-specific state (positions, active orders)

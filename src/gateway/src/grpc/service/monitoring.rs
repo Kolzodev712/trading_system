@@ -270,32 +270,30 @@ impl MonitoringService {
 
     fn collect_dex_snapshot(&self) -> Option<trading_cli::DexVenueSnapshot> {
         let dex_sm = self.dex_state_manager.as_ref()?;
-        let state_arc = dex_sm.state();
-        let state = state_arc.read();
-        let balances: Vec<trading_cli::DexBalance> = state
-            .wallet
-            .balances
-            .iter()
-            .map(|(mint, amount)| trading_cli::DexBalance {
-                mint: mint.to_string(),
-                amount: amount.to_string(),
-            })
-            .collect();
-        let pending_transactions: Vec<trading_cli::DexPendingTransaction> = state
-            .pending
-            .iter()
-            .map(|(sig, pending)| trading_cli::DexPendingTransaction {
-                signature: sig.to_string(),
-                status: format!("{:?}", pending.status),
-            })
-            .collect();
-        Some(trading_cli::DexVenueSnapshot {
-            balances,
-            pending_transactions,
-            venue: self
-                .dex_venue_label
+        let snap = dex_engine::monitoring::collect_dex_snapshot(
+            dex_sm,
+            self.dex_venue_label
                 .clone()
                 .unwrap_or_else(|| "dex".to_string()),
+        );
+        Some(trading_cli::DexVenueSnapshot {
+            balances: snap
+                .balances
+                .into_iter()
+                .map(|b| trading_cli::DexBalance {
+                    mint: b.mint,
+                    amount: b.amount,
+                })
+                .collect(),
+            pending_transactions: snap
+                .pending_transactions
+                .into_iter()
+                .map(|p| trading_cli::DexPendingTransaction {
+                    signature: p.signature,
+                    status: p.status,
+                })
+                .collect(),
+            venue: snap.venue_label,
         })
     }
 

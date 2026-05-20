@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::sync::broadcast;
-use tracing::info;
+use tracing::{info, info_span, Instrument};
 use trading_core::config::ChannelConfig;
 use trading_core::venue::dex::provider::VenueProvider;
 use trading_core::venue::dex::DexError;
@@ -21,6 +21,7 @@ pub async fn run(
     reconciliation_interval_secs: u64,
     reconciliation_enabled: bool,
 ) -> Result<Arc<DexEngineRuntime>, DexError> {
+    let _bootstrap = info_span!("dex.bootstrap").entered();
     let (update_tx, update_rx) = trading_core::venue::dex::channels::dex_venue_update_channel(
         channels.dex_venue_update_capacity,
     );
@@ -35,18 +36,21 @@ pub async fn run(
     let provider_clone = provider.clone();
     let tx_clone = update_tx.clone();
     let mut stream_shutdown = shutdown_rx.resubscribe();
-    tokio::spawn(async move {
-        tokio::select! {
-            result = provider_clone.stream_updates(tx_clone) => {
-                if let Err(e) = result {
-                    tracing::error!("DEX stream_updates ended: {e}");
+    tokio::spawn(
+        async move {
+            tokio::select! {
+                result = provider_clone.stream_updates(tx_clone) => {
+                    if let Err(e) = result {
+                        tracing::error!("DEX stream_updates ended: {e}");
+                    }
+                }
+                _ = stream_shutdown.recv() => {
+                    info!("DEX stream_updates task shutting down");
                 }
             }
-            _ = stream_shutdown.recv() => {
-                info!("DEX stream_updates task shutting down");
-            }
         }
-    });
+        .instrument(info_span!("dex.stream_updates")),
+    );
 
     if reconciliation_enabled && reconciliation_interval_secs > 0 {
         let reconcile_provider = provider.clone();

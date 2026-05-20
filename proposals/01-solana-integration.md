@@ -3,7 +3,7 @@
 **Version**: 1.0  
 **Date**: December 2024  
 **Status**: Draft  
-**Prerequisites**: [Proposal 01](01-dex-preparation.md) (venue split: `trading_core::venue`, `dex_engine` core) — Phase 1–2 complete
+**Prerequisites**: Venue split + platform readiness **shipped** — [design log 002](../.cursor/design-log/002-dex-preparation.md), [design log 003](../.cursor/design-log/003-production-platform-readiness.md) (trace, event bridge, health, config).
 
 ## Executive Summary
 
@@ -171,7 +171,7 @@ pub struct LendingAccountHealth {
 
 ### 2.3 MarketDataEngine Extension
 
-**Note**: `MarketDataUpdate` extensions for DEX are defined in Proposal 01. This section focuses on Solana-specific implementation.
+**Note**: `MarketDataUpdate::DexAccountHealth` and platform hooks are **shipped** (design log 003). This section focuses on Solana-specific implementation.
 
 #### 2.3.1 Solana MarketDataDriver
 
@@ -180,7 +180,7 @@ pub struct LendingAccountHealth {
 **Implementation**:
 - Subscribe to relevant accounts via WebSocket
 - Decode account updates using protocol decoders
-- Publish `MarketDataUpdate::DexAccountHealth` events (defined in Proposal 01)
+- Publish `MarketDataUpdate::DexAccountHealth` events (type exists; real publisher is this proposal)
 - Handle account creation/deletion dynamically
 
 **Location**: `src/market_data_engine/src/exchanges/solana/driver.rs`
@@ -199,7 +199,7 @@ pub struct LendingAccountHealth {
 
 ### 2.4 `dex_engine/chains/solana` (not `exchange_engine`)
 
-**Note**: `VenueProvider`, `TradeCommand`, and `DexStateManager` are defined in [Proposal 01](01-dex-preparation.md) (`trading_core::venue::dex`, `dex_engine`). Solana I/O lives only under `dex_engine/chains/solana/`.
+**Note**: `VenueProvider`, `TradeCommand`, and `DexStateManager` live in `trading_core::venue::dex` and `dex_engine` (see design log 002). Solana I/O lives only under `dex_engine/chains/solana/`. Platform trace/bridge/health: design log 003 (shipped).
 
 #### 2.4.1 SolanaVenueProvider
 
@@ -344,13 +344,9 @@ DexStateManager::reconcile()
 
 ## 3. Implementation Phases
 
-**Prerequisites**: [Proposal 01](01-dex-preparation.md) Phase 1–2:
+**Prerequisites**: Design logs [002](../.cursor/design-log/002-dex-preparation.md) and [003](../.cursor/design-log/003-production-platform-readiness.md) (shipped).
 
-- `trading_core::venue::{cex,dex}` — CEX types under `venue/cex`, DEX under `venue/dex`
-- `dex_engine` core (`DexStateManager`, `DexVenueUpdate`, `run`)
-- `MarketDataUpdate` DEX variants (e.g. `DexAccountHealth`)
-
-This proposal implements **`dex_engine/chains/solana`** and **`trading_engine::dex`** only.
+This proposal implements **`dex_engine/chains/solana`**, real **`DexAccountHealth`** MD publishing, and production **`trading_engine::dex`** execution.
 
 ### Phase 1: Foundation (Weeks 1-3)
 
@@ -369,7 +365,7 @@ This proposal implements **`dex_engine/chains/solana`** and **`trading_engine::d
 - TUI shows Solana account health updates
 
 **Dependencies**:
-- Proposal 01 complete
+- Design logs 002 + 003 shipped
 - Solana Rust SDK
 - RPC endpoint (public devnet for testing)
 
@@ -391,7 +387,7 @@ This proposal implements **`dex_engine/chains/solana`** and **`trading_engine::d
 - Wallet balance tracking from on-chain
 
 **Dependencies**:
-- Proposal 01 complete
+- Design logs 002 + 003 shipped
 - Marginfi program IDL
 - Test wallet with devnet SOL
 
@@ -465,8 +461,9 @@ This proposal implements **`dex_engine/chains/solana`** and **`trading_engine::d
 
 ### 3.1 Prerequisites
 
-**Must Complete First**:
-- [Proposal 01](01-dex-preparation.md) — `venue/` split + `dex_engine` core (Phases 1–2)
+**Must Complete First** (shipped — see design logs, not active proposals):
+- [002-dex-preparation](../.cursor/design-log/002-dex-preparation.md) — venue scaffold
+- [003-production-platform-readiness](../.cursor/design-log/003-production-platform-readiness.md) — trace, bridge, health, config
 
 ### 3.2 Rust Crates
 

@@ -4,12 +4,12 @@ use smol_str::SmolStr;
 use trading_core::{
     error::EngineError,
     rest::HttpMethod,
-    traits::TradingClient,
     types::{
         common::{OrderId, OrderStatus, Pair},
         exchange::{Balance, Order, OrderRequest, Trade},
     },
     utils::hours_ago_from,
+    venue::cex::traits::TradingClient,
 };
 
 use crate::exchanges::binance::authenticator::BinanceAuthenticator;
@@ -29,7 +29,7 @@ use async_trait::async_trait;
 use std::{fmt::Debug, sync::Arc};
 use tokio::sync::RwLock;
 use tracing::{error, warn};
-use trading_core::{traits::PrivateDataClient, types::common::Exchange};
+use trading_core::{types::common::Exchange, venue::cex::traits::PrivateDataClient};
 
 #[derive(Debug, Clone)]
 pub struct BinanceClient {

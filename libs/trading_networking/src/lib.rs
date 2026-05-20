@@ -26,14 +26,14 @@ pub mod zenoh_bridge;
 
 pub use commands::{Command, CommandDispatcher, CommandPayload, CommandResponse, CommandRouter};
 pub use error::{DtpError, NetworkError};
-pub use events::{ColdEvent, ColdEventBus, HotEvent, HotEventBus};
+pub use events::{ColdEvent, ColdEventBus, DexColdEvent, DexColdEventBus, HotEvent, HotEventBus};
 pub use payload::{
-    deserialize_cold_event, deserialize_command, deserialize_hot_event, serialize_cold_event,
-    serialize_command, serialize_hot_event,
+    deserialize_cold_event, deserialize_command, deserialize_dex_cold_event, deserialize_hot_event,
+    serialize_cold_event, serialize_command, serialize_dex_cold_event, serialize_hot_event,
 };
 
 #[cfg(feature = "zenoh")]
 pub use zenoh_bridge::{
-    open_session, publish_cold_event, publish_hot_event, request_command, run_command_queryable,
-    CommandQueryHandler,
+    open_session, publish_cold_event, publish_dex_cold_event, publish_hot_event, request_command,
+    run_command_queryable, CommandQueryHandler,
 };

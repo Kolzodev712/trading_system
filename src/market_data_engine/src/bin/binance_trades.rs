@@ -17,7 +17,8 @@ use std::path::PathBuf;
 use tokio::signal;
 use tracing::{error, info};
 use trading_core::{
-    error::EngineError, traits::MarketDataClient, types::market_data::StructuredPublicTrade,
+    error::EngineError, types::market_data::StructuredPublicTrade,
+    venue::cex::traits::MarketDataClient,
 };
 
 /// Simple message handler that prints trade updates

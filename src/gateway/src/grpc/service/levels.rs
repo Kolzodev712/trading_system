@@ -6,8 +6,8 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tonic::{Request, Response, Status};
 use trading_core::grpc::TradingControl;
-use trading_core::traits::TradingClient;
 use trading_core::types::exchange::OrderRequest;
+use trading_core::venue::cex::traits::TradingClient;
 use trading_engine::levels::{LevelExecutor, LevelManager};
 
 use super::converters;

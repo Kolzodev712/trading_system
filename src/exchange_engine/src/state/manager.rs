@@ -8,14 +8,14 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 use trading_core::{
-    channels::exchange::CexVenueUpdateSender,
     error::EngineError,
     registry::symbol::SymbolRegistry,
-    traits::TradingClient,
     types::{
         common::{OrderId, Pair},
         exchange::{Balance, Order, OrderRequest, Position, Trade},
     },
+    venue::cex::channels::CexVenueUpdateSender,
+    venue::cex::traits::TradingClient,
 };
 
 use super::{publisher::ExchangeStatePublisher, reconciler::StateReconciler, state::ExchangeState};

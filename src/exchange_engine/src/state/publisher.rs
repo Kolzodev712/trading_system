@@ -5,9 +5,9 @@
 
 use tracing::{debug, warn};
 use trading_core::{
-    channels::exchange::CexVenueUpdateSender,
     error::EngineError,
     types::exchange::{Balance, Order, Position, Trade},
+    venue::cex::channels::CexVenueUpdateSender,
 };
 use trading_trace::{get_tracer, ColdTraceContext};
 
@@ -32,7 +32,7 @@ impl ExchangeStatePublisher {
     /// # Errors
     /// Returns an error if the channel is closed (all receivers dropped)
     pub async fn publish_order(&self, order: &Order) -> Result<(), EngineError> {
-        use trading_core::channels::exchange::CexVenueUpdate;
+        use trading_core::venue::cex::channels::CexVenueUpdate;
 
         let tracer = get_tracer("exchange-engine");
         let mut ctx = ColdTraceContext::new_root_with_tracer(&tracer, "exchange.order", None);
@@ -65,7 +65,7 @@ impl ExchangeStatePublisher {
     /// # Errors
     /// Returns an error if the channel is closed (all receivers dropped)
     pub async fn publish_balance(&self, balance: &Balance) -> Result<(), EngineError> {
-        use trading_core::channels::exchange::CexVenueUpdate;
+        use trading_core::venue::cex::channels::CexVenueUpdate;
 
         let tracer = get_tracer("exchange-engine");
         let mut ctx = ColdTraceContext::new_root_with_tracer(&tracer, "exchange.balance", None);
@@ -97,7 +97,7 @@ impl ExchangeStatePublisher {
     /// # Errors
     /// Returns an error if the channel is closed (all receivers dropped)
     pub async fn publish_trade(&self, trade: &Trade) -> Result<(), EngineError> {
-        use trading_core::channels::exchange::CexVenueUpdate;
+        use trading_core::venue::cex::channels::CexVenueUpdate;
 
         let tracer = get_tracer("exchange-engine");
         let mut ctx = ColdTraceContext::new_root_with_tracer(&tracer, "exchange.trade", None);
@@ -127,7 +127,7 @@ impl ExchangeStatePublisher {
     /// # Errors
     /// Returns an error if the channel is closed (all receivers dropped)
     pub async fn publish_position(&self, position: &Position) -> Result<(), EngineError> {
-        use trading_core::channels::exchange::CexVenueUpdate;
+        use trading_core::venue::cex::channels::CexVenueUpdate;
 
         let tracer = get_tracer("exchange-engine");
         let mut ctx = ColdTraceContext::new_root_with_tracer(&tracer, "exchange.position", None);
@@ -171,11 +171,11 @@ mod tests {
     use std::time::Duration;
     use tokio::time::timeout;
     use trading_core::{
-        channels::exchange::cex_venue_update_channel,
         types::{
             common::{OrderId, OrderStatus, Side},
             exchange::Order,
         },
+        venue::cex::channels::cex_venue_update_channel,
     };
 
     fn create_test_order() -> Order {
@@ -213,7 +213,7 @@ mod tests {
             .unwrap();
 
         match update {
-            trading_core::channels::exchange::CexVenueUpdate::Order {
+            trading_core::venue::cex::channels::CexVenueUpdate::Order {
                 order: published_order,
                 ..
             } => {

@@ -138,3 +138,17 @@ impl CommandHandler for RunnerCommandHandler {
         }
     }
 }
+
+/// No-op command handler for dex-only mode (Zenoh queryable still needs a handler).
+pub struct DexNoopHandler;
+
+#[async_trait::async_trait]
+impl CommandHandler for DexNoopHandler {
+    async fn handle(&self, _command: Command) -> Result<CommandResponse, String> {
+        Ok(CommandResponse {
+            success: false,
+            message: Some("dex mode: remote commands not supported".to_string()),
+            data: None,
+        })
+    }
+}

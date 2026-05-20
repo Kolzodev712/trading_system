@@ -12,9 +12,11 @@ use async_trait::async_trait;
 use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc, oneshot, RwLock};
 use tracing::{debug, error, info};
-use trading_core::traits::exchange_driver::ConnectionState;
-use trading_core::traits::ExchangeDriver;
-use trading_core::{error::EngineError, traits::TradingClient, types::exchange::OrderRequest};
+use trading_core::venue::cex::traits::ConnectionState;
+use trading_core::venue::cex::traits::ExchangeDriver;
+use trading_core::{
+    error::EngineError, types::exchange::OrderRequest, venue::cex::traits::TradingClient,
+};
 
 /// Bybit exchange driver
 ///

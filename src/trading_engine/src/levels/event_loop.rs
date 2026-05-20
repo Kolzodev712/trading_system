@@ -9,14 +9,14 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio::time::{interval, Duration};
-use trading_core::channels::exchange::{CexVenueUpdate, CexVenueUpdateReceiver};
 use trading_core::channels::market_data::{MarketDataUpdate, MarketDataUpdateReceiver};
 use trading_core::error::EngineError;
-use trading_core::traits::TradingClient;
 use trading_core::types::common::{OrderId, Pair};
 use trading_core::types::exchange::{BulkAmendItem, BulkAmendRequest, BulkOrderRequest};
 use trading_core::types::exchange::{Order, OrderRequest};
 use trading_core::types::market_data::StructuredOrderbook;
+use trading_core::venue::cex::channels::{CexVenueUpdate, CexVenueUpdateReceiver};
+use trading_core::venue::cex::traits::TradingClient;
 
 /// Level-based event loop
 pub struct LevelBasedEventLoop {

@@ -6,15 +6,15 @@
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use trading_core::{
-    channels::exchange::cex_venue_update_channel,
     config::ChannelConfig,
     registry::symbol::SymbolRegistry,
     secret::SecretString,
-    traits::TradingClient,
     types::{
         common::{Exchange, Pair},
         exchange::OrderRequest,
     },
+    venue::cex::channels::cex_venue_update_channel,
+    venue::cex::traits::TradingClient,
 };
 
 use exchange_engine::{
@@ -101,7 +101,7 @@ impl ExchangeClientBuilder {
         &self,
     ) -> (
         ExchangeStateManager,
-        trading_core::channels::exchange::CexVenueUpdateReceiver,
+        trading_core::venue::cex::channels::CexVenueUpdateReceiver,
     ) {
         let (tx, rx) = cex_venue_update_channel(self.channels.cex_venue_update_capacity);
         let symbol_registry = Arc::new(SymbolRegistry::from_pairs(self.config.pairs.clone()));
@@ -164,7 +164,7 @@ impl MarketDataClientBuilder {
     }
 
     /// Build a market data client for the configured exchange
-    pub fn build(&self) -> Box<dyn trading_core::traits::MarketDataClient> {
+    pub fn build(&self) -> Box<dyn trading_core::venue::cex::traits::MarketDataClient> {
         match self.config.exchange {
             Exchange::Binance => {
                 use market_data_engine::exchanges::binance::{
@@ -208,7 +208,7 @@ impl MarketDataClientBuilder {
     pub fn build_with_handler(
         &self,
         handler: Option<Box<dyn market_data_engine::messages::WSMessageHandler + Send + Sync>>,
-    ) -> Box<dyn trading_core::traits::MarketDataClient> {
+    ) -> Box<dyn trading_core::venue::cex::traits::MarketDataClient> {
         match self.config.exchange {
             Exchange::Binance => {
                 use market_data_engine::exchanges::binance::{

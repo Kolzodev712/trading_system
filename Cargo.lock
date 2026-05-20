@@ -1049,6 +1049,7 @@ dependencies = [
  "tokio",
  "tracing",
  "trading_core",
+ "trading_trace",
 ]
 
 [[package]]

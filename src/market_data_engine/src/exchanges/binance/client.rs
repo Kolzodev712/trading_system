@@ -13,7 +13,7 @@ use tokio::sync::mpsc;
 use tracing::{debug, error, info};
 use trading_core::registry::symbol::SymbolRegistry;
 use trading_core::{
-    error::EngineError, traits::MarketDataClient, types::common::DataType, Exchange,
+    error::EngineError, types::common::DataType, venue::cex::traits::MarketDataClient, Exchange,
 };
 
 #[derive(Debug)]

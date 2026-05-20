@@ -7,7 +7,6 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use trading_core::error::EngineError;
 use trading_core::registry::symbol::SymbolRegistry;
-use trading_core::traits::TradingClient;
 use trading_core::types::common::{
     Instrument, InstrumentType, OrderId, OrderStatus, Pair, Side, Symbol,
 };
@@ -15,6 +14,7 @@ use trading_core::types::exchange::{
     Balance, BulkAmendRequest, BulkAmendResponse, BulkCancelRequest, BulkCancelResponse,
     BulkOperationResult, BulkOrderRequest, BulkOrderResponse, Order, OrderRequest, Position, Trade,
 };
+use trading_core::venue::cex::traits::TradingClient;
 use trading_engine::levels::config::{
     LevelRiskConfig, LifecycleConfig, OrderTypeConfig, PriceConfig, QuantityConfig,
 };
@@ -111,25 +111,26 @@ pub fn create_test_binance_config() -> exchange_engine::exchanges::binance::conf
 /// Create exchange state manager for testing
 pub async fn create_test_exchange_state_manager() -> (
     exchange_engine::state::manager::ExchangeStateManager,
-    trading_core::channels::exchange::CexVenueUpdateReceiver,
+    trading_core::venue::cex::channels::CexVenueUpdateReceiver,
 ) {
     use exchange_engine::exchanges::binance::client::BinanceClient;
-    use trading_core::channels::exchange::cex_venue_update_channel;
     use trading_core::config::ChannelConfig;
     use trading_core::registry::symbol::SymbolRegistry;
+    use trading_core::venue::cex::channels::cex_venue_update_channel;
 
     let (tx, rx) = cex_venue_update_channel(100);
     let symbol_registry = Arc::new(SymbolRegistry::new());
     let channels = ChannelConfig::default();
     let binance_config = create_test_binance_config();
-    let trading_client: Arc<RwLock<dyn trading_core::traits::TradingClient<OrderRequest>>> =
-        Arc::new(RwLock::new(BinanceClient::new(
-            binance_config,
-            channels.websocket_inbound_capacity,
-            channels.websocket_ping_capacity,
-            channels.websocket_outbound_rpc_capacity,
-            channels.shutdown_capacity,
-        )));
+    let trading_client: Arc<
+        RwLock<dyn trading_core::venue::cex::traits::TradingClient<OrderRequest>>,
+    > = Arc::new(RwLock::new(BinanceClient::new(
+        binance_config,
+        channels.websocket_inbound_capacity,
+        channels.websocket_ping_capacity,
+        channels.websocket_outbound_rpc_capacity,
+        channels.shutdown_capacity,
+    )));
     let manager = exchange_engine::state::manager::ExchangeStateManager::new(
         tx,
         symbol_registry,

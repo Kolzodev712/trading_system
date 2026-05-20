@@ -313,7 +313,6 @@ impl BotConfig {
 
     /// Validate bot configuration
     pub fn validate(&self) -> Result<(), String> {
-        // Basic validation - can be extended
         if self.server.port == 0 {
             return Err("Server port must be greater than zero".to_string());
         }
@@ -328,8 +327,41 @@ impl BotConfig {
                 }
             }
         }
-        // Redis validation removed - channels are used for internal communication
-        // Redis is only needed if Web UI feature is enabled (future)
+        if matches!(self.venue.mode, VenueMode::Cex | VenueMode::Both)
+            && self.get_pairs().map_err(|e| e.to_string())?.is_empty()
+        {
+            return Err(
+                "at least one trading pair is required in exchange_engine config when venue.mode is \"cex\" or \"both\"".to_string(),
+            );
+        }
+
+        Ok(())
+    }
+
+    /// Validate `venue.mode` against runner `--mode`.
+    pub fn validate_for_runner(&self, runner_mode: &str) -> Result<(), String> {
+        match runner_mode {
+            "levels" if self.venue.mode != VenueMode::Cex => {
+                return Err(format!(
+                    "runner --mode levels requires venue.mode \"cex\" (got {:?})",
+                    self.venue.mode
+                ));
+            }
+            "strategies" if self.venue.mode != VenueMode::Cex => {
+                return Err(format!(
+                    "runner --mode strategies requires venue.mode \"cex\" (got {:?})",
+                    self.venue.mode
+                ));
+            }
+            "dex" if !matches!(self.venue.mode, VenueMode::Dex | VenueMode::Both) => {
+                return Err(format!(
+                    "runner --mode dex requires venue.mode \"dex\" or \"both\" (got {:?})",
+                    self.venue.mode
+                ));
+            }
+            "levels" | "strategies" | "dex" => {}
+            other => return Err(format!("unknown runner mode: {other}")),
+        }
         Ok(())
     }
 
@@ -377,6 +409,41 @@ impl BotConfig {
             }
             Exchange::Unsupported => Ok(InstrumentType::Spot), // Default to Spot
         }
+    }
+}
+
+#[cfg(test)]
+mod config_smoke_tests {
+    use super::*;
+
+    fn example_path(name: &str) -> std::path::PathBuf {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../config")
+            .join(name)
+    }
+
+    #[test]
+    fn bot_cex_example_validates() {
+        let cfg = BotConfig::load_from_file(example_path("bot.json").to_str().unwrap()).unwrap();
+        cfg.validate().unwrap();
+        cfg.validate_for_runner("levels").unwrap();
+    }
+
+    #[test]
+    fn bot_dex_example_validates() {
+        let path = example_path("bot.dex.example.json");
+        let cfg = BotConfig::load_from_file(path.to_str().unwrap()).unwrap();
+        cfg.validate().unwrap();
+        cfg.validate_for_runner("dex").unwrap();
+        assert!(cfg.validate_for_runner("levels").is_err());
+    }
+
+    #[test]
+    fn bot_both_example_validates() {
+        let path = example_path("bot.both.example.json");
+        let cfg = BotConfig::load_from_file(path.to_str().unwrap()).unwrap();
+        cfg.validate().unwrap();
+        cfg.validate_for_runner("dex").unwrap();
     }
 }
 

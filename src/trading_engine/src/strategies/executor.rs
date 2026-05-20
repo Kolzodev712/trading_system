@@ -8,12 +8,12 @@ use trading_core::{
     channels::market_data::{MarketDataUpdate, MarketDataUpdateReceiver},
     circuit_breaker::{order_circuit_breaker, CircuitBreaker},
     error::EngineError,
-    traits::TradingClient,
     types::{
         common::{Exchange, Instrument, InstrumentType, OrderId},
         exchange::{Order, OrderRequest},
         Pair,
     },
+    venue::cex::traits::TradingClient,
 };
 // ExecutionReport removed - use Order directly from channels
 use rust_decimal::Decimal;

@@ -8,16 +8,16 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, warn};
 use trading_core::{
-    channels::exchange::CexVenueUpdate,
     error::EngineError,
     types::common::OrderStatus,
     types::exchange::{Balance, Order, Trade},
+    venue::cex::channels::CexVenueUpdate,
 };
 
 /// Subscribes to ExchangeStateManager updates and updates TradingState
 pub struct ExchangeStateSubscriber {
     /// Receiver for ExchangeStateManager updates
-    exchange_update_rx: trading_core::channels::exchange::CexVenueUpdateReceiver,
+    exchange_update_rx: trading_core::venue::cex::channels::CexVenueUpdateReceiver,
 
     /// Trading state to update
     trading_state: Arc<RwLock<TradingState>>,
@@ -30,7 +30,7 @@ impl ExchangeStateSubscriber {
     /// * `exchange_update_rx` - Receiver for ExchangeStateManager updates
     /// * `trading_state` - Trading state to update
     pub fn new(
-        exchange_update_rx: trading_core::channels::exchange::CexVenueUpdateReceiver,
+        exchange_update_rx: trading_core::venue::cex::channels::CexVenueUpdateReceiver,
         trading_state: Arc<RwLock<TradingState>>,
     ) -> Self {
         Self {

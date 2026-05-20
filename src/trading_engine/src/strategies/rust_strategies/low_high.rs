@@ -14,12 +14,12 @@ use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 use trading_core::{
     error::EngineError,
-    traits::TradingClient,
     types::{
         common::{Exchange, Instrument, InstrumentType, OrderStatus, OrderType, Pair, Side},
         exchange::{Order, OrderRequest},
         market_data::Orderbook,
     },
+    venue::cex::traits::TradingClient,
 };
 
 /// Enhanced "Buy Low, Sell High" strategy with all improvements

@@ -109,6 +109,21 @@ pub struct SimpleIndicatorDocument {
     pub updated_at: u64,
 }
 
+/// Level template → indicator pricing binding (lives in indicators collection).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LevelPricingDocument {
+    #[serde(rename = "_id")]
+    pub document_id: String,
+
+    pub indicator_type: String, // "level_pricing"
+    pub level_id: String,
+    pub indicator_ref: String,
+    pub offset_type: String,
+    pub offset_value: rust_decimal::Decimal,
+    pub created_at: u64,
+    pub updated_at: u64,
+}
+
 /// Composite indicator document
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompositeIndicatorDocument {

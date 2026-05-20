@@ -659,5 +659,5 @@ impl StrategyExecutor {
 
 ---
 
-**Next Steps**: Once this proposal is complete, proceed to Proposal 04.02 (Solana Integration) which will implement the Solana-specific `VenueProvider`.
+**Next Steps**: Once this proposal is complete, proceed to [Proposal 02](02-solana-integration.md) (Solana Integration), which implements the Solana-specific `VenueProvider`.
 

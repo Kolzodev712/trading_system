@@ -4,7 +4,7 @@ pub mod shutdown;
 pub use gateway::grpc;
 
 use asset_engine::AssetService;
-use indicator_engine::IndicatorService;
+use indicator_engine::{IndicatorService, LevelPricingRegistry};
 use tokio::sync::Mutex;
 
 use crate::config::BotConfig;
@@ -79,6 +79,8 @@ pub struct SharedServices {
     pub market_data_rx: trading_core::channels::market_data::MarketDataUpdateReceiver,
     pub indicator_rx: trading_core::channels::indicators::IndicatorUpdateReceiver,
     pub indicator_service: Arc<Mutex<IndicatorService>>,
+    /// Clone of indicator service level bindings (avoids locking `indicator_service` while its run loop holds the mutex).
+    pub level_pricing: Arc<parking_lot::RwLock<LevelPricingRegistry>>,
     pub indicator_calculator: Arc<indicator_engine::calculator::IndicatorCalculator>,
     pub shutdown_manager: ShutdownManager,
     pub market_data_handle: JoinHandle<()>,
@@ -184,7 +186,7 @@ pub async fn run(
     let (indicator_tx, indicator_rx) = trading_core::channels::indicators::indicator_update_channel(
         bot_config.channels.indicator_update_capacity,
     );
-    let (indicator_service, indicator_handle, indicator_calculator) =
+    let (indicator_service, indicator_handle, indicator_calculator, level_pricing) =
         init::initialize_indicator_service(
             &bot_config,
             &mongo_client,
@@ -207,6 +209,7 @@ pub async fn run(
         market_data_rx: market_data_rx.resubscribe(),
         indicator_rx,
         indicator_service,
+        level_pricing,
         indicator_calculator,
         shutdown_manager,
         market_data_handle,

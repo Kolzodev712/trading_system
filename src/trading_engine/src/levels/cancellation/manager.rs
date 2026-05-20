@@ -68,7 +68,7 @@ impl CancellationManager {
                     // For now, simplified check
                     if daily_pnl < Decimal::ZERO {
                         // Could trigger cancellation if loss is too high
-                        // This will be fully implemented in Proposal 07 (Risk System)
+                        // This will be fully implemented in Proposal 06 (HFT subsystem) / future risk work
                     }
                 }
                 CancellationCondition::TotalPositionExceeded(_limit) => {
@@ -119,6 +119,9 @@ impl CancellationManager {
                             None,                                              // asset_service
                             trading_core::types::common::Exchange::Binance, // exchange (not used for cancellation)
                             trading_core::types::common::InstrumentType::Spot, // Default to Spot for cancellation
+                            Arc::new(parking_lot::RwLock::new(
+                                indicator_engine::LevelPricingRegistry::new(),
+                            )),
                             rust_decimal::Decimal::new(1, 5), // config_min_order_size
                             rust_decimal::Decimal::new(1, 5), // config_step_size
                             rust_decimal::Decimal::new(1, 2), // config_tick_size

@@ -69,13 +69,6 @@ pub enum QuantityConfig {
     /// Fixed quantity
     Fixed(Decimal),
 
-    /// Quantity based on indicator value
-    Indicator {
-        indicator_name: SmolStr,
-        multiplier: Option<Decimal>, // Multiply indicator value
-        offset: Option<Decimal>,     // Add/subtract from indicator
-    },
-
     /// Percentage of available balance
     BalancePercent(Decimal),
 
@@ -89,12 +82,9 @@ pub enum PriceConfig {
     /// Fixed price
     Fixed(Decimal),
 
-    /// Price based on indicator with offset
-    Indicator {
-        indicator_name: SmolStr,
-        offset_type: PriceOffsetType,
-        offset_value: Decimal,
-    },
+    /// Price from indicator config binding for this level template id (`config.id`).
+    /// See `config/indicators.json` → `level_pricing` or MongoDB `indicators` collection.
+    Binding,
 
     /// Best bid with offset
     BestBid { offset: Decimal },
@@ -206,11 +196,7 @@ mod tests {
             side: Side::Buy,
             order_type: OrderTypeConfig::Limit,
             quantity: QuantityConfig::Fixed(dec!(0.001)),
-            price: PriceConfig::Indicator {
-                indicator_name: SmolStr::new("sma_20"),
-                offset_type: PriceOffsetType::PercentBelow,
-                offset_value: dec!(2.0),
-            },
+            price: PriceConfig::Binding,
             risk: LevelRiskConfig::default(),
             lifecycle: LifecycleConfig::default(),
             enabled: true,

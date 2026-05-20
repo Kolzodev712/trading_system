@@ -52,6 +52,7 @@ uuid = { workspace = true }
 # Redis is no longer needed for Trading Engine
 
 # Utils
+parking_lot = { workspace = true }
 smol_str = { workspace = true }
 futures-util = { workspace = true }
 chrono = { workspace = true }

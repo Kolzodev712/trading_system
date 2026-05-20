@@ -95,6 +95,7 @@ pub async fn level_runner(
             services.asset_service.clone(),
             bot_config.exchange_engine.exchange.clone(),
             instrument_type.clone(),
+            services.level_pricing.clone(),
             config_min_order_size,
             config_step_size,
             config_tick_size,

@@ -649,18 +649,20 @@ To set up the configuration:
    cp sample_config/binance/bot.json config/bot.json
    cp sample_config/binance/strategies.json config/strategies.json
    cp sample_config/binance/levels.json config/levels.json
+   cp sample_config/binance/indicators.json config/indicators.json
    
    # Or for Bybit
    cp sample_config/bybit/bot.json config/bot.json
    cp sample_config/bybit/strategies.json config/strategies.json
    cp sample_config/bybit/levels.json config/levels.json
+   cp sample_config/bybit/indicators.json config/indicators.json
    ```
 
 3. **Edit `config/bot.json`** and add your:
    - Exchange API keys (see [Configuration](#configuration) for structure)
    - MongoDB connection string if different from default
 
-4. **Customize** `config/strategies.json` and `config/levels.json` as needed for your trading strategy.
+4. **Customize** `config/strategies.json`, `config/levels.json`, and `config/indicators.json` as needed for your trading strategy.
 
 > **Note**: The `sample_config/` directory contains template files without API keys. Always use these as a starting point, then add your own credentials to the `config/` directory.
 
@@ -735,39 +737,35 @@ To set up the configuration:
 
 ### Levels Configuration (`config/levels.json`)
 
+Level templates use `"price": "Binding"` when price comes from indicators; see `config/indicators.json` → `level_pricing`. Full field reference: [Levels Guide](docs/LEVELS_GUIDE.md).
+
 ```json
 {
   "levels": [
     {
-      "id": "level_1",
-      "name": "BTC Buy Level 1",
-      "symbol": {
-        "base": "BTC",
-        "quote": "USDT"
-      },
+      "id": "buy_level_1",
+      "name": "Buy at SMA-0.5%",
       "side": "Buy",
       "order_type": "Limit",
-      "price": {
-        "type": "Fixed",
-        "value": 50000
-      },
-      "quantity": {
-        "type": "Fixed",
-        "value": 0.001
-      },
-      "risk": {
-        "daily_loss_limit": null,
-        "max_position": null
-      },
-      "lifecycle": {
-        "auto_repost": true,
-        "auto_repost_on_cancel": false
-      },
+      "quantity": { "type": "Fixed", "value": "0.002" },
+      "price": "Binding",
       "enabled": true
     }
   ]
 }
 ```
+
+### Indicators configuration (`config/indicators.json`)
+
+Generated or edited by the Python **indicator config generator** (`python/`). Registers SMA/EMA (and composites) plus **`level_pricing`** rows keyed by level template `id`.
+
+```bash
+cd python && uv sync
+uv run indicator-generate --pairs BTCUSDT,ETHUSDT --output ../config/indicators.json
+uv run indicator-validate --config ../config/indicators.json
+```
+
+At startup, the indicator engine loads **MongoDB first** (if enabled), then merges from this file. Details: [indicator_config_generator/README.md](python/indicator_config_generator/README.md), [Levels Guide](docs/LEVELS_GUIDE.md).
 
 ### Strategies Configuration (`config/strategies.json`)
 
@@ -817,6 +815,8 @@ export MONGODB_URI=mongodb://localhost:27017
 
 ## Running the System
 
+For **Paper mode** with **k-paper**, the **runner**, and the **TUI CLI** (three terminals, ports, dummy orderbooks), see **[Local dev guide](docs/LOCAL_DEV_GUIDE.md)**.
+
 ### Pre-Flight Checks
 
 Before starting the system, run the dependency check script:
@@ -838,14 +838,14 @@ This script will:
 #### 1. Start the Trading System
 
 ```bash
-# Default (levels mode)
-cargo run --release --package runner
+# Default (levels mode) — use --bin runner (package also builds test_runner)
+cargo run --release --package runner --bin runner
 
 # Explicit levels mode
-cargo run --release --package runner -- --mode levels
+cargo run --release --package runner --bin runner -- --mode levels
 
 # With custom levels config
-cargo run --release --package runner -- --mode levels --levels-config config/levels.json
+cargo run --release --package runner --bin runner -- --mode levels --levels-config config/levels.json
 ```
 
 #### 2. Start the TUI CLI (Optional)

@@ -1,8 +1,13 @@
 use crate::calculator::IndicatorCalculator;
+use crate::config::{load_indicators_file, ConfigError, IndicatorsFile};
+use crate::indicators::composite::CompositeIndicatorConfig;
 use crate::indicators::traits::IndicatorConfig;
+use crate::level_pricing::{LevelPricingRegistry, LevelPricingRule};
 use crate::persistence::IndicatorPersistence;
 use crate::publisher::IndicatorPublisher;
 use crate::subscriber::MarketDataSubscriber;
+use parking_lot::RwLock;
+use std::path::Path;
 use std::sync::Arc;
 use thiserror::Error;
 use trading_core::channels::indicators::IndicatorUpdateSender;
@@ -10,6 +15,7 @@ use trading_core::channels::market_data::MarketDataUpdateReceiver;
 
 pub struct IndicatorService {
     pub(crate) calculator: Arc<IndicatorCalculator>,
+    level_pricing: Arc<RwLock<LevelPricingRegistry>>,
     subscriber: Option<MarketDataSubscriber>,
     publisher: Option<IndicatorPublisher>,
     persistence: Option<Arc<IndicatorPersistence>>,
@@ -25,10 +31,16 @@ impl IndicatorService {
     pub fn new() -> Self {
         Self {
             calculator: Arc::new(IndicatorCalculator::new()),
+            level_pricing: Arc::new(RwLock::new(LevelPricingRegistry::new())),
             subscriber: None,
             publisher: None,
             persistence: None,
         }
+    }
+
+    /// Level template id → indicator pricing bindings (from indicators config / Mongo).
+    pub fn level_pricing_registry(&self) -> Arc<RwLock<LevelPricingRegistry>> {
+        self.level_pricing.clone()
     }
 
     /// Set persistence for indicator service
@@ -82,42 +94,157 @@ impl IndicatorService {
         Ok(())
     }
 
-    /// Load all indicators from MongoDB
-    /// Returns the number of indicators successfully loaded
+    /// Register a composite indicator.
+    pub async fn register_composite(
+        &self,
+        config: CompositeIndicatorConfig,
+    ) -> Result<(), crate::indicators::traits::IndicatorError> {
+        self.calculator.register_composite(config)
+    }
+
+    /// Load all indicators from MongoDB (simple, then composite).
+    /// Returns the number of indicators successfully loaded.
     pub async fn load_from_mongo(&self) -> Result<usize, ServiceError> {
-        if let Some(persistence) = &self.persistence {
-            match persistence.load_all_indicators().await {
-                Ok(indicators) => {
-                    let total_count = indicators.len();
-                    let mut success_count = 0;
-                    for config in indicators {
-                        if let Err(e) = self.calculator.register_indicator(config) {
-                            tracing::warn!("Failed to register indicator from MongoDB: {}", e);
-                        } else {
-                            success_count += 1;
-                        }
+        let Some(persistence) = &self.persistence else {
+            return Err(ServiceError::PersistenceError(
+                "MongoDB persistence not enabled".to_string(),
+            ));
+        };
+
+        let mut success_count = 0;
+
+        match persistence.load_all_indicators().await {
+            Ok(indicators) => {
+                let total_count = indicators.len();
+                for config in indicators {
+                    if self.calculator.register_indicator(config).is_ok() {
+                        success_count += 1;
                     }
-                    tracing::info!(
-                        "Loaded {} indicators from MongoDB ({} successful, {} failed)",
-                        total_count,
-                        success_count,
-                        total_count - success_count
-                    );
-                    Ok(success_count)
                 }
-                Err(e) => {
-                    tracing::warn!("Failed to load indicators from MongoDB: {}", e);
-                    Err(ServiceError::PersistenceError(format!(
-                        "Failed to load indicators: {}",
-                        e
-                    )))
+                tracing::info!(
+                    "Loaded {} simple indicator(s) from MongoDB ({} registered)",
+                    total_count,
+                    success_count
+                );
+            }
+            Err(e) => {
+                tracing::warn!("Failed to load simple indicators from MongoDB: {}", e);
+                return Err(ServiceError::PersistenceError(format!(
+                    "Failed to load simple indicators: {}",
+                    e
+                )));
+            }
+        }
+
+        let composite_before = success_count;
+        match persistence.load_all_composites().await {
+            Ok(composites) => {
+                let total_count = composites.len();
+                for config in composites {
+                    if self.calculator.register_composite(config).is_ok() {
+                        success_count += 1;
+                    }
+                }
+                tracing::info!(
+                    "Loaded {} composite indicator(s) from MongoDB ({} registered)",
+                    total_count,
+                    success_count - composite_before
+                );
+            }
+            Err(e) => {
+                tracing::warn!("Failed to load composite indicators from MongoDB: {}", e);
+            }
+        }
+
+        match persistence.load_level_pricing().await {
+            Ok(registry) => {
+                *self.level_pricing.write() = registry;
+                tracing::info!(
+                    "Loaded {} level pricing binding(s) from MongoDB",
+                    self.level_pricing.read().len()
+                );
+            }
+            Err(e) => tracing::warn!("Failed to load level pricing from MongoDB: {}", e),
+        }
+
+        Ok(success_count)
+    }
+
+    /// Load indicators + level pricing from JSON file. Skips indicator IDs already registered (Mongo wins).
+    pub fn load_from_config(&self, path: &Path) -> Result<usize, ServiceError> {
+        let file = load_indicators_file(path).map_err(|e| match e {
+            ConfigError::Io(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                ServiceError::ConfigNotFound(path.display().to_string())
+            }
+            other => ServiceError::ConfigError(other.to_string()),
+        })?;
+
+        Ok(self.register_from_file(&file, false))
+    }
+
+    /// Load only level pricing from file (when indicators come from MongoDB).
+    pub fn load_level_pricing_from_config(&self, path: &Path) -> Result<usize, ServiceError> {
+        let file = load_indicators_file(path).map_err(|e| match e {
+            ConfigError::Io(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                ServiceError::ConfigNotFound(path.display().to_string())
+            }
+            other => ServiceError::ConfigError(other.to_string()),
+        })?;
+        Ok(self.apply_level_pricing(&file.level_pricing))
+    }
+
+    fn apply_level_pricing(&self, rules: &[LevelPricingRule]) -> usize {
+        if rules.is_empty() {
+            return 0;
+        }
+        match LevelPricingRegistry::from_rules(rules.to_vec()) {
+            Ok(registry) => {
+                let count = registry.len();
+                *self.level_pricing.write() = registry;
+                count
+            }
+            Err(e) => {
+                tracing::warn!("Failed to apply level pricing rules: {}", e);
+                0
+            }
+        }
+    }
+
+    fn register_from_file(&self, file: &IndicatorsFile, indicators_only: bool) -> usize {
+        let mut registered = 0usize;
+
+        for entry in file.indicators.clone() {
+            if self.calculator.has_indicator(entry.id().as_str()) {
+                tracing::debug!(
+                    "Skipping indicator {} (already loaded from MongoDB)",
+                    entry.id()
+                );
+                continue;
+            }
+            if let Some(config) = entry.into_simple_config() {
+                if self.calculator.register_indicator(config).is_ok() {
+                    registered += 1;
                 }
             }
-        } else {
-            Err(ServiceError::PersistenceError(
-                "MongoDB persistence not enabled".to_string(),
-            ))
         }
+
+        for entry in file.indicators.clone() {
+            if self.calculator.has_indicator(entry.id().as_str()) {
+                continue;
+            }
+            if let Some(config) = entry.into_composite_config() {
+                match self.calculator.register_composite(config) {
+                    Ok(()) => registered += 1,
+                    Err(e) => tracing::warn!("Failed to register composite from config: {}", e),
+                }
+            }
+        }
+
+        if !indicators_only {
+            self.apply_level_pricing(&file.level_pricing);
+        }
+
+        registered
     }
 
     /// Get the number of registered indicators
@@ -205,6 +332,12 @@ pub enum ServiceError {
 
     #[error("Persistence error: {0}")]
     PersistenceError(String),
+
+    #[error("Config file not found: {0}")]
+    ConfigNotFound(String),
+
+    #[error("Config error: {0}")]
+    ConfigError(String),
 }
 
 #[cfg(test)]
@@ -253,6 +386,23 @@ mod tests {
         // Value should be None initially (indicator not ready)
         let value = service.get_value("test_sma");
         assert!(value.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_load_from_config_registers_indicators_and_level_pricing() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../config/indicators.json");
+        if !path.exists() {
+            return;
+        }
+        let service = IndicatorService::new();
+        let registered = service.load_from_config(&path).expect("load config");
+        assert!(registered >= 4, "expected at least 4 simple indicators");
+        assert_eq!(service.level_pricing_registry().read().len(), 2);
+        assert!(service
+            .level_pricing_registry()
+            .read()
+            .get("buy_level_1")
+            .is_some());
     }
 
     #[tokio::test]

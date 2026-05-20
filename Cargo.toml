@@ -89,6 +89,7 @@ prost-types = "0.12"
 [dependencies]
 
 [dev-dependencies]
+parking_lot = { workspace = true }
 runner = { path = "src/runner" }
 trading_engine = { path = "src/trading_engine" }
 trading_core = { path = "libs/trading_core" }

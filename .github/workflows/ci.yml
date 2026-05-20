@@ -203,15 +203,26 @@ jobs:
       
       - name: Cargo check
         run: just check
-      
-      # Note: Python config generation will be added when implemented
-      # This would generate indicators.json before Rust build
-      # - name: Generate indicator configs (if Python code exists)
-      #   working-directory: python
-      #   run: |
-      #     if [ -f "indicator_config_generator/src/cli.py" ]; then
-      #       uv run indicator-generate --pairs BTCUSDT --output ../config/indicators.json || true
-      #     fi
+
+  indicator-config:
+    name: Indicator Config
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install just
+        uses: extractions/setup-just@v1
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Validate and check indicators.json drift
+        run: |
+          just indicator-validate
+          just indicator-config-check
+
+      - name: Python indicator tests
+        run: just indicator-test
 
   # Build Docker images (optional, for validation)
   docker-build:

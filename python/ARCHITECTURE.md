@@ -17,7 +17,7 @@ Python DSL → Compiler → JSON → Rust indicator_engine loads at startup
 
 **Location**: `python/indicator_config_generator/`
 
-**Output**: `config/indicators.json`
+**Output**: `config/indicators.json` (`indicators` + `level_pricing` for level `"price": "Binding"`)
 
 ### 2. strategy_dsl
 
@@ -79,7 +79,7 @@ vim python/strategy_dsl/src/strategies/my_strategy.py
 # 2. Compile to IR
 cd python
 uv run strategy-compile --input strategy_dsl/src/strategies/my_strategy.py \
-    --output ../../config/strategies/my_strategy.json
+    --output ../config/strategies/my_strategy.json
 
 # 3. Rust loads IR at startup
 cargo run
@@ -91,8 +91,9 @@ cargo run
 # Generate all configs
 cd python
 uv sync
-uv run indicator-generate --pairs BTCUSDT ETHUSDT --output ../../config/indicators.json
-uv run strategy-compile --input strategies/*.py --output-dir ../../config/strategies/
+uv run indicator-generate --pairs BTCUSDT,ETHUSDT --output ../config/indicators.json
+uv run indicator-validate --config ../config/indicators.json
+uv run strategy-compile --input strategies/*.py --output-dir ../config/strategies/
 
 # Build Rust system (loads generated configs)
 cd ..

@@ -3,7 +3,7 @@
 **Version**: 1.0  
 **Date**: December 2024  
 **Status**: Draft  
-**Prerequisites**: Proposal 01 (Indicator Config Generator)
+**Prerequisites**: Indicator config generator (implemented — [design log 001](../.cursor/design-log/001-indicator-config-generator.md)). For DEX/Solana strategies, [Proposal 01](01-dex-preparation.md) and [Proposal 02](02-solana-integration.md) apply first; CEX-only strategies do not require them.
 
 ## Executive Summary
 

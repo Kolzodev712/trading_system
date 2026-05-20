@@ -3,6 +3,7 @@ use super::super::order_validation::{get_trading_rules, validate_order};
 use super::{IndicatorResolver, Level, ResolvedLevel};
 use asset_engine::AssetService;
 use indicator_engine::data::IndicatorValue;
+use indicator_engine::level_pricing::LevelPricingRegistry;
 use smol_str::SmolStr;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -39,6 +40,7 @@ impl LevelExecutor {
         asset_service: Option<Arc<AssetService>>,
         exchange: Exchange,
         instrument_type: InstrumentType,
+        level_pricing: Arc<parking_lot::RwLock<LevelPricingRegistry>>,
         config_min_order_size: rust_decimal::Decimal,
         config_step_size: rust_decimal::Decimal,
         config_tick_size: rust_decimal::Decimal,
@@ -47,6 +49,7 @@ impl LevelExecutor {
         let resolver = IndicatorResolver::new(
             asset_service.clone(),
             exchange.clone(),
+            level_pricing,
             config_tick_size,
             config_step_size,
         );
@@ -128,7 +131,13 @@ impl LevelExecutor {
         // Resolve price (with rounding to tick size)
         let resolved_price = self
             .resolver
-            .resolve_price(&level.config.price, indicators, orderbook, &level.pair)
+            .resolve_price(
+                &level.config.price,
+                level.config.id.as_str(),
+                indicators,
+                orderbook,
+                &level.pair,
+            )
             .await?;
 
         // Resolve quantity (with rounding to step size)

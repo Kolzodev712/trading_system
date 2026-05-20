@@ -358,6 +358,9 @@ impl LevelService {
                             None,
                             trading_core::types::common::Exchange::Binance,
                             trading_core::types::common::InstrumentType::Spot,
+                            Arc::new(parking_lot::RwLock::new(
+                                indicator_engine::LevelPricingRegistry::new(),
+                            )),
                             rust_decimal::Decimal::new(1, 5),
                             rust_decimal::Decimal::new(1, 5),
                             rust_decimal::Decimal::new(1, 2),

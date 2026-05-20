@@ -1,0 +1,51 @@
+{
+  "version": 1,
+  "indicators": [
+    {
+      "kind": "simple",
+      "id": "sma_20_BTCUSDT",
+      "name": "SMA",
+      "pair": "BTCUSDT",
+      "period": 20,
+      "source": "close"
+    },
+    {
+      "kind": "simple",
+      "id": "ema_12_BTCUSDT",
+      "name": "EMA",
+      "pair": "BTCUSDT",
+      "period": 12,
+      "source": "close"
+    },
+    {
+      "kind": "simple",
+      "id": "sma_20_ETHUSDT",
+      "name": "SMA",
+      "pair": "ETHUSDT",
+      "period": 20,
+      "source": "close"
+    },
+    {
+      "kind": "simple",
+      "id": "ema_12_ETHUSDT",
+      "name": "EMA",
+      "pair": "ETHUSDT",
+      "period": 12,
+      "source": "close"
+    }
+  ],
+  "level_pricing": [
+    {
+      "level_id": "buy_level_1",
+      "indicator_ref": "sma_20",
+      "offset_type": "PercentBelow",
+      "offset_value": "0.5"
+    },
+    {
+      "level_id": "sell_level_1",
+      "indicator_ref": "sma_20",
+      "offset_type": "PercentAbove",
+      "offset_value": "0.5"
+    }
+  ]
+}

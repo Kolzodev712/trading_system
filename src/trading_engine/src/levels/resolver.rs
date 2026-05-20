@@ -3,6 +3,7 @@ use super::super::order_validation::{get_trading_rules, round_price, round_quant
 use super::config::{PriceConfig, PriceOffsetType, QuantityConfig};
 use asset_engine::AssetService;
 use indicator_engine::data::IndicatorValue;
+use indicator_engine::level_pricing::{LevelPricingRegistry, PricingOffsetType};
 use rust_decimal::Decimal;
 use smol_str::SmolStr;
 use std::collections::HashMap;
@@ -15,6 +16,7 @@ use trading_core::types::market_data::Orderbook;
 pub struct IndicatorResolver {
     asset_service: Option<Arc<AssetService>>,
     exchange: Exchange,
+    level_pricing: Arc<parking_lot::RwLock<LevelPricingRegistry>>,
     /// Config fallback values
     config_tick_size: Decimal,
     config_step_size: Decimal,
@@ -25,12 +27,14 @@ impl IndicatorResolver {
     pub fn new(
         asset_service: Option<Arc<AssetService>>,
         exchange: Exchange,
+        level_pricing: Arc<parking_lot::RwLock<LevelPricingRegistry>>,
         config_tick_size: Decimal,
         config_step_size: Decimal,
     ) -> Self {
         Self {
             asset_service,
             exchange,
+            level_pricing,
             config_tick_size,
             config_step_size,
         }
@@ -40,6 +44,7 @@ impl IndicatorResolver {
     pub async fn resolve_price(
         &self,
         config: &PriceConfig,
+        level_template_id: &str,
         indicators: &HashMap<SmolStr, IndicatorValue>,
         orderbook: Option<&Orderbook>,
         pair: &trading_core::types::common::Pair,
@@ -47,69 +52,28 @@ impl IndicatorResolver {
         let resolved_price = match config {
             PriceConfig::Fixed(price) => *price,
 
-            PriceConfig::Indicator {
-                indicator_name,
-                offset_type,
-                offset_value,
-            } => {
-                // Resolve indicator name: if it's pair-agnostic (e.g., "sma_20"),
-                // resolve it to pair-specific (e.g., "sma_20_ETHUSDC")
-                let pair_str = pair.convert_to_smolstr();
-                let resolved_indicator_id = if indicator_name.contains('_')
-                    && !indicator_name.contains(pair_str.as_str())
-                {
-                    // Template indicator name, resolve with pair
-                    SmolStr::new(format!("{}_{}", indicator_name, pair_str))
-                } else {
-                    // Already pair-specific or exact match
-                    indicator_name.clone()
-                };
-
-                tracing::debug!(
-                    "Resolving indicator: {} -> {} for pair {}",
-                    indicator_name,
-                    resolved_indicator_id,
-                    pair_str
-                );
-
-                // Find indicator by resolved ID first, then by original name, then by indicator name
-                let indicator = indicators
-                    .get(&resolved_indicator_id)
-                    .or_else(|| indicators.get(indicator_name))
-                    .or_else(|| {
-                        indicators.values().find(|v| {
-                            v.indicator_name == *indicator_name || v.indicator_id == *indicator_name
-                        })
-                    })
+            PriceConfig::Binding => {
+                let rule = self
+                    .level_pricing
+                    .read()
+                    .get(level_template_id)
+                    .cloned()
                     .ok_or_else(|| {
-                        let available: Vec<_> = indicators.keys().map(|k| k.as_str()).collect();
-                        tracing::debug!(
-                            "Indicator not found: {} (resolved as: {}, available: {:?})",
-                            indicator_name,
-                            resolved_indicator_id,
-                            available
-                        );
                         EngineError::CustomError(anyhow::anyhow!(
-                            "Indicator not found: {} (resolved as: {}, available: {:?})",
-                            indicator_name,
-                            resolved_indicator_id,
-                            available
+                            "No level_pricing binding for level template {}",
+                            level_template_id
                         ))
                     })?;
-
-                let base_price = indicator.value;
-                match offset_type {
-                    PriceOffsetType::Absolute => base_price + offset_value,
-                    PriceOffsetType::Percent => {
-                        base_price * (Decimal::ONE + offset_value / Decimal::from(100))
-                    }
-                    PriceOffsetType::PercentBelow => {
-                        base_price * (Decimal::ONE - offset_value / Decimal::from(100))
-                    }
-                    PriceOffsetType::PercentAbove => {
-                        base_price * (Decimal::ONE + offset_value / Decimal::from(100))
-                    }
-                }
+                let indicator_name = SmolStr::new(&rule.indicator_ref);
+                let offset_type = to_price_offset_type(rule.offset_type);
+                let offset_value = rule.offset_value;
+                resolve_indicator_price(
+                    &indicator_name,
+                    offset_type,
+                    offset_value,
+                    indicators,
+                    pair,
+                )?
             }
 
             PriceConfig::BestBid { offset } => {
@@ -167,62 +131,14 @@ impl IndicatorResolver {
     pub async fn resolve_quantity(
         &self,
         config: &QuantityConfig,
-        indicators: &HashMap<SmolStr, IndicatorValue>,
+        _indicators: &HashMap<SmolStr, IndicatorValue>,
         balance: Decimal,
         current_price: Decimal,
         pair: &trading_core::types::common::Pair,
     ) -> Result<Decimal, EngineError> {
+        let _ = pair;
         let resolved_qty = match config {
             QuantityConfig::Fixed(qty) => *qty,
-
-            QuantityConfig::Indicator {
-                indicator_name,
-                multiplier,
-                offset,
-            } => {
-                // Resolve indicator name: if it's pair-agnostic (e.g., "sma_20"),
-                // resolve it to pair-specific (e.g., "sma_20_ETHUSDC")
-                let pair_str = pair.convert_to_smolstr();
-                let resolved_indicator_id = if indicator_name.contains('_')
-                    && !indicator_name.contains(pair_str.as_str())
-                {
-                    // Template indicator name, resolve with pair
-                    SmolStr::new(format!("{}_{}", indicator_name, pair_str))
-                } else {
-                    // Already pair-specific or exact match
-                    indicator_name.clone()
-                };
-
-                // Find indicator by resolved ID first, then by original name, then by indicator name
-                let indicator = indicators
-                    .get(&resolved_indicator_id)
-                    .or_else(|| indicators.get(indicator_name))
-                    .or_else(|| {
-                        indicators.values().find(|v| {
-                            v.indicator_name == *indicator_name || v.indicator_id == *indicator_name
-                        })
-                    })
-                    .ok_or_else(|| {
-                        EngineError::CustomError(anyhow::anyhow!(
-                            "Indicator not found: {} (resolved as: {})",
-                            indicator_name,
-                            resolved_indicator_id
-                        ))
-                    })?;
-
-                let base_qty = indicator.value;
-                let mut qty = base_qty;
-
-                if let Some(mult) = multiplier {
-                    qty *= mult;
-                }
-
-                if let Some(off) = offset {
-                    qty += off;
-                }
-
-                qty.max(Decimal::ZERO)
-            }
 
             QuantityConfig::BalancePercent(percent) => {
                 balance * percent / Decimal::from(100) / current_price.max(Decimal::ONE)
@@ -244,4 +160,59 @@ impl IndicatorResolver {
         .await;
         Ok(round_quantity(resolved_qty, rules.step_size))
     }
+}
+
+fn to_price_offset_type(offset: PricingOffsetType) -> PriceOffsetType {
+    match offset {
+        PricingOffsetType::Absolute => PriceOffsetType::Absolute,
+        PricingOffsetType::Percent => PriceOffsetType::Percent,
+        PricingOffsetType::PercentBelow => PriceOffsetType::PercentBelow,
+        PricingOffsetType::PercentAbove => PriceOffsetType::PercentAbove,
+    }
+}
+
+fn resolve_indicator_price(
+    indicator_name: &SmolStr,
+    offset_type: PriceOffsetType,
+    offset_value: Decimal,
+    indicators: &HashMap<SmolStr, IndicatorValue>,
+    pair: &trading_core::types::common::Pair,
+) -> Result<Decimal, EngineError> {
+    let pair_str = pair.convert_to_smolstr();
+    let resolved_indicator_id =
+        if indicator_name.contains('_') && !indicator_name.contains(pair_str.as_str()) {
+            SmolStr::new(format!("{}_{}", indicator_name, pair_str))
+        } else {
+            indicator_name.clone()
+        };
+
+    let indicator = indicators
+        .get(&resolved_indicator_id)
+        .or_else(|| indicators.get(indicator_name))
+        .or_else(|| {
+            indicators
+                .values()
+                .find(|v| v.indicator_name == *indicator_name || v.indicator_id == *indicator_name)
+        })
+        .ok_or_else(|| {
+            let available: Vec<_> = indicators.keys().map(|k| k.as_str()).collect();
+            EngineError::CustomError(anyhow::anyhow!(
+                "Indicator not found: {} (resolved as: {}, available: {:?})",
+                indicator_name,
+                resolved_indicator_id,
+                available
+            ))
+        })?;
+
+    let base_price = indicator.value;
+    Ok(match offset_type {
+        PriceOffsetType::Absolute => base_price + offset_value,
+        PriceOffsetType::Percent => base_price * (Decimal::ONE + offset_value / Decimal::from(100)),
+        PriceOffsetType::PercentBelow => {
+            base_price * (Decimal::ONE - offset_value / Decimal::from(100))
+        }
+        PriceOffsetType::PercentAbove => {
+            base_price * (Decimal::ONE + offset_value / Decimal::from(100))
+        }
+    })
 }

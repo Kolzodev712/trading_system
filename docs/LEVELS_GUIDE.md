@@ -8,8 +8,8 @@
 The Trading System supports level-based trading, which allows you to define trading levels that automatically place orders based on indicator values, orderbook prices, or fixed prices. Levels are exchange-agnostic and pair-agnostic templates that get expanded to create instances for each configured trading pair.
 
 **Key Features**:
-- **Indicator-based pricing**: Use technical indicators (SMA, EMA, RSI, etc.) to dynamically calculate order prices
-- **Flexible quantity configuration**: Fixed quantities, indicator-based, balance percentage, or notional values
+- **Indicator-based pricing**: Levels use `"price": "Binding"`; indicator refs and offsets live in `config/indicators.json` (`level_pricing`) or MongoDB
+- **Flexible quantity configuration**: Fixed quantities, balance percentage, or notional values
 - **Auto-reposting**: Automatically repost orders after fills or cancellations
 - **Automatic order amendments**: Automatically amends existing orders when price/quantity changes (no cancel+place)
 - **Risk management**: Per-level and global risk limits
@@ -67,13 +67,7 @@ Levels are configured in `config/levels.json`:
         "type": "Fixed",
         "value": "0.002"
       },
-      "price": {
-        "Indicator": {
-          "indicator_name": "sma_20",
-          "offset_type": "PercentBelow",
-          "offset_value": "0.5"
-        }
-      },
+      "price": "Binding",
       "risk": {
         "max_position": "0.01",
         "max_orders": 2,
@@ -133,62 +127,63 @@ Place orders at a fixed price:
 }
 ```
 
-### Indicator-Based Price
+### Binding price (indicator-based)
 
-Place orders relative to an indicator value:
+Levels that trade off indicators use a **binding** price in `config/levels.json`:
 
 ```json
-"price": {
-  "Indicator": {
-    "indicator_name": "sma_20",
-    "offset_type": "PercentBelow",
-    "offset_value": "0.5"
-  }
+"price": "Binding"
+```
+
+The level template **`id`** (e.g. `buy_level_1`) must match a row in **`config/indicators.json`** → **`level_pricing`** (or a MongoDB `level_pricing` document). Indicator definitions live in the same file under **`indicators`**.
+
+Example `config/indicators.json`:
+
+```json
+{
+  "version": 1,
+  "indicators": [
+    {
+      "kind": "simple",
+      "id": "sma_20_BTCUSDT",
+      "name": "SMA",
+      "pair": "BTCUSDT",
+      "period": 20,
+      "source": "close"
+    }
+  ],
+  "level_pricing": [
+    {
+      "level_id": "buy_level_1",
+      "indicator_ref": "sma_20",
+      "offset_type": "PercentBelow",
+      "offset_value": "0.5"
+    }
+  ]
 }
 ```
 
-**Parameters**:
-- **`indicator_name`** (string, required): Indicator name (e.g., "sma_20", "ema_50", "rsi_14")
-  - If pair-agnostic (e.g., "sma_20"), it gets resolved to pair-specific (e.g., "sma_20_ETHUSDC")
-  - If pair-specific (e.g., "sma_20_ETHUSDC"), it's used as-is
-- **`offset_type`** (string, required): Offset type - "Absolute", "Percent", "PercentBelow", or "PercentAbove"
-- **`offset_value`** (decimal, required): Offset value
+**`level_pricing` fields**:
+- **`level_id`** (string, required): Must match the level template `id` in `config/levels.json`
+- **`indicator_ref`** (string, required): Pair-agnostic ref (e.g. `sma_20`) or full id (e.g. `sma_20_BTCUSDT`). Pair-agnostic refs resolve per pair when the level is expanded (e.g. `sma_20` → `sma_20_BTCUSDT`)
+- **`offset_type`** (string, required): `Absolute`, `Percent`, `PercentBelow`, or `PercentAbove`
+- **`offset_value`** (decimal string, required): Offset magnitude
 
-**Offset Types**:
-- **`Absolute`**: Add/subtract absolute value (e.g., `indicator_value + offset_value`)
-- **`Percent`**: Add/subtract percentage (e.g., `indicator_value * (1 + offset_value/100)`)
-- **`PercentBelow`**: X% below indicator (e.g., `indicator_value * (1 - offset_value/100)`)
-- **`PercentAbove`**: X% above indicator (e.g., `indicator_value * (1 + offset_value/100)`)
+**Offset types**:
+- **`Absolute`**: `indicator_value + offset_value`
+- **`Percent`**: percentage add/subtract on the indicator value
+- **`PercentBelow`**: X% below (e.g. `indicator_value * (1 - offset_value/100)`)
+- **`PercentAbove`**: X% above (e.g. `indicator_value * (1 + offset_value/100)`)
 
-**Examples**:
-```json
-// Buy 0.5% below SMA-20
-{
-  "Indicator": {
-    "indicator_name": "sma_20",
-    "offset_type": "PercentBelow",
-    "offset_value": "0.5"
-  }
-}
+Generate or validate indicators config from `python/`:
 
-// Sell 1.0% above EMA-50
-{
-  "Indicator": {
-    "indicator_name": "ema_50",
-    "offset_type": "PercentAbove",
-    "offset_value": "1.0"
-  }
-}
-
-// Buy $10 below RSI-based price
-{
-  "Indicator": {
-    "indicator_name": "custom_price_indicator",
-    "offset_type": "Absolute",
-    "offset_value": "-10.0"
-  }
-}
+```bash
+cd python && uv sync
+uv run indicator-generate --pairs BTCUSDT,ETHUSDT --output ../config/indicators.json
+uv run indicator-validate --config ../config/indicators.json
 ```
+
+At startup the indicator engine loads **MongoDB first** (if enabled), then fills gaps from `config/indicators.json`. Duplicate indicator ids: Mongo wins.
 
 ### Orderbook-Based Price
 
@@ -236,26 +231,6 @@ Trade a fixed amount:
   "value": "0.002"
 }
 ```
-
-### Indicator-Based Quantity
-
-Trade based on an indicator value:
-
-```json
-"quantity": {
-  "type": "Indicator",
-  "indicator_name": "volume_indicator",
-  "multiplier": "1.5",
-  "offset": "0.001"
-}
-```
-
-**Parameters**:
-- **`indicator_name`** (string, required): Indicator name
-- **`multiplier`** (decimal, optional): Multiply indicator value (e.g., `indicator_value * multiplier`)
-- **`offset`** (decimal, optional): Add/subtract from indicator (e.g., `indicator_value + offset`)
-
-**Calculation**: `(indicator_value * multiplier) + offset`
 
 ### Balance Percentage
 
@@ -471,23 +446,24 @@ Levels post orders when:
 1. **Level is ready**: State is `Created` and no active orders
 2. **Level is enabled**: `enabled` flag is `true`
 3. **Risk checks pass**: All risk checks (circuit breaker, balance, limits) pass
-4. **Indicators available**: Required indicators are available (if using indicator-based price/quantity)
+4. **Indicators available**: Required indicators are registered and have values (if using `"price": "Binding"`)
 5. **Orderbook available**: Orderbook data is available (if using orderbook-based price)
 
 ### Price Resolution
 
 Price resolution happens in real-time:
 
-1. **Indicator Resolution**: If using indicator-based price, the indicator value is fetched from the indicator cache
-2. **Offset Calculation**: Offset is applied based on `offset_type` and `offset_value`
-3. **Tick Size Rounding**: Price is rounded to exchange tick size (e.g., 0.01 for ETH/USDC)
-4. **Validation**: Price is validated against exchange rules (min/max price, price precision)
+1. **Binding lookup**: For `"price": "Binding"`, `level_pricing` is resolved by level template `id` and trading pair
+2. **Indicator value**: The referenced indicator value is read from the indicator cache
+3. **Offset calculation**: Offset is applied from `offset_type` and `offset_value`
+4. **Tick size rounding**: Price is rounded to exchange tick size (e.g., 0.01 for ETH/USDC)
+5. **Validation**: Price is validated against exchange rules (min/max price, price precision)
 
 ### Quantity Resolution
 
 Quantity resolution happens in real-time:
 
-1. **Quantity Calculation**: Based on quantity configuration (Fixed, Indicator, BalancePercent, or Notional)
+1. **Quantity calculation**: Based on quantity configuration (Fixed, BalancePercent, or Notional)
 2. **Balance Check**: For BalancePercent or Notional, balance is checked
 3. **Step Size Rounding**: Quantity is rounded to exchange step size (e.g., 0.0001 for ETH)
 4. **Validation**: Quantity is validated against exchange rules (min order size, quantity precision)
@@ -536,7 +512,6 @@ Created → Posted → Filled → Created (if auto_repost)
 1. **Start Small**: Use small fixed quantities initially
 2. **Balance Percentages**: Use BalancePercent for position sizing relative to available capital
 3. **Notional Values**: Use Notional for fixed dollar amounts
-4. **Indicator-Based**: Use indicator-based quantities for dynamic sizing (advanced)
 
 ### Lifecycle Management
 
@@ -592,18 +567,18 @@ Created → Posted → Filled → Created (if auto_repost)
 3. Check repost conditions in configuration
 4. Check level enabled status
 
-### Indicator Not Found
+### Indicator not found / binding missing
 
-**Possible Causes**:
-- Indicator name mismatch (check exact name)
-- Indicator not configured in Indicator Engine
-- Pair-specific indicator not resolved correctly
+**Possible causes**:
+- No `level_pricing` row for the level template `id`
+- `indicator_ref` does not match any registered indicator for that pair
+- `config/indicators.json` not loaded (Mongo empty and file missing or invalid)
 
 **Solutions**:
-1. Verify indicator name matches exactly (case-sensitive)
-2. Check Indicator Engine configuration
-3. Use pair-agnostic indicator names (e.g., "sma_20") for automatic resolution
-4. Check logs for indicator resolution details
+1. Ensure `level_id` in `level_pricing` matches the level template `id` in `config/levels.json`
+2. Run `uv run indicator-validate --config ../config/indicators.json` from `python/`
+3. Confirm indicators exist for each pair (ids like `sma_20_BTCUSDT`) or use pair-agnostic refs (`sma_20`)
+4. Check startup logs for indicator registration and Mongo vs file load order
 
 ### Price/Quantity Resolution Errors
 
@@ -620,24 +595,13 @@ Created → Posted → Filled → Created (if auto_repost)
 
 ## Advanced Configuration
 
-### Indicator Integration
+### Indicator integration
 
-Levels can use any indicator from the Indicator Engine:
+1. Register indicators in `config/indicators.json` (or MongoDB `indicators` collection) — simple (`kind: "simple"`) or composite (`kind: "composite"`).
+2. Set `"price": "Binding"` on the level template in `config/levels.json`.
+3. Add a `level_pricing` entry keyed by that template's `id`.
 
-- **Technical Indicators**: SMA, EMA, RSI, MACD, Bollinger Bands, etc.
-- **Custom Indicators**: Any custom indicator configured in the Indicator Engine
-- **Pair Resolution**: Pair-agnostic indicators (e.g., "sma_20") are automatically resolved to pair-specific (e.g., "sma_20_ETHUSDC")
-
-**Example**:
-```json
-"price": {
-  "Indicator": {
-    "indicator_name": "sma_20",
-    "offset_type": "PercentBelow",
-    "offset_value": "0.5"
-  }
-}
-```
+Pair-agnostic `indicator_ref` values (e.g. `sma_20`) resolve to pair-specific indicator ids (e.g. `sma_20_BTCUSDT`) when levels are expanded per pair.
 
 ### Multiple Levels Per Pair
 
@@ -648,13 +612,13 @@ You can configure multiple levels for the same trading pair:
   {
     "id": "buy_level_1",
     "side": "Buy",
-    "price": { "Indicator": { "indicator_name": "sma_20", "offset_type": "PercentBelow", "offset_value": "0.5" } },
+    "price": "Binding",
     ...
   },
   {
     "id": "buy_level_2",
     "side": "Buy",
-    "price": { "Indicator": { "indicator_name": "sma_20", "offset_type": "PercentBelow", "offset_value": "1.0" } },
+    "price": "Binding",
     ...
   }
 ]

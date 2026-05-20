@@ -140,15 +140,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     // Initialize Indicator Service (requires MongoDB)
-    let (indicator_service, indicator_handle, indicator_calculator) = initialize_indicator_service(
-        &bot_config,
-        &mongo_client,
-        market_data_rx.resubscribe(),
-        indicator_tx,
-        &shutdown_manager,
-        &configured_pairs,
-    )
-    .await?;
+    let (indicator_service, indicator_handle, indicator_calculator, level_pricing) =
+        initialize_indicator_service(
+            &bot_config,
+            &mongo_client,
+            market_data_rx.resubscribe(),
+            indicator_tx,
+            &shutdown_manager,
+            &configured_pairs,
+        )
+        .await?;
     info!("✓ Indicator service initialized");
 
     // Initialize Exchange Engine
@@ -174,6 +175,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         market_data_rx: market_data_rx.resubscribe(),
         indicator_rx,
         indicator_service,
+        level_pricing,
         indicator_calculator,
         shutdown_manager: shutdown_manager.clone(),
         market_data_handle,

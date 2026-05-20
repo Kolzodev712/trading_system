@@ -3,11 +3,11 @@
 **Version**: 1.0  
 **Date**: December 2024  
 **Status**: Draft  
-**Prerequisites**: Proposal 04.01 (DEX Preparation) must be completed first
+**Prerequisites**: Proposal 01 (DEX Preparation) must be completed first
 
 ## Executive Summary
 
-This proposal details the **Solana-specific implementation** of the DEX integration infrastructure defined in Proposal 04.01. It focuses on **lending protocol liquidations** as the initial monetization strategy, implementing the `VenueProvider` trait for Solana and building the necessary Solana RPC/WebSocket clients, protocol decoders, and liquidation strategy.
+This proposal details the **Solana-specific implementation** of the DEX integration infrastructure defined in Proposal 01. It focuses on **lending protocol liquidations** as the initial monetization strategy, implementing the `VenueProvider` trait for Solana and building the necessary Solana RPC/WebSocket clients, protocol decoders, and liquidation strategy.
 
 ### Key Objectives
 
@@ -171,7 +171,7 @@ pub struct LendingAccountHealth {
 
 ### 2.3 MarketDataEngine Extension
 
-**Note**: `MarketDataUpdate` extensions for DEX are defined in Proposal 04.01. This section focuses on Solana-specific implementation.
+**Note**: `MarketDataUpdate` extensions for DEX are defined in Proposal 01. This section focuses on Solana-specific implementation.
 
 #### 2.3.1 Solana MarketDataDriver
 
@@ -180,7 +180,7 @@ pub struct LendingAccountHealth {
 **Implementation**:
 - Subscribe to relevant accounts via WebSocket
 - Decode account updates using protocol decoders
-- Publish `MarketDataUpdate::DexAccountHealth` events (defined in 04.01)
+- Publish `MarketDataUpdate::DexAccountHealth` events (defined in Proposal 01)
 - Handle account creation/deletion dynamically
 
 **Location**: `src/market_data_engine/src/exchanges/solana/driver.rs`
@@ -199,7 +199,7 @@ pub struct LendingAccountHealth {
 
 ### 2.4 ExchangeEngine Extension
 
-**Note**: The `VenueProvider` trait, `ExecutionInterface` trait, and `ExchangeStateManager` integration are defined in Proposal 04.01 (DEX Preparation). This section focuses on the Solana-specific implementation.
+**Note**: The `VenueProvider` trait, `ExecutionInterface` trait, and `ExchangeStateManager` integration are defined in Proposal 01 (DEX Preparation). This section focuses on the Solana-specific implementation.
 
 #### 2.4.1 SolanaVenueProvider
 
@@ -233,7 +233,7 @@ pub struct PendingExecution {
 
 **Location**: `src/exchange_engine/src/exchanges/solana/venue_provider.rs`
 
-**Note**: `TradeCommand` extensions and `ExchangeState` extensions for DEX are defined in Proposal 04.01. This section focuses on Solana-specific state structures.
+**Note**: `TradeCommand` extensions and `ExchangeState` extensions for DEX are defined in Proposal 01. This section focuses on Solana-specific state structures.
 
 ### 2.5 TradingEngine Extension
 
@@ -346,7 +346,7 @@ ExchangeStateManager::reconcile()
 
 ## 3. Implementation Phases
 
-**Prerequisites**: **Proposal 04.01 (DEX Preparation) must be completed first.** This foundational proposal defines:
+**Prerequisites**: **Proposal 01 (DEX Preparation) must be completed first.** This foundational proposal defines:
 - `VenueProvider` trait - Unified DEX interface
 - `ExecutionInterface` trait - Unified execution for CEX/DEX
 - `TradeCommand` extensions - DEX-specific command variants
@@ -354,7 +354,7 @@ ExchangeStateManager::reconcile()
 - `ExchangeStateManager` integration - Support for both CEX and DEX venues
 - `MarketDataUpdate` extensions - DEX-specific market data events
 
-This proposal (04.02) implements the Solana-specific `VenueProvider` and all Solana connectivity.
+This proposal (02) implements the Solana-specific `VenueProvider` and all Solana connectivity.
 
 ### Phase 1: Foundation (Weeks 1-3)
 
@@ -373,7 +373,7 @@ This proposal (04.02) implements the Solana-specific `VenueProvider` and all Sol
 - TUI shows Solana account health updates
 
 **Dependencies**:
-- Proposal 04.01 complete
+- Proposal 01 complete
 - Solana Rust SDK
 - RPC endpoint (public devnet for testing)
 
@@ -387,7 +387,7 @@ This proposal (04.02) implements the Solana-specific `VenueProvider` and all Sol
 3. ✅ Implement liquidation instruction builder (Marginfi)
 4. ✅ Transaction assembly (blockhash, compute budget, priority fees)
 5. ✅ Transaction submission and signature tracking
-6. ✅ Integrate with `ExchangeStateManager` (using DEX support from 04.01)
+6. ✅ Integrate with `ExchangeStateManager` (using DEX support from Proposal 01)
 
 **Deliverables**:
 - Can build and submit liquidation transactions
@@ -395,7 +395,7 @@ This proposal (04.02) implements the Solana-specific `VenueProvider` and all Sol
 - Wallet balance tracking from on-chain
 
 **Dependencies**:
-- Proposal 04.01 complete
+- Proposal 01 complete
 - Marginfi program IDL
 - Test wallet with devnet SOL
 
@@ -470,7 +470,7 @@ This proposal (04.02) implements the Solana-specific `VenueProvider` and all Sol
 ### 3.1 Prerequisites
 
 **Must Complete First**:
-- Proposal 04.01 (DEX Preparation) - All foundational infrastructure
+- Proposal 01 (DEX Preparation) - All foundational infrastructure
 
 ### 3.2 Rust Crates
 

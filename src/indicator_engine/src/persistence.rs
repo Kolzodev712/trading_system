@@ -1,5 +1,7 @@
 //! Indicator Engine persistence to MongoDB
+use crate::indicators::composite::{CompositeIndicatorConfig, IndicatorExpression};
 use crate::indicators::traits::{IndicatorConfig, PriceSource};
+use crate::level_pricing::{LevelPricingRegistry, LevelPricingRule, PricingOffsetType};
 use futures_util::StreamExt;
 use mongodb::bson::doc;
 use smol_str::SmolStr;
@@ -7,7 +9,7 @@ use trading_core::error::EngineError;
 use trading_core::persistence::mongo::{
     client::MongoClient,
     collections::INDICATORS_COLLECTION,
-    models::{CompositeIndicatorDocument, SimpleIndicatorDocument},
+    models::{CompositeIndicatorDocument, LevelPricingDocument, SimpleIndicatorDocument},
 };
 
 /// Indicator Engine persistence
@@ -147,6 +149,125 @@ impl IndicatorPersistence {
         Ok(indicators)
     }
 
+    /// Load all composite indicators from MongoDB
+    pub async fn load_all_composites(
+        &self,
+    ) -> Result<Vec<CompositeIndicatorConfig>, PersistenceError> {
+        let collection = self
+            .mongo_client
+            .get_collection::<CompositeIndicatorDocument>(INDICATORS_COLLECTION);
+
+        let mut cursor = collection
+            .find(doc! { "indicator_type": "composite" })
+            .await
+            .map_err(|e| {
+                PersistenceError::MongoError(
+                    trading_core::persistence::mongo::client::MongoError::Error(e),
+                )
+            })?;
+
+        let mut composites = Vec::new();
+        while let Some(doc) = cursor.next().await.transpose().map_err(|e| {
+            PersistenceError::MongoError(
+                trading_core::persistence::mongo::client::MongoError::Error(e),
+            )
+        })? {
+            let expression: IndicatorExpression = serde_json::from_value(doc.expression)?;
+            composites.push(CompositeIndicatorConfig {
+                id: SmolStr::new(&doc.indicator_id),
+                name: SmolStr::new(&doc.name),
+                pair: SmolStr::new(&doc.pair),
+                expression,
+                dependencies: doc.dependencies.into_iter().map(SmolStr::new).collect(),
+            });
+        }
+
+        Ok(composites)
+    }
+
+    /// Load level pricing bindings from MongoDB
+    pub async fn load_level_pricing(&self) -> Result<LevelPricingRegistry, PersistenceError> {
+        let collection = self
+            .mongo_client
+            .get_collection::<LevelPricingDocument>(INDICATORS_COLLECTION);
+
+        let mut cursor = collection
+            .find(doc! { "indicator_type": "level_pricing" })
+            .await
+            .map_err(|e| {
+                PersistenceError::MongoError(
+                    trading_core::persistence::mongo::client::MongoError::Error(e),
+                )
+            })?;
+
+        let mut rules = Vec::new();
+        while let Some(doc) = cursor.next().await.transpose().map_err(|e| {
+            PersistenceError::MongoError(
+                trading_core::persistence::mongo::client::MongoError::Error(e),
+            )
+        })? {
+            let offset_type = parse_pricing_offset_type(&doc.offset_type)?;
+            rules.push(LevelPricingRule {
+                level_id: doc.level_id,
+                indicator_ref: doc.indicator_ref,
+                offset_type,
+                offset_value: doc.offset_value,
+            });
+        }
+
+        LevelPricingRegistry::from_rules(rules).map_err(|e| {
+            PersistenceError::EngineError(EngineError::CustomError(anyhow::anyhow!(e)))
+        })
+    }
+
+    /// Upsert level pricing bindings to MongoDB
+    pub async fn save_level_pricing_rules(
+        &self,
+        rules: &[LevelPricingRule],
+    ) -> Result<(), PersistenceError> {
+        let collection = self
+            .mongo_client
+            .get_collection::<LevelPricingDocument>(INDICATORS_COLLECTION);
+
+        let now = chrono::Utc::now().timestamp() as u64;
+        for rule in rules {
+            let document_id = format!("level_pricing:{}", rule.level_id);
+            let doc = LevelPricingDocument {
+                document_id: document_id.clone(),
+                indicator_type: "level_pricing".to_string(),
+                level_id: rule.level_id.clone(),
+                indicator_ref: rule.indicator_ref.clone(),
+                offset_type: format!("{:?}", rule.offset_type),
+                offset_value: rule.offset_value,
+                created_at: now,
+                updated_at: now,
+            };
+
+            let filter = doc! { "_id": &document_id };
+            let update_doc = mongodb::bson::to_document(&doc).map_err(|e| {
+                PersistenceError::EngineError(EngineError::CustomError(anyhow::anyhow!(
+                    "BSON conversion error: {}",
+                    e
+                )))
+            })?;
+            let update = doc! { "$set": update_doc };
+
+            let options = mongodb::options::UpdateOptions::builder()
+                .upsert(true)
+                .build();
+            collection
+                .update_one(filter, update)
+                .with_options(options)
+                .await
+                .map_err(|e| {
+                    PersistenceError::MongoError(
+                        trading_core::persistence::mongo::client::MongoError::Error(e),
+                    )
+                })?;
+        }
+        Ok(())
+    }
+
     /// Load indicator by ID
     pub async fn load_indicator(
         &self,
@@ -234,5 +355,17 @@ impl IndicatorPersistence {
                 anyhow::anyhow!("Unknown price source: {}", source),
             ))),
         }
+    }
+}
+
+fn parse_pricing_offset_type(s: &str) -> Result<PricingOffsetType, PersistenceError> {
+    match s {
+        "Absolute" => Ok(PricingOffsetType::Absolute),
+        "Percent" => Ok(PricingOffsetType::Percent),
+        "PercentBelow" => Ok(PricingOffsetType::PercentBelow),
+        "PercentAbove" => Ok(PricingOffsetType::PercentAbove),
+        _ => Err(PersistenceError::EngineError(EngineError::CustomError(
+            anyhow::anyhow!("Unknown pricing offset type: {}", s),
+        ))),
     }
 }

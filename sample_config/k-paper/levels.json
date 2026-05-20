@@ -9,13 +9,7 @@
         "type": "Fixed",
         "value": "0.002"
       },
-      "price": {
-        "Indicator": {
-          "indicator_name": "sma_20",
-          "offset_type": "PercentBelow",
-          "offset_value": "0.5"
-        }
-      },
+      "price": "Binding",
       "risk": {
         "max_position": "0.01",
         "max_orders": 2,
@@ -40,13 +34,7 @@
         "type": "Fixed",
         "value": "0.002"
       },
-      "price": {
-        "Indicator": {
-          "indicator_name": "sma_20",
-          "offset_type": "PercentAbove",
-          "offset_value": "0.5"
-        }
-      },
+      "price": "Binding",
       "risk": {
         "max_position": "0.01",
         "max_orders": 2

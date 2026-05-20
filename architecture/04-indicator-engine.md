@@ -201,6 +201,27 @@ MarketDataStateManager (via broadcast channel) → Indicator Engine
 }
 ```
 
+## Configuration sources
+
+Indicators and level pricing are defined outside the engine and registered at startup (see `src/indicator_engine/src/config.rs`, `level_pricing.rs`, `service.rs`).
+
+| Source | Contents |
+|--------|----------|
+| MongoDB `indicators` collection (optional) | Indicator docs + `level_pricing` (`indicator_type: "level_pricing"`) |
+| `config/indicators.json` | `version`, `indicators[]`, `level_pricing[]` |
+
+**Load order**: Mongo first, then JSON file. Duplicate indicator **ids**: Mongo wins. If Mongo already registered indicators, the file is not used to register more indicators; file `level_pricing` may still apply when Mongo has no pricing rules.
+
+**Build-time generation** (from `python/`):
+
+```bash
+cd python && uv sync
+uv run indicator-generate --pairs BTCUSDT,ETHUSDT --output ../config/indicators.json
+uv run indicator-validate --config ../config/indicators.json
+```
+
+Simple indicators use ids `{name}_{period}_{pair}` (e.g. `sma_20_BTCUSDT`). Levels reference pricing via `"price": "Binding"` in `config/levels.json` and matching `level_id` in `level_pricing`; `indicator_ref` may be pair-agnostic (`sma_20`) and is resolved per pair in the trading engine.
+
 ## Error Handling
 
 - **Channel Lag**: Handled gracefully with warnings

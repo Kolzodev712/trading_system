@@ -70,6 +70,23 @@ build-cli:
     # Build CLI binary in release mode
     cargo build --release --package cli --bin trading-cli
 
+# Indicator config (pairs must match config/indicators.json)
+indicator-pairs := "BTCUSDT,ETHUSDT"
+
+generate-indicators:
+    # Regenerate config/indicators.json from default templates (no Mongo)
+    cd python && uv sync --quiet && uv run indicator-generate --pairs {{indicator-pairs}} --output ../config/indicators.json --no-mongo
+
+indicator-validate:
+    cd python && uv sync --quiet && uv run indicator-validate --config ../config/indicators.json
+
+indicator-config-check: generate-indicators
+    # Fail if committed indicators.json drifts from generator output
+    git diff --exit-code config/indicators.json
+
+indicator-test:
+    cd python && uv sync --quiet && uv run --with pytest pytest indicator_config_generator/tests -q
+
 # Full CI check (what CI runs)
 ci:
     # Run all CI checks locally
@@ -78,6 +95,9 @@ ci:
     just check
     just test
     just test-integration
+    just indicator-validate
+    just indicator-config-check
+    just indicator-test
 
 # Quick check (format, clippy, test)
 quick:

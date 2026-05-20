@@ -24,30 +24,37 @@ pip install uv
 ## Setup
 
 ```bash
-# Install all dependencies
-uv sync
+cd python
 
-# Install with dev dependencies
-uv sync --dev
+# Install workspace (root + indicator_config_generator member)
+uv sync
+```
+
+If `uv run indicator-validate` is not found, sync again after pulling latest `pyproject.toml`, or run:
+
+```bash
+uv run --package indicator-config-generator indicator-validate --help
 ```
 
 ## Usage
 
+Run from the **`python/`** directory; use `../config/...` for repo-root config paths.
+
 ### Indicator Config Generator
 
 ```bash
-# Generate indicators
-uv run indicator-generate --pairs BTCUSDT ETHUSDT --output ../../config/indicators.json
+# Generate indicators (+ Mongo if config/bot.json has mongo settings)
+uv run indicator-generate --pairs BTCUSDT,ETHUSDT --output ../config/indicators.json
 
 # Validate config
-uv run indicator-validate --config ../../config/indicators.json
+uv run indicator-validate --config ../config/indicators.json
 ```
 
 ### Strategy DSL
 
 ```bash
 # Compile strategy to IR
-uv run strategy-compile --input strategy.py --output ../../config/strategies/strategy.json
+uv run strategy-compile --input strategy.py --output ../config/strategies/strategy.json
 
 # Validate strategy
 uv run strategy-validate --input strategy.py
@@ -84,7 +91,5 @@ uv add package-name
 4. **Modern**: Uses PEP 621 standard (pyproject.toml)
 5. **Centralized**: Dependencies managed in one place
 
-## Migration from indicator_config_generator/
-
-The old `indicator_config_generator/` directory will be moved here when implementation begins.
+See [indicator_config_generator/README.md](indicator_config_generator/README.md) for defaults, Mongo sync, and JSON schema.
 

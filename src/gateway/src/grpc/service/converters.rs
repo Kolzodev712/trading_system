@@ -26,14 +26,9 @@ pub fn order_type_to_string(order_type: &OrderTypeConfig) -> &'static str {
 pub fn format_price_config(price: &trading_engine::levels::config::PriceConfig) -> String {
     match price {
         trading_engine::levels::config::PriceConfig::Fixed(d) => format!("Fixed({})", d),
-        trading_engine::levels::config::PriceConfig::Indicator {
-            indicator_name,
-            offset_type,
-            offset_value,
-        } => format!(
-            "Indicator({}, {:?}, {})",
-            indicator_name, offset_type, offset_value
-        ),
+        trading_engine::levels::config::PriceConfig::Binding => {
+            "Binding(indicators_config)".to_string()
+        }
         trading_engine::levels::config::PriceConfig::BestBid { offset } => {
             format!("BestBid({})", offset)
         }
@@ -49,14 +44,6 @@ pub fn format_price_config(price: &trading_engine::levels::config::PriceConfig) 
 pub fn format_quantity_config(quantity: &trading_engine::levels::config::QuantityConfig) -> String {
     match quantity {
         trading_engine::levels::config::QuantityConfig::Fixed(d) => format!("Fixed({})", d),
-        trading_engine::levels::config::QuantityConfig::Indicator {
-            indicator_name,
-            multiplier,
-            offset,
-        } => format!(
-            "Indicator({}, mul:{:?}, off:{:?})",
-            indicator_name, multiplier, offset
-        ),
         trading_engine::levels::config::QuantityConfig::BalancePercent(p) => {
             format!("BalancePercent({})", p)
         }

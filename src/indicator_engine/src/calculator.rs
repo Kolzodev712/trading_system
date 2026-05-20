@@ -1,4 +1,5 @@
 use crate::data::{IndicatorValue, PricePoint};
+use crate::indicators::composite::{CompositeIndicator, CompositeIndicatorConfig};
 use crate::indicators::traits::{Indicator, IndicatorConfig, IndicatorError};
 use crate::indicators::{ExponentialMovingAverage, SimpleMovingAverage};
 use parking_lot::RwLock;
@@ -41,6 +42,9 @@ impl CacheEntry {
 
 pub struct IndicatorCalculator {
     indicators: Arc<RwLock<HashMap<SmolStr, Box<dyn Indicator + Send + Sync>>>>,
+    composites: Arc<RwLock<HashMap<SmolStr, CompositeIndicator>>>,
+    /// dependency_id -> composite indicator ids
+    dependency_index: Arc<RwLock<HashMap<SmolStr, Vec<SmolStr>>>>,
     /// Cache: indicator_id -> CacheEntry (current value + history)
     cache: Arc<RwLock<HashMap<SmolStr, CacheEntry>>>,
     /// Index: pair -> Vec<indicator_id> (for efficient pair-based queries)
@@ -59,6 +63,8 @@ impl IndicatorCalculator {
     pub fn new() -> Self {
         Self {
             indicators: Arc::new(RwLock::new(HashMap::new())),
+            composites: Arc::new(RwLock::new(HashMap::new())),
+            dependency_index: Arc::new(RwLock::new(HashMap::new())),
             cache: Arc::new(RwLock::new(HashMap::new())),
             pair_index: Arc::new(RwLock::new(HashMap::new())),
             name_index: Arc::new(RwLock::new(HashMap::new())),
@@ -89,6 +95,50 @@ impl IndicatorCalculator {
         drop(indicators);
 
         // Update indices (release indicators lock first)
+        {
+            let mut pair_index = self.pair_index.write();
+            pair_index.entry(pair).or_default().push(id.clone());
+        }
+        {
+            let mut name_index = self.name_index.write();
+            name_index.entry(name).or_default().push(id);
+        }
+
+        Ok(())
+    }
+
+    /// Register a composite indicator (depends on simple indicators only).
+    pub fn register_composite(
+        &self,
+        config: CompositeIndicatorConfig,
+    ) -> Result<(), IndicatorError> {
+        let id = config.id.clone();
+        let pair = config.pair.clone();
+        let name = config.name.clone();
+
+        let simple_ids: std::collections::HashSet<SmolStr> =
+            self.indicators.read().keys().cloned().collect();
+        config
+            .validate_dependencies(&simple_ids)
+            .map_err(IndicatorError::CalculationError)?;
+
+        let deps = config.dependencies.clone();
+        let composite = CompositeIndicator::new(config)?;
+        {
+            let mut composites = self.composites.write();
+            composites.insert(id.clone(), composite);
+        }
+
+        {
+            let mut dependency_index = self.dependency_index.write();
+            for dep_id in &deps {
+                dependency_index
+                    .entry(dep_id.clone())
+                    .or_default()
+                    .push(id.clone());
+            }
+        }
+
         {
             let mut pair_index = self.pair_index.write();
             pair_index.entry(pair).or_default().push(id.clone());
@@ -209,7 +259,73 @@ impl IndicatorCalculator {
             }
         }
 
+        let composite_updates = self.propagate_composite_updates(&updated_values)?;
+        updated_values.extend(composite_updates);
+
         Ok(updated_values)
+    }
+
+    fn propagate_composite_updates(
+        &self,
+        simple_updates: &[IndicatorValue],
+    ) -> Result<Vec<IndicatorValue>, IndicatorError> {
+        let mut out = Vec::new();
+
+        for update in simple_updates {
+            let dependent_ids: Vec<SmolStr> = {
+                let dependency_index = self.dependency_index.read();
+                dependency_index
+                    .get(&update.indicator_id)
+                    .cloned()
+                    .unwrap_or_default()
+            };
+
+            for composite_id in dependent_ids {
+                let (is_ready, value_opt, name, period) = {
+                    let mut composites = self.composites.write();
+                    let composite = composites.get_mut(&composite_id).ok_or_else(|| {
+                        IndicatorError::CalculationError(SmolStr::new("Composite not found"))
+                    })?;
+                    composite.update_dependency(&update.indicator_id, update.value);
+                    let is_ready = composite.is_ready();
+                    let value_opt = if is_ready { composite.value() } else { None };
+                    let name = composite.name().to_string();
+                    let period = composite.period();
+                    (is_ready, value_opt, name, period)
+                };
+
+                if is_ready {
+                    if let Some(value) = value_opt {
+                        let indicator_value = IndicatorValue {
+                            indicator_id: composite_id.clone(),
+                            indicator_name: SmolStr::new(&name),
+                            pair: update.pair.clone(),
+                            value,
+                            timestamp: update.timestamp,
+                            period,
+                            is_composite: true,
+                        };
+
+                        let indicator_value_for_cache = indicator_value.clone();
+                        {
+                            let mut cache = self.cache.write();
+                            match cache.get_mut(&composite_id) {
+                                Some(entry) => entry.update(indicator_value_for_cache),
+                                None => {
+                                    cache.insert(
+                                        composite_id.clone(),
+                                        CacheEntry::new(indicator_value_for_cache),
+                                    );
+                                }
+                            }
+                        }
+                        out.push(indicator_value);
+                    }
+                }
+            }
+        }
+
+        Ok(out)
     }
 
     /// Get cached indicator value (latest)
@@ -297,15 +413,31 @@ impl IndicatorCalculator {
         // Get indicator config to remove from indices
         let pair_opt = {
             let indicators = self.indicators.read();
-            indicators
-                .get(&id_smol)
-                .map(|ind| (ind.pair().to_string(), ind.name().to_string()))
+            if let Some(ind) = indicators.get(&id_smol) {
+                Some((ind.pair().to_string(), ind.name().to_string()))
+            } else {
+                let composites = self.composites.read();
+                composites
+                    .get(&id_smol)
+                    .map(|ind| (ind.pair().to_string(), ind.name().to_string()))
+            }
         };
 
-        // Remove from indicators
+        // Remove from indicators / composites
         {
             let mut indicators = self.indicators.write();
             indicators.remove(&id_smol);
+        }
+        {
+            let mut composites = self.composites.write();
+            composites.remove(&id_smol);
+        }
+        {
+            let mut dependency_index = self.dependency_index.write();
+            dependency_index.retain(|_, ids| {
+                ids.retain(|id| id != &id_smol);
+                !ids.is_empty()
+            });
         }
 
         // Remove from cache
@@ -351,13 +483,21 @@ impl IndicatorCalculator {
     /// Get all registered indicator IDs
     pub fn get_indicator_ids(&self) -> Vec<SmolStr> {
         let indicators = self.indicators.read();
-        indicators.keys().cloned().collect()
+        let composites = self.composites.read();
+        let mut ids: Vec<SmolStr> = indicators.keys().cloned().collect();
+        ids.extend(composites.keys().cloned());
+        ids
     }
 
     /// Check if an indicator is registered
     pub fn has_indicator(&self, indicator_id: &str) -> bool {
+        let id = SmolStr::new(indicator_id);
         let indicators = self.indicators.read();
-        indicators.contains_key(&SmolStr::new(indicator_id))
+        if indicators.contains_key(&id) {
+            return true;
+        }
+        let composites = self.composites.read();
+        composites.contains_key(&id)
     }
 
     /// Check if any indicators are registered for a pair

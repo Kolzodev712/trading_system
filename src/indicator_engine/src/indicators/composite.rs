@@ -107,11 +107,18 @@ pub struct CompositeIndicatorConfig {
 impl CompositeIndicatorConfig {
     /// Validate that all dependencies are simple indicators (not composite)
     /// and that there are no circular dependencies
-    pub fn validate_dependencies(&self, _all_indicators: &[SmolStr]) -> Result<(), SmolStr> {
-        // TODO: Implement validation when composite indicators are fully implemented
-        // - Check that all dependencies exist
-        // - Check that dependencies are simple indicators (not composite)
-        // - Check for circular dependencies
+    pub fn validate_dependencies(
+        &self,
+        registered_simple_ids: &std::collections::HashSet<SmolStr>,
+    ) -> Result<(), SmolStr> {
+        for dep in &self.dependencies {
+            if !registered_simple_ids.contains(dep) {
+                return Err(SmolStr::new(format!(
+                    "composite {}: dependency {} is not a registered simple indicator",
+                    self.id, dep
+                )));
+            }
+        }
         Ok(())
     }
 

@@ -2,16 +2,16 @@
 
 > **Note**: Architectural decisions and feature roadmaps are documented in the **`proposals/`** directory. Significant changes and implementation tracking can also be recorded in **`design-log/`** (see `.cursor/rules/design-log.mdc`).
 >
-> **Current proposals** (in `proposals/`):
-> - **01-indicator-config-generator.md** - Indicator configuration generation from Python
-> - **02-strategy-engine.md** - Strategy DSL and IR interpreter
-> - **03-dex-preparation.md** - DEX foundational infrastructure
-> - **04-solana-integration.md** - Solana DEX implementation
-> - **05-future-enhancements.md** - Future enhancements (OCO, TWAP, etc.)
-> - **06-private-crate-registry.md** - Private crate distribution
-> - **07-hft-subsystem.md** - High-frequency trading daemon
+> **Current proposals** (in `proposals/`, in roadmap order):
+> - **01-dex-preparation.md** - DEX foundational infrastructure
+> - **02-solana-integration.md** - Solana DEX implementation
+> - **03-strategy-engine.md** - Strategy DSL and IR interpreter
+> - **04-future-enhancements.md** - Future enhancements (OCO, TWAP, etc.)
+> - **05-private-crate-registry.md** - Private crate distribution
+> - **06-hft-subsystem.md** - High-frequency trading daemon
 >
-> **Completed (no proposal file in repo)**:
+> **Completed** (design log / docs; proposal removed when shipped):
+> - Indicator config generator → [design log 001](.cursor/design-log/001-indicator-config-generator.md), `python/indicator_config_generator/`
 > - Futures integration, Bybit integration → implemented in `exchange_engine` (Binance + Bybit)
 > - Traceability/observability → `libs/trading_trace`
 > - Communication layer / gateway → `src/gateway` (gRPC), `libs/trading_networking` (Zenoh events/commands)
@@ -29,13 +29,13 @@
 - **Risk Management** → Proposals 01, 10 (circuit breakers, kill switches)
 - **Market Data** → Proposals 01, 02, 03 (funding rate, mark price, etc.)
 - **Observability** → ✅ **COMPLETED** - Implemented as `libs/trading_trace` library (see [README](libs/trading_trace/README.md))
-- **Web UI Architecture** → Proposal 04 (Gateway layer) ✅ **Implemented**: Gateway crate for gRPC, trading_networking for Zenoh events/commands
+- **Web UI / gRPC / Zenoh** → ✅ **Implemented**: `src/gateway`, `libs/trading_networking` (not a numbered proposal)
 - **HFT System** → Proposal 10 (complete HFT daemon design)
-- **DEX Integration** → Proposals 03, 04 (Solana DEX)
+- **DEX Integration** → Proposals 01, 02 (DEX prep + Solana)
 
 ### 🔮 Future Enhancements (Not Yet in Proposals)
 
-Planned but not yet fully detailed; can be new proposals or extensions (see **05-future-enhancements.md**):
+Planned but not yet fully detailed; can be new proposals or extensions (see **04-future-enhancements.md**):
 
 - **OCO, TWAP, VWAP Orders** - Advanced order types
 - **Commercial Features** - Multi-tenancy, licensing, billing (separate concern)

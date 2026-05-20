@@ -1,5 +1,5 @@
 //! Redis client for pub/sub (kept for backward compatibility during migration)
-//! Note: This will be replaced by channels in Proposal 04
+//! Note: Legacy Redis path; live system uses broadcast channels (see gateway / trading_networking)
 use crate::error::EngineError;
 use crate::types::market_data::{StructuredOrderbook, StructuredPublicTrade};
 use redis::{AsyncCommands, Client};

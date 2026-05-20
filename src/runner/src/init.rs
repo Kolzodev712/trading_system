@@ -344,6 +344,7 @@ pub async fn initialize_indicator_service(
         Arc<Mutex<IndicatorService>>,
         JoinHandle<()>,
         Arc<indicator_engine::calculator::IndicatorCalculator>,
+        Arc<parking_lot::RwLock<indicator_engine::LevelPricingRegistry>>,
     ),
     Box<dyn std::error::Error>,
 > {
@@ -363,106 +364,82 @@ pub async fn initialize_indicator_service(
         .await
         .initialize(indicator_market_data_rx, indicator_tx, 1);
 
-    let loaded_count = match indicator_service.lock().await.load_from_mongo().await {
+    let mongo_count = match indicator_service.lock().await.load_from_mongo().await {
         Ok(count) => {
             info!("Loaded {} indicator(s) from MongoDB", count);
             count
         }
         Err(e) => {
             warn!(
-                "Failed to load indicators from MongoDB: {}. System will continue without pre-configured indicators. You can add indicators via the API or they will be created on-demand.",
+                "Failed to load indicators from MongoDB: {}. Continuing with config file fallback.",
                 e
             );
             0
         }
     };
 
-    if loaded_count == 0 {
-        warn!(
-            "WARNING: No indicators loaded from MongoDB. The database may be empty or indicators haven't been configured yet. System will continue and indicators can be created on-demand."
-        );
-        warn!(
-            "To add indicators, use the indicator management API or ensure indicators are configured in MongoDB collection 'indicators'."
-        );
-        warn!(
-            "The system will continue with default indicators (SMA, EMA), but trading may be limited without proper indicator configuration."
-        );
-    } else {
+    let config_path = std::path::Path::new("config/indicators.json");
+    let file_count = if mongo_count > 0 {
         info!(
-            "Successfully loaded {} indicator(s) from MongoDB",
-            loaded_count
+            "Skipping indicator registration from {} (MongoDB is source of truth for indicators)",
+            config_path.display()
+        );
+        let pricing_count = {
+            let svc = indicator_service.lock().await;
+            if svc.level_pricing_registry().read().is_empty() {
+                match svc.load_level_pricing_from_config(config_path) {
+                    Ok(n) => {
+                        info!(
+                            "Loaded {} level pricing binding(s) from {}",
+                            n,
+                            config_path.display()
+                        );
+                        n
+                    }
+                    Err(indicator_engine::service::ServiceError::ConfigNotFound(_)) => 0,
+                    Err(e) => {
+                        warn!("Failed to load level pricing from file: {}", e);
+                        0
+                    }
+                }
+            } else {
+                svc.level_pricing_registry().read().len()
+            }
+        };
+        let _ = pricing_count;
+        0
+    } else {
+        match indicator_service.lock().await.load_from_config(config_path) {
+            Ok(count) => {
+                info!(
+                    "Loaded {} indicator(s) and level pricing from {}",
+                    count,
+                    config_path.display()
+                );
+                count
+            }
+            Err(indicator_engine::service::ServiceError::ConfigNotFound(path)) => {
+                warn!(
+                    "Indicator config file not found at {}. Generate with: cd python && uv run indicator-generate --pairs <PAIRS> --output ../config/indicators.json",
+                    path
+                );
+                0
+            }
+            Err(e) => {
+                warn!("Failed to load indicators from config file: {}", e);
+                0
+            }
+        }
+    };
+
+    if mongo_count == 0 && file_count == 0 {
+        warn!(
+            "No indicators loaded from MongoDB or {}. Levels with price Binding will not resolve until indicators are configured.",
+            config_path.display()
         );
     }
 
-    info!(
-        "Registering default indicators (SMA, EMA) for {} configured pair(s): {:?}",
-        configured_pairs.len(),
-        configured_pairs
-    );
-
-    let mut registered_count = 0;
-    for pair in configured_pairs {
-        let pair_str = pair.convert_to_smolstr();
-        info!("Processing pair: {} (formatted as: {})", pair, pair_str);
-
-        let sma_id = smol_str::SmolStr::new(format!("sma_20_{}", pair_str));
-        let sma_config = indicator_engine::indicators::IndicatorConfig {
-            id: sma_id.clone(),
-            name: smol_str::SmolStr::new("SMA"),
-            pair: pair_str.clone(),
-            period: 20,
-            source: indicator_engine::indicators::PriceSource::Close,
-        };
-        match indicator_service
-            .lock()
-            .await
-            .register_indicator(sma_config.clone())
-            .await
-        {
-            Ok(_) => {
-                info!(
-                    "✓ Registered SMA indicator: {} for pair: {}",
-                    sma_id, pair_str
-                );
-                registered_count += 1;
-            }
-            Err(e) => {
-                warn!("✗ Failed to register SMA indicator for {}: {e}", pair_str);
-            }
-        }
-
-        let ema_id = smol_str::SmolStr::new(format!("ema_12_{}", pair_str));
-        let ema_config = indicator_engine::indicators::IndicatorConfig {
-            id: ema_id.clone(),
-            name: smol_str::SmolStr::new("EMA"),
-            pair: pair_str.clone(),
-            period: 12,
-            source: indicator_engine::indicators::PriceSource::Close,
-        };
-        match indicator_service
-            .lock()
-            .await
-            .register_indicator(ema_config.clone())
-            .await
-        {
-            Ok(_) => {
-                info!(
-                    "✓ Registered EMA indicator: {} for pair: {}",
-                    ema_id, pair_str
-                );
-                registered_count += 1;
-            }
-            Err(e) => {
-                warn!("✗ Failed to register EMA indicator for {}: {e}", pair_str);
-            }
-        }
-    }
-
-    info!(
-        "Successfully registered {} indicator(s) for {} pair(s)",
-        registered_count,
-        configured_pairs.len()
-    );
+    let _ = configured_pairs;
 
     let total_indicators = indicator_service.lock().await.get_indicator_count();
     info!(
@@ -471,9 +448,9 @@ pub async fn initialize_indicator_service(
         configured_pairs.len()
     );
 
-    let indicator_calculator = {
+    let (indicator_calculator, level_pricing) = {
         let service = indicator_service.lock().await;
-        service.calculator()
+        (service.calculator(), service.level_pricing_registry())
     };
 
     let mut shutdown_rx = shutdown_manager.subscribe();
@@ -496,6 +473,7 @@ pub async fn initialize_indicator_service(
             }
         }),
         indicator_calculator,
+        level_pricing,
     ))
 }
 

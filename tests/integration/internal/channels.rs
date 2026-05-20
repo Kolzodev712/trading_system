@@ -2,7 +2,7 @@
 
 use rust_decimal_macros::dec;
 use smol_str::SmolStr;
-use trading_core::channels::exchange::exchange_update_channel;
+use trading_core::channels::exchange::cex_venue_update_channel;
 use trading_core::channels::indicators::indicator_update_channel;
 use trading_core::channels::market_data::market_data_update_channel;
 use trading_core::types::common::{Instrument, InstrumentType, OrderId, OrderStatus, Pair, Side};
@@ -54,7 +54,7 @@ async fn test_indicator_channel() {
 
 #[tokio::test]
 async fn test_exchange_channel() {
-    let (tx, mut rx) = exchange_update_channel(10);
+    let (tx, mut rx) = cex_venue_update_channel(10);
 
     let order = Order {
         order_id: OrderId::new("test".into()),
@@ -69,7 +69,7 @@ async fn test_exchange_channel() {
         filled_amount: dec!(0),
     };
 
-    tx.send(trading_core::channels::exchange::ExchangeUpdate::Order {
+    tx.send(trading_core::channels::exchange::CexVenueUpdate::Order {
         order,
         trace_context: None,
     })

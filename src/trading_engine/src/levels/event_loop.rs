@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio::time::{interval, Duration};
-use trading_core::channels::exchange::{ExchangeUpdate, ExchangeUpdateReceiver};
+use trading_core::channels::exchange::{CexVenueUpdate, CexVenueUpdateReceiver};
 use trading_core::channels::market_data::{MarketDataUpdate, MarketDataUpdateReceiver};
 use trading_core::error::EngineError;
 use trading_core::traits::TradingClient;
@@ -28,7 +28,7 @@ pub struct LevelBasedEventLoop {
     trading_client: Arc<RwLock<dyn TradingClient<OrderRequest>>>,
     trading_state_manager: Arc<crate::state::manager::TradingStateManager>,
     market_data_rx: MarketDataUpdateReceiver,
-    exchange_update_rx: ExchangeUpdateReceiver,
+    exchange_update_rx: CexVenueUpdateReceiver,
     pairs: Vec<Pair>,
     reconciliation_interval_secs: u64,
     /// Last seen prices for periodic risk checks (one per pair)
@@ -46,7 +46,7 @@ impl LevelBasedEventLoop {
         indicator_subscriber: Arc<RwLock<IndicatorSubscriber>>,
         trading_client: Arc<RwLock<dyn TradingClient<OrderRequest>>>,
         market_data_rx: MarketDataUpdateReceiver,
-        exchange_update_rx: ExchangeUpdateReceiver,
+        exchange_update_rx: CexVenueUpdateReceiver,
         pairs: Vec<Pair>,
         trading_state_manager: Arc<crate::state::manager::TradingStateManager>,
         reconciliation_interval_secs: u64,
@@ -139,7 +139,7 @@ impl LevelBasedEventLoop {
                 // Handle exchange order updates (fills, cancels) so levels clear active_orders
                 exchange_update = exchange_update_rx.recv() => {
                     match exchange_update {
-                        Ok(ExchangeUpdate::Order { order, .. }) => {
+                        Ok(CexVenueUpdate::Order { order, .. }) => {
                             if let Err(e) = self.handle_execution_report(&order).await {
                                 tracing::error!("Error handling execution report: {}", e);
                             }
@@ -180,6 +180,7 @@ impl LevelBasedEventLoop {
                             // Ignore trades for now
                             tracing::debug!("Received trade update (ignored)");
                         }
+                        Ok(MarketDataUpdate::DexAccountHealth { .. }) => {}
                         Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
                             tracing::warn!(
                                 "Market data receiver lagged, skipped {skipped} messages. This may indicate slow processing."

@@ -17,7 +17,8 @@ async fn test_strategy_monitoring_with_position() {
     trading_state.update_position(pair.clone(), dec!(0.0015), dec!(50000));
 
     // Create exchange state manager first (needed for trading state manager)
-    let (exchange_tx, exchange_rx) = trading_core::channels::exchange::exchange_update_channel(100);
+    let (exchange_tx, exchange_rx) =
+        trading_core::channels::exchange::cex_venue_update_channel(100);
     let symbol_registry = Arc::new(SymbolRegistry::new());
     let trading_client: Arc<
         tokio::sync::RwLock<
@@ -73,6 +74,8 @@ async fn test_strategy_monitoring_with_position() {
         strategy_manager: None,
         instrument_type: trading_core::types::common::InstrumentType::Spot,
         exchange: "Test".to_string(),
+        dex_state_manager: None,
+        dex_venue_label: None,
     };
 
     // Collect monitoring data
@@ -93,7 +96,8 @@ async fn test_strategy_monitoring_with_position() {
 #[tokio::test]
 async fn test_strategy_monitoring_without_position() {
     // Create exchange state manager first
-    let (exchange_tx, exchange_rx) = trading_core::channels::exchange::exchange_update_channel(100);
+    let (exchange_tx, exchange_rx) =
+        trading_core::channels::exchange::cex_venue_update_channel(100);
     let symbol_registry = Arc::new(SymbolRegistry::new());
     let trading_client: Arc<
         tokio::sync::RwLock<
@@ -143,6 +147,8 @@ async fn test_strategy_monitoring_without_position() {
         strategy_manager: None,
         instrument_type: trading_core::types::common::InstrumentType::Spot,
         exchange: "Test".to_string(),
+        dex_state_manager: None,
+        dex_venue_label: None,
     };
 
     // Collect monitoring data
@@ -184,7 +190,8 @@ async fn test_strategy_monitoring_with_active_orders() {
     trading_state.add_order(order);
 
     // Create exchange state manager first
-    let (exchange_tx, exchange_rx) = trading_core::channels::exchange::exchange_update_channel(100);
+    let (exchange_tx, exchange_rx) =
+        trading_core::channels::exchange::cex_venue_update_channel(100);
     let symbol_registry = Arc::new(SymbolRegistry::new());
     let trading_client: Arc<
         tokio::sync::RwLock<
@@ -238,6 +245,8 @@ async fn test_strategy_monitoring_with_active_orders() {
         strategy_manager: None,
         instrument_type: trading_core::types::common::InstrumentType::Spot,
         exchange: "Test".to_string(),
+        dex_state_manager: None,
+        dex_venue_label: None,
     };
 
     // Collect monitoring data

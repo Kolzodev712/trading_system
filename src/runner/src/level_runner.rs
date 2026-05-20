@@ -82,7 +82,7 @@ pub async fn level_runner(
     let config_min_notional = rust_decimal::Decimal::new(5, 0); // 5.0
 
     // Create TradingControl for enable/disable trading
-    let trading_control = Arc::new(TradingControl::new(services.trading_client.clone()));
+    let trading_control = Arc::new(TradingControl::new(services.trading_client()?.clone()));
 
     // Get instrument type from config (defaults to Spot if not specified)
     let instrument_type = bot_config
@@ -91,7 +91,7 @@ pub async fn level_runner(
 
     let level_executor = Arc::new(
         LevelExecutor::new(
-            services.trading_client.clone(),
+            services.trading_client()?.clone(),
             services.asset_service.clone(),
             bot_config.exchange_engine.exchange.clone(),
             instrument_type.clone(),
@@ -120,9 +120,12 @@ pub async fn level_runner(
     use crate::grpc::service::TradingCliServiceImpl;
     let grpc_service = TradingCliServiceImpl::new(
         level_manager.clone(),
-        services.trading_state_manager.clone(),
-        services.trading_client.clone(),
-        services.exchange_state_manager.clone(),
+        services
+            .trading_state_manager
+            .clone()
+            .ok_or("Trading state requires venue.mode \"cex\"")?,
+        services.trading_client()?.clone(),
+        services.exchange_state_manager()?.clone(),
         services.market_data_state_manager.clone(),
         services.indicator_service.clone(),
         services.indicator_calculator.clone(),
@@ -130,21 +133,29 @@ pub async fn level_runner(
     )
     .with_instrument_type(instrument_type.clone())
     .with_exchange(format!("{:?}", bot_config.exchange_engine.exchange));
+    let grpc_service = if let Some(dex_sm) = services.venue.dex_state_manager() {
+        grpc_service.with_dex_state_manager(dex_sm, format!("{:?}", services.venue.mode()))
+    } else {
+        grpc_service
+    };
 
     let grpc_server = TradingGrpcServer::from_service(grpc_service);
     let grpc_handle = grpc_server.start(grpc_addr).await?;
     info!("gRPC server started on {}", grpc_addr);
 
     let (hot_tx, hot_rx) = hot_event_channel(bot_config.channels.market_data_capacity);
-    let cold_bus = cold_event_bus(bot_config.channels.exchange_update_capacity);
+    let cold_bus = cold_event_bus(bot_config.channels.cex_venue_update_capacity);
 
     let (router, cmd_rx) = MpscCommandRouter::new(1024);
     let router = Arc::new(router);
 
     let handler = RunnerCommandHandler {
         trading_control: Arc::clone(&trading_control),
-        trading_state_manager: Arc::clone(&services.trading_state_manager),
-        exchange_state_manager: Arc::clone(&services.exchange_state_manager),
+        trading_state_manager: services
+            .trading_state_manager
+            .clone()
+            .ok_or("Trading state requires venue.mode cex")?,
+        exchange_state_manager: services.exchange_state_manager()?.clone(),
         level_manager: Arc::clone(&level_manager),
         strategy_manager: None,
     };
@@ -176,6 +187,7 @@ pub async fn level_runner(
                             };
                             let _ = hot_tx_for_bridge.try_send(event);
                         }
+                        Ok(trading_core::channels::market_data::MarketDataUpdate::DexAccountHealth { .. }) => {}
                         Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
                             tracing::warn!("[zenoh bridge] market data lagged; skipped {}", skipped);
                         }
@@ -188,23 +200,23 @@ pub async fn level_runner(
     });
 
     let cold_bus_for_bridge = cold_bus.clone();
-    let mut ex_rx = services.exec_report_rx.resubscribe();
+    let mut ex_rx = services.exec_report_rx()?.resubscribe();
     let mut shutdown_rx_ex = services.shutdown_manager.subscribe();
     tokio::spawn(async move {
         loop {
             tokio::select! {
                 update = ex_rx.recv() => {
                     match update {
-                        Ok(trading_core::channels::exchange::ExchangeUpdate::Order { order, trace_context }) => {
+                        Ok(trading_core::channels::exchange::CexVenueUpdate::Order { order, trace_context }) => {
                             let _ = cold_bus_for_bridge.publish(Arc::new(trading_networking::events::ColdEvent::Order { order, trace_context }));
                         }
-                        Ok(trading_core::channels::exchange::ExchangeUpdate::Balance { balance, trace_context }) => {
+                        Ok(trading_core::channels::exchange::CexVenueUpdate::Balance { balance, trace_context }) => {
                             let _ = cold_bus_for_bridge.publish(Arc::new(trading_networking::events::ColdEvent::Balance { balance, trace_context }));
                         }
-                        Ok(trading_core::channels::exchange::ExchangeUpdate::Position { position, trace_context }) => {
+                        Ok(trading_core::channels::exchange::CexVenueUpdate::Position { position, trace_context }) => {
                             let _ = cold_bus_for_bridge.publish(Arc::new(trading_networking::events::ColdEvent::Position { position, trace_context }));
                         }
-                        Ok(trading_core::channels::exchange::ExchangeUpdate::Trade { trade, trace_context }) => {
+                        Ok(trading_core::channels::exchange::CexVenueUpdate::Trade { trade, trace_context }) => {
                             let _ = cold_bus_for_bridge.publish(Arc::new(trading_networking::events::ColdEvent::Trade { trade, trace_context }));
                         }
                         Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
@@ -337,20 +349,26 @@ pub async fn level_runner(
         risk_manager,
         cancellation_manager,
         indicator_subscriber,
-        services.trading_client.clone(),
+        services.trading_client()?.clone(),
         services.market_data_rx.resubscribe(),
-        services.exec_report_rx.resubscribe(),
+        services.exec_report_rx()?.resubscribe(),
         configured_pairs.clone(),
-        services.trading_state_manager.clone(),
+        services
+            .trading_state_manager
+            .clone()
+            .ok_or("Trading state requires venue.mode \"cex\"")?,
         trading_reconciliation_interval_secs,
     );
 
     // Note: TradingStateManager automatically handles execution reports via ExchangeStateManager subscription
-    // Execution reports are published through the exchange_update channel and handled by TradingStateManager
+    // Execution reports are published through the CEX venue update channel and handled by TradingStateManager
     // No separate execution report handler needed - TradingStateManager is the single source of truth
 
-    // Set up health server using TradingStateManager's state
-    let health_server = TradingHealthServer::new(services.trading_state_manager.get_state());
+    let trading_state = services
+        .trading_state_manager
+        .clone()
+        .ok_or("Trading state requires venue.mode \"cex\"")?;
+    let health_server = TradingHealthServer::new(trading_state.get_state());
     let health_server = if let Some(ref h) = services.tracing_handles {
         let handles = h.clone();
         health_server.with_metrics(Arc::new(move || {
@@ -401,22 +419,17 @@ pub async fn level_runner(
     services.shutdown_manager.wait_for_shutdown().await;
 
     info!("Shutting down gracefully...");
-    // Cancel all orders for all configured pairs
-    for pair in configured_pairs {
-        info!("Cancelling all open orders for {}...", pair);
-        match services
-            .trading_client
-            .write()
-            .await
-            .cancel_all_orders(&pair)
-            .await
-        {
-            Ok(_) => info!("All orders cancelled successfully for {}", pair),
-            Err(e) => warn!(
-                "Failed to cancel all orders for {}: {error}",
-                pair,
-                error = e
-            ),
+    if let Ok(trading_client) = services.trading_client() {
+        for pair in configured_pairs {
+            info!("Cancelling all open orders for {}...", pair);
+            match trading_client.write().await.cancel_all_orders(&pair).await {
+                Ok(_) => info!("All orders cancelled successfully for {}", pair),
+                Err(e) => warn!(
+                    "Failed to cancel all orders for {}: {error}",
+                    pair,
+                    error = e
+                ),
+            }
         }
     }
 

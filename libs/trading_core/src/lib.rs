@@ -14,6 +14,7 @@ pub mod secret;
 pub mod traits;
 pub mod types;
 pub mod utils;
+pub mod venue;
 pub mod websocket;
 // Re-export WebSocket client traits for compatibility
 pub use websocket::client::{MessageHandler, SubscriptionHandler, WebSocketClient};

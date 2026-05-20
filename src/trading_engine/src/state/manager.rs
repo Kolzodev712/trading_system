@@ -10,7 +10,7 @@ use exchange_engine::state::manager::ExchangeStateManager;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use trading_core::{
-    channels::exchange::ExchangeUpdateReceiver, error::EngineError, types::common::Pair,
+    channels::exchange::CexVenueUpdateReceiver, error::EngineError, types::common::Pair,
 };
 
 /// Manages trading-specific state (positions, active orders)
@@ -35,7 +35,7 @@ impl TradingStateManager {
     /// * `exchange_update_rx` - Receiver for ExchangeStateManager updates
     /// * `exchange_state_manager` - ExchangeStateManager to reconcile with
     pub fn new(
-        exchange_update_rx: ExchangeUpdateReceiver,
+        exchange_update_rx: CexVenueUpdateReceiver,
         exchange_state_manager: Arc<ExchangeStateManager>,
     ) -> Self {
         let state = Arc::new(RwLock::new(TradingState::new()));

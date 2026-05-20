@@ -19,7 +19,7 @@ use trading_networking::events::{cold_event_bus, hot_event_channel};
 
 /// Processes execution reports from the exchange and calls the provided handler function
 async fn execution_report_handler<F, Fut>(
-    mut exchange_update_rx: trading_core::channels::exchange::ExchangeUpdateReceiver,
+    mut exchange_update_rx: trading_core::channels::exchange::CexVenueUpdateReceiver,
     mut shutdown_rx: tokio::sync::broadcast::Receiver<()>,
     handler: F,
 ) where
@@ -30,7 +30,7 @@ async fn execution_report_handler<F, Fut>(
         tokio::select! {
             update = exchange_update_rx.recv() => {
                 match update {
-                    Ok(trading_core::channels::exchange::ExchangeUpdate::Order {
+                    Ok(trading_core::channels::exchange::CexVenueUpdate::Order {
                         order,
                         ..
                     }) => {
@@ -138,7 +138,7 @@ pub async fn strategy_runner(
             .unwrap_or_else(|| rust_decimal::Decimal::new(5, 0));
 
         let strategy = Arc::new(RwLock::new(BuyLowSellHigh::new(
-            services.trading_client.clone(),
+            services.trading_client()?.clone(),
             pair.clone(),
             config.position_size,
             config.max_position,
@@ -191,7 +191,7 @@ pub async fn strategy_runner(
         .unwrap_or_else(|| rust_decimal::Decimal::new(5, 0));
 
     // Create TradingControl for enable/disable trading
-    let trading_control = Arc::new(TradingControl::new(services.trading_client.clone()));
+    let trading_control = Arc::new(TradingControl::new(services.trading_client()?.clone()));
 
     // Wrap StrategyManager and set trading control for hierarchical control
     let strategy_manager =
@@ -249,9 +249,12 @@ pub async fn strategy_runner(
     use crate::grpc::service::TradingCliServiceImpl;
     let grpc_service = TradingCliServiceImpl::new(
         dummy_level_manager.clone(),
-        services.trading_state_manager.clone(),
-        services.trading_client.clone(),
-        services.exchange_state_manager.clone(),
+        services
+            .trading_state_manager
+            .clone()
+            .ok_or("Trading state requires venue.mode \"cex\"")?,
+        services.trading_client()?.clone(),
+        services.exchange_state_manager()?.clone(),
         services.market_data_state_manager.clone(),
         services.indicator_service.clone(),
         services.indicator_calculator.clone(),
@@ -267,15 +270,18 @@ pub async fn strategy_runner(
     info!("gRPC server started on {}", grpc_addr);
 
     let (hot_tx, hot_rx) = hot_event_channel(bot_config.channels.market_data_capacity);
-    let cold_bus = cold_event_bus(bot_config.channels.exchange_update_capacity);
+    let cold_bus = cold_event_bus(bot_config.channels.cex_venue_update_capacity);
 
     let (router, cmd_rx) = MpscCommandRouter::new(1024);
     let router = Arc::new(router);
 
     let handler = RunnerCommandHandler {
         trading_control: Arc::clone(&trading_control),
-        trading_state_manager: Arc::clone(&services.trading_state_manager),
-        exchange_state_manager: Arc::clone(&services.exchange_state_manager),
+        trading_state_manager: services
+            .trading_state_manager
+            .clone()
+            .ok_or("Trading state requires venue.mode cex")?,
+        exchange_state_manager: services.exchange_state_manager()?.clone(),
         level_manager: Arc::clone(&dummy_level_manager),
         strategy_manager: Some(Arc::clone(&strategy_manager_arc)),
     };
@@ -296,6 +302,7 @@ pub async fn strategy_runner(
                             let event = trading_networking::events::HotEvent::orderbook_from_structured(&orderbook, trace_context);
                             let _ = hot_tx_for_bridge.try_send(event);
                         }
+                        Ok(trading_core::channels::market_data::MarketDataUpdate::DexAccountHealth { .. }) => {}
                         Ok(trading_core::channels::market_data::MarketDataUpdate::Trade { trade, trace_context }) => {
                             let event = trading_networking::events::HotEvent::Trade {
                                 pair: trade.pair.clone(),
@@ -319,23 +326,23 @@ pub async fn strategy_runner(
     });
 
     let cold_bus_for_bridge = cold_bus.clone();
-    let mut ex_rx = services.exec_report_rx.resubscribe();
+    let mut ex_rx = services.exec_report_rx()?.resubscribe();
     let mut shutdown_rx_ex = services.shutdown_manager.subscribe();
     tokio::spawn(async move {
         loop {
             tokio::select! {
                 update = ex_rx.recv() => {
                     match update {
-                        Ok(trading_core::channels::exchange::ExchangeUpdate::Order { order, trace_context }) => {
+                        Ok(trading_core::channels::exchange::CexVenueUpdate::Order { order, trace_context }) => {
                             let _ = cold_bus_for_bridge.publish(Arc::new(trading_networking::events::ColdEvent::Order { order, trace_context }));
                         }
-                        Ok(trading_core::channels::exchange::ExchangeUpdate::Balance { balance, trace_context }) => {
+                        Ok(trading_core::channels::exchange::CexVenueUpdate::Balance { balance, trace_context }) => {
                             let _ = cold_bus_for_bridge.publish(Arc::new(trading_networking::events::ColdEvent::Balance { balance, trace_context }));
                         }
-                        Ok(trading_core::channels::exchange::ExchangeUpdate::Position { position, trace_context }) => {
+                        Ok(trading_core::channels::exchange::CexVenueUpdate::Position { position, trace_context }) => {
                             let _ = cold_bus_for_bridge.publish(Arc::new(trading_networking::events::ColdEvent::Position { position, trace_context }));
                         }
-                        Ok(trading_core::channels::exchange::ExchangeUpdate::Trade { trade, trace_context }) => {
+                        Ok(trading_core::channels::exchange::CexVenueUpdate::Trade { trade, trace_context }) => {
                             let _ = cold_bus_for_bridge.publish(Arc::new(trading_networking::events::ColdEvent::Trade { trade, trace_context }));
                         }
                         Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
@@ -354,10 +361,13 @@ pub async fn strategy_runner(
     // Pass all pairs to executor (no .first() - single source of truth)
     let executor = StrategyExecutor::new(
         strategy_wrapper.clone(),
-        services.trading_client.clone(),
+        services.trading_client()?.clone(),
         services.market_data_rx.resubscribe(),
         all_symbols.clone(),
-        services.trading_state_manager.clone(),
+        services
+            .trading_state_manager
+            .clone()
+            .ok_or("Trading state requires venue.mode \"cex\"")?,
         trading_reconciliation_interval_secs,
         services.asset_service.clone(),
         bot_config.exchange_engine.exchange.clone(),
@@ -373,7 +383,7 @@ pub async fn strategy_runner(
     // Set up execution report handler (StrategyManager handles routing to all strategies)
     let strategy_manager_for_reports = strategy_manager_arc.clone();
     let shutdown_rx_reports = services.shutdown_manager.subscribe();
-    let exec_report_rx = services.exec_report_rx;
+    let exec_report_rx = services.exec_report_rx()?;
     let _execution_report_handle = tokio::spawn(async move {
         execution_report_handler(exec_report_rx, shutdown_rx_reports, move |order| {
             let manager = Arc::clone(&strategy_manager_for_reports);
@@ -390,7 +400,11 @@ pub async fn strategy_runner(
     });
 
     // Get TradingState from TradingStateManager for health server
-    let trading_state_for_health = services.trading_state_manager.get_state();
+    let trading_state_for_health = services
+        .trading_state_manager
+        .clone()
+        .ok_or("Trading state requires venue.mode \"cex\"")?
+        .get_state();
     let health_server = TradingHealthServer::new(trading_state_for_health);
     let health_server = if let Some(ref h) = services.tracing_handles {
         let handles = h.clone();
@@ -442,22 +456,17 @@ pub async fn strategy_runner(
     services.shutdown_manager.wait_for_shutdown().await;
 
     info!("Shutting down gracefully...");
-    // Cancel orders for all symbols
-    for symbol in &all_symbols {
-        info!("Cancelling all open orders for {}...", symbol);
-        match services
-            .trading_client
-            .write()
-            .await
-            .cancel_all_orders(symbol)
-            .await
-        {
-            Ok(_) => info!("All orders cancelled successfully for {}", symbol),
-            Err(e) => warn!(
-                "Failed to cancel all orders for {}: {error}",
-                symbol,
-                error = e
-            ),
+    if let Ok(trading_client) = services.trading_client() {
+        for symbol in &all_symbols {
+            info!("Cancelling all open orders for {}...", symbol);
+            match trading_client.write().await.cancel_all_orders(symbol).await {
+                Ok(_) => info!("All orders cancelled successfully for {}", symbol),
+                Err(e) => warn!(
+                    "Failed to cancel all orders for {}: {error}",
+                    symbol,
+                    error = e
+                ),
+            }
         }
     }
 

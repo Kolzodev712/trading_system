@@ -8,7 +8,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 use trading_core::{
-    channels::exchange::ExchangeUpdateSender,
+    channels::exchange::CexVenueUpdateSender,
     error::EngineError,
     registry::symbol::SymbolRegistry,
     traits::TradingClient,
@@ -51,7 +51,7 @@ impl ExchangeStateManager {
     /// * `reconciliation_interval_secs` - Interval for periodic reconciliation (0 = disabled)
     /// * `reconciliation_enabled` - Whether reconciliation is enabled
     pub fn new(
-        exchange_update_tx: ExchangeUpdateSender,
+        exchange_update_tx: CexVenueUpdateSender,
         symbol_registry: Arc<SymbolRegistry>,
         trading_client: Arc<RwLock<dyn TradingClient<OrderRequest>>>,
         reconciliation_interval_secs: u64,

@@ -691,6 +691,7 @@ impl<S: Strategy> StrategyExecutor<S> {
                     // Ignore trades for now
                     debug!("Received trade update (ignored)");
                 }
+                Ok(MarketDataUpdate::DexAccountHealth { .. }) => {}
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
                     warn!(
                         "Market data receiver lagged, skipped {skipped} messages. This may indicate slow processing."

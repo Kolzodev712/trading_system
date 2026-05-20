@@ -111,14 +111,14 @@ pub fn create_test_binance_config() -> exchange_engine::exchanges::binance::conf
 /// Create exchange state manager for testing
 pub async fn create_test_exchange_state_manager() -> (
     exchange_engine::state::manager::ExchangeStateManager,
-    trading_core::channels::exchange::ExchangeUpdateReceiver,
+    trading_core::channels::exchange::CexVenueUpdateReceiver,
 ) {
     use exchange_engine::exchanges::binance::client::BinanceClient;
-    use trading_core::channels::exchange::exchange_update_channel;
+    use trading_core::channels::exchange::cex_venue_update_channel;
     use trading_core::config::ChannelConfig;
     use trading_core::registry::symbol::SymbolRegistry;
 
-    let (tx, rx) = exchange_update_channel(100);
+    let (tx, rx) = cex_venue_update_channel(100);
     let symbol_registry = Arc::new(SymbolRegistry::new());
     let channels = ChannelConfig::default();
     let binance_config = create_test_binance_config();

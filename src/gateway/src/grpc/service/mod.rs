@@ -35,6 +35,8 @@ pub struct TradingCliServiceImpl {
     strategy_manager: Option<Arc<RwLock<StrategyManager>>>,
     instrument_type: trading_core::types::common::InstrumentType,
     exchange: String,
+    dex_state_manager: Option<Arc<dex_engine::state::manager::DexStateManager>>,
+    dex_venue_label: Option<String>,
 }
 
 impl TradingCliServiceImpl {
@@ -62,7 +64,19 @@ impl TradingCliServiceImpl {
             strategy_manager: None,
             instrument_type: trading_core::types::common::InstrumentType::Spot,
             exchange: "Unknown".to_string(),
+            dex_state_manager: None,
+            dex_venue_label: None,
         }
+    }
+
+    pub fn with_dex_state_manager(
+        mut self,
+        dex_state_manager: Arc<dex_engine::state::manager::DexStateManager>,
+        venue_label: impl Into<String>,
+    ) -> Self {
+        self.dex_state_manager = Some(dex_state_manager);
+        self.dex_venue_label = Some(venue_label.into());
+        self
     }
 
     pub fn with_strategy_info(
@@ -116,6 +130,8 @@ impl TradingCliServiceImpl {
             strategy_manager: self.strategy_manager.clone(),
             instrument_type: self.instrument_type.clone(),
             exchange: self.exchange.clone(),
+            dex_state_manager: self.dex_state_manager.clone(),
+            dex_venue_label: self.dex_venue_label.clone(),
         }
     }
 
@@ -124,12 +140,14 @@ impl TradingCliServiceImpl {
             level_manager: self.level_manager.clone(),
             trading_state_manager: self.trading_state_manager.clone(),
             exchange_state_manager: self.exchange_state_manager.clone(),
+            dex_state_manager: self.dex_state_manager.clone(),
             market_data_state_manager: self.market_data_state_manager.clone(),
             indicator_calculator: self.indicator_calculator.clone(),
             strategy_infos: self.strategy_infos.clone(),
             strategy_manager: self.strategy_manager.clone(),
             instrument_type: self.instrument_type.clone(),
             exchange: self.exchange.clone(),
+            dex_venue_label: self.dex_venue_label.clone(),
         }
     }
 

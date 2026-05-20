@@ -3,11 +3,11 @@
 **Version**: 1.0  
 **Date**: December 2024  
 **Status**: Draft  
-**Prerequisites**: Proposal 01 (DEX Preparation) must be completed first
+**Prerequisites**: [Proposal 01](01-dex-preparation.md) (venue split: `trading_core::venue`, `dex_engine` core) — Phase 1–2 complete
 
 ## Executive Summary
 
-This proposal details the **Solana-specific implementation** of the DEX integration infrastructure defined in Proposal 01. It focuses on **lending protocol liquidations** as the initial monetization strategy, implementing the `VenueProvider` trait for Solana and building the necessary Solana RPC/WebSocket clients, protocol decoders, and liquidation strategy.
+This proposal implements **Solana** under `dex_engine/chains/solana/`: RPC/WS, protocol decoders, `VenueProvider`, DEX market-data feeds, and liquidation strategy in `trading_engine::dex`. CEX crates (`exchange_engine`, `levels/`) are not modified except gateway monitoring hooks.
 
 ### Key Objectives
 
@@ -16,7 +16,7 @@ This proposal details the **Solana-specific implementation** of the DEX integrat
 3. **Implement protocol decoders** - Marginfi, Solend, and other lending protocols
 4. **Implement `LiquidationStrategy`** - Automated liquidation detection and execution
 5. **Extend MarketDataEngine** - Ingest Solana on-chain state (pool accounts, oracle accounts, protocol accounts)
-6. **Maintain architectural integrity** - All execution via ExchangeEngine, full reconciliation, risk isolation
+6. **Maintain architectural integrity** - Execution via `dex_engine` + `VenueProvider`; CEX stack untouched
 
 ### Why Liquidations First?
 
@@ -36,7 +36,7 @@ This proposal details the **Solana-specific implementation** of the DEX integrat
 ```
 MarketDataEngine → Orderbook/Trade Streams → TradingEngine
 ExchangeEngine → REST/WS → Account/Balance State → TradingEngine
-TradingEngine → TradeCommand → ExchangeEngine → Order Execution
+trading_engine::dex → TradeCommand → dex_engine → Solana transaction
 ```
 
 ### 1.2 Extended Architecture (DEX - Solana)
@@ -44,7 +44,7 @@ TradingEngine → TradeCommand → ExchangeEngine → Order Execution
 ```
 MarketDataEngine → Solana RPC/WS → Pool/Oracle/Protocol Accounts → TradingEngine
 ExchangeEngine → SolanaVenueProvider → Wallet/On-chain State → TradingEngine
-TradingEngine → TradeCommand::Liquidate → ExchangeEngine → Transaction Execution
+trading_engine::dex → TradeCommand::Liquidate → dex_engine/chains/solana → transaction
 ```
 
 ### 1.3 Key Architectural Principles (Maintained)
@@ -78,7 +78,7 @@ TradingEngine → TradeCommand::Liquidate → ExchangeEngine → Transaction Exe
 - `getSignatureStatus` - Track transaction confirmation
 - `simulateTransaction` - Pre-flight checks
 
-**Location**: `src/exchange_engine/src/exchanges/solana/rpc_client.rs`
+**Location**: `src/dex_engine/src/chains/solana/rpc.rs`
 
 #### 2.1.2 WebSocket PubSub Client
 
@@ -95,7 +95,7 @@ TradingEngine → TradeCommand::Liquidate → ExchangeEngine → Transaction Exe
 - `logsSubscribe` - Watch program logs/instruction execution
 - `signatureSubscribe` - Track transaction confirmation
 
-**Location**: `src/exchange_engine/src/exchanges/solana/ws_client.rs`  
+**Location**: `src/dex_engine/src/chains/solana/ws.rs`  
 **Location**: `src/market_data_engine/src/exchanges/solana/ws_client.rs`
 
 **Configuration**:
@@ -197,9 +197,9 @@ pub struct LendingAccountHealth {
 
 **Location**: `src/market_data_engine/src/state/state.rs` (extend existing)
 
-### 2.4 ExchangeEngine Extension
+### 2.4 `dex_engine/chains/solana` (not `exchange_engine`)
 
-**Note**: The `VenueProvider` trait, `ExecutionInterface` trait, and `ExchangeStateManager` integration are defined in Proposal 01 (DEX Preparation). This section focuses on the Solana-specific implementation.
+**Note**: `VenueProvider`, `TradeCommand`, and `DexStateManager` are defined in [Proposal 01](01-dex-preparation.md) (`trading_core::venue::dex`, `dex_engine`). Solana I/O lives only under `dex_engine/chains/solana/`.
 
 #### 2.4.1 SolanaVenueProvider
 
@@ -231,15 +231,15 @@ pub struct PendingExecution {
 }
 ```
 
-**Location**: `src/exchange_engine/src/exchanges/solana/venue_provider.rs`
+**Location**: `src/dex_engine/src/chains/solana/provider.rs`
 
-**Note**: `TradeCommand` extensions and `ExchangeState` extensions for DEX are defined in Proposal 01. This section focuses on Solana-specific state structures.
+**Note**: DEX state lives in `dex_engine::state`, not `exchange_engine::ExchangeState`. Solana-specific structs and decoders below.
 
-### 2.5 TradingEngine Extension
+### 2.5 `trading_engine::dex` (not `levels/`)
 
 #### 2.5.1 LiquidationStrategy
 
-**Purpose**: Detect and execute liquidation opportunities
+**Purpose**: Detect and emit `TradeCommand::Liquidate`; execution is **`dex_engine`**, not `TradingClient`.
 
 **Implementation**:
 ```rust
@@ -250,15 +250,14 @@ pub struct LiquidationStrategy {
     min_health_factor: Decimal, // e.g., 0.995 for buffer
 }
 
-impl Strategy for LiquidationStrategy {
+impl DexStrategy for LiquidationStrategy {
     fn evaluate(
         &self,
         market_data: &MarketDataUpdate,
-        exchange_state: &ExchangeState,
-        trading_state: &TradingState,
+        dex_state: &DexState,
     ) -> Option<TradeCommand> {
         match market_data {
-            MarketDataUpdate::SolanaAccountHealth { .. } => {
+            MarketDataUpdate::DexAccountHealth { .. } => {
                 // Check health factor < threshold
                 // Check wallet has required asset
                 // Check risk limits
@@ -331,30 +330,27 @@ Built → Signed → Submitted → InMempool → IncludedInBlock → Confirmed /
 
 **Reconciliation Flow**:
 ```
-ExchangeStateManager::reconcile()
+DexStateManager::reconcile()
   → SolanaVenueProvider::reconcile()
     → RPC: getAccountInfo(wallet_pubkey)
     → RPC: getSignatureStatuses(pending_signatures)
-    → Compare vs internal state
-    → Update ExchangeState
-    → Publish ExchangeStateUpdate
+    → Compare vs internal DexState
+    → Publish DexVenueUpdate
 ```
 
-**Location**: `src/exchange_engine/src/exchanges/solana/venue_provider.rs` (reconcile method)
+**Location**: `src/dex_engine/src/state/reconciler.rs` + `chains/solana/provider.rs`
 
 ---
 
 ## 3. Implementation Phases
 
-**Prerequisites**: **Proposal 01 (DEX Preparation) must be completed first.** This foundational proposal defines:
-- `VenueProvider` trait - Unified DEX interface
-- `ExecutionInterface` trait - Unified execution for CEX/DEX
-- `TradeCommand` extensions - DEX-specific command variants
-- `ExchangeState` extensions - DEX wallet and transaction tracking
-- `ExchangeStateManager` integration - Support for both CEX and DEX venues
-- `MarketDataUpdate` extensions - DEX-specific market data events
+**Prerequisites**: [Proposal 01](01-dex-preparation.md) Phase 1–2:
 
-This proposal (02) implements the Solana-specific `VenueProvider` and all Solana connectivity.
+- `trading_core::venue::{cex,dex}` — CEX types under `venue/cex`, DEX under `venue/dex`
+- `dex_engine` core (`DexStateManager`, `DexVenueUpdate`, `run`)
+- `MarketDataUpdate` DEX variants (e.g. `DexAccountHealth`)
+
+This proposal implements **`dex_engine/chains/solana`** and **`trading_engine::dex`** only.
 
 ### Phase 1: Foundation (Weeks 1-3)
 
@@ -387,7 +383,7 @@ This proposal (02) implements the Solana-specific `VenueProvider` and all Solana
 3. ✅ Implement liquidation instruction builder (Marginfi)
 4. ✅ Transaction assembly (blockhash, compute budget, priority fees)
 5. ✅ Transaction submission and signature tracking
-6. ✅ Integrate with `ExchangeStateManager` (using DEX support from Proposal 01)
+6. ✅ Integrate with `DexStateManager` (`dex_engine`)
 
 **Deliverables**:
 - Can build and submit liquidation transactions
@@ -470,7 +466,7 @@ This proposal (02) implements the Solana-specific `VenueProvider` and all Solana
 ### 3.1 Prerequisites
 
 **Must Complete First**:
-- Proposal 01 (DEX Preparation) - All foundational infrastructure
+- [Proposal 01](01-dex-preparation.md) — `venue/` split + `dex_engine` core (Phases 1–2)
 
 ### 3.2 Rust Crates
 
@@ -757,8 +753,8 @@ Once liquidations are proven:
    - `wallet_balance = 1500 USDC > 1000 USDC required` ✅
    - `risk_check = PASS` ✅
    - `expected_profit = $50 > $10 minimum` ✅
-5. **LiquidationStrategy** emits `TradeCommand::Liquidate { ... }`
-6. **ExchangeEngine** receives command, routes to `SolanaVenueProvider`
+5. **LiquidationStrategy** (`trading_engine::dex`) emits `TradeCommand::Liquidate { ... }`
+6. **dex_engine** receives command, routes to `SolanaVenueProvider`
 7. **SolanaVenueProvider** builds liquidation transaction:
    - Fetches recent blockhash
    - Adds liquidation instruction
@@ -766,8 +762,8 @@ Once liquidations are proven:
    - Signs with wallet keypair
 8. **SolanaVenueProvider** submits transaction via RPC
 9. **SolanaVenueProvider** tracks signature via `signatureSubscribe`
-10. **Transaction confirmed** → Update `ExchangeState` with position delta
-11. **TradingStateManager** reconciles expected vs actual
+10. **Transaction confirmed** → `DexStateManager` updates wallet / pending tx
+11. **DexStateManager** reconciles expected vs on-chain
 12. **TUI** displays successful liquidation with PnL
 
 ---
@@ -775,49 +771,35 @@ Once liquidations are proven:
 ## Appendix B: Code Structure Overview
 
 ```
-src/
-├── exchange_engine/
-│   └── src/
-│       ├── exchanges/
-│       │   ├── binance/          # Existing
-│       │   └── solana/           # NEW
-│       │       ├── rpc_client.rs
-│       │       ├── ws_client.rs
-│       │       ├── venue_provider.rs
-│       │       ├── wallet.rs
-│       │       └── protocols/
-│       │           └── marginfi/
-│       │               ├── decoder.rs
-│       │               ├── types.rs
-│       │               └── liquidation.rs
-│       └── state/
-│           └── manager.rs        # Extend with VenueInterface enum
-├── market_data_engine/
-│   └── src/
-│       ├── exchanges/
-│       │   ├── binance/          # Existing
-│       │   └── solana/           # NEW
-│       │       ├── driver.rs
-│       │       ├── ws_client.rs
-│       │       ├── account_discovery.rs
-│       │       └── protocols/
-│       │           ├── marginfi/
-│       │           │   └── decoder.rs
-│       │           └── common/
-│       │               └── normalized.rs
-└── trading_engine/
-    └── src/
-        └── strategies/
-            ├── strategies.rs     # Existing
-            └── liquidation.rs    # NEW
+libs/trading_core/src/
+├── venue/
+│   ├── cex/                      # moved from traits/, channels/exchange, types/exchange
+│   └── dex/
+│       ├── provider.rs           # VenueProvider
+│       ├── command.rs            # TradeCommand
+│       └── channels/update.rs    # DexVenueUpdate
+└── traits/                       # pub use venue::cex::* (shim)
 
-libs/
-└── trading_core/
-    └── src/
-        ├── traits/
-        │   └── venue_provider.rs # NEW trait
-        └── types/
-            └── common.rs         # Extend TradeCommand
+src/
+├── dex_engine/                   # NEW — parallel to exchange_engine
+│   └── src/
+│       ├── state/                # DexStateManager, reconciler
+│       ├── run.rs
+│       └── chains/
+│           └── solana/
+│               ├── provider.rs
+│               ├── rpc.rs
+│               ├── ws.rs
+│               └── protocols/marginfi/
+├── exchange_engine/              # CEX only — no solana/
+├── market_data_engine/
+│   └── src/exchanges/
+│       ├── binance/              # existing CEX
+│       └── dex/solana/           # or dex_engine/md — DEX feeds
+└── trading_engine/
+    ├── levels/                   # CEX only
+    └── dex/
+        └── liquidation.rs        # NEW
 ```
 
 ---

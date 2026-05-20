@@ -1,6 +1,6 @@
 //! Cold lane event types (orders, balances, positions, trades).
 //!
-//! State-change events with optional trace context. Aligned with `ExchangeUpdate` for easy dual-publish.
+//! State-change events with optional trace context. Aligned with `CexVenueUpdate` for easy dual-publish.
 
 use serde::{Deserialize, Serialize};
 use trading_core::types::exchange::{Balance, Order, Position, Trade};

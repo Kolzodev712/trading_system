@@ -17,12 +17,14 @@ pub struct MonitoringService {
     pub level_manager: Arc<RwLock<LevelManager>>,
     pub trading_state_manager: Arc<TradingStateManager>,
     pub exchange_state_manager: Arc<ExchangeStateManager>,
+    pub dex_state_manager: Option<Arc<dex_engine::state::manager::DexStateManager>>,
     pub market_data_state_manager: Arc<market_data_engine::state::manager::MarketDataStateManager>,
     pub indicator_calculator: Arc<indicator_engine::calculator::IndicatorCalculator>,
     pub strategy_infos: Vec<StrategyInfo>,
     pub strategy_manager: Option<Arc<RwLock<StrategyManager>>>,
     pub instrument_type: trading_core::types::common::InstrumentType,
     pub exchange: String,
+    pub dex_venue_label: Option<String>,
 }
 
 #[derive(Clone)]
@@ -246,6 +248,8 @@ impl MonitoringService {
             trading_core::types::common::InstrumentType::Derivitives => "Futures",
         };
 
+        let dex = self.collect_dex_snapshot();
+
         let data = trading_cli::MonitoringData {
             orders,
             balances,
@@ -257,10 +261,42 @@ impl MonitoringService {
             orderbooks,
             instrument_type: instrument_type_str.to_string(),
             exchange: self.exchange.clone(),
+            dex,
         };
 
         tracing::debug!("[gRPC] collect_monitoring_data: Returning data successfully");
         Ok(data)
+    }
+
+    fn collect_dex_snapshot(&self) -> Option<trading_cli::DexVenueSnapshot> {
+        let dex_sm = self.dex_state_manager.as_ref()?;
+        let state_arc = dex_sm.state();
+        let state = state_arc.read();
+        let balances: Vec<trading_cli::DexBalance> = state
+            .wallet
+            .balances
+            .iter()
+            .map(|(mint, amount)| trading_cli::DexBalance {
+                mint: mint.to_string(),
+                amount: amount.to_string(),
+            })
+            .collect();
+        let pending_transactions: Vec<trading_cli::DexPendingTransaction> = state
+            .pending
+            .iter()
+            .map(|(sig, pending)| trading_cli::DexPendingTransaction {
+                signature: sig.to_string(),
+                status: format!("{:?}", pending.status),
+            })
+            .collect();
+        Some(trading_cli::DexVenueSnapshot {
+            balances,
+            pending_transactions,
+            venue: self
+                .dex_venue_label
+                .clone()
+                .unwrap_or_else(|| "dex".to_string()),
+        })
     }
 
     pub async fn get_trades(&self) -> Result<Vec<trading_cli::Trade>, Status> {

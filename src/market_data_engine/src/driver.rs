@@ -102,7 +102,6 @@ impl MarketDataDriver {
                 Ok(Box::new(PaperClient::new(
                     paper_config.clone(),
                     Some(message_handler),
-                    paper_config.pairs.clone(),
                 )))
             }
         }

@@ -13,6 +13,8 @@ pub struct PaperConfig {
     /// WebSocket URL (exchange URL with any path, e.g. "ws://127.0.0.1:19999/ws/trade").
     /// We connect to the same host with path /ws/market.
     pub url: String,
+    /// Pairs to forward from the k-paper market feed (must match `bot.json` exchange pairs).
+    /// When non-empty, orderbook/trade messages for other instruments are dropped in `PaperClient`.
     pub pairs: Vec<Pair>,
 }
 

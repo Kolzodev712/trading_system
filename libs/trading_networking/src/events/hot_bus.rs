@@ -55,21 +55,6 @@ pub fn hot_event_channel(capacity: usize) -> (HotEventTx, HotEventRx) {
     (HotEventTx { tx }, HotEventRx { rx })
 }
 
-/// Trait for sending hot events (e.g. for gateway abstraction later).
-pub trait HotEventBus {
-    /// Try to send without blocking.
-    fn try_send(&self, event: HotEvent) -> Result<(), HotEventBusError>;
-}
-
-impl HotEventBus for HotEventTx {
-    fn try_send(&self, event: HotEvent) -> Result<(), HotEventBusError> {
-        self.tx.try_send(event).map_err(|e| match e {
-            mpsc::error::TrySendError::Full(_) => HotEventBusError::Full,
-            mpsc::error::TrySendError::Closed(_) => HotEventBusError::Closed,
-        })
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

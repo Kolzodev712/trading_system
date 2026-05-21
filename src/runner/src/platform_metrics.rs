@@ -3,6 +3,9 @@
 use std::sync::atomic::Ordering;
 
 use crate::event_bridge::{BROADCAST_LAG_CEX, BROADCAST_LAG_DEX, BROADCAST_LAG_MD};
+use crate::zenoh_metrics::{
+    ZENOH_TRANSPORT_DROPPED, ZENOH_TRANSPORT_PUBLISH_ERRORS, ZENOH_TRANSPORT_SENT,
+};
 use dex_engine::runtime::{DEX_EXECUTE_ERRORS_TOTAL, DEX_EXECUTE_TOTAL};
 use trading_core::venue::VenueMode;
 
@@ -26,12 +29,24 @@ pub fn encode_platform_metrics(venue_mode: VenueMode) -> String {
          # TYPE broadcast_lag_total counter\n\
          broadcast_lag_total{{channel=\"md\"}} {}\n\
          broadcast_lag_total{{channel=\"cex\"}} {}\n\
-         broadcast_lag_total{{channel=\"dex\"}} {}\n",
+         broadcast_lag_total{{channel=\"dex\"}} {}\n\
+         # HELP zenoh_transport_sent_total Events published on Zenoh transport\n\
+         # TYPE zenoh_transport_sent_total counter\n\
+         zenoh_transport_sent_total {}\n\
+         # HELP zenoh_transport_dropped_total Events dropped (transport queue full)\n\
+         # TYPE zenoh_transport_dropped_total counter\n\
+         zenoh_transport_dropped_total {}\n\
+         # HELP zenoh_transport_publish_errors_total Zenoh publish failures\n\
+         # TYPE zenoh_transport_publish_errors_total counter\n\
+         zenoh_transport_publish_errors_total {}\n",
         mode_value,
         DEX_EXECUTE_TOTAL.load(Ordering::Relaxed),
         DEX_EXECUTE_ERRORS_TOTAL.load(Ordering::Relaxed),
         BROADCAST_LAG_MD.load(Ordering::Relaxed),
         BROADCAST_LAG_CEX.load(Ordering::Relaxed),
         BROADCAST_LAG_DEX.load(Ordering::Relaxed),
+        ZENOH_TRANSPORT_SENT.load(Ordering::Relaxed),
+        ZENOH_TRANSPORT_DROPPED.load(Ordering::Relaxed),
+        ZENOH_TRANSPORT_PUBLISH_ERRORS.load(Ordering::Relaxed),
     )
 }

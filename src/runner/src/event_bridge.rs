@@ -9,8 +9,9 @@ use trading_core::channels::market_data::MarketDataUpdateReceiver;
 use trading_core::venue::cex::channels::CexVenueUpdateReceiver;
 use trading_core::venue::dex::channels::DexVenueUpdateReceiver;
 use trading_networking::events::{
-    cold_event_bus, dex_cold_event_bus, hot_event_channel, ColdEvent, ColdEventBus, DexColdEvent,
-    DexColdEventBus, HotEvent, HotEventRx, HotEventTx,
+    cold_event_bus, cold_event_from_cex, dex_cold_event_bus, dex_cold_event_from_dex,
+    hot_event_channel, hot_event_from_market_data, ColdEventBus, DexColdEventBus, HotEventRx,
+    HotEventTx,
 };
 
 use crate::shutdown::ShutdownManager;
@@ -53,22 +54,11 @@ pub fn start_event_bridge(inputs: EventBridgeInputs<'_>) -> EventBridgeHandles {
                 tokio::select! {
                     update = md_rx.recv() => {
                         match update {
-                            Ok(trading_core::channels::market_data::MarketDataUpdate::Orderbook { orderbook, trace_context }) => {
-                                let event = HotEvent::orderbook_from_structured(&orderbook, trace_context);
-                                let _ = hot_tx.try_send(event);
+                            Ok(update) => {
+                                if let Some(event) = hot_event_from_market_data(update) {
+                                    let _ = hot_tx.try_send(event);
+                                }
                             }
-                            Ok(trading_core::channels::market_data::MarketDataUpdate::Trade { trade, trace_context }) => {
-                                let event = HotEvent::Trade {
-                                    pair: trade.pair.clone(),
-                                    price: trade.price,
-                                    quantity: trade.quantity,
-                                    timestamp: trade.timestamp,
-                                    trade_id: trade.trade_id.clone(),
-                                    trace_context,
-                                };
-                                let _ = hot_tx.try_send(event);
-                            }
-                            Ok(trading_core::channels::market_data::MarketDataUpdate::DexAccountHealth { .. }) => {}
                             Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
                                 BROADCAST_LAG_MD.fetch_add(skipped, Ordering::Relaxed);
                                 warn!("[event_bridge] market data lagged; skipped {skipped}");
@@ -90,17 +80,9 @@ pub fn start_event_bridge(inputs: EventBridgeInputs<'_>) -> EventBridgeHandles {
                 tokio::select! {
                     update = cex_rx.recv() => {
                         match update {
-                            Ok(trading_core::venue::cex::channels::CexVenueUpdate::Order { order, trace_context }) => {
-                                let _ = cold_bus.publish(Arc::new(ColdEvent::Order { order, trace_context }));
-                            }
-                            Ok(trading_core::venue::cex::channels::CexVenueUpdate::Balance { balance, trace_context }) => {
-                                let _ = cold_bus.publish(Arc::new(ColdEvent::Balance { balance, trace_context }));
-                            }
-                            Ok(trading_core::venue::cex::channels::CexVenueUpdate::Position { position, trace_context }) => {
-                                let _ = cold_bus.publish(Arc::new(ColdEvent::Position { position, trace_context }));
-                            }
-                            Ok(trading_core::venue::cex::channels::CexVenueUpdate::Trade { trade, trace_context }) => {
-                                let _ = cold_bus.publish(Arc::new(ColdEvent::Trade { trade, trace_context }));
+                            Ok(update) => {
+                                let event = cold_event_from_cex(update);
+                                let _ = cold_bus.publish(Arc::new(event));
                             }
                             Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
                                 BROADCAST_LAG_CEX.fetch_add(skipped, Ordering::Relaxed);
@@ -123,18 +105,9 @@ pub fn start_event_bridge(inputs: EventBridgeInputs<'_>) -> EventBridgeHandles {
                 tokio::select! {
                     update = dex_rx.recv() => {
                         match update {
-                            Ok(trading_core::venue::dex::channels::DexVenueUpdate::WalletBalance { balances, trace_context }) => {
-                                let _ = dex_bus.publish(Arc::new(DexColdEvent::WalletBalance { balances, trace_context }));
-                            }
-                            Ok(trading_core::venue::dex::channels::DexVenueUpdate::PendingTransaction { pending, trace_context }) => {
-                                let _ = dex_bus.publish(Arc::new(DexColdEvent::PendingTransaction {
-                                    signature: pending.signature.clone(),
-                                    status: pending.status,
-                                    trace_context,
-                                }));
-                            }
-                            Ok(trading_core::venue::dex::channels::DexVenueUpdate::ExecutionResult { result, trace_context }) => {
-                                let _ = dex_bus.publish(Arc::new(DexColdEvent::ExecutionResult { result, trace_context }));
+                            Ok(update) => {
+                                let event = dex_cold_event_from_dex(update);
+                                let _ = dex_bus.publish(Arc::new(event));
                             }
                             Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
                                 BROADCAST_LAG_DEX.fetch_add(skipped, Ordering::Relaxed);

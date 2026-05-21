@@ -60,7 +60,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("Starting k-paper trade stream (url={})", config.url);
 
     let handler = Box::new(PrintTradeHandler);
-    let mut client = PaperClient::new(config, Some(handler), vec![]);
+    let mut client = PaperClient::new(config, Some(handler));
 
     let _client_handle = tokio::spawn(async move {
         // trades() is implemented as orderbooks() for k-paper, since both flow over same WS.

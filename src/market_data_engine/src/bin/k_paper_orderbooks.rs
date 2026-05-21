@@ -52,7 +52,7 @@ fn k_paper_config_from_env() -> PaperConfig {
         .unwrap_or_else(|_| "ws://127.0.0.1:19999/ws/market".to_string());
     PaperConfig {
         url,
-        // Not used by PaperClient today; instrument_id is parsed from incoming messages.
+        // Empty = no filter (all k-paper instruments). Set pairs to restrict (e.g. BTC/USDT).
         pairs: vec![],
     }
 }
@@ -67,7 +67,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("Starting k-paper orderbook stream (url={})", config.url);
 
     let handler = Box::new(PrintOrderbookHandler);
-    let mut client = PaperClient::new(config, Some(handler), vec![]);
+    let mut client = PaperClient::new(config, Some(handler));
 
     let _client_handle = tokio::spawn(async move {
         if let Err(e) = client.orderbooks().await {

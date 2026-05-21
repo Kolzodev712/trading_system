@@ -12,13 +12,16 @@ Do **not** route internal trading through Zenoh — that adds serialization and 
 
 ## Runner bridge
 
-`runner::event_bridge` subscribes to internal channels and publishes to networking buses:
+`runner::event_bridge` subscribes to internal channels and publishes to networking buses using
+`trading_networking::events::{hot_event_from_market_data, cold_event_from_cex, dex_cold_event_from_dex}`:
 
 - MD → `HotEvent`
 - CEX → `ColdEvent`
 - DEX → `DexColdEvent` (topic prefix `trading/dex_cold/...` on Zenoh)
 
 Used by `--mode levels`, `strategies`, and `dex` when external export is enabled.
+
+Remote commands: see [COMMAND_PLANE.md](./COMMAND_PLANE.md). Zenoh smoke: [ZENOH_SMOKE.md](./ZENOH_SMOKE.md).
 
 ## Zenoh
 

@@ -9,6 +9,13 @@ pub use config::DexEngineConfig;
 pub use run::run;
 pub use runtime::DexEngineRuntime;
 
+pub use chains::sui::execution::DeepBookSetup;
+pub use chains::sui::indexer::IndexerOrderbook;
+pub use chains::sui::{
+    pool_name_to_pair, DeepBookConfig, DeepBookIndexerClient, DeepBookPoolMeta,
+    DeepBookVenueProvider, IndexerTrade, OrderbookSnapshot,
+};
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -21,11 +28,12 @@ mod tests {
         let provider = chains::mock::MockVenueProvider;
         assert_eq!(provider.venue_id(), VenueId::Solana);
         let wallet = provider.bootstrap_state().await.unwrap();
-        assert!(wallet.balances.is_empty());
+        assert!(wallet.wallet.balances.is_empty());
+        assert!(wallet.open_orders.is_empty());
     }
 
     #[tokio::test]
-    async fn run_starts_runtime() {
+    async fn run_starts_runtime_with_mock_solana() {
         let config = DexEngineConfig {
             venue: VenueId::Solana,
             chain: config::DexChain::Solana,
@@ -42,5 +50,19 @@ mod tests {
             .wallet
             .balances
             .is_empty());
+    }
+
+    #[test]
+    fn deepbook_config_deserializes() {
+        let config = DexEngineConfig {
+            venue: VenueId::DeepBook,
+            chain: config::DexChain::Sui,
+            config: serde_json::json!({
+                "network": "testnet",
+                "pools": ["SUI_DBUSDC"]
+            }),
+        };
+        let deepbook = config.deepbook_config().unwrap();
+        assert_eq!(deepbook.pools.len(), 1);
     }
 }

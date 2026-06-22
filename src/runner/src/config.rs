@@ -325,6 +325,18 @@ impl BotConfig {
                             .to_string(),
                     );
                 }
+                if let Some(ref dex) = self.dex_engine {
+                    if dex.chain == dex_engine::config::DexChain::Sui {
+                        if dex.venue != trading_core::venue::VenueId::DeepBook {
+                            return Err(
+                                "dex_engine.venue must be \"deepbook\" when chain is \"sui\""
+                                    .to_string(),
+                            );
+                        }
+                        dex.deepbook_config()
+                            .map_err(|e| format!("invalid dex_engine DeepBook config: {e}"))?;
+                    }
+                }
             }
         }
         if matches!(self.venue.mode, VenueMode::Cex | VenueMode::Both)
@@ -359,7 +371,14 @@ impl BotConfig {
                     self.venue.mode
                 ));
             }
-            "levels" | "strategies" | "dex" => {}
+            "dex" => {
+                if let Some(ref dex) = self.dex_engine {
+                    dex.deepbook_config()
+                        .map_err(|e| format!("invalid dex_engine DeepBook config: {e}"))?
+                        .validate_for_trading()
+                        .map_err(|e| format!("invalid dex_engine DeepBook config: {e}"))?;
+                }
+            }
             other => return Err(format!("unknown runner mode: {other}")),
         }
         Ok(())
@@ -387,6 +406,7 @@ impl BotConfig {
                 Ok(paper_config.pairs)
             }
             Exchange::Unsupported => Err("Unsupported exchange".into()),
+            Exchange::DeepBook => Err("DeepBook pairs come from dex_engine.config.pools".into()),
         }
     }
 
@@ -408,42 +428,8 @@ impl BotConfig {
                 Ok(paper_config.instrument_type)
             }
             Exchange::Unsupported => Ok(InstrumentType::Spot), // Default to Spot
+            Exchange::DeepBook => Ok(InstrumentType::Spot),
         }
-    }
-}
-
-#[cfg(test)]
-mod config_smoke_tests {
-    use super::*;
-
-    fn example_path(name: &str) -> std::path::PathBuf {
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../config")
-            .join(name)
-    }
-
-    #[test]
-    fn bot_cex_example_validates() {
-        let cfg = BotConfig::load_from_file(example_path("bot.json").to_str().unwrap()).unwrap();
-        cfg.validate().unwrap();
-        cfg.validate_for_runner("levels").unwrap();
-    }
-
-    #[test]
-    fn bot_dex_example_validates() {
-        let path = example_path("bot.dex.example.json");
-        let cfg = BotConfig::load_from_file(path.to_str().unwrap()).unwrap();
-        cfg.validate().unwrap();
-        cfg.validate_for_runner("dex").unwrap();
-        assert!(cfg.validate_for_runner("levels").is_err());
-    }
-
-    #[test]
-    fn bot_both_example_validates() {
-        let path = example_path("bot.both.example.json");
-        let cfg = BotConfig::load_from_file(path.to_str().unwrap()).unwrap();
-        cfg.validate().unwrap();
-        cfg.validate_for_runner("dex").unwrap();
     }
 }
 
@@ -499,5 +485,40 @@ impl StrategyConfig {
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod config_smoke_tests {
+    use super::*;
+
+    fn example_path(name: &str) -> std::path::PathBuf {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../config")
+            .join(name)
+    }
+
+    #[test]
+    fn bot_cex_example_validates() {
+        let cfg = BotConfig::load_from_file(example_path("bot.json").to_str().unwrap()).unwrap();
+        cfg.validate().unwrap();
+        cfg.validate_for_runner("levels").unwrap();
+    }
+
+    #[test]
+    fn bot_dex_example_validates() {
+        let path = example_path("bot.dex.example.json");
+        let cfg = BotConfig::load_from_file(path.to_str().unwrap()).unwrap();
+        cfg.validate().unwrap();
+        cfg.validate_for_runner("dex").unwrap();
+        assert!(cfg.validate_for_runner("levels").is_err());
+    }
+
+    #[test]
+    fn bot_both_example_validates() {
+        let path = example_path("bot.both.example.json");
+        let cfg = BotConfig::load_from_file(path.to_str().unwrap()).unwrap();
+        cfg.validate().unwrap();
+        cfg.validate_for_runner("dex").unwrap();
     }
 }

@@ -299,6 +299,9 @@ pub enum Exchange {
     Binance,
     Bybit,
     Paper,
+    /// DeepBook V3 CLOB (on-chain; chain is separate — see `DexChain`).
+    #[serde(rename = "DeepBook", alias = "deepbook")]
+    DeepBook,
     Unsupported,
 }
 

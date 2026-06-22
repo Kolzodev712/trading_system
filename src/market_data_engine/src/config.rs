@@ -2,7 +2,7 @@ use trading_core::{error::EngineError, types::common::Exchange};
 
 use super::exchanges::{
     binance::config::BinanceConfig, bybit::config::BybitConfig,
-    k_paper::config::PaperConfig as KPaperConfig,
+    deepbook::config::DeepBookMarketDataConfig, k_paper::config::PaperConfig as KPaperConfig,
 };
 use serde::{Deserialize, Serialize};
 
@@ -34,6 +34,7 @@ pub enum ExchangeConfig {
     Binance(BinanceConfig),
     Bybit(BybitConfig),
     Paper(KPaperConfig),
+    DeepBook(DeepBookMarketDataConfig),
 }
 
 impl ConfigGetter<BinanceConfig> for ExchangeConfig {
@@ -113,7 +114,7 @@ mod tests {
                 assert_eq!(binance_config.base_delay, None);
                 assert_eq!(binance_config.max_delay, None);
             }
-            ExchangeConfig::Bybit(_) | ExchangeConfig::Paper(_) => {
+            ExchangeConfig::Bybit(_) | ExchangeConfig::Paper(_) | ExchangeConfig::DeepBook(_) => {
                 panic!("Expected Binance config in test");
             }
         }

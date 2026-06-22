@@ -173,6 +173,9 @@ pub async fn initialize_asset_service(
         Exchange::Unsupported => {
             return Err("Unsupported exchange for Asset Engine".into());
         }
+        Exchange::DeepBook => {
+            return Err("DeepBook is configured via dex_engine, not exchange_engine".into());
+        }
     }
 
     Ok(asset_service)
@@ -300,6 +303,12 @@ pub fn initialize_market_data_engine(
         Exchange::Unsupported => {
             return Err("Unsupported exchange for Market Data Engine".into());
         }
+        Exchange::DeepBook => {
+            return Err(
+                "DeepBook market data is initialized via dex_engine (initialize_dex_market_data_engine)"
+                    .into(),
+            );
+        }
     };
 
     let (market_data_tx, market_data_rx) =
@@ -331,6 +340,138 @@ pub fn initialize_market_data_engine(
     });
 
     Ok((market_data_tx, market_data_rx, handle, state_manager))
+}
+
+/// Initialize market data from DeepBook indexer (DEX mode).
+pub fn initialize_dex_market_data_engine(
+    bot_config: &BotConfig,
+    shutdown_manager: &ShutdownManager,
+) -> Result<MarketDataEngineResult, Box<dyn std::error::Error>> {
+    use market_data_engine::exchanges::deepbook::DeepBookMarketDataConfig;
+
+    let dex_config = bot_config
+        .dex_engine
+        .as_ref()
+        .ok_or("dex_engine config required for DEX market data")?;
+    let deepbook_config = dex_config
+        .deepbook_config()
+        .map_err(|e| format!("invalid DeepBook config: {e}"))?;
+
+    let pairs: Vec<Pair> = deepbook_config
+        .pools
+        .iter()
+        .map(|p| dex_engine::pool_name_to_pair(p.as_str()))
+        .collect();
+
+    info!(
+        "Starting DeepBook market data (exchange: DeepBook, chain: Sui, pools: {:?}, indexer: {})...",
+        deepbook_config.pools,
+        deepbook_config.indexer_url()
+    );
+
+    let market_data_config = MarketDataConfig {
+        redis_url: None,
+        exchange: Exchange::DeepBook,
+        exchange_config: MDExchangeConfig::DeepBook(DeepBookMarketDataConfig {
+            indexer_url: deepbook_config.indexer_url(),
+            pools: deepbook_config.pools.clone(),
+            poll_interval_ms: deepbook_config.poll_interval_ms,
+            orderbook_depth: 50,
+            trades_limit: 20,
+        }),
+    };
+
+    let (market_data_tx, market_data_rx) =
+        trading_core::channels::market_data::market_data_update_channel(
+            bot_config.channels.market_data_capacity,
+        );
+
+    let mut market_data_driver = MarketDataDriver::new(
+        market_data_config,
+        market_data_tx.clone(),
+        bot_config.channels.clone(),
+        pairs.clone(),
+    )?;
+
+    let state_manager = market_data_driver.get_state_manager();
+
+    let mut shutdown_rx = shutdown_manager.subscribe();
+    let handle = tokio::spawn(async move {
+        tokio::select! {
+            result = market_data_driver.run(Method::Orderbooks) => {
+                if let Err(e) = result {
+                    error!("DeepBook market data engine error: {e}");
+                }
+            }
+            _ = shutdown_rx.recv() => {
+                info!("DeepBook market data engine shutting down");
+            }
+        }
+    });
+
+    Ok((market_data_tx, market_data_rx, handle, state_manager))
+}
+
+/// Whether `venue.mode: both` should also poll DeepBook indexer MD.
+pub fn should_spawn_deepbook_sidecar(bot_config: &BotConfig) -> bool {
+    bot_config.venue.mode == VenueMode::Both
+        && bot_config.dex_engine.as_ref().is_some_and(|dex| {
+            dex.chain == dex_engine::config::DexChain::Sui
+                && dex.venue == trading_core::venue::VenueId::DeepBook
+        })
+}
+
+/// Poll DeepBook alongside CEX MD, writing into the shared `MarketDataStateManager`.
+pub fn spawn_deepbook_market_data_sidecar(
+    bot_config: &BotConfig,
+    shutdown_manager: &ShutdownManager,
+    state_manager: Arc<market_data_engine::state::manager::MarketDataStateManager>,
+) -> Result<JoinHandle<()>, Box<dyn std::error::Error>> {
+    use market_data_engine::exchanges::deepbook::client::DeepBookMarketDataClient;
+    use market_data_engine::exchanges::deepbook::DeepBookMarketDataConfig;
+    use market_data_engine::messages::StateManagerMessageHandler;
+    use trading_core::venue::cex::traits::MarketDataClient;
+
+    let dex_config = bot_config
+        .dex_engine
+        .as_ref()
+        .ok_or("dex_engine required for DeepBook sidecar")?;
+    let deepbook_config = dex_config
+        .deepbook_config()
+        .map_err(|e| format!("invalid DeepBook config: {e}"))?;
+
+    info!(
+        "Starting DeepBook market data sidecar (pools: {:?}) for venue.mode both",
+        deepbook_config.pools
+    );
+
+    let md_config = DeepBookMarketDataConfig {
+        indexer_url: deepbook_config.indexer_url(),
+        pools: deepbook_config.pools.clone(),
+        poll_interval_ms: deepbook_config.poll_interval_ms,
+        orderbook_depth: 50,
+        trades_limit: 20,
+    };
+
+    let mut client = DeepBookMarketDataClient::new(
+        md_config,
+        Some(Box::new(StateManagerMessageHandler::new(state_manager))),
+    )
+    .map_err(|e| format!("DeepBook sidecar client: {e}"))?;
+
+    let mut shutdown_rx = shutdown_manager.subscribe();
+    Ok(tokio::spawn(async move {
+        tokio::select! {
+            result = client.orderbooks() => {
+                if let Err(e) = result {
+                    error!("DeepBook market data sidecar error: {e}");
+                }
+            }
+            _ = shutdown_rx.recv() => {
+                info!("DeepBook market data sidecar shutting down");
+            }
+        }
+    }))
 }
 
 /// Initialize Indicator Service
@@ -645,6 +786,9 @@ pub async fn initialize_exchange_engine(
         }
         Exchange::Unsupported => {
             return Err("Unsupported exchange for Exchange Engine".into());
+        }
+        Exchange::DeepBook => {
+            return Err("DeepBook is configured via dex_engine, not exchange_engine".into());
         }
     };
 

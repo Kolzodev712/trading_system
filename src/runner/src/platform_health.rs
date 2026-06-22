@@ -8,10 +8,31 @@ use market_data_engine::state::manager::MarketDataStateManager;
 use trading_core::types::common::Pair;
 use trading_core::venue::VenueMode;
 
+use crate::config::BotConfig;
+
 /// How stale market data may be before readiness fails (seconds).
 const MD_STALE_SECS: u64 = 120;
 /// Grace period after process start before MD freshness is required.
 const MD_GRACE_SECS: u64 = 45;
+
+/// DeepBook pool pairs from bot config (empty when not DEX/both).
+pub fn dex_pairs_from_config(bot_config: &BotConfig) -> Vec<Pair> {
+    if !matches!(bot_config.venue.mode, VenueMode::Dex | VenueMode::Both) {
+        return Vec::new();
+    }
+    let Some(dex) = bot_config.dex_engine.as_ref() else {
+        return Vec::new();
+    };
+    dex.deepbook_config()
+        .ok()
+        .map(|db| {
+            db.pools
+                .iter()
+                .map(|p| dex_engine::pool_name_to_pair(p.as_str()))
+                .collect()
+        })
+        .unwrap_or_default()
+}
 
 #[derive(Debug, Clone)]
 pub struct PlatformReadiness {
@@ -20,6 +41,8 @@ pub struct PlatformReadiness {
     pub exchange_state_manager: Option<Arc<ExchangeStateManager>>,
     pub market_data_state_manager: Option<Arc<MarketDataStateManager>>,
     pub configured_pairs: Vec<Pair>,
+    /// DeepBook pool pairs (for `venue.mode: both` MD freshness).
+    pub dex_pairs: Vec<Pair>,
     pub dex_ready: bool,
     pub mongo_enabled: bool,
 }
@@ -61,7 +84,7 @@ impl PlatformReadiness {
         let Some(mdsm) = &self.market_data_state_manager else {
             return true;
         };
-        if self.configured_pairs.is_empty() {
+        if self.configured_pairs.is_empty() && self.dex_pairs.is_empty() {
             return true;
         }
         let now = SystemTime::now()
@@ -72,12 +95,15 @@ impl PlatformReadiness {
         let Ok(guard) = state.try_read() else {
             return false;
         };
-        self.configured_pairs.iter().any(|pair| {
-            guard
-                .get_orderbook_timestamp(pair)
-                .map(|ts| now.saturating_sub(ts / 1000) <= MD_STALE_SECS)
-                .unwrap_or(false)
-        })
+        self.configured_pairs
+            .iter()
+            .chain(self.dex_pairs.iter())
+            .any(|pair| {
+                guard
+                    .get_orderbook_timestamp(pair)
+                    .map(|ts| now.saturating_sub(ts / 1000) <= MD_STALE_SECS)
+                    .unwrap_or(false)
+            })
     }
 
     pub fn status_detail(&self) -> String {

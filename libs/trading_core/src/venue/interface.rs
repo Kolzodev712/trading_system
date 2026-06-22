@@ -28,7 +28,11 @@ pub enum VenueId {
     Binance,
     Bybit,
     Paper,
+    /// Reserved (Solana lending-era scaffold).
     Solana,
+    /// DeepBook V3 CLOB exchange (`dex_engine`; chain in `DexChain`, e.g. Sui).
+    #[serde(rename = "deepbook", alias = "deep_book", alias = "sui")]
+    DeepBook,
 }
 
 /// Maps `Exchange` to `VenueId` for CEX configs.
@@ -38,6 +42,7 @@ pub fn venue_id_from_exchange(exchange: crate::types::common::Exchange) -> Venue
         Exchange::Binance => VenueId::Binance,
         Exchange::Bybit => VenueId::Bybit,
         Exchange::Paper => VenueId::Paper,
+        Exchange::DeepBook => VenueId::DeepBook,
         Exchange::Unsupported => VenueId::Paper,
     }
 }

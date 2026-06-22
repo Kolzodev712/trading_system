@@ -56,6 +56,7 @@ impl ZenohKeyspace {
     pub fn dex_cold_key(&self, event: &DexColdEvent) -> &'static str {
         match event {
             DexColdEvent::WalletBalance { .. } => "dex_cold/wallet_balance",
+            DexColdEvent::OpenOrders { .. } => "dex_cold/open_orders",
             DexColdEvent::PendingTransaction { .. } => "dex_cold/pending_transaction",
             DexColdEvent::ExecutionResult { .. } => "dex_cold/execution_result",
         }

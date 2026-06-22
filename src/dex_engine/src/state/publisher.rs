@@ -26,6 +26,16 @@ impl DexStatePublisher {
                     trace_context: Some(to_send),
                 }
             }
+            DexVenueUpdate::OpenOrders { orders, .. } => {
+                let tracer = get_tracer("dex_engine");
+                let ctx = ColdTraceContext::new_root_with_tracer(&tracer, "dex.open_orders", None);
+                let to_send = ctx.clone();
+                ctx.end();
+                DexVenueUpdate::OpenOrders {
+                    orders,
+                    trace_context: Some(to_send),
+                }
+            }
             DexVenueUpdate::PendingTransaction { pending, .. } => {
                 let tracer = get_tracer("dex_engine");
                 let ctx = ColdTraceContext::new_root_with_tracer(

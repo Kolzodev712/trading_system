@@ -161,6 +161,16 @@ message DexVenueSnapshot {
     repeated DexBalance balances = 1;
     repeated DexPendingTransaction pending_transactions = 2;
     string venue = 3;
+    repeated DexOrder open_orders = 4;
+}
+
+message DexOrder {
+    string order_id = 1;
+    string pool = 2;
+    string side = 3;
+    string price = 4;
+    string quantity = 5;
+    string status = 6;
 }
 
 message DexBalance {

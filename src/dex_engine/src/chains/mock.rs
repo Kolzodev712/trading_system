@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use tokio::sync::broadcast;
 use trading_core::venue::dex::channels::DexVenueUpdate;
 use trading_core::venue::dex::provider::VenueProvider;
-use trading_core::venue::dex::types::{DexWalletBalances, ExecutionResult};
+use trading_core::venue::dex::types::{DexAccountSnapshot, ExecutionResult};
 use trading_core::venue::dex::{DexError, TradeCommand};
 use trading_core::venue::VenueId;
 
@@ -15,8 +15,8 @@ impl VenueProvider for MockVenueProvider {
         VenueId::Solana
     }
 
-    async fn bootstrap_state(&self) -> Result<DexWalletBalances, DexError> {
-        Ok(DexWalletBalances::default())
+    async fn bootstrap_state(&self) -> Result<DexAccountSnapshot, DexError> {
+        Ok(DexAccountSnapshot::default())
     }
 
     async fn stream_updates(&self, _tx: broadcast::Sender<DexVenueUpdate>) -> Result<(), DexError> {
@@ -29,7 +29,7 @@ impl VenueProvider for MockVenueProvider {
         ))
     }
 
-    async fn reconcile(&self) -> Result<DexWalletBalances, DexError> {
-        Ok(DexWalletBalances::default())
+    async fn reconcile(&self) -> Result<DexAccountSnapshot, DexError> {
+        Ok(DexAccountSnapshot::default())
     }
 }

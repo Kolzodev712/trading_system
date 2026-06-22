@@ -65,7 +65,7 @@ mongodb = "3.0.0"
 
 # HTTP Server
 axum = "0.7"
-tower = "0.4"
+tower = "0.5.3"
 tower-http = { version = "0.5", features = ["cors", "trace"] }
 
 # Utils
@@ -91,6 +91,7 @@ prost-types = "0.12"
 
 [dev-dependencies]
 parking_lot = { workspace = true }
+dex_engine = { path = "src/dex_engine" }
 runner = { path = "src/runner" }
 trading_engine = { path = "src/trading_engine" }
 trading_core = { path = "libs/trading_core" }

@@ -7,9 +7,13 @@ use clap::Parser;
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
-    /// Trading mode: "strategies" or "levels"
+    /// Trading mode: "levels", "strategies", or "dex"
     #[arg(short, long, default_value = "levels")]
     mode: String,
+
+    /// Path to bot config (venue, exchange/dex engines, server, mongo)
+    #[arg(short, long, default_value = "config/bot.json")]
+    config: String,
 
     /// Path to strategies config file (required if mode is "strategies")
     #[arg(short, long, default_value = "config/strategies.json")]
@@ -18,13 +22,17 @@ struct Args {
     /// Path to levels config file (required if mode is "levels")
     #[arg(short, long, default_value = "config/levels.json")]
     levels_config: String,
+
+    /// Path to DEX levels config file (required if mode is "dex")
+    #[arg(long, default_value = "config/dex_levels.example.json")]
+    dex_levels_config: String,
 }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
 
-    let bot_config = BotConfig::load_from_file("config/bot.json")?;
+    let bot_config = BotConfig::load_from_file(&args.config)?;
     bot_config.validate()?;
 
     initialize_logging(&bot_config);
@@ -59,6 +67,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         args.mode,
         args.strategies_config,
         args.levels_config,
+        args.dex_levels_config,
         mongo_client,
         tracing_handles,
     )
@@ -85,6 +94,7 @@ fn initialize_logging(bot_config: &BotConfig) {
 fn log_startup_info(bot_config: &BotConfig, mode: &str) {
     info!("=== Starting Trading System ===");
     info!("Mode: {}", mode);
+    info!("Venue mode: {:?}", bot_config.venue.mode);
     info!("Exchange: {:?}", bot_config.exchange_engine.exchange);
     info!(
         "MongoDB persistence: {}",

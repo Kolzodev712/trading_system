@@ -8,5 +8,6 @@
 //! State management and internal logic are tested in unit tests.
 
 pub mod asset_engine;
+pub mod dex_engine;
 pub mod exchange_engine;
 pub mod market_data_engine;

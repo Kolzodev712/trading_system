@@ -293,6 +293,18 @@ impl MonitoringService {
                     status: p.status,
                 })
                 .collect(),
+            open_orders: snap
+                .open_orders
+                .into_iter()
+                .map(|o| trading_cli::DexOrder {
+                    order_id: o.order_id,
+                    pool: o.pool,
+                    side: o.side,
+                    price: o.price,
+                    quantity: o.quantity,
+                    status: o.status,
+                })
+                .collect(),
             venue: snap.venue_label,
         })
     }

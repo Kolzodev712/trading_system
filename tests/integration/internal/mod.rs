@@ -10,6 +10,7 @@
 pub mod channels;
 pub mod circuit_breaker;
 pub mod config;
+pub mod dex;
 pub mod futures;
 pub mod indicator;
 pub mod level_execution;

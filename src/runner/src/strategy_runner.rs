@@ -17,7 +17,7 @@ use trading_engine::strategies::{
 use trading_networking::commands::{CommandDispatcher, MpscCommandRouter};
 
 use crate::event_bridge::{start_event_bridge, EventBridgeInputs};
-use crate::platform_health::PlatformReadiness;
+use crate::platform_health::{dex_pairs_from_config, PlatformReadiness};
 use crate::{build_metrics_provider, maybe_start_zenoh_gateway};
 
 /// Processes execution reports from the exchange and calls the provided handler function
@@ -354,6 +354,7 @@ pub async fn strategy_runner(
         exchange_state_manager: services.exchange_state_manager().ok(),
         market_data_state_manager: Some(services.market_data_state_manager.clone()),
         configured_pairs: configured_pairs.clone(),
+        dex_pairs: dex_pairs_from_config(&bot_config),
         dex_ready: services.venue.dex_state_manager().is_some(),
         mongo_enabled: bot_config.mongo.enabled,
     };

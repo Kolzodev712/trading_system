@@ -9,7 +9,7 @@ use std::sync::Arc;
 use trading_core::types::common::Pair;
 use trading_core::types::market_data::Orderbook;
 use trading_engine::levels::config::PriceConfig;
-use trading_engine::levels::resolver::IndicatorResolver;
+use trading_engine::levels::IndicatorResolver;
 
 fn test_resolver() -> IndicatorResolver {
     IndicatorResolver::new(

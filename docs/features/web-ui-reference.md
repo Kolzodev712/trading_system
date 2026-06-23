@@ -48,13 +48,24 @@ PAPER_EXCHANGE_DUMMY_OB=1 cargo run -p paper-exchange-server
 
 ### Terminal 2 — trading runner
 
+**CEX (levels):**
+
 ```bash
 cd ~/Desktop/trading_system
 cargo run --release --package runner --bin runner -- --mode levels
 # Expect: gRPC server started on [::]:50051
 ```
 
-Ensure `config/bot.json` has `paper_exchange_url: "ws://127.0.0.1:19999/ws/trade"`.
+**DEX (DeepBook levels / quotes):**
+
+```bash
+cd ~/Desktop/trading_system
+just run-dex
+# or: cargo run --release -p runner -- --mode dex
+# Expect: gRPC on [::]:50051, monitoringData.dex populated on connect
+```
+
+Ensure `config/bot.json` has `paper_exchange_url: "ws://127.0.0.1:19999/ws/trade"` for CEX/k-paper.
 
 ### Terminal 3 — gRPC-Web proxy
 
@@ -127,15 +138,28 @@ There is **no React Router**. Navigation is a Zustand `screen` field:
 | `screen` | Component | When |
 |----------|-----------|------|
 | `main` | `MainMenu` | After connect, before monitor |
-| `spot` | `SpotMonitor` | `instrument_type !== "Futures"` |
-| `futures` | `FuturesMonitor` | `instrument_type === "Futures"` |
+| `spot` | `SpotMonitor` | CEX spot (`instrument_type !== "Futures"`, no `dex`) |
+| `futures` | `FuturesMonitor` | CEX futures (`instrument_type === "Futures"`, no `dex`) |
+| `dex` | `DexMonitor` | **`monitoringData.dex` is present** (DEX runner active) |
 
 `App.tsx` wires global hooks and dialogs:
 
 ```tsx
 useMonitoringStream(connected && screen !== "main");  // live data
-useLevelsPoll(connected && screen !== "main", true);  // 5s poll, spot only
+useLevelsPoll(connected && screen === "spot", true);   // 5s poll, CEX spot only
 ```
+
+**Screen selection (match TUI):** when entering the monitor from the main menu, pick the screen from the first `GetMonitoringData` / stream snapshot:
+
+```typescript
+function deriveMonitorScreen(data: MonitoringData): "dex" | "spot" | "futures" {
+  if (data.dex) return "dex";
+  if (data.instrumentType === "Futures") return "futures";
+  return "spot";
+}
+```
+
+TUI reference: `cli/src/app.rs` → `monitor_screen_for_data()`.
 
 ### 4.2 Screen state machine
 
@@ -143,10 +167,12 @@ useLevelsPoll(connected && screen !== "main", true);  // 5s poll, spot only
 stateDiagram-v2
     [*] --> Disconnected
     Disconnected --> Dashboard: Connect
-    Dashboard --> SpotMonitor: Open Monitor (Spot)
-    Dashboard --> FuturesMonitor: Open Monitor (Futures)
+    Dashboard --> DexMonitor: Open Monitor (dex present)
+    Dashboard --> SpotMonitor: Open Monitor (CEX spot)
+    Dashboard --> FuturesMonitor: Open Monitor (CEX futures)
     SpotMonitor --> FuturesMonitor: stream instrument_type → Futures
     FuturesMonitor --> SpotMonitor: stream instrument_type → Spot
+    DexMonitor --> Dashboard: Back
     SpotMonitor --> Dashboard: Back
     FuturesMonitor --> Dashboard: Back
 ```
@@ -171,7 +197,8 @@ export function useMode(): "levels" | "strategies"
 | `monitoringData` | Stream + manual refresh | `useMonitoringStream`, Refresh button |
 | `levels` | `GetLevels` poll | `useLevelsPoll` (5s, spot only) |
 | `screen` | User + `instrument_type` in stream | `enterMonitor`, `leaveMonitor`, `setMonitoringData` |
-| `selectedLevelIndex`, `selectedStrategyIndex`, `selectedOrderbookIndex` | Table clicks / tabs | Panel interaction |
+| `selectedLevelIndex`, `selectedStrategyIndex`, `selectedOrderbookIndex` | Table clicks / tabs | CEX panel interaction |
+| `selectedDexQuoteIndex`, `selectedDexStrategyIndex` | Table clicks | DEX quotes / strategies (pool-scoped) |
 | `overlay` | User actions | Dialogs: `levelDetails`, `strategyDetails`, `createLevel`, `editLevel` |
 | `streamConnected` | Stream hook | Backoff/reconnect indicator in status bar |
 
@@ -218,7 +245,10 @@ Client is recreated when endpoint changes. `resetTradingClient()` on connect/dis
 | `createLevel()` | `CreateLevel` | Create dialog |
 | `updateLevel()` | `UpdateLevel` | Edit dialog |
 | `toggleLevel()` | `ToggleLevel` | Toolbar (levels mode) |
-| `toggleStrategy()` | `ToggleStrategy` | Toolbar (strategies mode) |
+| `toggleStrategy()` | `ToggleStrategy` | Toolbar (CEX strategies mode) |
+| `toggleDexQuote()` | `ToggleDexQuote` | DEX monitor toolbar |
+| `cancelDexPoolOrders()` | `CancelDexPoolOrders` | DEX monitor toolbar |
+| `toggleDexStrategy()` | `ToggleDexStrategy` | DEX monitor toolbar |
 | `deleteLevel()` | `DeleteLevel` | **Not exposed** (server UNIMPLEMENTED) |
 
 ### 6.3 Streaming (`src/hooks/useMonitoringStream.ts`)
@@ -265,6 +295,11 @@ Replicated from Rust TUI `cli/src/screens/shared/panels.rs`:
 | Trades | Reversed before display (newest first) |
 | Price/qty on create/update | Wrapped as `Fixed(value)` via `wrapFixed()` |
 | Edit form | Strips `Fixed(...)` prefix for display |
+| DEX asset label | `asset_labels[mint]` or last `::` segment of mint (TUI: `asset_label()`) |
+| DEX quote price | Show `resolved_price` when non-empty, else config `price` (e.g. `"Binding"`) |
+| DEX signature / order id | Truncate middle for display (`head…tail`) |
+
+TUI source: `cli/src/screens/dex_monitor/panels.rs`, `cli/src/screens/shared/panels.rs`.
 
 ### Level ID conventions
 
@@ -295,12 +330,14 @@ Helpers: `configIdFromExpanded()`, `pairFromLevel()` in `src/lib/levelId.ts`.
 ├──────────────┬──────────────────┬───────────────────────────┤
 │ Orders       │                  │ Indicators                │
 │ Balances     │   Orderbook      │ Aggregated (web-only)     │
-│ Levels OR    │   (pair tabs)    │ DEX (web-only, if present)│
+│ Levels OR    │   (pair tabs)    │                           │
 │ Strategies   │                  │                           │
 ├──────────────┴──────────────────┴───────────────────────────┤
 │ Recent Trades                                                │
 └─────────────────────────────────────────────────────────────┘
 ```
+
+> **Note:** Spot monitor may show a small aggregated sidebar. For DEX mode the TUI uses a **dedicated full-screen `DexMonitor`** — do not embed DEX as a tiny sidebar only. See §8.7.
 
 ### 8.3 Futures Monitor (`screens/FuturesMonitor.tsx`)
 
@@ -308,7 +345,196 @@ Helpers: `configIdFromExpanded()`, `pairFromLevel()` in `src/lib/levelId.ts`.
 **Strategies mode:** Strategies + Orders | Orderbook | Margin + Indicators  
 Bottom: Trades + Aggregated/DEX extras
 
-### 8.4 Monitor toolbar (`components/layout/MonitorToolbar.tsx`)
+**Levels mode:** Positions + Levels + Orders | Orderbook | Margin + Indicators  
+**Strategies mode:** Strategies + Orders | Orderbook | Margin + Indicators  
+Bottom: Trades + Aggregated extras
+
+### 8.4 DEX Monitor (`screens/DexMonitor.tsx`) — **implement this**
+
+**When:** `monitoringData.dex` is set (runner started with `--mode dex` or `--mode dex-strategies`).
+
+**TUI reference:** `cli/src/screens/dex_monitor/mod.rs` + `panels.rs` + `input.rs`.
+
+#### Layout (match TUI)
+
+```
+┌──────────────────────────────────────────────────────────────────────────┐
+│ Header: DEX Monitor — {dex.venue} · {monitoringData.exchange}            │
+├─────────────────────┬──────────────────────┬─────────────────────────────┤
+│ Venue               │                      │ Venue Balances              │
+│ (venue/exchange/    │   Orderbook          │ (mint → amount)             │
+│  mode labels)       │   (shared panel)     ├─────────────────────────────┤
+├─────────────────────┤   pair tabs ←/→      │ Pending Transactions        │
+│ DEX Indicators      │   from orderbooks[]  │ (signature, status)         │
+│ (pool-filtered)     │                      │                             │
+├─────────────────────┤                      │                             │
+│ Open Orders         │                      │                             │
+│ (pool-filtered)     │                      │                             │
+├─────────────────────┴──────────────────────┴─────────────────────────────┤
+│ Quotes (pool-filtered) │ Strategies (pool-filtered) │ Recent Trades        │
+├──────────────────────────────────────────────────────────────────────────┤
+│ Toolbar: Back | Refresh | Toggle Quote | Toggle Strategy | Cancel Pool   │
+└──────────────────────────────────────────────────────────────────────────┘
+```
+
+Use a responsive grid; preserve panel **grouping** and **pool scoping** even if column widths differ on small screens.
+
+#### Data source
+
+All DEX panels read from **`monitoringData.dex`** (`DexVenueSnapshot`):
+
+| Proto field | Panel | Notes |
+|-------------|-------|-------|
+| `venue` | Venue header | e.g. `"dex"`, `"deepbook"` |
+| `balances` + `asset_labels` | Venue Balances | Resolve mint → human label |
+| `pending_transactions` | Pending Transactions | On-chain tx pipeline |
+| `open_orders` | Open Orders | Live DeepBook orders |
+| `quotes` | Quotes | Configured quote rows + runtime state |
+| `dex_strategies` | Strategies | Only when strategies engine active |
+| `dex_indicators` | DEX Indicators | Pool-scoped mid/bid/ask/spread values |
+
+Shared (not inside `dex`):
+
+| Field | Panel |
+|-------|-------|
+| `orderbooks[]` | Orderbook (same as CEX) |
+| `trades[]` | Recent Trades |
+| `exchange` | Header subtitle |
+
+Regenerate proto after backend changes:
+
+```bash
+cp ../trading_system/libs/trading_core/proto/trading_cli.proto proto/
+npm run generate
+```
+
+Key messages (`trading_cli.proto`):
+
+```protobuf
+message DexVenueSnapshot {
+  repeated DexBalance balances = 1;
+  repeated DexPendingTransaction pending_transactions = 2;
+  string venue = 3;
+  repeated DexOrder open_orders = 4;
+  repeated DexQuote quotes = 5;
+  map<string, string> asset_labels = 6;
+  repeated DexStrategyStatus dex_strategies = 7;
+  repeated DexIndicator dex_indicators = 8;
+}
+
+message DexQuote {
+  string id = 1;
+  string pool = 2;
+  string side = 3;
+  string price = 4;            // config spec: "Binding", "3.50", "Mid(...)", etc.
+  string quantity = 5;
+  bool enabled = 6;
+  bool auto_repost = 7;
+  string state = 8;            // idle | pending_tx | placed | repost_scheduled | disabled
+  string order_id = 9;
+  string last_signature = 10;
+  string resolved_price = 11;  // last computed price when dynamic/binding
+}
+
+message DexIndicator {
+  string indicator_id = 1;
+  string name = 2;   // Mid, BestBid, BestAsk, Spread
+  string pool = 3;
+  string value = 4;
+  uint64 timestamp = 5;
+}
+```
+
+#### Pool filter (critical)
+
+Several panels filter by the **selected orderbook tab**, not by a separate pool picker.
+
+1. `selectedOrderbookIndex` → `orderbooks[i].pair` (e.g. `"SUI/DBUSDC"`).
+2. Match pool-scoped rows with the same rules as TUI:
+
+```typescript
+function matchesPool(entityPool: string, tabLabel: string): boolean {
+  if (entityPool === tabLabel) return true;
+  const normalized = tabLabel.replace("/", "_"); // SUI/DBUSDC → SUI_DBUSDC
+  return entityPool === normalized || entityPool.includes(tabLabel);
+}
+```
+
+Apply to: `open_orders`, `quotes`, `dex_strategies`, `dex_indicators`.
+
+TUI: `quote_matches_pool`, `order_matches_pool`, `strategy_matches_market`, `indicator_matches_pool` in `cli/src/screens/dex_monitor/panels.rs`.
+
+#### Panel columns (copy TUI)
+
+| Panel | Columns |
+|-------|---------|
+| Venue | Venue, Exchange, Mode (`DEX monitor`) |
+| DEX Indicators | Kind (`name`), Pool, Value |
+| Open Orders | Order ID (truncated), Pool, Side, Price, Qty, Status |
+| Venue Balances | Asset (resolved label), Amount |
+| Pending Transactions | Signature (truncated), Status |
+| Quotes | ID, Side, Price†, Qty, En (on/off), State |
+| Strategies | ID, Type, Market, En, State, Signal (truncated) |
+
+† **Price column:** `resolvedPrice || price` (see transforms above).
+
+#### Toolbar actions (DEX RPCs)
+
+| Action | RPC | Request | Timeout | TUI key |
+|--------|-----|---------|---------|---------|
+| Toggle selected quote | `ToggleDexQuote` | `{ quote_id, enabled: !current }` | 10s | `T` |
+| Toggle selected strategy | `ToggleDexStrategy` | `{ strategy_id, enabled: !current }` | 10s | `S` |
+| Cancel pool orders | `CancelDexPoolOrders` | `{ pool: selectedTabNormalized }` | 30s | `C` |
+| Refresh | `GetMonitoringData` | — | 5s | `R` |
+| Back | — | `leaveMonitor()` | — | `Esc` |
+
+**Pool for cancel:** pass the normalized pool name (e.g. `SUI_DBUSDC`). Empty `pool` cancels all configured pools (proto allows it; TUI cancels current tab only).
+
+After toggle/cancel: refresh monitoring data (TUI calls `refresh_monitoring_data()`; stream will catch up within ~1s).
+
+**Selection:** quotes and strategies are selected **within the pool-filtered list** (index into filtered rows, not global array). TUI: `dex_quotes_for_selected_pool()`, `dex_strategies_for_selected_pool()` in `cli/src/app.rs`.
+
+#### Store / hooks additions
+
+```typescript
+// tradingStore.ts — add:
+selectedDexQuoteIndex: number | null;
+selectedDexStrategyIndex: number | null;
+setSelectedDexQuoteIndex(...);
+setSelectedDexStrategyIndex(...);
+
+// api/tradingCliService.ts — add wrappers:
+toggleDexQuote(quoteId: string, enabled: boolean)
+toggleDexStrategy(strategyId: string, enabled: boolean)
+cancelDexPoolOrders(pool: string)
+
+// hooks/useMonitorActions.ts — DEX branch when screen === "dex"
+```
+
+Do **not** enable `useLevelsPoll` on the DEX screen (no CEX levels).
+
+#### Implementation checklist (web UI repo)
+
+1. [ ] Sync proto + `npm run generate` (needs `DexIndicator`, `resolved_price`, DEX RPCs).
+2. [ ] Add `screen: "dex"` and `deriveMonitorScreen()` on connect / stream.
+3. [ ] Create `screens/DexMonitor.tsx` with layout above.
+4. [ ] Add panels: `DexVenuePanel`, `DexIndicatorsPanel`, `DexOpenOrdersPanel`, `DexBalancesPanel`, `DexPendingPanel`, `DexQuotesPanel`, `DexStrategiesPanel` (reuse `OrderbookPanel`, `TradesPanel`).
+5. [ ] Implement `matchesPool()` + pool-filtered row lists.
+6. [ ] Add DEX RPC wrappers + toolbar buttons.
+7. [ ] Add transforms: asset label, price display, truncate signature/order id.
+8. [ ] Main menu footer: show `"DEX"` mode when `data.dex` present.
+9. [ ] Manual test against `just run-dex` runner.
+
+#### Empty / loading states
+
+| Condition | UI |
+|-----------|-----|
+| `dex` undefined | Stay on CEX monitor; don't show DEX screen |
+| `dex_indicators` empty on startup | Show "No DEX indicators" (normal until first orderbook tick ~1s) |
+| `quotes` empty | "No configured quotes" |
+| `dex_strategies` empty | "No configured strategies" (levels-only DEX mode) |
+
+### 8.5 Monitor toolbar (`components/layout/MonitorToolbar.tsx`)
 
 | Action | Levels mode | Strategies mode |
 |--------|-------------|-----------------|
@@ -319,9 +545,11 @@ Bottom: Trades + Aggregated/DEX extras
 | New Level | Open create dialog | Hidden |
 | Edit | Open edit dialog | Hidden |
 
-Selection: click row in `DataTable`; double-click opens details.
+Selection: click row in `DataTable`; double-click opens details (CEX only).
 
-### 8.5 Dialogs
+**DEX toolbar variant:** when `screen === "dex"`, hide CEX level/strategy CRUD buttons; show quote toggle, strategy toggle (if strategies present), cancel pool orders.
+
+### 8.6 Dialogs
 
 | Dialog | RPC | Fields |
 |--------|-----|--------|
@@ -331,7 +559,7 @@ Selection: click row in `DataTable`; double-click opens details.
 | `StrategyDetailsDialog` | — (cached) | Strategy fields from stream |
 | `DeleteLevelStub` | — | Disabled; documents server `UNIMPLEMENTED` |
 
-### 8.6 Panels
+### 8.7 Panels (CEX)
 
 | Panel | Data source | Notes |
 |-------|-------------|-------|
@@ -345,7 +573,8 @@ Selection: click row in `DataTable`; double-click opens details.
 | `PositionsPanel` | `monitoringData.positions` | Futures |
 | `MarginPanel` | positions + balances | Sums margin/PnL; USDT collateral |
 | `AggregatedPanel` | `monitoringData.aggregated` | **Not in TUI** |
-| `DexPanel` | `monitoringData.dex` | **Not in TUI** |
+
+DEX panels: see §8.4 (dedicated `DexMonitor` screen, not a single sidebar widget).
 
 ---
 
@@ -367,11 +596,16 @@ Selection: click row in `DataTable`; double-click opens details.
 | Orderbook pair switching | ✅ Tabs |
 | Cancelled orders feedback | ✅ Toast on global toggle |
 | Levels 5s poll (spot only) | ✅ Same as TUI |
+| **DEX monitor screen** | ❌ **Gap — implement §8.4** |
+| DEX indicators panel | ❌ (TUI: `render_dex_indicators`) |
+| DEX quote toggle | ❌ (`ToggleDexQuote`) |
+| DEX strategy toggle | ❌ (`ToggleDexStrategy`) |
+| DEX cancel pool orders | ❌ (`CancelDexPoolOrders`) |
+| Auto-route to DEX when `dex` present | ❌ (TUI does this) |
 
 ### Web UI extras (beyond TUI)
 
-- Aggregated stats panel
-- DEX venue panel
+- Aggregated stats panel (CEX spot sidebar)
 - Manual Refresh button
 - Stream reconnect status in footer
 - Toast notifications (Sonner)
@@ -383,7 +617,8 @@ Selection: click row in `DataTable`; double-click opens details.
 |------|-----|--------|
 | Delete level | No UI | Stub only; server UNIMPLEMENTED |
 | Levels on futures enter | Fetches on any monitor enter | Poll disabled on futures — list may be empty until mutation |
-| Keyboard shortcuts | T/L/E/C, arrows | Mouse/toolbar only |
+| Keyboard shortcuts | T/L/E/C, arrows; DEX: T/S/C, pool tabs | Mouse/toolbar only |
+| DEX monitor | Full screen when `dex` present | Not implemented yet |
 | Symbol picker on create | From existing levels | Manual base/quote entry |
 | Native gRPC | Direct to `:50051` | Requires Envoy gRPC-Web |
 | Auth | None | None (add at proxy/network layer for prod) |
@@ -410,10 +645,10 @@ trading-system-ui/
 │   │   ├── useMonitoringStream.ts
 │   │   ├── useLevelsPoll.ts
 │   │   └── useMonitorActions.ts
-│   ├── screens/                  # MainMenu, SpotMonitor, FuturesMonitor
+│   ├── screens/                  # MainMenu, SpotMonitor, FuturesMonitor, DexMonitor
 │   ├── components/
 │   │   ├── layout/               # ConnectionBanner, MonitorToolbar, StatusBar
-│   │   ├── panels/               # Data tables
+│   │   ├── panels/               # Data tables (+ dex/* panels)
 │   │   ├── levels/               # CRUD dialogs
 │   │   ├── strategies/           # Strategy details
 │   │   ├── shared/               # DataTable, PnlText
@@ -474,6 +709,7 @@ Covers: `transforms.test.ts` (display rules), `App.test.tsx` (boot render).
 4. Levels mode: create, edit, toggle, details work; list refreshes
 5. Global toggle → toast shows cancelled order count
 6. Status bar shows stream connected indicator
+7. **DEX:** connect to `just run-dex` runner → auto-open DEX monitor → indicators populate after ~1s → quote toggle / cancel pool work
 
 ---
 
@@ -498,4 +734,6 @@ Covers: `transforms.test.ts` (display rules), `App.test.tsx` (boot render).
 | Web UI architecture | `trading-system-ui/docs/architecture.md` |
 | Web UI gRPC API | `trading-system-ui/docs/grpc-api.md` |
 | Local dev (k-paper + runner) | `trading_system/docs/LOCAL_DEV_GUIDE.md` |
+| TUI DEX monitor | `trading_system/cli/src/screens/dex_monitor/` |
+| DEX config | `trading_system/config/dex/levels.json`, `config/dex/indicators.json` |
 | Proto source of truth | `trading_system/libs/trading_core/proto/trading_cli.proto` |

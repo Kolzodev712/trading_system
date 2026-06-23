@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 use smol_str::SmolStr;
-use trading_core::venue::dex::types::{DexWalletBalances, ExecutionResult, TxStatus};
+use trading_core::venue::dex::types::{DexOpenOrder, DexWalletBalances, ExecutionResult, TxStatus};
 use trading_trace::ColdTraceContext;
 
 /// DEX cold lane event (aligned with `DexVenueUpdate`).
@@ -10,6 +10,12 @@ use trading_trace::ColdTraceContext;
 pub enum DexColdEvent {
     WalletBalance {
         balances: DexWalletBalances,
+        #[serde(skip)]
+        #[allow(clippy::type_complexity)]
+        trace_context: Option<ColdTraceContext>,
+    },
+    OpenOrders {
+        orders: Vec<DexOpenOrder>,
         #[serde(skip)]
         #[allow(clippy::type_complexity)]
         trace_context: Option<ColdTraceContext>,

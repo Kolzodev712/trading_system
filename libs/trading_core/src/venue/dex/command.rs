@@ -4,6 +4,8 @@ use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use smol_str::SmolStr;
 
+use crate::types::common::Side;
+
 /// Lending / perp protocol identifier on a chain.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -31,5 +33,34 @@ pub enum TradeCommand {
         amount: Decimal,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         slippage_bps: Option<u32>,
+    },
+    /// DeepBook CLOB — place limit order (engine converts human price/qty to ticks/lots).
+    PlaceLimitOrder {
+        pool_id: SmolStr,
+        balance_manager_id: SmolStr,
+        side: Side,
+        price: Decimal,
+        quantity: Decimal,
+        #[serde(default)]
+        pay_fees_in_deep: bool,
+    },
+    CancelOrder {
+        pool_id: SmolStr,
+        balance_manager_id: SmolStr,
+        order_id: SmolStr,
+    },
+    CancelAllOrders {
+        pool_id: SmolStr,
+        balance_manager_id: SmolStr,
+    },
+    Deposit {
+        balance_manager_id: SmolStr,
+        coin_type: SmolStr,
+        amount: Decimal,
+    },
+    Withdraw {
+        balance_manager_id: SmolStr,
+        coin_type: SmolStr,
+        amount: Decimal,
     },
 }

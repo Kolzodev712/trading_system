@@ -11,8 +11,9 @@ pub mod trading_cli {
 
 use trading_cli::trading_cli_service_client::TradingCliServiceClient;
 use trading_cli::{
-    CreateLevelRequest, GetLevelRequest, GetLevelsRequest, GetMonitoringDataRequest,
-    GetTradingStatusRequest, SetTradingEnabledRequest, StreamMonitoringDataRequest,
+    CancelDexPoolOrdersRequest, CreateLevelRequest, GetLevelRequest, GetLevelsRequest,
+    GetMonitoringDataRequest, GetTradingStatusRequest, SetTradingEnabledRequest,
+    StreamMonitoringDataRequest, ToggleDexQuoteRequest, ToggleDexStrategyRequest,
     ToggleLevelRequest, ToggleStrategyRequest, UpdateLevelRequest,
 };
 
@@ -101,6 +102,64 @@ impl TradingCliClient {
                 .await
                 .map_err(|_| CliError::Custom("gRPC call timed out".to_string()))?
                 .map_err(CliError::Grpc)?;
+
+        Ok(response.into_inner().success)
+    }
+
+    /// Toggle a configured DEX quote (enable/disable placement).
+    pub async fn toggle_dex_quote(
+        &mut self,
+        quote_id: &str,
+        enabled: bool,
+    ) -> Result<bool, CliError> {
+        let request = tonic::Request::new(ToggleDexQuoteRequest {
+            quote_id: quote_id.to_string(),
+            enabled,
+        });
+        let response = tokio::time::timeout(
+            Duration::from_secs(10),
+            self.client.toggle_dex_quote(request),
+        )
+        .await
+        .map_err(|_| CliError::Custom("gRPC call timed out".to_string()))?
+        .map_err(CliError::Grpc)?;
+
+        Ok(response.into_inner().success)
+    }
+
+    /// Cancel all open orders on a DEX pool (empty pool = all configured pools).
+    pub async fn cancel_dex_pool_orders(&mut self, pool: &str) -> Result<Vec<String>, CliError> {
+        let request = tonic::Request::new(CancelDexPoolOrdersRequest {
+            pool: pool.to_string(),
+        });
+        let response = tokio::time::timeout(
+            Duration::from_secs(30),
+            self.client.cancel_dex_pool_orders(request),
+        )
+        .await
+        .map_err(|_| CliError::Custom("gRPC call timed out".to_string()))?
+        .map_err(CliError::Grpc)?;
+
+        Ok(response.into_inner().transaction_signatures)
+    }
+
+    /// Toggle a configured DEX strategy (enable/disable evaluation).
+    pub async fn toggle_dex_strategy(
+        &mut self,
+        strategy_id: &str,
+        enabled: bool,
+    ) -> Result<bool, CliError> {
+        let request = tonic::Request::new(ToggleDexStrategyRequest {
+            strategy_id: strategy_id.to_string(),
+            enabled,
+        });
+        let response = tokio::time::timeout(
+            Duration::from_secs(10),
+            self.client.toggle_dex_strategy(request),
+        )
+        .await
+        .map_err(|_| CliError::Custom("gRPC call timed out".to_string()))?
+        .map_err(CliError::Grpc)?;
 
         Ok(response.into_inner().success)
     }

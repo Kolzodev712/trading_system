@@ -86,6 +86,27 @@ impl TradingCliService for GatewayService {
         self.client().toggle_level(request).await
     }
 
+    async fn toggle_dex_quote(
+        &self,
+        request: Request<trading_cli::ToggleDexQuoteRequest>,
+    ) -> Result<Response<trading_cli::ToggleDexQuoteResponse>, Status> {
+        self.client().toggle_dex_quote(request).await
+    }
+
+    async fn cancel_dex_pool_orders(
+        &self,
+        request: Request<trading_cli::CancelDexPoolOrdersRequest>,
+    ) -> Result<Response<trading_cli::CancelDexPoolOrdersResponse>, Status> {
+        self.client().cancel_dex_pool_orders(request).await
+    }
+
+    async fn toggle_dex_strategy(
+        &self,
+        request: Request<trading_cli::ToggleDexStrategyRequest>,
+    ) -> Result<Response<trading_cli::ToggleDexStrategyResponse>, Status> {
+        self.client().toggle_dex_strategy(request).await
+    }
+
     async fn get_monitoring_data(
         &self,
         request: Request<trading_cli::GetMonitoringDataRequest>,

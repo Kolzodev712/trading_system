@@ -11,8 +11,8 @@ impl DexReconciler {
         provider: &P,
         state: &DexStateManager,
     ) -> Result<(), DexError> {
-        let balances = provider.reconcile().await?;
-        state.apply_wallet_balances(balances);
+        let snapshot = provider.reconcile().await?;
+        state.apply_account_snapshot(snapshot);
         info!("DEX reconciliation completed");
         Ok(())
     }

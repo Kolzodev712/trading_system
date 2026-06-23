@@ -86,7 +86,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     warn!("This is a test run - all orders will use test_open_order()");
 
     // Initialize MongoDB - REQUIRED for trading system
-    let mongo_client = initialize_mongodb(&bot_config).await?;
+    let mongo_client = initialize_mongodb(&bot_config, &args.mode)
+        .await?
+        .ok_or("MongoDB required for test_runner")?;
     info!("✓ MongoDB connected");
 
     // Create shutdown manager and setup Ctrl-C handler
@@ -180,6 +182,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         market_data_handle,
         trading_ws_handle: tokio::spawn(async {}),
         indicator_handle,
+        dex_indicator_engine: None,
         trading_state_manager,
         market_data_state_manager,
         asset_service: Some(asset_service),

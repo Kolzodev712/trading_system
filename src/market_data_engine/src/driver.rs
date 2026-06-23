@@ -2,7 +2,8 @@ use super::{config::MarketDataConfig, messages::StateManagerMessageHandler};
 use crate::{
     config::ExchangeConfig,
     exchanges::{
-        binance::client::BinanceClient, bybit::client::BybitClient, k_paper::client::PaperClient,
+        binance::client::BinanceClient, bybit::client::BybitClient,
+        deepbook::client::DeepBookMarketDataClient, k_paper::client::PaperClient,
     },
     state::manager::MarketDataStateManager,
 };
@@ -103,6 +104,13 @@ impl MarketDataDriver {
                     paper_config.clone(),
                     Some(message_handler),
                 )))
+            }
+            ExchangeConfig::DeepBook(deepbook_config) => {
+                let message_handler = Box::new(StateManagerMessageHandler::new(state_manager));
+                Ok(Box::new(DeepBookMarketDataClient::new(
+                    deepbook_config.clone(),
+                    Some(message_handler),
+                )?))
             }
         }
     }

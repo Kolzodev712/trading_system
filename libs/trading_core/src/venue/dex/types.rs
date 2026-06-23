@@ -36,7 +36,26 @@ pub struct ExecutionResult {
 }
 
 /// Wallet balances keyed by mint symbol or address.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct DexWalletBalances {
     pub balances: HashMap<SmolStr, Decimal>,
+}
+
+/// Open limit order from DeepBook indexer (Layer 2 read path).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DexOpenOrder {
+    pub order_id: SmolStr,
+    pub pool_name: SmolStr,
+    pub side: SmolStr,
+    pub price: Decimal,
+    pub quantity: Decimal,
+    pub filled_quantity: Decimal,
+    pub status: SmolStr,
+}
+
+/// Combined wallet + open-order snapshot from chain/indexer reads.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct DexAccountSnapshot {
+    pub wallet: DexWalletBalances,
+    pub open_orders: Vec<DexOpenOrder>,
 }

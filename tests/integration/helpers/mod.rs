@@ -4,6 +4,7 @@
 //! - `external.rs`: Generic builders for exchange clients (exchange-agnostic)
 //! - `internal.rs`: Helpers for internal system testing (mocks, test data, etc.)
 
+pub mod dex_engine;
 pub mod external;
 pub mod internal;
 

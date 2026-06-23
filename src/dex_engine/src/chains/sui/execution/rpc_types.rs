@@ -55,6 +55,51 @@ pub fn pick_gas_coin(coins: &[CoinRef]) -> Result<&CoinRef, DexError> {
         .ok_or_else(|| DexError::Transaction("no SUI coins available for gas".into()))
 }
 
+/// When depositing SUI, reserve the **smallest** viable gas coin so larger coins stay available
+/// as deposit inputs (avoid `pick_gas_coin` taking the largest coin as gas).
+pub fn pick_sui_deposit_coins(
+    coins: &[CoinRef],
+    deposit_needed: u64,
+    gas_budget: u64,
+) -> Result<(&CoinRef, &CoinRef), DexError> {
+    if coins.is_empty() {
+        return Err(DexError::Transaction("no SUI coins available".into()));
+    }
+
+    let funding = coins
+        .iter()
+        .filter(|c| c.balance >= deposit_needed)
+        .max_by_key(|c| c.balance)
+        .ok_or_else(|| {
+            let max_single = coins.iter().map(|c| c.balance).max().unwrap_or(0);
+            let total: u64 = coins.iter().map(|c| c.balance).sum();
+            DexError::Transaction(
+                format!(
+                    "insufficient SUI for deposit: need {deposit_needed} mist in one coin object, \
+                     largest coin has {max_single} mist (total across {} objects: {total} mist)",
+                    coins.len()
+                )
+                .into(),
+            )
+        })?;
+
+    if let Some(gas) = coins
+        .iter()
+        .filter(|c| c.object_id != funding.object_id && c.balance >= gas_budget)
+        .min_by_key(|c| c.balance)
+    {
+        return Ok((gas, funding));
+    }
+
+    Err(DexError::Transaction(
+        format!(
+            "no separate SUI coin for gas (need {gas_budget} mist); \
+             free a small coin object or reduce deposit below largest coin balance"
+        )
+        .into(),
+    ))
+}
+
 pub fn coin_to_object_input(coin: &CoinRef) -> ObjectInput {
     ObjectInput::owned(coin.object_id, coin.version, coin.digest)
 }
@@ -99,5 +144,35 @@ mod tests {
             map_execution_status(&ExecutionStatus::default().with_success(false)),
             TxStatus::Failed
         );
+    }
+
+    fn coin(byte: u8, balance: u64) -> CoinRef {
+        use sui_sdk_types::{Address, Digest};
+        let mut id = [0u8; 32];
+        id[31] = byte;
+        CoinRef {
+            object_id: Address::new(id),
+            version: 1,
+            digest: Digest::new([byte; 32]),
+            balance,
+        }
+    }
+
+    #[test]
+    fn pick_sui_deposit_uses_smallest_gas_coin() {
+        let coins = vec![
+            coin(1, 1_000_000_000), // 1 SUI — funding
+            coin(2, 984_764_000),
+            coin(3, 374_305_000), // gas
+        ];
+        let (gas, fund) = pick_sui_deposit_coins(&coins, 1_000_000_000, 250_000_000).unwrap();
+        assert_eq!(gas.object_id, coin(3, 0).object_id);
+        assert_eq!(fund.object_id, coin(1, 0).object_id);
+    }
+
+    #[test]
+    fn pick_sui_deposit_rejects_when_no_single_coin_large_enough() {
+        let coins = vec![coin(1, 1_000_000_000), coin(2, 984_764_000)];
+        assert!(pick_sui_deposit_coins(&coins, 1_500_000_000, 250_000_000).is_err());
     }
 }

@@ -7,10 +7,9 @@ use sui_transaction_builder::{Argument, Function, ObjectInput, TransactionBuilde
 use trading_core::types::common::Side;
 use trading_core::venue::dex::DexError;
 
+use super::super::precision::price_to_chain_units;
 use super::super::types::DeepBookPoolMeta;
 
-/// DeepBook fixed-point scalar (10^9), matching TS SDK `FLOAT_SCALAR`.
-pub const FLOAT_SCALAR: u64 = 1_000_000_000;
 /// Order expiration sentinel (TS SDK `MAX_TIMESTAMP`).
 pub const MAX_TIMESTAMP: u64 = 1_844_674_407_370_955_161;
 /// Default gas budget in MIST (0.25 SUI).
@@ -25,7 +24,8 @@ const SELF_MATCHING_ALLOWED: u8 = 0;
 pub struct DeepBookPtbContext {
     pub package_id: Address,
     pub pool: DeepBookPoolMeta,
-    pub balance_manager_id: Address,
+    pub balance_manager: ObjectInput,
+    pub pool_object: ObjectInput,
     pub clock: ObjectInput,
 }
 
@@ -56,7 +56,7 @@ impl DeepBookPtbContext {
     }
 
     pub fn generate_trade_proof(&self, tx: &mut TransactionBuilder) -> Result<Argument, DexError> {
-        let manager = tx.object(ObjectInput::new(self.balance_manager_id));
+        let manager = tx.object(self.balance_manager.clone());
         Ok(tx.move_call(
             self.balance_manager_fn("generate_proof_as_owner")?,
             vec![manager],
@@ -74,8 +74,8 @@ impl DeepBookPtbContext {
     ) -> Result<(), DexError> {
         let func = self.pool_fn("place_limit_order")?;
         let trade_proof = self.generate_trade_proof(tx)?;
-        let pool = tx.object(ObjectInput::new(parse_address(&self.pool.pool_id)?));
-        let manager = tx.object(ObjectInput::new(self.balance_manager_id));
+        let pool = tx.object(self.pool_object.clone());
+        let manager = tx.object(self.balance_manager.clone());
         let chain_price = price_to_chain_units(price, &self.pool)?;
         let chain_qty = quantity_to_base_units(quantity, &self.pool)?;
         let is_bid = matches!(side, Side::Buy);
@@ -115,8 +115,8 @@ impl DeepBookPtbContext {
     ) -> Result<(), DexError> {
         let func = self.pool_fn("cancel_order")?;
         let trade_proof = self.generate_trade_proof(tx)?;
-        let pool = tx.object(ObjectInput::new(parse_address(&self.pool.pool_id)?));
-        let manager = tx.object(ObjectInput::new(self.balance_manager_id));
+        let pool = tx.object(self.pool_object.clone());
+        let manager = tx.object(self.balance_manager.clone());
         let order_id_u128: u128 = order_id.parse().map_err(|e| {
             DexError::InvalidConfig(format!("invalid order_id `{order_id}`: {e}").into())
         })?;
@@ -132,8 +132,8 @@ impl DeepBookPtbContext {
     pub fn append_cancel_all_orders(&self, tx: &mut TransactionBuilder) -> Result<(), DexError> {
         let func = self.pool_fn("cancel_all_orders")?;
         let trade_proof = self.generate_trade_proof(tx)?;
-        let pool = tx.object(ObjectInput::new(parse_address(&self.pool.pool_id)?));
-        let manager = tx.object(ObjectInput::new(self.balance_manager_id));
+        let pool = tx.object(self.pool_object.clone());
+        let manager = tx.object(self.balance_manager.clone());
         let arg_clock = tx.object(self.clock.clone());
         tx.move_call(func, vec![pool, manager, trade_proof, arg_clock]);
         Ok(())
@@ -148,7 +148,7 @@ impl DeepBookPtbContext {
     ) -> Result<(), DexError> {
         let type_tag = parse_type_tag(coin_type)?;
         let chain_amount = amount_to_coin_units(amount, coin_type, &self.pool)?;
-        let manager = tx.object(ObjectInput::new(self.balance_manager_id));
+        let manager = tx.object(self.balance_manager.clone());
         let amount_arg = tx.pure(&chain_amount);
         let coin_arg = tx.object(coin_object);
         let split = tx.split_coins(coin_arg, vec![amount_arg]);
@@ -171,23 +171,13 @@ impl DeepBookPtbContext {
             .balance_manager_fn("withdraw")?
             .with_type_args(vec![parse_type_tag(coin_type)?]);
         let chain_amount = amount_to_coin_units(amount, coin_type, &self.pool)?;
-        let manager = tx.object(ObjectInput::new(self.balance_manager_id));
+        let manager = tx.object(self.balance_manager.clone());
         let arg_amount = tx.pure(&chain_amount);
         let withdrawn = tx.move_call(func, vec![manager, arg_amount]);
         let arg_recipient = tx.pure(&recipient);
         tx.transfer_objects(vec![withdrawn], arg_recipient);
         Ok(())
     }
-}
-
-pub fn price_to_chain_units(price: Decimal, meta: &DeepBookPoolMeta) -> Result<u64, DexError> {
-    let base_scale = decimal_scale(meta.base_asset_decimals);
-    let quote_scale = decimal_scale(meta.quote_asset_decimals);
-    let scaled = price * Decimal::from(FLOAT_SCALAR) * quote_scale / base_scale;
-    scaled
-        .round()
-        .to_u64()
-        .ok_or_else(|| DexError::InvalidConfig(format!("price {price} out of range").into()))
 }
 
 pub fn quantity_to_base_units(qty: Decimal, meta: &DeepBookPoolMeta) -> Result<u64, DexError> {
@@ -198,14 +188,24 @@ pub fn quantity_to_base_units(qty: Decimal, meta: &DeepBookPoolMeta) -> Result<u
         .ok_or_else(|| DexError::InvalidConfig(format!("quantity {qty} out of range").into()))
 }
 
+pub fn coin_types_match(left: &str, right: &str) -> bool {
+    if left == right {
+        return true;
+    }
+    match (parse_type_tag(left), parse_type_tag(right)) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => false,
+    }
+}
+
 pub fn amount_to_coin_units(
     amount: Decimal,
     coin_type: &str,
     meta: &DeepBookPoolMeta,
 ) -> Result<u64, DexError> {
-    let decimals = if coin_type == meta.base_asset_id.as_str() {
+    let decimals = if coin_types_match(coin_type, meta.base_asset_id.as_str()) {
         meta.base_asset_decimals
-    } else if coin_type == meta.quote_asset_id.as_str() {
+    } else if coin_types_match(coin_type, meta.quote_asset_id.as_str()) {
         meta.quote_asset_decimals
     } else {
         return Err(DexError::InvalidConfig(

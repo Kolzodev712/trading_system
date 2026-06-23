@@ -84,6 +84,11 @@ impl MainMenuScreen {
         frame.render_widget(status_paragraph, main_chunks[0]);
 
         // Navigation Menu
+        let monitor_hint = if app.has_dex() {
+            "On-chain venue: orders, balances, pending txs, orderbooks"
+        } else {
+            "Orders, balances, trades, indicators, level management"
+        };
         let menu_items = vec![
             Line::from(""),
             Line::from(vec![
@@ -95,7 +100,7 @@ impl MainMenuScreen {
                 ),
                 Span::from("  Trading Monitor"),
             ]),
-            Line::from("   Orders, balances, trades, indicators, level management"),
+            Line::from(format!("   {monitor_hint}")),
             Line::from(""),
             Line::from(vec![
                 Span::styled(
@@ -115,7 +120,9 @@ impl MainMenuScreen {
         frame.render_widget(menu_paragraph, main_chunks[1]);
 
         // Footer
-        let mode_label = if app.has_strategy() {
+        let mode_label = if app.has_dex() {
+            "DEX"
+        } else if app.has_strategy() {
             "Strategies"
         } else {
             "Levels"

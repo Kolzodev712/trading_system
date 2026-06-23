@@ -10,7 +10,6 @@ use trading_core::venue::dex::channels::DexVenueUpdate;
 use trading_core::venue::dex::provider::VenueProvider;
 use trading_core::venue::dex::DexError;
 
-use crate::chains::mock::MockVenueProvider;
 use crate::chains::sui::DeepBookVenueProvider;
 use crate::config::{DexChain, DexEngineConfig};
 use crate::runtime::DexEngineRuntime;
@@ -152,7 +151,6 @@ async fn select_provider(
             let pool_meta = Arc::new(provider.pool_meta());
             Ok((Arc::new(provider), Some(pool_meta)))
         }
-        (VenueId::Solana, DexChain::Solana) => Ok((Arc::new(MockVenueProvider), None)),
         (venue, chain) => Err(DexError::ProviderNotConfigured(
             format!("unsupported dex_engine venue {venue:?} + chain {chain:?}").into(),
         )),

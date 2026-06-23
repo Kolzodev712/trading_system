@@ -8,7 +8,6 @@ pub mod limits;
 pub mod manager;
 pub mod metrics;
 
-pub use circuit_breaker::*;
-pub use limits::*;
-pub use manager::*;
-pub use metrics::*;
+pub use limits::{RiskCheckResult, RiskLimits};
+pub use manager::RiskManager;
+pub use metrics::{DailyPnLTracker, RiskMetrics, RiskMetricsCalculator};

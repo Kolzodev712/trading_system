@@ -179,27 +179,6 @@ pub fn render_levels(frame: &mut Frame, area: Rect, app: &App) -> Result<(), Cli
     Ok(())
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn level_indicator_respects_global_trading_disabled() {
-        assert_eq!(level_enabled_indicator(true, false), ("⏸", Color::Yellow));
-    }
-
-    #[test]
-    fn level_indicator_shows_enabled_only_when_global_enabled() {
-        assert_eq!(level_enabled_indicator(true, true), ("✓", Color::Green));
-    }
-
-    #[test]
-    fn level_indicator_shows_disabled_when_level_disabled() {
-        assert_eq!(level_enabled_indicator(false, true), ("✗", Color::Red));
-        assert_eq!(level_enabled_indicator(false, false), ("✗", Color::Red));
-    }
-}
-
 /// Render the balances panel
 pub fn render_balances(frame: &mut Frame, area: Rect, app: &App) -> Result<(), CliError> {
     let data = app.monitoring_data();
@@ -659,4 +638,25 @@ pub fn render_orderbook(frame: &mut Frame, area: Rect, app: &App) -> Result<(), 
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn level_indicator_respects_global_trading_disabled() {
+        assert_eq!(level_enabled_indicator(true, false), ("⏸", Color::Yellow));
+    }
+
+    #[test]
+    fn level_indicator_shows_enabled_only_when_global_enabled() {
+        assert_eq!(level_enabled_indicator(true, true), ("✓", Color::Green));
+    }
+
+    #[test]
+    fn level_indicator_shows_disabled_when_level_disabled() {
+        assert_eq!(level_enabled_indicator(false, true), ("✗", Color::Red));
+        assert_eq!(level_enabled_indicator(false, false), ("✗", Color::Red));
+    }
 }

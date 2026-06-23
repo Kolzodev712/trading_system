@@ -7,11 +7,12 @@ use std::collections::HashMap;
 use std::str::FromStr;
 use trading_core::types::common::Side;
 use trading_core::venue::dex::TradeCommand;
+use trading_engine::dex::indicators::DexPriceConfig;
 use trading_engine::dex::levels::DexQuoteConfig;
 use trading_engine::dex::DexLevelsFile;
 
-#[test]
-fn dex_levels_place_command_from_fixture_pool_meta() {
+#[tokio::test]
+async fn dex_levels_place_command_from_fixture_pool_meta() {
     let pool = sui_dbusdc_pool();
     let mut pool_meta = HashMap::new();
     pool_meta.insert(pool.pool_name.clone(), pool.clone());
@@ -22,7 +23,7 @@ fn dex_levels_place_command_from_fixture_pool_meta() {
             id: "bid-1".to_string(),
             pool: "SUI_DBUSDC".to_string(),
             side: Side::Buy,
-            price: Decimal::from_str("3.71").unwrap(),
+            price: DexPriceConfig::Fixed(Decimal::from_str("3.71").unwrap()),
             quantity: Decimal::from_str("10").unwrap(),
             enabled: true,
             auto_repost: None,
@@ -37,7 +38,7 @@ fn dex_levels_place_command_from_fixture_pool_meta() {
     )
     .unwrap();
 
-    let cmd = manager.build_place_command("bid-1").unwrap();
+    let cmd = manager.build_place_command("bid-1").await.unwrap();
     match cmd {
         TradeCommand::PlaceLimitOrder {
             pool_id,

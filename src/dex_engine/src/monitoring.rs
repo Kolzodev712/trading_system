@@ -1,9 +1,5 @@
 //! DEX monitoring snapshot helpers (shared by gRPC monitoring).
 
-use std::collections::HashMap;
-
-use smol_str::SmolStr;
-
 use crate::state::manager::DexStateManager;
 
 #[derive(Debug, Clone, Default)]
@@ -77,16 +73,4 @@ pub fn collect_dex_snapshot(
         open_orders,
         venue_label: venue_label.into(),
     }
-}
-
-/// Keyed map form for tests.
-pub fn wallet_balance_map(dex_sm: &DexStateManager) -> HashMap<SmolStr, String> {
-    let state_arc = dex_sm.state();
-    let state = state_arc.read();
-    state
-        .wallet
-        .balances
-        .iter()
-        .map(|(k, v)| (k.clone(), v.to_string()))
-        .collect()
 }

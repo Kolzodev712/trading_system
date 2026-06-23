@@ -7,7 +7,7 @@ use trading_core::venue::dex::{
 };
 
 /// In-memory DEX venue state (wallet + pending transactions).
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct DexState {
     pub wallet: DexWalletBalances,
     pub open_orders: Vec<DexOpenOrder>,

@@ -6,6 +6,8 @@ use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use trading_core::types::common::Side;
 
+use crate::dex::DexPriceConfig;
+
 fn default_true() -> bool {
     true
 }
@@ -35,14 +37,14 @@ impl Default for DexLevelsDefaults {
     }
 }
 
-/// Single fixed-price quote on a DeepBook pool.
+/// Single quote on a DeepBook pool (fixed or indicator-derived price).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DexQuoteConfig {
     pub id: String,
     /// DeepBook pool name (e.g. `SUI_DBUSDC`).
     pub pool: String,
     pub side: Side,
-    pub price: Decimal,
+    pub price: DexPriceConfig,
     pub quantity: Decimal,
     #[serde(default = "default_true")]
     pub enabled: bool,
@@ -99,7 +101,24 @@ mod tests {
         }"#;
         let file: DexLevelsFile = serde_json::from_str(json).unwrap();
         assert_eq!(file.quotes.len(), 1);
-        assert_eq!(file.quotes[0].price, dec!(0.70));
+        assert_eq!(file.quotes[0].price, DexPriceConfig::Fixed(dec!(0.70)));
         assert!(file.quotes[0].auto_repost(&file.defaults));
+    }
+
+    #[test]
+    fn deserializes_binding_price() {
+        let json = r#"{
+            "quotes": [{
+                "id": "bid_1",
+                "pool": "SUI_DBUSDC",
+                "side": "Buy",
+                "price": "Binding",
+                "quantity": "1.0",
+                "enabled": true
+            }],
+            "defaults": {}
+        }"#;
+        let file: DexLevelsFile = serde_json::from_str(json).unwrap();
+        assert_eq!(file.quotes[0].price, DexPriceConfig::Binding);
     }
 }

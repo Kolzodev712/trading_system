@@ -41,10 +41,6 @@ impl DexQuoteRuntime {
         Self { config, state }
     }
 
-    pub fn is_enabled(&self) -> bool {
-        self.config.enabled && !matches!(self.state, DexQuoteState::Disabled)
-    }
-
     pub fn needs_placement(&self, now: Instant) -> bool {
         match &self.state {
             DexQuoteState::Idle => self.config.enabled,

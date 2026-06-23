@@ -4,7 +4,7 @@
 use super::circuit_breaker::CircuitBreaker;
 use super::limits::{RiskCheckResult, RiskLimits};
 use super::metrics::{RiskMetrics, RiskMetricsCalculator};
-use crate::state::TradingState;
+use crate::cex::state::TradingState;
 use rust_decimal::Decimal;
 use smol_str::SmolStr;
 use std::collections::HashMap;
@@ -70,7 +70,7 @@ impl RiskManager {
     /// Check level before posting (for level-based trading)
     pub async fn check_level(
         &self,
-        resolved_level: &crate::levels::ResolvedLevel,
+        resolved_level: &crate::cex::levels::ResolvedLevel,
         trading_state: &TradingState,
         balances: &[Balance],
         current_prices: Option<&HashMap<Pair, Decimal>>,

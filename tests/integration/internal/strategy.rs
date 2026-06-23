@@ -78,6 +78,9 @@ async fn test_strategy_monitoring_with_position() {
         exchange: "Test".to_string(),
         dex_state_manager: None,
         dex_venue_label: None,
+        dex_quote_manager: None,
+        dex_strategy_manager: None,
+        dex_indicator_engine: None,
     };
 
     // Collect monitoring data
@@ -153,6 +156,9 @@ async fn test_strategy_monitoring_without_position() {
         exchange: "Test".to_string(),
         dex_state_manager: None,
         dex_venue_label: None,
+        dex_quote_manager: None,
+        dex_strategy_manager: None,
+        dex_indicator_engine: None,
     };
 
     // Collect monitoring data
@@ -253,6 +259,9 @@ async fn test_strategy_monitoring_with_active_orders() {
         exchange: "Test".to_string(),
         dex_state_manager: None,
         dex_venue_label: None,
+        dex_quote_manager: None,
+        dex_strategy_manager: None,
+        dex_indicator_engine: None,
     };
 
     // Collect monitoring data

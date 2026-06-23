@@ -2,6 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 use smol_str::SmolStr;
+use trading_core::secret::Secret;
 use trading_core::venue::VenueId;
 
 use crate::config::{DexChain, DexEngineConfig};
@@ -73,6 +74,10 @@ pub struct DeepBookConfig {
     pub pools: Vec<SmolStr>,
     #[serde(default)]
     pub pay_fees_in_deep: bool,
+    /// Inline signing key (local dev). Takes precedence over `privateKeyEnv`.
+    #[serde(default)]
+    pub private_key: Option<Secret<SmolStr>>,
+    /// Env var name for signing key when `privateKey` is not set (default: `SUI_PRIVATE_KEY`).
     #[serde(default = "default_private_key_env")]
     pub private_key_env: SmolStr,
     /// Indexer poll interval for market data (milliseconds).
@@ -177,6 +182,38 @@ impl DeepBookConfig {
         }
         Ok(())
     }
+
+    /// Load signing credentials: `privateKey` in config, else `std::env`[`privateKeyEnv`].
+    pub fn signer(&self) -> Result<super::execution::SuiSigner, DexError> {
+        use super::execution::SuiSigner;
+
+        if let Some(ref key) = self.private_key {
+            if key.is_empty() {
+                return Err(DexError::InvalidConfig(
+                    "privateKey is set but empty".into(),
+                ));
+            }
+            return SuiSigner::from_secret(key.expose());
+        }
+        SuiSigner::from_env(self.private_key_env.as_str())
+    }
+
+    /// Ensure a signing key is available and matches configured `walletAddress`.
+    pub fn validate_signer(&self) -> Result<(), DexError> {
+        let signer = self.signer()?;
+        if let Some(wallet) = self.wallet_address() {
+            let derived = signer.address().to_string();
+            if !derived.eq_ignore_ascii_case(wallet) {
+                return Err(DexError::InvalidConfig(
+                    format!(
+                        "walletAddress `{wallet}` does not match signing key (derived `{derived}`)"
+                    )
+                    .into(),
+                ));
+            }
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -202,6 +239,23 @@ mod tests {
             deepbook.indexer_url(),
             "https://deepbook-indexer.testnet.mystenlabs.com"
         );
+    }
+
+    #[test]
+    fn deserializes_inline_private_key() {
+        let json = serde_json::json!({
+            "network": "testnet",
+            "pools": ["SUI_DBUSDC"],
+            "privateKey": "a".repeat(64)
+        });
+        let cfg = DexEngineConfig {
+            venue: VenueId::DeepBook,
+            chain: DexChain::Sui,
+            config: json,
+        };
+        let deepbook = DeepBookConfig::from_dex_engine(&cfg).unwrap();
+        assert!(deepbook.private_key.is_some());
+        assert_eq!(deepbook.private_key.as_ref().unwrap().expose().len(), 64);
     }
 
     #[test]

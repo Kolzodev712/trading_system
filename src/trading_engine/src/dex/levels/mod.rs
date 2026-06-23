@@ -1,8 +1,8 @@
 pub mod config;
-pub mod engine;
-pub mod manager;
-pub mod quote;
+mod event_loop;
+mod manager;
+mod quote;
 
 pub use config::{DexLevelsDefaults, DexLevelsFile, DexQuoteConfig};
-pub use engine::DexLevelsEngine;
-pub use manager::DexQuoteManager;
+pub use event_loop::DexLevelsEngine;
+pub use manager::{DexQuoteManager, DexQuoteSnapshot};

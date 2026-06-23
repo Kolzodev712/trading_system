@@ -7,6 +7,7 @@ use tokio::sync::RwLock;
 use tonic::Status;
 use tracing::debug;
 use trading_core::utils::hours_ago;
+use trading_engine::dex::{DexIndicatorEngine, DexQuoteManager, DexStrategyManager};
 use trading_engine::levels::LevelManager;
 use trading_engine::state::manager::TradingStateManager;
 use trading_engine::strategies::strategy_manager::StrategyManager;
@@ -18,6 +19,9 @@ pub struct MonitoringService {
     pub trading_state_manager: Arc<TradingStateManager>,
     pub exchange_state_manager: Arc<ExchangeStateManager>,
     pub dex_state_manager: Option<Arc<dex_engine::state::manager::DexStateManager>>,
+    pub dex_quote_manager: Option<Arc<RwLock<DexQuoteManager>>>,
+    pub dex_strategy_manager: Option<Arc<RwLock<DexStrategyManager>>>,
+    pub dex_indicator_engine: Option<Arc<DexIndicatorEngine>>,
     pub market_data_state_manager: Arc<market_data_engine::state::manager::MarketDataStateManager>,
     pub indicator_calculator: Arc<indicator_engine::calculator::IndicatorCalculator>,
     pub strategy_infos: Vec<StrategyInfo>,
@@ -248,7 +252,7 @@ impl MonitoringService {
             trading_core::types::common::InstrumentType::Derivitives => "Futures",
         };
 
-        let dex = self.collect_dex_snapshot();
+        let dex = self.collect_dex_snapshot().await;
 
         let data = trading_cli::MonitoringData {
             orders,
@@ -268,7 +272,7 @@ impl MonitoringService {
         Ok(data)
     }
 
-    fn collect_dex_snapshot(&self) -> Option<trading_cli::DexVenueSnapshot> {
+    async fn collect_dex_snapshot(&self) -> Option<trading_cli::DexVenueSnapshot> {
         let dex_sm = self.dex_state_manager.as_ref()?;
         let snap = dex_engine::monitoring::collect_dex_snapshot(
             dex_sm,
@@ -276,6 +280,69 @@ impl MonitoringService {
                 .clone()
                 .unwrap_or_else(|| "dex".to_string()),
         );
+        let (quotes, asset_labels) = if let Some(qm) = &self.dex_quote_manager {
+            let guard = qm.read().await;
+            (
+                guard
+                    .quote_snapshots()
+                    .into_iter()
+                    .map(|q| trading_cli::DexQuote {
+                        id: q.id,
+                        pool: q.pool,
+                        side: q.side,
+                        price: q.price,
+                        quantity: q.quantity,
+                        enabled: q.enabled,
+                        auto_repost: q.auto_repost,
+                        state: q.state,
+                        order_id: q.order_id,
+                        last_signature: q.last_signature,
+                        resolved_price: q.resolved_price,
+                    })
+                    .collect(),
+                guard.asset_labels(),
+            )
+        } else {
+            (Vec::new(), HashMap::new())
+        };
+        let dex_strategies = if let Some(sm) = &self.dex_strategy_manager {
+            let guard = sm.read().await;
+            guard
+                .status_snapshots()
+                .into_iter()
+                .map(|s| trading_cli::DexStrategyStatus {
+                    id: s.id.as_str().to_string(),
+                    strategy_type: s.strategy_type.to_string(),
+                    market: s.market.as_str().to_string(),
+                    enabled: s.enabled,
+                    state: s.state.to_string(),
+                    last_signal: s
+                        .last_signal
+                        .as_ref()
+                        .map(|sig| sig.to_string())
+                        .unwrap_or_default(),
+                    eval_count: s.eval_count,
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let dex_indicators = if let Some(engine) = &self.dex_indicator_engine {
+            engine
+                .monitoring_values()
+                .await
+                .into_iter()
+                .map(|v| trading_cli::DexIndicator {
+                    indicator_id: v.indicator_id.to_string(),
+                    name: v.name.to_string(),
+                    pool: v.pool.to_string(),
+                    value: v.value.to_string(),
+                    timestamp: v.timestamp,
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
         Some(trading_cli::DexVenueSnapshot {
             balances: snap
                 .balances
@@ -306,6 +373,10 @@ impl MonitoringService {
                 })
                 .collect(),
             venue: snap.venue_label,
+            quotes,
+            asset_labels,
+            dex_strategies,
+            dex_indicators,
         })
     }
 

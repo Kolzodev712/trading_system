@@ -10,5 +10,6 @@ mod submit;
 
 pub use super::grpc::SuiGrpcClient;
 pub use executor::DeepBookExecutor;
+pub use keys::SuiSigner;
 pub use rpc_types::{CoinRef, SharedObjectRef};
 pub use setup::DeepBookSetup;

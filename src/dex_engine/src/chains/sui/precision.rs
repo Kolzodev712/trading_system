@@ -52,6 +52,17 @@ pub fn ticks_to_price(ticks: u64, meta: &DeepBookPoolMeta) -> Decimal {
     Decimal::from(ticks * meta.tick_size) / decimal_scale(meta.quote_asset_decimals)
 }
 
+/// Human price → on-chain price units (must be a multiple of `tick_size`).
+pub fn price_to_chain_units(price: Decimal, meta: &DeepBookPoolMeta) -> Result<u64, DexError> {
+    let ticks = price_to_ticks(price, meta)?;
+    Ok(ticks.saturating_mul(meta.tick_size))
+}
+
+/// Snap a human price to the nearest valid on-chain tick.
+pub fn snap_price_to_tick(price: Decimal, meta: &DeepBookPoolMeta) -> Result<Decimal, DexError> {
+    price_to_ticks(price, meta).map(|ticks| ticks_to_price(ticks, meta))
+}
+
 /// Ensure lot count satisfies pool `min_size` (in base smallest units).
 pub fn validate_min_lots(lots: u64, meta: &DeepBookPoolMeta) -> Result<(), DexError> {
     let base_units = lots.saturating_mul(meta.lot_size);
@@ -111,6 +122,17 @@ mod tests {
         let ticks = price_to_ticks(price, &meta).unwrap();
         let back = ticks_to_price(ticks, &meta);
         assert_eq!(back, price);
+    }
+
+    #[test]
+    fn chain_price_aligns_to_tick_grid() {
+        let meta = sui_dbusdc_fixture();
+        assert_eq!(price_to_chain_units(dec!(0.732), &meta).unwrap(), 732_000);
+        // Binding mid + offset can land between ticks; must snap before PTB.
+        assert_eq!(
+            price_to_chain_units(dec!(0.704505), &meta).unwrap(),
+            704_500
+        );
     }
 
     #[test]

@@ -1,7 +1,10 @@
+pub mod cex;
 pub mod dex;
 pub mod health;
-pub mod levels;
 pub mod order_validation;
 pub mod risk;
-pub mod state;
-pub mod strategies;
+
+// Backward-compatible paths (`trading_engine::levels`, etc.)
+pub use cex::levels;
+pub use cex::state;
+pub use cex::strategies;

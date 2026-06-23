@@ -2,14 +2,15 @@ use std::collections::HashMap;
 
 use smol_str::SmolStr;
 use trading_core::venue::dex::{
-    types::{DexWalletBalances, PendingTransaction},
+    types::{DexOpenOrder, DexWalletBalances, PendingTransaction},
     TradeCommand,
 };
 
 /// In-memory DEX venue state (wallet + pending transactions).
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct DexState {
     pub wallet: DexWalletBalances,
+    pub open_orders: Vec<DexOpenOrder>,
     pub pending: HashMap<SmolStr, PendingTransaction>,
     pub last_command: Option<TradeCommand>,
 }

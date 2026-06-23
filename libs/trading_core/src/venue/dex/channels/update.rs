@@ -3,13 +3,19 @@
 use tokio::sync::broadcast;
 use trading_trace::ColdTraceContext;
 
-use crate::venue::dex::types::{DexWalletBalances, ExecutionResult, PendingTransaction};
+use crate::venue::dex::types::{
+    DexOpenOrder, DexWalletBalances, ExecutionResult, PendingTransaction,
+};
 
 /// DEX venue update message (individual updates, not batches).
 #[derive(Debug, Clone)]
 pub enum DexVenueUpdate {
     WalletBalance {
         balances: DexWalletBalances,
+        trace_context: Option<ColdTraceContext>,
+    },
+    OpenOrders {
+        orders: Vec<DexOpenOrder>,
         trace_context: Option<ColdTraceContext>,
     },
     PendingTransaction {

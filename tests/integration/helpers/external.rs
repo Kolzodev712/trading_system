@@ -93,6 +93,9 @@ impl ExchangeClientBuilder {
             Exchange::Unsupported => {
                 panic!("Unsupported exchange cannot be used in tests")
             }
+            Exchange::DeepBook => {
+                panic!("DeepBook is configured via dex_engine, not exchange_engine tests")
+            }
         }
     }
 
@@ -201,6 +204,9 @@ impl MarketDataClientBuilder {
             Exchange::Unsupported => {
                 panic!("Unsupported exchange cannot be used in tests")
             }
+            Exchange::DeepBook => {
+                panic!("DeepBook is configured via dex_engine, not exchange_engine tests")
+            }
         }
     }
 
@@ -247,6 +253,9 @@ impl MarketDataClientBuilder {
             Exchange::Unsupported => {
                 panic!("Unsupported exchange cannot be used in tests")
             }
+            Exchange::DeepBook => {
+                panic!("DeepBook is configured via dex_engine, not exchange_engine tests")
+            }
         }
     }
 }
@@ -281,6 +290,9 @@ impl AssetDataClientBuilder {
             }
             Exchange::Unsupported => {
                 panic!("Unsupported exchange cannot be used in tests")
+            }
+            Exchange::DeepBook => {
+                panic!("DeepBook is configured via dex_engine, not exchange_engine tests")
             }
         }
     }

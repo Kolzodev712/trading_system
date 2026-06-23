@@ -111,6 +111,37 @@ quick:
     just clippy
     just test
 
+# Run trading system (mode picks config/cex/ or config/dex/ automatically)
+run mode="levels":
+    cargo run --release -p runner -- --mode {{mode}}
+
+run-dex:
+    just run dex
+
+run-levels:
+    just run levels
+
+run-strategies:
+    just run strategies
+
+run-dex-strategies:
+    just run dex-strategies
+
+# DEX setup — deposit wallet funds into BalanceManager (uses config/dex/bot.json)
+# Usage: just dex-deposit --sui 2 --dbusdc 50
+dex-deposit +ARGS:
+    ./scripts/deepbook/deposit.sh {{ARGS}}
+
+# DEX setup — create BalanceManager (once)
+dex-create-balance-manager:
+    ./scripts/deepbook/create-balance-manager.sh
+
+run-cli:
+    cargo run --release -p cli --bin trading-cli
+
+cli:
+    just run-cli
+
 # Clean build artifacts
 clean:
     # Remove all build artifacts

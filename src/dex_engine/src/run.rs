@@ -1,17 +1,22 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
+use smol_str::SmolStr;
 use tokio::sync::broadcast;
 use tracing::{info, info_span, Instrument};
 use trading_core::config::ChannelConfig;
+use trading_core::venue::dex::channels::DexVenueUpdate;
 use trading_core::venue::dex::provider::VenueProvider;
 use trading_core::venue::dex::DexError;
 
-use crate::chains::mock::MockVenueProvider;
-use crate::config::DexEngineConfig;
+use crate::chains::sui::DeepBookVenueProvider;
+use crate::config::{DexChain, DexEngineConfig};
 use crate::runtime::DexEngineRuntime;
 use crate::state::manager::DexStateManager;
 use crate::state::reconciler::DexReconciler;
+use crate::DeepBookPoolMeta;
+use trading_core::venue::VenueId;
 
 /// Bootstrap DEX engine: runtime with state manager, provider, and optional reconciliation loop.
 pub async fn run(
@@ -27,11 +32,46 @@ pub async fn run(
     );
     let state_manager = Arc::new(DexStateManager::new(update_tx.clone()));
 
-    let provider: Arc<dyn VenueProvider> = Arc::new(select_provider(&config)?);
+    let (provider, pool_meta) = select_provider(&config).await?;
     info!("DEX engine starting for venue {:?}", config.venue);
 
-    let wallet = provider.bootstrap_state().await?;
-    state_manager.apply_wallet_balances(wallet);
+    let snapshot = provider.bootstrap_state().await?;
+    state_manager.apply_account_snapshot(snapshot);
+
+    let wallet_state = state_manager.clone();
+    let mut wallet_rx = update_tx.subscribe();
+    let mut wallet_shutdown = shutdown_rx.resubscribe();
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                update = wallet_rx.recv() => {
+                    match update {
+                        Ok(DexVenueUpdate::WalletBalance { balances, .. }) => {
+                            wallet_state.set_wallet_balances(balances);
+                        }
+                        Ok(DexVenueUpdate::OpenOrders { orders, .. }) => {
+                            wallet_state.set_open_orders(orders);
+                        }
+                        Ok(DexVenueUpdate::PendingTransaction { pending, .. }) => {
+                            let state = wallet_state.state();
+                            let mut guard = state.write();
+                            guard.pending.insert(pending.signature.clone(), pending);
+                        }
+                        Ok(DexVenueUpdate::ExecutionResult { result, .. }) => {
+                            if result.status != trading_core::venue::dex::types::TxStatus::Pending {
+                                let state = wallet_state.state();
+                                let mut guard = state.write();
+                                guard.pending.remove(&result.signature);
+                            }
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                    }
+                }
+                _ = wallet_shutdown.recv() => break,
+            }
+        }
+    });
 
     let provider_clone = provider.clone();
     let tx_clone = update_tx.clone();
@@ -84,6 +124,7 @@ pub async fn run(
         state_manager,
         provider,
         update_rx,
+        pool_meta,
     });
 
     tokio::spawn(async move {
@@ -94,6 +135,24 @@ pub async fn run(
     Ok(runtime)
 }
 
-fn select_provider(_config: &DexEngineConfig) -> Result<MockVenueProvider, DexError> {
-    Ok(MockVenueProvider)
+async fn select_provider(
+    config: &DexEngineConfig,
+) -> Result<
+    (
+        Arc<dyn VenueProvider>,
+        Option<Arc<HashMap<SmolStr, DeepBookPoolMeta>>>,
+    ),
+    DexError,
+> {
+    match (config.venue, config.chain) {
+        (VenueId::DeepBook, DexChain::Sui) => {
+            let deepbook_config = config.deepbook_config()?;
+            let provider = DeepBookVenueProvider::new(deepbook_config).await?;
+            let pool_meta = Arc::new(provider.pool_meta());
+            Ok((Arc::new(provider), Some(pool_meta)))
+        }
+        (venue, chain) => Err(DexError::ProviderNotConfigured(
+            format!("unsupported dex_engine venue {venue:?} + chain {chain:?}").into(),
+        )),
+    }
 }

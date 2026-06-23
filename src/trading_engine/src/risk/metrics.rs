@@ -1,5 +1,5 @@
 //! Risk metrics - P&L tracking and calculations
-use crate::state::{Position, TradingState};
+use crate::cex::state::{Position, TradingState};
 use chrono::Utc;
 use rust_decimal::Decimal;
 use std::collections::HashMap;
@@ -220,7 +220,7 @@ impl Default for RiskMetricsCalculator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state::TradingState;
+    use crate::cex::state::TradingState;
     use rust_decimal::Decimal;
     use rust_decimal_macros::dec;
     use std::collections::HashMap;

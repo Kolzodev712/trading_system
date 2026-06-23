@@ -65,23 +65,26 @@ impl CircuitBreaker {
 
     /// Close the circuit breaker
     pub async fn close(&self) {
-        let mut state_guard = self.state.write().await;
-        if *state_guard != CircuitBreakerState::Closed {
+        {
+            let mut state_guard = self.state.write().await;
+            if *state_guard == CircuitBreakerState::Closed {
+                return;
+            }
             *state_guard = CircuitBreakerState::Closed;
-            *self.last_open_time.write().await = None;
-            *self.open_reason.write().await = None;
-            *self.failure_count.write().await = 0;
-            info!("Circuit breaker closed, resuming normal operation.");
         }
+        *self.last_open_time.write().await = None;
+        *self.open_reason.write().await = None;
+        *self.failure_count.write().await = 0;
+        info!("Circuit breaker closed, resuming normal operation.");
     }
 
     /// Record a successful operation
     pub async fn record_success(&self) {
-        let mut failure_count_guard = self.failure_count.write().await;
-        *failure_count_guard = 0; // Reset failure count on success
-        let state_guard = self.state.read().await;
-        if *state_guard == CircuitBreakerState::HalfOpen {
-            drop(state_guard); // Drop read lock before acquiring write lock
+        {
+            let mut failure_count_guard = self.failure_count.write().await;
+            *failure_count_guard = 0; // Reset failure count on success
+        }
+        if self.get_state().await == CircuitBreakerState::HalfOpen {
             self.close().await;
         }
     }

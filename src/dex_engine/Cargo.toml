@@ -14,6 +14,17 @@ serde_json = { workspace = true }
 smol_str = { workspace = true }
 rust_decimal = { workspace = true }
 parking_lot = { workspace = true }
+reqwest = { workspace = true }
+thiserror = { workspace = true }
+bcs = "0.1.6"
+hex = { workspace = true }
+rand = { workspace = true }
+sui-sdk-types = { git = "https://github.com/MystenLabs/sui-rust-sdk", default-features = false, features = ["serde", "hash"] }
+sui-transaction-builder = { git = "https://github.com/MystenLabs/sui-rust-sdk", default-features = false }
+sui-crypto = { git = "https://github.com/MystenLabs/sui-rust-sdk", default-features = false, features = ["ed25519", "bech32"] }
+sui-rpc = { git = "https://github.com/MystenLabs/sui-rust-sdk", default-features = false }
+prost-types = "0.14"
 
 [dev-dependencies]
+rust_decimal_macros = { workspace = true }
 tokio = { workspace = true }

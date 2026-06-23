@@ -77,6 +77,13 @@ pub fn dex_cold_event_from_dex(update: DexVenueUpdate) -> DexColdEvent {
             balances,
             trace_context,
         },
+        DexVenueUpdate::OpenOrders {
+            orders,
+            trace_context,
+        } => DexColdEvent::OpenOrders {
+            orders,
+            trace_context,
+        },
         DexVenueUpdate::PendingTransaction {
             pending,
             trace_context,

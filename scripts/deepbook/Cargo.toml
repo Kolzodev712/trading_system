@@ -1,0 +1,21 @@
+[package]
+name = "deepbook_tools"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "create_balance_manager"
+path = "src/bin/create_balance_manager.rs"
+
+[[bin]]
+name = "deposit_to_balance_manager"
+path = "src/bin/deposit_to_balance_manager.rs"
+
+[dependencies]
+dex_engine = { path = "../../src/dex_engine" }
+trading_core = { path = "../../libs/trading_core" }
+tokio = { workspace = true }
+serde_json = { workspace = true }
+rust_decimal = { workspace = true }
+smol_str = { workspace = true }

@@ -17,6 +17,11 @@ service TradingCliService {
     rpc DeleteLevel(DeleteLevelRequest) returns (DeleteLevelResponse);
     rpc ToggleLevel(ToggleLevelRequest) returns (ToggleLevelResponse);
     
+    // DEX quote control (Phase 2 — on-chain venues)
+    rpc ToggleDexQuote(ToggleDexQuoteRequest) returns (ToggleDexQuoteResponse);
+    rpc CancelDexPoolOrders(CancelDexPoolOrdersRequest) returns (CancelDexPoolOrdersResponse);
+    rpc ToggleDexStrategy(ToggleDexStrategyRequest) returns (ToggleDexStrategyResponse);
+    
     // Monitoring Data (Phase 2)
     rpc GetMonitoringData(GetMonitoringDataRequest) returns (GetMonitoringDataResponse);
     rpc StreamMonitoringData(StreamMonitoringDataRequest) returns (stream MonitoringDataUpdate);
@@ -100,6 +105,37 @@ message ToggleLevelResponse {
     bool success = 1;
 }
 
+message ToggleDexQuoteRequest {
+    string quote_id = 1;
+    bool enabled = 2;
+}
+
+message ToggleDexQuoteResponse {
+    bool success = 1;
+    string message = 2;
+}
+
+message CancelDexPoolOrdersRequest {
+    // Pool / market id (e.g. SUI_DBUSDC). Empty cancels all configured pools.
+    string pool = 1;
+}
+
+message CancelDexPoolOrdersResponse {
+    bool success = 1;
+    string message = 2;
+    repeated string transaction_signatures = 3;
+}
+
+message ToggleDexStrategyRequest {
+    string strategy_id = 1;
+    bool enabled = 2;
+}
+
+message ToggleDexStrategyResponse {
+    bool success = 1;
+    string message = 2;
+}
+
 // Level Data Structures
 message Level {
     string id = 1;
@@ -161,6 +197,52 @@ message DexVenueSnapshot {
     repeated DexBalance balances = 1;
     repeated DexPendingTransaction pending_transactions = 2;
     string venue = 3;
+    repeated DexOrder open_orders = 4;
+    repeated DexQuote quotes = 5;
+    map<string, string> asset_labels = 6;
+    repeated DexStrategyStatus dex_strategies = 7;
+    repeated DexIndicator dex_indicators = 8;
+}
+
+message DexIndicator {
+    string indicator_id = 1;
+    string name = 2;
+    string pool = 3;
+    string value = 4;
+    uint64 timestamp = 5;
+}
+
+message DexStrategyStatus {
+    string id = 1;
+    string strategy_type = 2;
+    string market = 3;
+    bool enabled = 4;
+    string state = 5;
+    string last_signal = 6;
+    uint64 eval_count = 7;
+}
+
+message DexQuote {
+    string id = 1;
+    string pool = 2;
+    string side = 3;
+    string price = 4;
+    string quantity = 5;
+    bool enabled = 6;
+    bool auto_repost = 7;
+    string state = 8;
+    string order_id = 9;
+    string last_signature = 10;
+    string resolved_price = 11;
+}
+
+message DexOrder {
+    string order_id = 1;
+    string pool = 2;
+    string side = 3;
+    string price = 4;
+    string quantity = 5;
+    string status = 6;
 }
 
 message DexBalance {

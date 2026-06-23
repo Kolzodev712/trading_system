@@ -1,5 +1,7 @@
 //! gRPC Service Implementation
 mod converters;
+mod dex_quotes;
+mod dex_strategies;
 mod levels;
 mod monitoring;
 mod trading_control;
@@ -7,14 +9,17 @@ mod trading_control;
 pub use monitoring::{MonitoringService, StrategyInfo};
 
 use async_trait::async_trait;
+use dex_engine::runtime::DexEngineRuntime;
 use exchange_engine::state::manager::ExchangeStateManager;
 use indicator_engine::IndicatorService;
+use smol_str::SmolStr;
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
 use tonic::{Request, Response, Status};
 use trading_core::grpc::TradingControl;
 use trading_core::types::exchange::OrderRequest;
 use trading_core::venue::cex::traits::TradingClient;
+use trading_engine::dex::{DexIndicatorEngine, DexQuoteManager, DexStrategyManager};
 use trading_engine::levels::LevelManager;
 use trading_engine::state::manager::TradingStateManager;
 use trading_engine::strategies::strategy_manager::StrategyManager;
@@ -37,6 +42,11 @@ pub struct TradingCliServiceImpl {
     exchange: String,
     dex_state_manager: Option<Arc<dex_engine::state::manager::DexStateManager>>,
     dex_venue_label: Option<String>,
+    dex_quote_manager: Option<Arc<RwLock<DexQuoteManager>>>,
+    dex_strategy_manager: Option<Arc<RwLock<DexStrategyManager>>>,
+    dex_indicator_engine: Option<Arc<DexIndicatorEngine>>,
+    dex_runtime: Option<Arc<DexEngineRuntime>>,
+    dex_balance_manager_id: Option<SmolStr>,
 }
 
 impl TradingCliServiceImpl {
@@ -66,7 +76,37 @@ impl TradingCliServiceImpl {
             exchange: "Unknown".to_string(),
             dex_state_manager: None,
             dex_venue_label: None,
+            dex_quote_manager: None,
+            dex_strategy_manager: None,
+            dex_indicator_engine: None,
+            dex_runtime: None,
+            dex_balance_manager_id: None,
         }
+    }
+
+    pub fn with_dex_strategy_manager(
+        mut self,
+        strategy_manager: Arc<RwLock<DexStrategyManager>>,
+    ) -> Self {
+        self.dex_strategy_manager = Some(strategy_manager);
+        self
+    }
+
+    pub fn with_dex_indicator_engine(mut self, engine: Arc<DexIndicatorEngine>) -> Self {
+        self.dex_indicator_engine = Some(engine);
+        self
+    }
+
+    pub fn with_dex_quote_control(
+        mut self,
+        quote_manager: Arc<RwLock<DexQuoteManager>>,
+        dex_runtime: Arc<DexEngineRuntime>,
+        balance_manager_id: SmolStr,
+    ) -> Self {
+        self.dex_quote_manager = Some(quote_manager);
+        self.dex_runtime = Some(dex_runtime);
+        self.dex_balance_manager_id = Some(balance_manager_id);
+        self
     }
 
     pub fn with_dex_state_manager(
@@ -132,7 +172,26 @@ impl TradingCliServiceImpl {
             exchange: self.exchange.clone(),
             dex_state_manager: self.dex_state_manager.clone(),
             dex_venue_label: self.dex_venue_label.clone(),
+            dex_quote_manager: self.dex_quote_manager.clone(),
+            dex_strategy_manager: self.dex_strategy_manager.clone(),
+            dex_indicator_engine: self.dex_indicator_engine.clone(),
+            dex_runtime: self.dex_runtime.clone(),
+            dex_balance_manager_id: self.dex_balance_manager_id.clone(),
         }
+    }
+
+    fn dex_quote_service(&self) -> Option<dex_quotes::DexQuoteService> {
+        Some(dex_quotes::DexQuoteService {
+            quote_manager: self.dex_quote_manager.clone()?,
+            dex_runtime: self.dex_runtime.clone()?,
+            balance_manager_id: self.dex_balance_manager_id.clone()?,
+        })
+    }
+
+    fn dex_strategy_service(&self) -> Option<dex_strategies::DexStrategyService> {
+        Some(dex_strategies::DexStrategyService {
+            strategy_manager: self.dex_strategy_manager.clone()?,
+        })
     }
 
     fn monitoring_service(&self) -> monitoring::MonitoringService {
@@ -148,6 +207,9 @@ impl TradingCliServiceImpl {
             instrument_type: self.instrument_type.clone(),
             exchange: self.exchange.clone(),
             dex_venue_label: self.dex_venue_label.clone(),
+            dex_quote_manager: self.dex_quote_manager.clone(),
+            dex_strategy_manager: self.dex_strategy_manager.clone(),
+            dex_indicator_engine: self.dex_indicator_engine.clone(),
         }
     }
 
@@ -230,6 +292,42 @@ impl TradingCliService for TradingCliServiceImpl {
         request: Request<trading_cli::ToggleLevelRequest>,
     ) -> Result<Response<trading_cli::ToggleLevelResponse>, Status> {
         self.level_service().toggle_level(request).await
+    }
+
+    async fn toggle_dex_quote(
+        &self,
+        request: Request<trading_cli::ToggleDexQuoteRequest>,
+    ) -> Result<Response<trading_cli::ToggleDexQuoteResponse>, Status> {
+        let Some(service) = self.dex_quote_service() else {
+            return Err(Status::failed_precondition(
+                "DEX quote control not available (not in dex levels mode)",
+            ));
+        };
+        service.toggle_dex_quote(request).await
+    }
+
+    async fn cancel_dex_pool_orders(
+        &self,
+        request: Request<trading_cli::CancelDexPoolOrdersRequest>,
+    ) -> Result<Response<trading_cli::CancelDexPoolOrdersResponse>, Status> {
+        let Some(service) = self.dex_quote_service() else {
+            return Err(Status::failed_precondition(
+                "DEX quote control not available (not in dex levels mode)",
+            ));
+        };
+        service.cancel_dex_pool_orders(request).await
+    }
+
+    async fn toggle_dex_strategy(
+        &self,
+        request: Request<trading_cli::ToggleDexStrategyRequest>,
+    ) -> Result<Response<trading_cli::ToggleDexStrategyResponse>, Status> {
+        let Some(service) = self.dex_strategy_service() else {
+            return Err(Status::failed_precondition(
+                "DEX strategy control not available (not in dex-strategies mode)",
+            ));
+        };
+        service.toggle_dex_strategy(request).await
     }
 
     async fn toggle_strategy(

@@ -21,6 +21,7 @@ members = [
     "src/live_config",
     "src/asset_engine",
     "cli", "libs/trading_trace",
+    "scripts/deepbook",
 ]
 
 [workspace.dependencies]

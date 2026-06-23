@@ -1,5 +1,7 @@
+pub mod cex;
 pub mod config;
-pub mod shutdown;
+pub mod dex;
+pub mod platform;
 
 pub use gateway::grpc;
 
@@ -7,131 +9,31 @@ use asset_engine::AssetService;
 use indicator_engine::{IndicatorService, LevelPricingRegistry};
 use tokio::sync::Mutex;
 
+use crate::config::mode_config::ResolvedModeConfig;
 use crate::config::BotConfig;
-use crate::shutdown::ShutdownManager;
+use crate::platform::shutdown::ShutdownManager;
+use crate::platform::venue::VenueInterface;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
-use tracing::{info, warn};
+use tracing::info;
 use trading_core::persistence::mongo::client::MongoClient;
 use trading_core::types::common::Exchange;
 use trading_core::venue::cex::traits::TradingClient;
 use trading_core::venue::cex::types::exchange::OrderRequest;
 use trading_core::venue::VenueMode;
-
-use crate::venue::VenueInterface;
 use trading_engine::state::manager::TradingStateManager;
-use trading_networking::commands::MpscCommandRouter;
-use trading_networking::gateway::backpressure::BackpressurePolicy;
-use trading_networking::gateway::command_gateway::serve_zenoh_commands;
-use trading_networking::gateway::event_gateway::EventGateway;
-use trading_networking::gateway::transports::zenoh::{
-    open_default_session, ZenohEventTransport, ZenohKeyspace,
-};
-
-pub mod commands;
-pub mod dex_monitoring;
-pub mod dex_runner;
-pub mod event_bridge;
-pub mod init;
-pub mod level_runner;
-pub mod platform_health;
-pub mod platform_metrics;
-pub mod strategy_runner;
-pub mod venue;
-pub mod zenoh_metrics;
-
-/// Build Prometheus scrape bytes (OTEL registry + platform counters).
-pub fn build_metrics_provider(
-    tracing_handles: Option<trading_trace::ExporterHandles>,
-    venue_mode: VenueMode,
-) -> Arc<dyn Fn() -> Vec<u8> + Send + Sync> {
-    Arc::new(move || {
-        let mut out = tracing_handles
-            .as_ref()
-            .map(trading_trace::encode_prometheus_metrics)
-            .transpose()
-            .ok()
-            .flatten()
-            .unwrap_or_default()
-            .into_bytes();
-        out.extend_from_slice(platform_metrics::encode_platform_metrics(venue_mode).as_bytes());
-        out
-    })
-}
-
-pub(crate) async fn maybe_start_zenoh_gateway(
-    hot_rx: trading_networking::events::HotEventRx,
-    cold_bus: trading_networking::events::ColdEventBus,
-    dex_bus: trading_networking::events::DexColdEventBus,
-    router: Arc<MpscCommandRouter>,
-) {
-    let enabled = std::env::var("ZENOH_ENABLED")
-        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-        .unwrap_or(false);
-    if !enabled {
-        return;
-    }
-
-    let session = match open_default_session().await {
-        Ok(s) => s,
-        Err(e) => {
-            warn!("Zenoh session open failed: {e}");
-            return;
-        }
-    };
-    let keyspace = ZenohKeyspace::default();
-    let transport = Arc::new(ZenohEventTransport::new(session.clone(), keyspace.clone()));
-
-    let mut gateway = EventGateway::new(
-        BackpressurePolicy::Sample { every_nth: 1 },
-        BackpressurePolicy::Drop,
-    );
-    let zenoh_health = gateway.add_transport("zenoh", transport, 1024);
-
-    let cold_rx = cold_bus.subscribe();
-    let dex_rx = dex_bus.subscribe();
-    tokio::spawn(async move {
-        gateway.run(hot_rx, cold_rx, dex_rx).await;
-    });
-
-    tokio::spawn(async move {
-        loop {
-            let m = zenoh_health.snapshot();
-            zenoh_metrics::record_transport_snapshot(m.sent, m.dropped, m.publish_errors);
-            if m.publish_errors > 0 {
-                if let Some(ref err) = m.last_error {
-                    warn!(
-                        zenoh_transport = "zenoh",
-                        sent = m.sent,
-                        dropped = m.dropped,
-                        publish_errors = m.publish_errors,
-                        last_error = %err,
-                        "Zenoh transport health"
-                    );
-                }
-            }
-            tokio::time::sleep(std::time::Duration::from_secs(10)).await;
-        }
-    });
-
-    let cmd_key = keyspace.commands_key;
-    tokio::spawn(async move {
-        if let Err(e) = serve_zenoh_commands(&session, &cmd_key, router).await {
-            tracing::warn!("Zenoh command gateway stopped: {e}");
-        }
-    });
-}
 
 /// Shared services needed for both modes
 pub struct SharedServices {
-    pub venue: venue::VenueInterface,
+    pub venue: VenueInterface,
     pub market_data_rx: trading_core::channels::market_data::MarketDataUpdateReceiver,
     pub indicator_rx: trading_core::channels::indicators::IndicatorUpdateReceiver,
     pub indicator_service: Arc<Mutex<IndicatorService>>,
     /// Clone of indicator service level bindings (avoids locking `indicator_service` while its run loop holds the mutex).
     pub level_pricing: Arc<parking_lot::RwLock<LevelPricingRegistry>>,
     pub indicator_calculator: Arc<indicator_engine::calculator::IndicatorCalculator>,
+    pub dex_indicator_engine: Option<Arc<trading_engine::dex::DexIndicatorEngine>>,
     pub shutdown_manager: ShutdownManager,
     pub market_data_handle: JoinHandle<()>,
     pub trading_ws_handle: JoinHandle<()>,
@@ -145,21 +47,18 @@ pub struct SharedServices {
 }
 
 /// Main entry point: creates shutdown manager, builds services, and runs the chosen runner.
-/// Call this from the runner binary so that `ShutdownManager` is constructed in the lib.
 pub async fn run(
     bot_config: BotConfig,
     mode: String,
-    strategies_config: String,
-    levels_config: String,
-    dex_levels_config: String,
-    mongo_client: Arc<MongoClient>,
+    config_paths: ResolvedModeConfig,
+    mongo_client: Option<Arc<MongoClient>>,
     tracing_handles: Option<trading_trace::ExporterHandles>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     bot_config.validate()?;
     bot_config.validate_for_runner(&mode)?;
 
     let shutdown_manager = ShutdownManager::new(bot_config.channels.shutdown_capacity);
-    init::setup_shutdown_handler(shutdown_manager.clone());
+    platform::init::setup_shutdown_handler(shutdown_manager.clone());
 
     let paper_rest_base =
         match bot_config.exchange_engine.exchange {
@@ -172,7 +71,7 @@ pub async fn run(
             }),
             _ => None,
         };
-    let asset_service = init::initialize_asset_service(
+    let asset_service = platform::init::initialize_asset_service(
         bot_config.exchange_engine.exchange.clone(),
         paper_rest_base,
     )
@@ -185,7 +84,7 @@ pub async fn run(
         if pairs.is_empty() {
             return Err("No pairs configured in bot.json".into());
         }
-        init::fetch_asset_data(
+        platform::init::fetch_asset_data(
             &asset_service,
             bot_config.exchange_engine.exchange.clone(),
             &pairs,
@@ -217,16 +116,17 @@ pub async fn run(
 
     let (venue, market_data_rx, market_data_handle, market_data_state_manager) = if needs_cex_md {
         if bot_config.exchange_engine.exchange == Exchange::Paper {
-            let cex = init::build_cex_handle(&bot_config, &shutdown_manager).await?;
+            let cex = platform::init::build_cex_handle(&bot_config, &shutdown_manager).await?;
             let (_, market_data_rx, market_data_handle, market_data_state_manager) =
-                init::initialize_market_data_engine(&bot_config, &shutdown_manager)?;
+                platform::init::initialize_market_data_engine(&bot_config, &shutdown_manager)?;
             let venue = if bot_config.venue.mode == VenueMode::Both {
                 let dex_config = bot_config
                     .dex_engine
                     .clone()
                     .ok_or("dex_engine required when venue.mode is both")?;
                 let dex =
-                    init::build_dex_handle(&bot_config, dex_config, &shutdown_manager).await?;
+                    platform::init::build_dex_handle(&bot_config, dex_config, &shutdown_manager)
+                        .await?;
                 VenueInterface::Both { cex, dex }
             } else {
                 VenueInterface::Cex(cex)
@@ -239,10 +139,10 @@ pub async fn run(
             )
         } else {
             let (_, market_data_rx, market_data_handle, market_data_state_manager) =
-                init::initialize_market_data_engine(&bot_config, &shutdown_manager)?;
+                platform::init::initialize_market_data_engine(&bot_config, &shutdown_manager)?;
             tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
             info!("Market Data Engine: WebSocket subscribed to orderbook stream");
-            let venue = init::initialize_venue(&bot_config, &shutdown_manager).await?;
+            let venue = platform::init::initialize_venue(&bot_config, &shutdown_manager).await?;
             (
                 venue,
                 market_data_rx,
@@ -258,9 +158,9 @@ pub async fn run(
         if dex.chain == dex_engine::config::DexChain::Sui
             && dex.venue == trading_core::venue::VenueId::DeepBook
         {
-            let venue = init::initialize_venue(&bot_config, &shutdown_manager).await?;
+            let venue = platform::init::initialize_venue(&bot_config, &shutdown_manager).await?;
             let (_, market_data_rx, market_data_handle, market_data_state_manager) =
-                init::initialize_dex_market_data_engine(&bot_config, &shutdown_manager)?;
+                platform::init::initialize_dex_market_data_engine(&bot_config, &shutdown_manager)?;
             (
                 venue,
                 market_data_rx,
@@ -268,7 +168,7 @@ pub async fn run(
                 market_data_state_manager,
             )
         } else {
-            let venue = init::initialize_venue(&bot_config, &shutdown_manager).await?;
+            let venue = platform::init::initialize_venue(&bot_config, &shutdown_manager).await?;
             let (market_data_tx, market_data_rx) =
                 trading_core::channels::market_data::market_data_update_channel(
                     bot_config.channels.market_data_capacity,
@@ -294,8 +194,8 @@ pub async fn run(
         return Err("invalid venue.mode configuration".into());
     };
 
-    if init::should_spawn_deepbook_sidecar(&bot_config) {
-        let _deepbook_md_handle = init::spawn_deepbook_market_data_sidecar(
+    if platform::init::should_spawn_deepbook_sidecar(&bot_config) {
+        let _deepbook_md_handle = platform::init::spawn_deepbook_market_data_sidecar(
             &bot_config,
             &shutdown_manager,
             market_data_state_manager.clone(),
@@ -310,16 +210,33 @@ pub async fn run(
     let (indicator_tx, indicator_rx) = trading_core::channels::indicators::indicator_update_channel(
         bot_config.channels.indicator_update_capacity,
     );
-    let (indicator_service, indicator_handle, indicator_calculator, level_pricing) =
-        init::initialize_indicator_service(
+    let (
+        (indicator_service, indicator_handle, indicator_calculator, level_pricing),
+        dex_indicator_engine,
+    ) = if bot_config.venue.mode == VenueMode::Dex {
+        platform::init::initialize_dex_indicator_service(
+            config_paths
+                .dex_indicators
+                .as_deref()
+                .unwrap_or("config/dex/indicators.json"),
+            market_data_rx.resubscribe(),
+            &shutdown_manager,
+        )?
+    } else {
+        let mongo = mongo_client
+            .as_ref()
+            .ok_or("MongoDB is required for this runner mode")?;
+        let (svc, handle, calc, pricing) = platform::init::initialize_indicator_service(
             &bot_config,
-            &mongo_client,
+            mongo,
             market_data_rx.resubscribe(),
             indicator_tx,
             &shutdown_manager,
             configured_pairs.as_slice(),
         )
         .await?;
+        ((svc, handle, calc, pricing), None)
+    };
 
     let trading_state_manager = match &venue {
         VenueInterface::Cex(cex) | VenueInterface::Both { cex, .. } => {
@@ -327,7 +244,7 @@ pub async fn run(
                 cex.cex_update_rx.resubscribe(),
                 cex.exchange_state_manager.clone(),
             ));
-            init::start_trading_state_subscriber(tsm.clone(), shutdown_manager.clone());
+            platform::init::start_trading_state_subscriber(tsm.clone(), shutdown_manager.clone());
             Some(tsm)
         }
         VenueInterface::Dex { .. } => None,
@@ -344,6 +261,7 @@ pub async fn run(
         market_data_handle,
         trading_ws_handle: tokio::spawn(async {}),
         indicator_handle,
+        dex_indicator_engine,
         trading_state_manager,
         market_data_state_manager,
         asset_service: Some(asset_service),
@@ -354,10 +272,12 @@ pub async fn run(
     match mode.as_str() {
         "strategies" => {
             let strategy_persistence =
-                init::create_strategy_persistence(Some(&mongo_client), &bot_config);
-            strategy_runner(
+                platform::init::create_strategy_persistence(mongo_client.as_ref(), &bot_config);
+            cex::strategy_runner(
                 bot_config,
-                strategies_config,
+                config_paths
+                    .strategies
+                    .unwrap_or_else(|| "config/cex/strategies.json".to_string()),
                 services,
                 strategy_persistence,
             )
@@ -365,19 +285,48 @@ pub async fn run(
         }
         "levels" => {
             let level_persistence =
-                init::create_level_persistence(Some(&mongo_client), &bot_config);
-            level_runner(bot_config, levels_config, services, level_persistence).await?;
+                platform::init::create_level_persistence(mongo_client.as_ref(), &bot_config);
+            cex::level_runner(
+                bot_config,
+                config_paths
+                    .levels
+                    .unwrap_or_else(|| "config/cex/levels.json".to_string()),
+                services,
+                level_persistence,
+            )
+            .await?;
         }
         "dex" => {
             if !matches!(services.venue.mode(), VenueMode::Dex | VenueMode::Both) {
                 return Err("dex mode requires venue.mode \"dex\" or \"both\"".into());
             }
-            dex_runner(bot_config, dex_levels_config, services).await?;
+            dex::run_levels(
+                bot_config,
+                config_paths
+                    .dex_levels
+                    .unwrap_or_else(|| "config/dex/levels.json".to_string()),
+                services,
+            )
+            .await?;
+        }
+        "dex-strategies" => {
+            if !matches!(services.venue.mode(), VenueMode::Dex | VenueMode::Both) {
+                return Err("dex-strategies mode requires venue.mode \"dex\" or \"both\"".into());
+            }
+            dex::run_strategies(
+                bot_config,
+                config_paths
+                    .dex_strategies
+                    .unwrap_or_else(|| "config/dex/strategies.json".to_string()),
+                services,
+            )
+            .await?;
         }
         _ => {
-            return Err(
-                format!("Unknown mode: {mode}. Use 'strategies', 'levels', or 'dex'").into(),
-            );
+            return Err(format!(
+                "Unknown mode: {mode}. Use 'levels', 'strategies', 'dex', or 'dex-strategies'"
+            )
+            .into());
         }
     }
 
@@ -409,13 +358,22 @@ impl SharedServices {
     }
 }
 
-pub use dex_runner::dex_runner;
-/// Re-export init helpers and runners so binaries and tests can use `runner::initialize_mongodb` etc.
-pub use init::{
+// --- Backward-compatible re-exports (prefer `cex::`, `dex::`, `platform::`, `config::`) ---
+
+pub use cex::{level_runner, strategy_runner};
+pub use config::mode_config;
+pub use dex::{run as dex_runner, run_levels, run_strategies, DexRunConfig};
+pub use platform::build_metrics_provider;
+pub use platform::commands;
+pub use platform::event_bridge;
+pub use platform::health as platform_health;
+pub use platform::init;
+pub use platform::shutdown;
+pub use platform::venue;
+
+pub use platform::init::{
     build_cex_handle, build_dex_handle, create_level_persistence, create_shutdown_manager,
     create_strategy_persistence, fetch_asset_data, initialize_asset_service,
     initialize_exchange_engine, initialize_indicator_service, initialize_market_data_engine,
     initialize_mongodb, initialize_venue, setup_shutdown_handler, start_trading_state_subscriber,
 };
-pub use level_runner::level_runner;
-pub use strategy_runner::strategy_runner;

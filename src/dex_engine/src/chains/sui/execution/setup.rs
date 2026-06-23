@@ -22,7 +22,7 @@ pub struct DeepBookSetup {
 
 impl DeepBookSetup {
     pub async fn from_config(config: DeepBookConfig) -> Result<Self, DexError> {
-        let signer = SuiSigner::from_env(config.private_key_env.as_str())?;
+        let signer = config.signer()?;
         let grpc = SuiGrpcClient::connect(config.grpc_url())?;
         Ok(Self {
             config,
@@ -89,6 +89,6 @@ impl DeepBookSetup {
         &self,
         builder: TransactionBuilder,
     ) -> Result<ExecuteTxResult, DexError> {
-        finish_and_submit(&self.grpc, &self.signer, builder).await
+        finish_and_submit(&self.grpc, &self.signer, builder, None).await
     }
 }

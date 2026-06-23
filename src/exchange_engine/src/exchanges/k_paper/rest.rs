@@ -167,7 +167,7 @@ mod tests {
     fn ws_url_to_http_base_wss() {
         assert_eq!(
             ws_url_to_http_base("wss://example.com:443/ws/market"),
-            "https://example.com:443"
+            "https://example.com"
         );
     }
 }

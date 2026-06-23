@@ -2,6 +2,7 @@
 use crate::client::trading_cli::MonitoringData;
 use crate::client::TradingCliClient;
 use crate::error::CliError;
+use crate::screens::dex_monitor::DexMonitorScreen;
 use crate::screens::futures_monitor::FuturesMonitorScreen;
 use crate::screens::main_menu::MainMenuScreen;
 use crate::screens::shared::handle_input_async;
@@ -24,6 +25,8 @@ pub struct App {
     selected_level_index: Option<usize>, // Selected level index in levels list
     selected_strategy_index: Option<usize>, // Selected strategy index in strategies list
     selected_orderbook_pair_index: Option<usize>, // Selected orderbook pair index
+    selected_dex_quote_index: Option<usize>, // Selected quote row in DEX monitor
+    selected_dex_strategy_index: Option<usize>, // Selected strategy row in DEX monitor
     level_details: Option<crate::client::trading_cli::Level>, // Currently viewed level details
     show_level_details: bool,            // Whether to show level details popup
     show_strategy_details: bool,         // Whether to show strategy details popup
@@ -71,6 +74,7 @@ pub enum Screen {
     MainMenu,
     SpotMonitor,
     FuturesMonitor,
+    DexMonitor,
 }
 
 impl App {
@@ -88,6 +92,8 @@ impl App {
             selected_level_index: None,
             selected_strategy_index: None,
             selected_orderbook_pair_index: None,
+            selected_dex_quote_index: None,
+            selected_dex_strategy_index: None,
             level_details: None,
             show_level_details: false,
             show_strategy_details: false,
@@ -204,6 +210,21 @@ impl App {
                         f.render_widget(paragraph, f.size());
                     }
                 }
+                Screen::DexMonitor => {
+                    if let Err(e) = DexMonitorScreen::render(f, f.size(), self) {
+                        use ratatui::{
+                            layout::Alignment,
+                            style::{Color, Style},
+                            widgets::{Block, Borders, Paragraph},
+                        };
+                        let error_msg = format!("Render error: {}", e);
+                        let paragraph = Paragraph::new(error_msg)
+                            .style(Style::default().fg(Color::Red))
+                            .alignment(Alignment::Center)
+                            .block(Block::default().borders(Borders::ALL).title("Error"));
+                        f.render_widget(paragraph, f.size());
+                    }
+                }
             }
         })?;
 
@@ -213,13 +234,9 @@ impl App {
 
         loop {
             // Start streaming if we're in a monitor screen and not already streaming
-            if matches!(
-                self.current_screen,
-                Screen::SpotMonitor | Screen::FuturesMonitor
-            ) && !self.streaming_active
-            {
+            if Self::is_monitor_screen(&self.current_screen) && !self.streaming_active {
                 // Refresh levels immediately when entering
-                if self.refresh_levels().await.is_err() {
+                if !self.has_dex() && self.refresh_levels().await.is_err() {
                     // Ignore errors, will retry next cycle
                 }
                 if let Err(e) = self.start_streaming(stream_tx.clone()).await {
@@ -229,11 +246,7 @@ impl App {
             }
 
             // Stop streaming if we left monitor screens
-            if !matches!(
-                self.current_screen,
-                Screen::SpotMonitor | Screen::FuturesMonitor
-            ) && self.streaming_active
-            {
+            if !Self::is_monitor_screen(&self.current_screen) && self.streaming_active {
                 self.streaming_active = false;
                 needs_redraw = true;
             }
@@ -286,6 +299,21 @@ impl App {
                             f.render_widget(paragraph, f.size());
                         }
                     }
+                    Screen::DexMonitor => {
+                        if let Err(e) = DexMonitorScreen::render(f, f.size(), self) {
+                            use ratatui::{
+                                layout::Alignment,
+                                style::{Color, Style},
+                                widgets::{Block, Borders, Paragraph},
+                            };
+                            let error_msg = format!("Render error: {}", e);
+                            let paragraph = Paragraph::new(error_msg)
+                                .style(Style::default().fg(Color::Red))
+                                .alignment(Alignment::Center)
+                                .block(Block::default().borders(Borders::ALL).title("Error"));
+                            f.render_widget(paragraph, f.size());
+                        }
+                    }
                 })?;
                 needs_redraw = false;
             }
@@ -315,6 +343,14 @@ impl App {
                                         needs_redraw = true;
                                     }
                                 }
+                                Screen::DexMonitor => {
+                                    if DexMonitorScreen::handle_input_async(self, key_code)
+                                        .await
+                                        .is_ok()
+                                    {
+                                        needs_redraw = true;
+                                    }
+                                }
                             }
                         }
                         Ok(None) => {}
@@ -326,25 +362,14 @@ impl App {
                 update = stream_rx.recv() => {
                     match update {
                         Some(data) => {
-                            // Check if instrument_type changed and switch screens if needed
-                            let old_instrument_type = self.monitoring_data
-                                .as_ref()
-                                .map(|md| md.instrument_type.as_str());
-                            let new_instrument_type = data.instrument_type.as_str();
-
-                            // Switch screen if instrument_type changed (e.g., from Spot to Futures)
-                            if old_instrument_type != Some(new_instrument_type) {
-                                self.current_screen = if new_instrument_type == "Futures" {
-                                    Screen::FuturesMonitor
-                                } else {
-                                    Screen::SpotMonitor
-                                };
-                                tracing::debug!(
-                                    "[CLI] Instrument type changed from {:?} to {}, switching to {:?}",
-                                    old_instrument_type,
-                                    new_instrument_type,
-                                    self.current_screen
-                                );
+                            if Self::is_monitor_screen(&self.current_screen) {
+                                let target = Self::monitor_screen_for_data(&data);
+                                if !std::mem::discriminant(&self.current_screen)
+                                    .eq(&std::mem::discriminant(&target))
+                                {
+                                    self.current_screen = target;
+                                    tracing::debug!("[CLI] Monitor screen switched to {:?}", self.current_screen);
+                                }
                             }
 
                             self.monitoring_data = Some(data.clone());
@@ -359,7 +384,7 @@ impl App {
                         None => {
                             // Channel closed - this means the stream handler stopped
                             // Try to restart streaming if we're still in a monitor screen
-                            if matches!(self.current_screen, Screen::SpotMonitor | Screen::FuturesMonitor) {
+                            if Self::is_monitor_screen(&self.current_screen) {
                                 self.streaming_active = false;
                             }
                         }
@@ -427,6 +452,196 @@ impl App {
 
     pub fn monitoring_data(&self) -> Option<&MonitoringData> {
         self.monitoring_data.as_ref()
+    }
+
+    /// Check if DEX venue snapshot is present (on-chain mode).
+    pub fn has_dex(&self) -> bool {
+        self.monitoring_data
+            .as_ref()
+            .and_then(|md| md.dex.as_ref())
+            .is_some()
+    }
+
+    fn monitor_screen_for_data(data: &MonitoringData) -> Screen {
+        if data.dex.is_some() {
+            Screen::DexMonitor
+        } else if data.instrument_type == "Futures" {
+            Screen::FuturesMonitor
+        } else {
+            Screen::SpotMonitor
+        }
+    }
+
+    fn is_monitor_screen(screen: &Screen) -> bool {
+        matches!(
+            screen,
+            Screen::SpotMonitor | Screen::FuturesMonitor | Screen::DexMonitor
+        )
+    }
+
+    /// Selected orderbook pair label for pool-scoped DEX panels.
+    pub fn selected_orderbook_pair_label(&self) -> Option<String> {
+        let md = self.monitoring_data.as_ref()?;
+        let idx = self.selected_orderbook_pair_index.unwrap_or(0);
+        md.orderbooks.get(idx).map(|ob| ob.pair.clone())
+    }
+
+    fn dex_quotes_for_selected_pool(&self) -> Vec<&crate::client::trading_cli::DexQuote> {
+        let Some(dex) = self.monitoring_data.as_ref().and_then(|md| md.dex.as_ref()) else {
+            return Vec::new();
+        };
+        let pool_filter = self.selected_orderbook_pair_label();
+        dex.quotes
+            .iter()
+            .filter(|q| {
+                pool_filter
+                    .as_ref()
+                    .map(|p| quote_matches_pool(q, p))
+                    .unwrap_or(true)
+            })
+            .collect()
+    }
+
+    pub fn selected_dex_quote_index(&self) -> Option<usize> {
+        self.selected_dex_quote_index
+    }
+
+    pub fn select_dex_quote_up(&mut self) {
+        let quotes = self.dex_quotes_for_selected_pool();
+        if quotes.is_empty() {
+            self.selected_dex_quote_index = None;
+            return;
+        }
+        let max_idx = quotes.len().saturating_sub(1);
+        self.selected_dex_quote_index = Some(
+            self.selected_dex_quote_index
+                .map(|idx| idx.saturating_sub(1).min(max_idx))
+                .unwrap_or(0),
+        );
+    }
+
+    pub fn select_dex_quote_down(&mut self) {
+        let quotes = self.dex_quotes_for_selected_pool();
+        if quotes.is_empty() {
+            self.selected_dex_quote_index = None;
+            return;
+        }
+        let max_idx = quotes.len() - 1;
+        self.selected_dex_quote_index = Some(
+            self.selected_dex_quote_index
+                .map(|idx| if idx >= max_idx { 0 } else { idx + 1 })
+                .unwrap_or(0),
+        );
+    }
+
+    pub async fn toggle_selected_dex_quote(&mut self) -> Result<(), CliError> {
+        let Some((quote_id, new_enabled)) = ({
+            let quotes = self.dex_quotes_for_selected_pool();
+            let idx = self.selected_dex_quote_index.unwrap_or(0);
+            quotes.get(idx).map(|q| (q.id.clone(), !q.enabled))
+        }) else {
+            return Ok(());
+        };
+        if let Some(ref mut client) = self.client {
+            if let Ok(Ok(_)) = tokio::time::timeout(
+                Duration::from_secs(5),
+                client.toggle_dex_quote(&quote_id, new_enabled),
+            )
+            .await
+            {
+                self.refresh_monitoring_data().await?;
+            }
+        }
+        Ok(())
+    }
+
+    fn dex_strategies_for_selected_pool(
+        &self,
+    ) -> Vec<&crate::client::trading_cli::DexStrategyStatus> {
+        let Some(dex) = self.monitoring_data.as_ref().and_then(|md| md.dex.as_ref()) else {
+            return Vec::new();
+        };
+        let pool_filter = self.selected_orderbook_pair_label();
+        dex.dex_strategies
+            .iter()
+            .filter(|s| {
+                pool_filter
+                    .as_ref()
+                    .map(|p| strategy_matches_market(s, p))
+                    .unwrap_or(true)
+            })
+            .collect()
+    }
+
+    pub fn selected_dex_strategy_index(&self) -> Option<usize> {
+        self.selected_dex_strategy_index
+    }
+
+    pub fn select_dex_strategy_up(&mut self) {
+        let strategies = self.dex_strategies_for_selected_pool();
+        if strategies.is_empty() {
+            self.selected_dex_strategy_index = None;
+            return;
+        }
+        let max_idx = strategies.len().saturating_sub(1);
+        self.selected_dex_strategy_index = Some(
+            self.selected_dex_strategy_index
+                .map(|idx| idx.saturating_sub(1).min(max_idx))
+                .unwrap_or(0),
+        );
+    }
+
+    pub fn select_dex_strategy_down(&mut self) {
+        let strategies = self.dex_strategies_for_selected_pool();
+        if strategies.is_empty() {
+            self.selected_dex_strategy_index = None;
+            return;
+        }
+        let max_idx = strategies.len() - 1;
+        self.selected_dex_strategy_index = Some(
+            self.selected_dex_strategy_index
+                .map(|idx| if idx >= max_idx { 0 } else { idx + 1 })
+                .unwrap_or(0),
+        );
+    }
+
+    pub async fn toggle_selected_dex_strategy(&mut self) -> Result<(), CliError> {
+        let Some((strategy_id, new_enabled)) = ({
+            let strategies = self.dex_strategies_for_selected_pool();
+            let idx = self.selected_dex_strategy_index.unwrap_or(0);
+            strategies.get(idx).map(|s| (s.id.clone(), !s.enabled))
+        }) else {
+            return Ok(());
+        };
+        if let Some(ref mut client) = self.client {
+            if let Ok(Ok(_)) = tokio::time::timeout(
+                Duration::from_secs(5),
+                client.toggle_dex_strategy(&strategy_id, new_enabled),
+            )
+            .await
+            {
+                self.refresh_monitoring_data().await?;
+            }
+        }
+        Ok(())
+    }
+
+    pub async fn cancel_dex_orders_for_pool(&mut self) -> Result<(), CliError> {
+        let pool = self
+            .selected_orderbook_pair_label()
+            .map(|p| p.replace('/', "_"))
+            .unwrap_or_default();
+        if let Some(ref mut client) = self.client {
+            if let Ok(Ok(_sigs)) = tokio::time::timeout(
+                Duration::from_secs(30),
+                client.cancel_dex_pool_orders(&pool),
+            )
+            .await
+            {
+                self.refresh_monitoring_data().await?;
+            }
+        }
+        Ok(())
     }
 
     /// Check if we're in strategies mode (has strategy data)
@@ -610,23 +825,18 @@ impl App {
             // If refresh fails, we'll check again when streaming data arrives
         }
 
-        // Determine which monitor screen to show based on instrument_type
-        let instrument_type = self
+        // Route to DEX monitor when venue snapshot is present, else CEX spot/futures.
+        self.current_screen = self
             .monitoring_data
             .as_ref()
-            .map(|md| md.instrument_type.as_str())
-            .unwrap_or("Spot");
-
-        self.current_screen = if instrument_type == "Futures" {
-            Screen::FuturesMonitor
-        } else {
-            Screen::SpotMonitor
-        };
+            .map(Self::monitor_screen_for_data)
+            .unwrap_or(Screen::SpotMonitor);
         // Reset selection when entering
         self.selected_level_index = None;
         self.selected_strategy_index = None;
-        // Fetch levels when entering trading monitor (only needed for levels mode)
-        if !self.has_strategy() {
+        self.selected_dex_quote_index = None;
+        self.selected_dex_strategy_index = None;
+        if !self.has_dex() && !self.has_strategy() {
             self.refresh_levels().await?;
         }
         // Don't block - just switch screen, data will come from streaming
@@ -1121,4 +1331,23 @@ impl App {
             }
         }
     }
+}
+
+fn quote_matches_pool(quote: &crate::client::trading_cli::DexQuote, pool_filter: &str) -> bool {
+    if quote.pool == pool_filter {
+        return true;
+    }
+    let normalized = pool_filter.replace('/', "_");
+    quote.pool == normalized || quote.pool.contains(pool_filter)
+}
+
+fn strategy_matches_market(
+    strategy: &crate::client::trading_cli::DexStrategyStatus,
+    pool_filter: &str,
+) -> bool {
+    if strategy.market == pool_filter {
+        return true;
+    }
+    let normalized = pool_filter.replace('/', "_");
+    strategy.market == normalized || strategy.market.contains(pool_filter)
 }

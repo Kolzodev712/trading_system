@@ -192,9 +192,9 @@ mod tests {
         let pairs: std::collections::HashSet<_> = file
             .indicators
             .iter()
-            .filter_map(|e| match e {
-                IndicatorEntry::Simple { pair, .. } => Some(pair.as_str()),
-                IndicatorEntry::Composite { pair, .. } => Some(pair.as_str()),
+            .map(|e| match e {
+                IndicatorEntry::Simple { pair, .. } => pair.as_str(),
+                IndicatorEntry::Composite { pair, .. } => pair.as_str(),
             })
             .collect();
         assert!(pairs.contains("BTCUSDT"));

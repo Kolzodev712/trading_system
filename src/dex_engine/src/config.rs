@@ -16,8 +16,9 @@ pub struct DexEngineConfig {
 #[serde(rename_all = "snake_case")]
 pub enum DexChain {
     #[default]
-    Solana,
     Sui,
+    #[serde(other)]
+    Unknown,
 }
 
 impl DexEngineConfig {

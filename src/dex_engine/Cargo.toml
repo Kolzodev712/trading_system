@@ -25,10 +25,6 @@ sui-crypto = { git = "https://github.com/MystenLabs/sui-rust-sdk", default-featu
 sui-rpc = { git = "https://github.com/MystenLabs/sui-rust-sdk", default-features = false }
 prost-types = "0.14"
 
-[[bin]]
-name = "create_balance_manager"
-path = "src/bin/create_balance_manager.rs"
-
 [dev-dependencies]
 rust_decimal_macros = { workspace = true }
 tokio = { workspace = true }

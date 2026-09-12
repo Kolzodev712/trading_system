@@ -89,8 +89,8 @@ impl MarketDataState {
         }
 
         // Sort bids descending (highest first) and asks ascending (lowest first)
-        existing.bids.sort_by(|a, b| b.0.cmp(&a.0));
-        existing.asks.sort_by(|a, b| a.0.cmp(&b.0));
+        existing.bids.sort_by_key(|a| std::cmp::Reverse(a.0));
+        existing.asks.sort_by_key(|a| a.0);
 
         // Update timestamp
         existing.timestamp = delta.timestamp;

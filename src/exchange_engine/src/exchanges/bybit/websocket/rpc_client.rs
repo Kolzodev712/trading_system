@@ -3,31 +3,38 @@
 //! Handles authenticated RPC requests like placing orders, canceling orders, etc.
 
 use super::types::rpc::{
-    amend::{BybitRpcAmendOrderRequest, BybitRpcAmendOrderResponse},
+    amend::{BybitRpcAmendOrderData, BybitRpcAmendOrderRequest, BybitRpcAmendOrderResponse},
     bulk::{
         BybitRpcBatchAmendOrderRequest, BybitRpcBatchAmendOrderResponse,
         BybitRpcBatchCancelOrderRequest, BybitRpcBatchCancelOrderResponse,
         BybitRpcBatchCreateOrderRequest, BybitRpcBatchCreateOrderResponse,
     },
-    cancel_all::{BybitRpcCancelAllOrdersRequest, BybitRpcCancelAllOrdersResponse},
-    cancel_by_id::{BybitRpcCancelOrderRequest, BybitRpcCancelOrderResponse},
-    open_order::{BybitRpcCreateOrderRequest, BybitRpcCreateOrderResponse},
-    BybitRpcOperation, BybitRpcRequestHeader,
+    cancel_all::{
+        BybitRpcCancelAllOrdersData, BybitRpcCancelAllOrdersRequest,
+        BybitRpcCancelAllOrdersResponse,
+    },
+    cancel_by_id::{
+        BybitRpcCancelOrderData, BybitRpcCancelOrderRequest, BybitRpcCancelOrderResponse,
+    },
+    open_order::{
+        BybitRpcCreateOrderArgs, BybitRpcCreateOrderData, BybitRpcCreateOrderRequest,
+        BybitRpcCreateOrderResponse,
+    },
+    BybitRpcOperation, BybitRpcRequestHeader, BybitRpcResponse,
 };
 use super::types::ws_streaming::{BybitAuthRequest, BybitAuthResponse, BybitWebSocketOp};
 use crate::exchanges::bybit::authenticator::BybitAuthenticator;
 use crate::exchanges::bybit::config::BybitConfig;
 use crate::exchanges::bybit::error::BybitError;
 use crate::exchanges::bybit::rate_limit::BybitRateLimiter;
+use crate::exchanges::bybit::rest::client::BybitHttpClient;
 use futures_util::{SinkExt, StreamExt};
 use std::sync::Arc;
 use tokio::time::{timeout, Duration};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 use tracing::{debug, info};
-use trading_core::{error::EngineError, utils::generate_custom_uuid};
+use trading_core::{error::EngineError, rest::HttpMethod, utils::generate_custom_uuid};
 
-const BYBIT_WS_TRADE_MAINNET: &str = "wss://stream.bybit.com/v5/trade";
-const BYBIT_WS_TRADE_TESTNET: &str = "wss://stream-testnet.bybit.com/v5/trade";
 const RPC_TIMEOUT_SECS: u64 = 10;
 
 #[derive(Debug)]
@@ -35,6 +42,7 @@ pub struct BybitRpcClient {
     config: BybitConfig,
     authenticator: BybitAuthenticator,
     rate_limiter: Arc<BybitRateLimiter>,
+    rest_client: BybitHttpClient,
 }
 
 #[derive(Debug, Clone)]
@@ -81,17 +89,164 @@ impl BybitRpcClient {
         );
 
         Self {
-            config,
+            config: config.clone(),
             authenticator,
             rate_limiter,
+            rest_client: BybitHttpClient::new(config),
         }
     }
 
-    fn get_ws_url(&self) -> &str {
-        if self.config.testnet {
-            BYBIT_WS_TRADE_TESTNET
-        } else {
-            BYBIT_WS_TRADE_MAINNET
+    fn get_ws_url(&self) -> Result<&str, EngineError> {
+        self.config.trade_ws_url().ok_or_else(|| {
+            EngineError::CustomError(anyhow::anyhow!(
+                "Bybit demo does not support WS Trade; orders must go through REST"
+            ))
+        })
+    }
+
+    async fn send_via_rest(&self, request: RpcRequest) -> Result<RpcResponse, EngineError> {
+        info!("Bybit demo mode: placing order via REST (WS Trade is not supported)");
+        match request {
+            RpcRequest::CreateOrder(req) => {
+                let args = req.args.into_iter().next().ok_or_else(|| {
+                    EngineError::CustomError(anyhow::anyhow!("CreateOrder missing args"))
+                })?;
+                let data: Option<BybitRpcCreateOrderData> = self
+                    .rest_client
+                    .call(
+                        "order/create",
+                        HttpMethod::POST,
+                        None::<BybitRpcCreateOrderArgs>,
+                        Some(args),
+                        None,
+                        true,
+                    )
+                    .await?;
+                Ok(RpcResponse::CreateOrder(rest_rpc_response(
+                    "order.create",
+                    data,
+                )))
+            }
+            RpcRequest::CancelOrder(req) => {
+                let args = req.args.into_iter().next().ok_or_else(|| {
+                    EngineError::CustomError(anyhow::anyhow!("CancelOrder missing args"))
+                })?;
+                let data: Option<BybitRpcCancelOrderData> = self
+                    .rest_client
+                    .call(
+                        "order/cancel",
+                        HttpMethod::POST,
+                        None,
+                        Some(args),
+                        None,
+                        true,
+                    )
+                    .await?;
+                Ok(RpcResponse::CancelOrder(rest_rpc_response(
+                    "order.cancel",
+                    data,
+                )))
+            }
+            RpcRequest::AmendOrder(req) => {
+                let args = req.args.into_iter().next().ok_or_else(|| {
+                    EngineError::CustomError(anyhow::anyhow!("AmendOrder missing args"))
+                })?;
+                let data: Option<BybitRpcAmendOrderData> = self
+                    .rest_client
+                    .call(
+                        "order/amend",
+                        HttpMethod::POST,
+                        None,
+                        Some(args),
+                        None,
+                        true,
+                    )
+                    .await?;
+                Ok(RpcResponse::AmendOrder(rest_rpc_response(
+                    "order.amend",
+                    data,
+                )))
+            }
+            RpcRequest::CancelAllOrders(req) => {
+                let args = req.args.into_iter().next().ok_or_else(|| {
+                    EngineError::CustomError(anyhow::anyhow!("CancelAllOrders missing args"))
+                })?;
+                let data: Option<BybitRpcCancelAllOrdersData> = self
+                    .rest_client
+                    .call(
+                        "order/cancel-all",
+                        HttpMethod::POST,
+                        None,
+                        Some(args),
+                        None,
+                        true,
+                    )
+                    .await?;
+                Ok(RpcResponse::CancelAllOrders(rest_rpc_response(
+                    "order.cancel-all",
+                    data,
+                )))
+            }
+            RpcRequest::BatchCreateOrder(req) => {
+                let args = req.args.into_iter().next().ok_or_else(|| {
+                    EngineError::CustomError(anyhow::anyhow!("BatchCreateOrder missing args"))
+                })?;
+                let data = self
+                    .rest_client
+                    .call(
+                        "order/create-batch",
+                        HttpMethod::POST,
+                        None,
+                        Some(args),
+                        None,
+                        true,
+                    )
+                    .await?;
+                Ok(RpcResponse::BatchCreateOrder(rest_rpc_response(
+                    "order.create-batch",
+                    data,
+                )))
+            }
+            RpcRequest::BatchAmendOrder(req) => {
+                let args = req.args.into_iter().next().ok_or_else(|| {
+                    EngineError::CustomError(anyhow::anyhow!("BatchAmendOrder missing args"))
+                })?;
+                let data = self
+                    .rest_client
+                    .call(
+                        "order/amend-batch",
+                        HttpMethod::POST,
+                        None,
+                        Some(args),
+                        None,
+                        true,
+                    )
+                    .await?;
+                Ok(RpcResponse::BatchAmendOrder(rest_rpc_response(
+                    "order.amend-batch",
+                    data,
+                )))
+            }
+            RpcRequest::BatchCancelOrder(req) => {
+                let args = req.args.into_iter().next().ok_or_else(|| {
+                    EngineError::CustomError(anyhow::anyhow!("BatchCancelOrder missing args"))
+                })?;
+                let data = self
+                    .rest_client
+                    .call(
+                        "order/cancel-batch",
+                        HttpMethod::POST,
+                        None,
+                        Some(args),
+                        None,
+                        true,
+                    )
+                    .await?;
+                Ok(RpcResponse::BatchCancelOrder(rest_rpc_response(
+                    "order.cancel-batch",
+                    data,
+                )))
+            }
         }
     }
 
@@ -135,7 +290,11 @@ impl BybitRpcClient {
     }
 
     pub async fn send_request(&self, request: RpcRequest) -> Result<RpcResponse, EngineError> {
-        let url = self.get_ws_url();
+        if self.config.demo {
+            return self.send_via_rest(request).await;
+        }
+
+        let url = self.get_ws_url()?;
         info!("Connecting to Bybit RPC WebSocket: {}", url);
 
         let (ws_stream, _) = connect_async(url)
@@ -428,5 +587,18 @@ impl BybitRpcClient {
                 Ok(RpcResponse::BatchCancelOrder(resp))
             }
         }
+    }
+}
+
+fn rest_rpc_response<T>(op: &str, data: Option<T>) -> BybitRpcResponse<T> {
+    BybitRpcResponse {
+        req_id: None,
+        ret_code: 0,
+        ret_msg: "OK".into(),
+        op: op.into(),
+        data,
+        ret_ext_info: None,
+        header: None,
+        conn_id: smol_str::SmolStr::new_inline(""),
     }
 }

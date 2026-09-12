@@ -10,7 +10,9 @@ use exchange_engine::state::manager::ExchangeStateManager;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use trading_core::{
-    error::EngineError, types::common::Pair, venue::cex::channels::CexVenueUpdateReceiver,
+    error::EngineError,
+    types::common::{InstrumentType, Pair},
+    venue::cex::channels::CexVenueUpdateReceiver,
 };
 
 /// Manages trading-specific state (positions, active orders)
@@ -38,12 +40,25 @@ impl TradingStateManager {
         exchange_update_rx: CexVenueUpdateReceiver,
         exchange_state_manager: Arc<ExchangeStateManager>,
     ) -> Self {
-        let state = Arc::new(RwLock::new(TradingState::new()));
-        let subscriber = Arc::new(tokio::sync::Mutex::new(ExchangeStateSubscriber::new(
+        Self::new_with_instrument_type(
             exchange_update_rx,
-            state.clone(),
-        )));
-        let reconciler = PositionReconciler::new(exchange_state_manager);
+            exchange_state_manager,
+            InstrumentType::Spot,
+        )
+    }
+
+    pub fn new_with_instrument_type(
+        exchange_update_rx: CexVenueUpdateReceiver,
+        exchange_state_manager: Arc<ExchangeStateManager>,
+        instrument_type: InstrumentType,
+    ) -> Self {
+        let state = Arc::new(RwLock::new(TradingState::new()));
+        let subscriber = Arc::new(tokio::sync::Mutex::new(
+            ExchangeStateSubscriber::new(exchange_update_rx, state.clone())
+                .with_instrument_type(instrument_type.clone()),
+        ));
+        let reconciler =
+            PositionReconciler::new(exchange_state_manager).with_instrument_type(instrument_type);
 
         Self {
             state,

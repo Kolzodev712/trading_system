@@ -2,9 +2,12 @@
 //!
 //! This module provides:
 //! - StrategyManager: manages multiple strategies
-//! - Common utilities: volatility tracking, trend detection, performance tracking, etc.
+//! - Common utilities: volatility tracking, trend detection, liquidity, sizing
 
-use crate::cex::state::Strategy;
+use crate::cex::intent::{StrategyContext, StrategyIntent};
+
+pub use crate::cex::intent::StrategyId;
+use crate::cex::state::{Strategy, TradingState};
 use chrono::{DateTime, Datelike, Timelike, Utc};
 use rust_decimal::Decimal;
 use std::collections::{HashMap, VecDeque};
@@ -13,11 +16,12 @@ use tokio::sync::RwLock;
 use tracing::{error, info};
 use trading_core::{
     error::EngineError,
-    types::{common::Pair, exchange::Order, market_data::Orderbook},
+    types::{
+        common::{InstrumentType, Pair},
+        exchange::Order,
+        market_data::Orderbook,
+    },
 };
-
-/// Strategy identifier: strategy_name + symbol
-pub type StrategyId = String;
 
 /// Manages multiple strategies with per-strategy enable/disable support
 pub struct StrategyManager {
@@ -32,6 +36,7 @@ pub struct StrategyManager {
     pair_to_indices: HashMap<Pair, Vec<usize>>,
     /// Global trading control - if disabled, all strategies are disabled regardless of individual state
     trading_control: Option<Arc<tokio::sync::RwLock<bool>>>,
+    instrument_type: InstrumentType,
 }
 
 impl StrategyManager {
@@ -43,12 +48,18 @@ impl StrategyManager {
             strategy_pairs: Vec::new(),
             pair_to_indices: HashMap::new(),
             trading_control: None,
+            instrument_type: InstrumentType::Spot,
         }
     }
 
     /// Set global trading control (hierarchical control)
     pub fn with_trading_control(mut self, trading_control: Arc<tokio::sync::RwLock<bool>>) -> Self {
         self.trading_control = Some(trading_control);
+        self
+    }
+
+    pub fn with_instrument_type(mut self, instrument_type: InstrumentType) -> Self {
+        self.instrument_type = instrument_type;
         self
     }
 
@@ -85,10 +96,8 @@ impl StrategyManager {
         enabled_map.get(strategy_id).copied().unwrap_or(false) // Default to disabled
     }
 
-    /// Get a reference to the enabled map (for direct access to avoid nested locks)
-    /// This allows callers to clone the Arc and access the map without holding the manager lock
-    pub fn get_enabled_map(&self) -> &Arc<RwLock<HashMap<StrategyId, bool>>> {
-        &self.strategy_enabled
+    pub fn strategy_ids(&self) -> &[StrategyId] {
+        &self.strategy_ids
     }
 
     /// Generate strategy ID from name and symbol
@@ -99,7 +108,8 @@ impl StrategyManager {
     pub async fn on_orderbook(
         &self,
         orderbook: &Orderbook,
-    ) -> Result<Vec<trading_core::types::exchange::OrderRequest>, EngineError> {
+        account: &TradingState,
+    ) -> Result<Vec<StrategyIntent>, EngineError> {
         // Log entry point (periodically)
         static ENTRY_COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let entry_count = ENTRY_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -190,33 +200,25 @@ impl StrategyManager {
 
             if should_log {
                 info!(
-                    "[StrategyManager] Calling strategy.on_orderbook() for {}",
+                    "[StrategyManager] Calling strategy.evaluate() for {}",
                     strategy_id
                 );
             }
 
             let strategy = &self.strategies[idx];
             let mut strat = strategy.write().await;
-            let state = strat.get_state().clone();
-            match strat.on_orderbook(orderbook, &state).await {
-                Ok(Some(req)) => {
+            let ctx = StrategyContext {
+                orderbook,
+                account,
+                instrument_type: self.instrument_type.clone(),
+            };
+            match strat.evaluate(&ctx).await {
+                Ok(intent) => {
                     info!(
-                        "[StrategyManager] ✅ Strategy {} returned order request: {} {} @ {} x {}",
-                        strategy_id,
-                        req.side,
-                        req.instrument.symbol(),
-                        req.price,
-                        req.amount
+                        "[StrategyManager] Strategy {} intent: {:?}",
+                        strategy_id, intent
                     );
-                    requests.push(req);
-                }
-                Ok(None) => {
-                    if should_log {
-                        info!(
-                            "[StrategyManager] Strategy {} returned None (no order)",
-                            strategy_id
-                        );
-                    }
+                    requests.push(intent);
                 }
                 Err(e) => {
                     error!("[StrategyManager] Strategy {} error: {}", strategy_id, e);
@@ -235,73 +237,12 @@ impl StrategyManager {
         Ok(requests)
     }
 
-    /// Get cancellation requests from all strategies for an orderbook update
-    /// Returns a vector of order IDs that strategies want to cancel
-    pub async fn on_orderbook_cancels(
-        &self,
-        orderbook: &Orderbook,
-    ) -> Result<Vec<trading_core::types::common::OrderId>, EngineError> {
-        let mut cancel_ids = Vec::new();
-
-        // Get only strategies that match this orderbook's symbol
-        let matching_indices = self
-            .pair_to_indices
-            .get(&orderbook.pair)
-            .map(|v| v.as_slice())
-            .unwrap_or(&[]);
-
-        if matching_indices.is_empty() {
-            return Ok(cancel_ids);
-        }
-
-        // Get enabled states for matching strategies only
-        let enabled_map = self.strategy_enabled.read().await;
-        let enabled_states: Vec<(usize, bool)> = matching_indices
-            .iter()
-            .map(|&idx| {
-                let strategy_id = &self.strategy_ids[idx];
-                let enabled = enabled_map.get(strategy_id).copied().unwrap_or(false);
-                (idx, enabled)
-            })
-            .collect();
-        drop(enabled_map);
-
-        // Collect cancellation requests from enabled strategies
-        for (idx, enabled) in enabled_states {
-            if !enabled {
-                continue; // Skip disabled strategies
-            }
-
-            let strategy = &self.strategies[idx];
-            let mut strat = strategy.write().await;
-            let state = strat.get_state().clone();
-            match strat.on_orderbook_cancels(orderbook, &state).await {
-                Ok(ids) => {
-                    cancel_ids.extend(ids);
-                }
-                Err(e) => {
-                    error!(
-                        "[StrategyManager] Strategy {} error in on_orderbook_cancels: {}",
-                        self.strategy_ids[idx], e
-                    );
-                    // Continue with other strategies
-                }
-            }
-        }
-
-        Ok(cancel_ids)
-    }
-
     pub async fn on_execution_report(&self, order: &Order) -> Result<(), EngineError> {
         for strategy in &self.strategies {
             let mut strat_guard = strategy.write().await;
             strat_guard.on_execution_report(order).await?;
         }
         Ok(())
-    }
-
-    pub fn get_strategies(&self) -> &[Arc<RwLock<dyn Strategy>>] {
-        &self.strategies
     }
 }
 
@@ -364,158 +305,6 @@ impl VolatilityTracker {
             / Decimal::from(self.returns.len());
 
         variance
-    }
-
-    /// Get adaptive threshold based on volatility
-    pub fn get_adaptive_threshold(&self, base_threshold: Decimal) -> Decimal {
-        let volatility = self.calculate_volatility();
-        // Normalize volatility (assume 1% = normal, scale from there)
-        let vol_multiplier = volatility / Decimal::from(100);
-        // Clamp multiplier between 0.5x and 2x
-        let clamped_multiplier = vol_multiplier.max(Decimal::new(5, 1)).min(Decimal::from(2));
-        base_threshold * clamped_multiplier
-    }
-}
-
-/// Trend direction based on EMA comparison
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum TrendDirection {
-    StrongUp,   // Don't sell
-    WeakUp,     // Can sell
-    Neutral,    // Trade both ways
-    WeakDown,   // Can buy
-    StrongDown, // Don't buy
-}
-
-/// Trend detector using fast/slow EMA comparison
-pub struct TrendDetector {
-    strong_threshold: Decimal, // e.g., 0.5% for strong trend
-    weak_threshold: Decimal,   // e.g., 0.1% for weak trend
-}
-
-impl TrendDetector {
-    pub fn new(strong_threshold: Decimal, weak_threshold: Decimal) -> Self {
-        Self {
-            strong_threshold,
-            weak_threshold,
-        }
-    }
-
-    /// Determine trend direction from fast and slow EMA
-    pub fn get_trend_direction(&self, fast_ema: Decimal, slow_ema: Decimal) -> TrendDirection {
-        if slow_ema <= Decimal::ZERO {
-            return TrendDirection::Neutral;
-        }
-
-        let diff_pct = (fast_ema - slow_ema) / slow_ema * Decimal::from(100);
-
-        if diff_pct > self.strong_threshold {
-            TrendDirection::StrongUp
-        } else if diff_pct > self.weak_threshold {
-            TrendDirection::WeakUp
-        } else if diff_pct < -self.strong_threshold {
-            TrendDirection::StrongDown
-        } else if diff_pct < -self.weak_threshold {
-            TrendDirection::WeakDown
-        } else {
-            TrendDirection::Neutral
-        }
-    }
-
-    /// Check if we should allow buy based on trend
-    pub fn should_allow_buy(&self, trend: TrendDirection) -> bool {
-        matches!(
-            trend,
-            TrendDirection::Neutral | TrendDirection::WeakDown | TrendDirection::WeakUp
-        )
-    }
-
-    /// Check if we should allow sell based on trend
-    pub fn should_allow_sell(&self, trend: TrendDirection) -> bool {
-        matches!(
-            trend,
-            TrendDirection::Neutral | TrendDirection::WeakUp | TrendDirection::WeakDown
-        )
-    }
-}
-
-/// Performance tracker for adaptive thresholds
-pub struct PerformanceTracker {
-    recent_trades: VecDeque<TradeResult>,
-    max_trades: usize,
-    consecutive_losses: usize,
-}
-
-#[derive(Debug, Clone)]
-pub struct TradeResult {
-    pub profit: Decimal,
-    pub timestamp: u64,
-}
-
-impl PerformanceTracker {
-    pub fn new(max_trades: usize) -> Self {
-        Self {
-            recent_trades: VecDeque::with_capacity(max_trades),
-            max_trades,
-            consecutive_losses: 0,
-        }
-    }
-
-    pub fn record_trade(&mut self, profit: Decimal, timestamp: u64) {
-        let is_loss = profit < Decimal::ZERO;
-
-        if is_loss {
-            self.consecutive_losses += 1;
-        } else {
-            self.consecutive_losses = 0;
-        }
-
-        self.recent_trades
-            .push_back(TradeResult { profit, timestamp });
-        if self.recent_trades.len() > self.max_trades {
-            self.recent_trades.pop_front();
-        }
-    }
-
-    pub fn calculate_win_rate(&self) -> Option<Decimal> {
-        if self.recent_trades.is_empty() {
-            return None;
-        }
-
-        let wins = self
-            .recent_trades
-            .iter()
-            .filter(|t| t.profit > Decimal::ZERO)
-            .count();
-
-        Some(Decimal::from(wins) / Decimal::from(self.recent_trades.len()) * Decimal::from(100))
-    }
-
-    /// Get threshold adjustment based on performance
-    /// Returns multiplier (e.g., 1.2 = widen by 20%, 0.8 = tighten by 20%)
-    pub fn get_threshold_adjustment(&self) -> Decimal {
-        // Pause after too many consecutive losses
-        if self.consecutive_losses >= 5 {
-            return Decimal::from(2); // Double thresholds (effectively pause)
-        }
-
-        if let Some(win_rate) = self.calculate_win_rate() {
-            if win_rate < Decimal::from(40) {
-                // Low win rate - widen thresholds (fewer trades, higher quality)
-                Decimal::new(12, 1) // 1.2x
-            } else if win_rate > Decimal::from(60) {
-                // High win rate - tighten thresholds (more trades)
-                Decimal::new(8, 1) // 0.8x
-            } else {
-                Decimal::ONE // No adjustment
-            }
-        } else {
-            Decimal::ONE
-        }
-    }
-
-    pub fn should_pause_trading(&self) -> bool {
-        self.consecutive_losses >= 5
     }
 }
 
@@ -657,54 +446,5 @@ impl PositionSizer {
         let size = self.base_size * confidence * clamped_vol;
         size.max(self.base_size * self.min_size_multiplier)
             .min(self.base_size * self.max_size_multiplier)
-    }
-}
-
-/// Order type selector (Market vs Limit)
-pub struct OrderTypeSelector {
-    use_market_for_strong_signals: bool,
-    strong_signal_multiplier: Decimal, // e.g., 2.0 = signal must be 2x threshold
-    max_spread_for_market: Decimal,    // e.g., 0.05% max spread for market orders
-    max_volatility_for_market: Decimal, // e.g., 1% max volatility for market orders
-}
-
-impl OrderTypeSelector {
-    pub fn new(
-        use_market_for_strong_signals: bool,
-        strong_signal_multiplier: Decimal,
-        max_spread_for_market: Decimal,
-        max_volatility_for_market: Decimal,
-    ) -> Self {
-        Self {
-            use_market_for_strong_signals,
-            strong_signal_multiplier,
-            max_spread_for_market,
-            max_volatility_for_market,
-        }
-    }
-
-    /// Select order type based on signal strength, spread, and volatility
-    pub fn select_order_type(
-        &self,
-        signal_strength: Decimal,
-        threshold: Decimal,
-        spread_percent: Option<Decimal>,
-        volatility: Decimal,
-    ) -> trading_core::types::common::OrderType {
-        if !self.use_market_for_strong_signals {
-            return trading_core::types::common::OrderType::Limit;
-        }
-
-        let is_strong_signal = signal_strength >= threshold * self.strong_signal_multiplier;
-        let spread_ok = spread_percent
-            .map(|s| s < self.max_spread_for_market)
-            .unwrap_or(false);
-        let vol_ok = volatility < self.max_volatility_for_market;
-
-        if is_strong_signal && spread_ok && vol_ok {
-            trading_core::types::common::OrderType::Market
-        } else {
-            trading_core::types::common::OrderType::Limit
-        }
     }
 }

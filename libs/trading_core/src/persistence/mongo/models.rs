@@ -138,28 +138,3 @@ pub struct CompositeIndicatorDocument {
     pub created_at: u64,
     pub updated_at: u64,
 }
-
-/// Strategy configuration document
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct StrategyConfigDocument {
-    #[serde(rename = "_id")]
-    pub strategy_id: String,
-
-    pub strategy_type: String, // "BuyLowSellHigh", etc.
-    pub symbol: PairDocument,
-    pub position_size: rust_decimal::Decimal,
-    pub max_position: rust_decimal::Decimal,
-    pub buy_threshold_percent: rust_decimal::Decimal,
-    pub sell_threshold_percent: rust_decimal::Decimal,
-    pub stop_loss_percent: Option<rust_decimal::Decimal>,
-    pub take_profit_percent: Option<rust_decimal::Decimal>,
-    pub max_active_orders: usize,
-    pub price_history_size: usize,
-    pub min_price_history: usize,
-    pub min_order_size: Option<rust_decimal::Decimal>,
-    pub step_size: Option<rust_decimal::Decimal>,
-    pub tick_size: Option<rust_decimal::Decimal>,
-    pub min_notional: Option<rust_decimal::Decimal>,
-    pub created_at: u64,
-    pub updated_at: u64,
-}

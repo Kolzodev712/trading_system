@@ -24,8 +24,6 @@ use trading_core::{
     utils::generate_custom_uuid,
 };
 
-const BYBIT_WS_PRIVATE_MAINNET: &str = "wss://stream.bybit.com/v5/private";
-const BYBIT_WS_PRIVATE_TESTNET: &str = "wss://stream-testnet.bybit.com/v5/private";
 const HEARTBEAT_INTERVAL_SECS: u64 = 20;
 
 pub struct BybitStreamingClient {
@@ -58,11 +56,7 @@ impl BybitStreamingClient {
     }
 
     fn get_ws_url(&self) -> &str {
-        if self.config.testnet {
-            BYBIT_WS_PRIVATE_TESTNET
-        } else {
-            BYBIT_WS_PRIVATE_MAINNET
-        }
+        self.config.private_ws_url()
     }
 
     fn generate_auth_signature(&self, expires: i64) -> Result<String, EngineError> {

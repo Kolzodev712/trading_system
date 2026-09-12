@@ -29,6 +29,7 @@ pub struct MonitoringService {
     pub instrument_type: trading_core::types::common::InstrumentType,
     pub exchange: String,
     pub dex_venue_label: Option<String>,
+    pub strategy_caps: Option<Arc<RwLock<HashMap<String, rust_decimal::Decimal>>>>,
 }
 
 #[derive(Clone)]
@@ -407,7 +408,7 @@ impl MonitoringService {
             })
             .collect();
 
-        converted.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+        converted.sort_by_key(|a| std::cmp::Reverse(a.timestamp));
         converted.truncate(100);
         Ok(converted)
     }
@@ -428,7 +429,7 @@ impl MonitoringService {
             })
             .collect();
 
-        converted.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+        converted.sort_by_key(|a| std::cmp::Reverse(a.timestamp));
         converted.truncate(100);
         Ok(converted)
     }
@@ -510,6 +511,15 @@ impl MonitoringService {
             max_active_orders: strategy_info.max_active_orders as i32,
             last_signal: "None".to_string(),
             signal_strength: String::new(),
+            max_position: if let Some(caps) = &self.strategy_caps {
+                caps.read()
+                    .await
+                    .get(&strategy_id)
+                    .map(|d| d.to_string())
+                    .unwrap_or_default()
+            } else {
+                String::new()
+            },
         })
     }
 
@@ -638,7 +648,7 @@ impl MonitoringService {
             orderbooks.len()
         );
 
-        orderbooks.sort_by(|a, b| a.pair.cmp(&b.pair));
+        orderbooks.sort_by_key(|a| a.pair.clone());
         Ok(orderbooks)
     }
 }

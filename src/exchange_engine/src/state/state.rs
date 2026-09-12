@@ -282,6 +282,15 @@ impl ExchangeState {
         self.positions.get(pair)
     }
 
+    /// Remove a position (flat / no longer reported by REST).
+    pub fn remove_position(&mut self, pair: &Pair) {
+        self.positions.remove(pair);
+        self.last_update = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+    }
+
     /// Get last update timestamp
     pub fn last_update(&self) -> u64 {
         self.last_update

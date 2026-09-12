@@ -1,5 +1,10 @@
+use crate::cex::intent::{
+    apply_abs_qty_cap, approve_target_qty, intent_to_order_request, StrategyContext, StrategyId,
+    StrategyIntent,
+};
 use crate::cex::state::Strategy;
 use crate::cex::strategies::strategy_manager::StrategyManager;
+use crate::risk::RiskManager;
 use asset_engine::AssetService;
 use trading_core::types::exchange::{
     BulkAmendItem, BulkAmendRequest, BulkCancelRequest, BulkOrderRequest,
@@ -9,7 +14,7 @@ use trading_core::{
     circuit_breaker::{order_circuit_breaker, CircuitBreaker},
     error::EngineError,
     types::{
-        common::{Exchange, Instrument, InstrumentType, OrderId},
+        common::{Exchange, InstrumentType, OrderId},
         exchange::{Order, OrderRequest},
         Pair,
     },
@@ -24,8 +29,8 @@ use tracing::{debug, error, info, warn};
 
 /// Executes a trading strategy by:
 /// 1. Consuming market data from channels
-/// 2. Calling strategy.on_orderbook() for each update
-/// 3. Placing orders through the trading client
+/// 2. Calling `Strategy::evaluate` for each update
+/// 3. Turning approved intent into orders through the trading client
 /// 4. Handling execution reports
 /// 5. Periodic position reconciliation
 /// 6. Circuit breaker for error handling
@@ -52,6 +57,9 @@ pub struct StrategyExecutor<S: Strategy + 'static> {
     /// Optional StrategyManager for batching (only set when using StrategyManagerWrapper)
     strategy_manager:
         Option<Arc<RwLock<crate::cex::strategies::strategy_manager::StrategyManager>>>,
+    risk_manager: Option<Arc<RiskManager>>,
+    /// `max_position` per strategy id. Shared so gRPC can update without restart.
+    strategy_caps: Arc<RwLock<std::collections::HashMap<StrategyId, Decimal>>>,
 }
 
 impl<S: Strategy> StrategyExecutor<S> {
@@ -92,7 +100,22 @@ impl<S: Strategy> StrategyExecutor<S> {
             config_min_notional,
             trading_enabled: None,
             strategy_manager: None,
+            risk_manager: None,
+            strategy_caps: Arc::new(RwLock::new(std::collections::HashMap::new())),
         }
+    }
+
+    pub fn with_shared_strategy_caps(
+        mut self,
+        strategy_caps: Arc<RwLock<std::collections::HashMap<StrategyId, Decimal>>>,
+    ) -> Self {
+        self.strategy_caps = strategy_caps;
+        self
+    }
+
+    pub fn with_risk_manager(mut self, risk_manager: Arc<RiskManager>) -> Self {
+        self.risk_manager = Some(risk_manager);
+        self
     }
 
     /// Set trading enabled flag (for TUI control)
@@ -104,11 +127,6 @@ impl<S: Strategy> StrategyExecutor<S> {
     /// Set StrategyManager for batching (only for StrategyManagerWrapper)
     pub fn with_strategy_manager(mut self, strategy_manager: Arc<RwLock<StrategyManager>>) -> Self {
         self.strategy_manager = Some(strategy_manager);
-        self
-    }
-
-    pub fn with_order_timeout(mut self, timeout_secs: u64) -> Self {
-        self.order_timeout_secs = timeout_secs;
         self
     }
 
@@ -276,9 +294,7 @@ impl<S: Strategy> StrategyExecutor<S> {
                         );
                     }
 
-                    // Get all order requests from strategy
-                    // For StrategyManagerWrapper, get all requests for batching
-                    // For other strategies, get single request
+                    // StrategyManager evaluates every matching strategy; otherwise one evaluate.
                     let orderbook_pair = orderbook.pair.clone();
                     let trading_state = self.trading_state_manager.get_state();
                     let state = {
@@ -286,124 +302,72 @@ impl<S: Strategy> StrategyExecutor<S> {
                         state_guard.clone()
                     };
 
-                    // Get all order requests and cancellation requests from strategy
-                    // If StrategyManager is available, get all requests for batching
-                    // Otherwise, get single request
-                    let all_requests: Vec<OrderRequest> = {
+                    let intents: Vec<StrategyIntent> = {
                         if let Some(ref strategy_manager) = self.strategy_manager {
-                            // Get all requests from StrategyManager for batching
                             let manager = strategy_manager.read().await;
-                            match manager.on_orderbook(&orderbook).await {
-                                Ok(requests) => requests,
+                            match manager.on_orderbook(&orderbook, &state).await {
+                                Ok(intents) => intents,
                                 Err(e) => {
                                     error!("StrategyManager error: {error}", error = e);
                                     continue;
                                 }
                             }
                         } else {
-                            // Single strategy - get one request
                             let mut strat = strategy.write().await;
-                            match strat.on_orderbook(&orderbook, &state).await {
-                                Ok(Some(req)) => vec![req],
-                                Ok(None) => vec![],
+                            let ctx = StrategyContext {
+                                orderbook: &orderbook,
+                                account: &state,
+                                instrument_type: self.instrument_type.clone(),
+                            };
+                            match strat.evaluate(&ctx).await {
+                                Ok(intent) => vec![intent],
                                 Err(e) => {
-                                    error!("Strategy error in on_orderbook: {error}", error = e);
+                                    error!("Strategy error in evaluate: {error}", error = e);
                                     continue;
                                 }
                             }
                         }
                     };
 
-                    // Get cancellation requests from strategies
-                    let cancel_ids: Vec<OrderId> = {
-                        if let Some(ref strategy_manager) = self.strategy_manager {
-                            // Get all cancellation requests from StrategyManager
-                            let manager = strategy_manager.read().await;
-                            match manager.on_orderbook_cancels(&orderbook).await {
-                                Ok(ids) => ids,
-                                Err(e) => {
-                                    error!(
-                                        "StrategyManager error getting cancels: {error}",
-                                        error = e
-                                    );
-                                    vec![]
-                                }
-                            }
-                        } else {
-                            // Single strategy - get cancellation requests
-                            let mut strat = strategy.write().await;
-                            match strat.on_orderbook_cancels(&orderbook, &state).await {
-                                Ok(ids) => ids,
-                                Err(e) => {
-                                    error!(
-                                        "Strategy error in on_orderbook_cancels: {error}",
-                                        error = e
-                                    );
-                                    vec![]
-                                }
-                            }
-                        }
-                    };
+                    let current_qty = state.effective_position_qty(&orderbook_pair);
+                    let max_abs = self
+                        .risk_manager
+                        .as_ref()
+                        .and_then(|risk| risk.get_limits().total_max_position);
+                    let caps = self.strategy_caps.read().await;
 
-                    // Batch process cancellation requests first
-                    if !cancel_ids.is_empty() {
-                        info!(
-                            "[StrategyExecutor] Batch cancelling {} order(s) requested by strategies",
-                            cancel_ids.len()
-                        );
-                        let bulk_request = BulkCancelRequest {
-                            order_ids: cancel_ids.clone(),
-                            pair: None,
-                        };
-                        let trading_client_guard = trading_client.write().await;
-                        let bulk_response =
-                            trading_client_guard.bulk_cancel_orders(bulk_request).await;
-
-                        match bulk_response {
-                            Ok(response) => {
-                                for (order_id, result) in
-                                    cancel_ids.iter().zip(response.results.iter())
-                                {
-                                    if result.success {
-                                        info!(
-                                            "[StrategyExecutor] ✅ Cancelled order {} requested by strategy",
-                                            order_id.as_str()
-                                        );
-                                        // Remove order from TradingStateManager
-                                        self.trading_state_manager.remove_order(order_id).await;
-                                    } else {
-                                        warn!(
-                                            "Failed to cancel order {} requested by strategy: {}",
-                                            order_id.as_str(),
-                                            result
-                                                .error
-                                                .as_ref()
-                                                .unwrap_or(&"Unknown error".to_string())
-                                        );
-                                    }
+                    let all_requests: Vec<OrderRequest> = intents
+                        .into_iter()
+                        .filter_map(|intent| {
+                            let approved = match &intent {
+                                StrategyIntent::Hold { .. } => return None,
+                                StrategyIntent::TargetPosition {
+                                    strategy_id, qty, ..
+                                } => {
+                                    let per_strategy = approve_target_qty(strategy_id, *qty, &caps);
+                                    apply_abs_qty_cap(per_strategy, max_abs)
                                 }
-                            }
-                            Err(e) => {
-                                warn!("Bulk cancel orders failed: {}", e);
-                            }
-                        }
-                    }
+                            };
+                            let approved_intent = match intent {
+                                StrategyIntent::TargetPosition {
+                                    strategy_id,
+                                    instrument,
+                                    ..
+                                } => StrategyIntent::TargetPosition {
+                                    strategy_id,
+                                    instrument,
+                                    qty: approved,
+                                },
+                                other => other,
+                            };
+                            intent_to_order_request(&approved_intent, current_qty, &orderbook)
+                        })
+                        .collect();
+                    drop(caps);
 
                     if all_requests.is_empty() {
                         continue;
                     }
-
-                    // Override instrument type for all requests
-                    let all_requests: Vec<OrderRequest> = all_requests
-                        .into_iter()
-                        .map(|mut req| {
-                            req.instrument = Instrument::new(
-                                self.instrument_type.clone(),
-                                req.instrument.pair.clone(),
-                            );
-                            req
-                        })
-                        .collect();
 
                     // Check circuit breaker and trading control
                     let cb = circuit_breaker.lock().await;
@@ -552,6 +516,24 @@ impl<S: Strategy> StrategyExecutor<S> {
                         req.price = round_price(req.price, rules.tick_size);
                         if validate_order(req.price, req.amount, &rules).is_err() {
                             continue;
+                        }
+
+                        if let Some(ref risk) = self.risk_manager {
+                            let check = risk
+                                .check_pre_trade(
+                                    &req,
+                                    &state,
+                                    balances.as_deref().unwrap_or(&[]),
+                                    None,
+                                )
+                                .await;
+                            if !check.allowed {
+                                warn!(
+                                    "Risk blocked order: {}",
+                                    check.reason.unwrap_or_else(|| "unknown".into())
+                                );
+                                continue;
+                            }
                         }
 
                         // Collect for batch posting

@@ -9,7 +9,27 @@ use exchange_engine::state::manager::ExchangeStateManager;
 use rust_decimal::Decimal;
 use std::sync::Arc;
 use tracing::warn;
-use trading_core::{error::EngineError, types::common::Pair};
+use trading_core::{
+    error::EngineError,
+    types::common::{InstrumentType, Pair},
+};
+
+/// Choose the authoritative quantity for target-vs-current.
+/// Futures: signed ESM position, or 0 if flat. Spot: base-wallet heuristic.
+pub fn authoritative_position_qty(
+    instrument_type: InstrumentType,
+    esm_position_qty: Option<Decimal>,
+    spot_base_balance: Option<Decimal>,
+) -> Decimal {
+    match instrument_type {
+        InstrumentType::Futures | InstrumentType::Derivitives => {
+            esm_position_qty.unwrap_or(Decimal::ZERO)
+        }
+        InstrumentType::Spot => esm_position_qty
+            .or(spot_base_balance)
+            .unwrap_or(Decimal::ZERO),
+    }
+}
 
 /// Reconciles TradingState with ExchangeStateManager (not with exchange directly)
 ///
@@ -19,6 +39,7 @@ use trading_core::{error::EngineError, types::common::Pair};
 pub struct PositionReconciler {
     /// Exchange state manager (single point of contact with exchange)
     exchange_state_manager: Arc<ExchangeStateManager>,
+    instrument_type: InstrumentType,
 }
 
 impl PositionReconciler {
@@ -29,7 +50,13 @@ impl PositionReconciler {
     pub fn new(exchange_state_manager: Arc<ExchangeStateManager>) -> Self {
         Self {
             exchange_state_manager,
+            instrument_type: InstrumentType::Spot,
         }
+    }
+
+    pub fn with_instrument_type(mut self, instrument_type: InstrumentType) -> Self {
+        self.instrument_type = instrument_type;
+        self
     }
 
     /// Reconcile TradingState with ExchangeStateManager (not with exchange directly)
@@ -52,12 +79,16 @@ impl PositionReconciler {
         let exchange_state_arc = self.exchange_state_manager.get_state();
         let exchange_state = exchange_state_arc.read().await;
 
-        // Reconcile positions
-        // Get balance for base currency from ExchangeStateManager
+        // Reconcile positions. Futures use signed ESM positions (design log 008).
         let base_currency = pair.base.as_str();
-        let exchange_balance = exchange_state
-            .get_balance(base_currency)
-            .map(|b| b.total)
+        let exchange_qty = authoritative_position_qty(
+            self.instrument_type.clone(),
+            exchange_state.get_position(pair).map(|p| p.quantity),
+            exchange_state.get_balance(base_currency).map(|b| b.total),
+        );
+        let exchange_avg = exchange_state
+            .get_position(pair)
+            .map(|p| p.avg_price)
             .unwrap_or(Decimal::ZERO);
 
         let trading_position_qty = trading_state
@@ -65,37 +96,31 @@ impl PositionReconciler {
             .map(|p| p.quantity)
             .unwrap_or(Decimal::ZERO);
 
-        let discrepancy = exchange_balance - trading_position_qty;
+        let discrepancy = exchange_qty - trading_position_qty;
 
         let mut reconciled = false;
 
         tracing::debug!(
             "Trading-level reconciliation for {}: TradingState={}, ExchangeStateManager={}, discrepancy={}",
-            pair, trading_position_qty, exchange_balance, discrepancy
+            pair, trading_position_qty, exchange_qty, discrepancy
         );
 
         if discrepancy.abs() > Decimal::new(1, 6) {
             warn!(
                 "TradingState position discrepancy for {}: internal={}, exchange={}, diff={}",
-                pair, trading_position_qty, exchange_balance, discrepancy
+                pair, trading_position_qty, exchange_qty, discrepancy
             );
-            // Update TradingState to match ExchangeStateManager
-            // Calculate delta: exchange_balance - current_position
-            let delta = exchange_balance - trading_position_qty;
-            if delta != Decimal::ZERO {
-                // Use a reasonable price for reconciliation (use current price if available, else 0)
-                let reconcile_price = _current_price.unwrap_or(Decimal::ZERO);
-                trading_state.update_position(
-                    pair.clone(),
-                    delta, // Delta, not absolute value
-                    reconcile_price,
-                );
-            }
+            let reconcile_price = if exchange_avg.is_zero() {
+                _current_price.unwrap_or(Decimal::ZERO)
+            } else {
+                exchange_avg
+            };
+            trading_state.set_position(pair.clone(), exchange_qty, reconcile_price);
             reconciled = true;
             tracing::debug!(
                 "TradingState position reconciled for {}: updated to {}",
                 pair,
-                exchange_balance
+                exchange_qty
             );
         } else {
             tracing::debug!(
@@ -117,7 +142,7 @@ impl PositionReconciler {
         );
 
         let mut orders_to_remove = Vec::new();
-        for (order_id, _order) in trading_state.active_orders.iter() {
+        for order_id in trading_state.active_orders.keys() {
             if !exchange_order_ids.contains(order_id) {
                 warn!(
                     "TradingState has active order {:?} for {} not found in ExchangeStateManager. Removing.",
@@ -146,7 +171,7 @@ impl PositionReconciler {
         Ok(ReconciliationResult {
             symbol: pair.clone(),
             internal_quantity: trading_position_qty,
-            exchange_quantity: exchange_balance,
+            exchange_quantity: exchange_qty,
             discrepancy,
             reconciled,
         })
@@ -166,4 +191,32 @@ pub struct ReconciliationResult {
     pub discrepancy: Decimal,
     /// Whether reconciliation was performed (discrepancy was found and fixed)
     pub reconciled: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn futures_flat_is_zero_not_wallet() {
+        let qty =
+            authoritative_position_qty(InstrumentType::Futures, None, Some(Decimal::new(2, 0)));
+        assert_eq!(qty, Decimal::ZERO);
+    }
+
+    #[test]
+    fn futures_uses_signed_esm_qty() {
+        let qty = authoritative_position_qty(
+            InstrumentType::Futures,
+            Some(Decimal::new(-15, 1)),
+            Some(Decimal::new(100, 0)),
+        );
+        assert_eq!(qty, Decimal::new(-15, 1));
+    }
+
+    #[test]
+    fn spot_falls_back_to_base_balance() {
+        let qty = authoritative_position_qty(InstrumentType::Spot, None, Some(Decimal::new(3, 0)));
+        assert_eq!(qty, Decimal::new(3, 0));
+    }
 }

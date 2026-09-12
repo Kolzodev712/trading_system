@@ -160,9 +160,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let trading_state_manager = match &venue {
         runner::venue::VenueInterface::Cex(cex)
         | runner::venue::VenueInterface::Both { cex, .. } => {
-            let tsm = Arc::new(TradingStateManager::new(
+            let instrument_type = bot_config
+                .get_instrument_type()
+                .unwrap_or(trading_core::types::common::InstrumentType::Spot);
+            let tsm = Arc::new(TradingStateManager::new_with_instrument_type(
                 cex.cex_update_rx.resubscribe(),
                 cex.exchange_state_manager.clone(),
+                instrument_type,
             ));
             start_trading_state_subscriber(tsm.clone(), shutdown_manager.clone());
             info!("✓ Trading state manager initialized");
@@ -196,18 +200,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Start the appropriate runner in a background task
     let runner_handle = match args.mode.as_str() {
         "strategies" => {
-            let strategy_persistence =
-                create_strategy_persistence(Some(&mongo_client), &bot_config);
             let bot_config_clone = bot_config.clone();
             let strategies_config_clone = args.strategies_config.clone();
             tokio::spawn(async move {
-                if let Err(e) = strategy_runner(
-                    bot_config_clone,
-                    strategies_config_clone,
-                    services,
-                    strategy_persistence,
-                )
-                .await
+                if let Err(e) =
+                    strategy_runner(bot_config_clone, strategies_config_clone, services).await
                 {
                     error!("Strategy runner error: {}", e);
                 }
@@ -272,20 +269,5 @@ fn create_level_persistence(
             client.as_ref().clone(),
             bot_config.mongo.bot_id.clone(),
         ))
-    })
-}
-
-/// Create strategy persistence if MongoDB is enabled
-fn create_strategy_persistence(
-    mongo_client: Option<&Arc<MongoClient>>,
-    bot_config: &BotConfig,
-) -> Option<Arc<trading_engine::strategies::persistence::StrategyPersistence>> {
-    mongo_client.map(|client| {
-        Arc::new(
-            trading_engine::strategies::persistence::StrategyPersistence::new(
-                client.as_ref().clone(),
-                bot_config.mongo.bot_id.clone(),
-            ),
-        )
     })
 }

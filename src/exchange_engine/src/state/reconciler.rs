@@ -69,6 +69,7 @@ impl StateReconciler {
             balances_fetched: balance_count,
             orders_fetched: 0,
             trades_fetched: trades_fetched.max(trade_count), // Use the higher of fetched vs actual count
+            positions_fetched: 0,
             discrepancies: Vec::new(),
         };
 
@@ -182,7 +183,28 @@ impl StateReconciler {
         ws_state.update_balances(rest_balances);
         drop(ws_state);
 
-        // TODO: Reconcile orders and trades when fetch_open_orders and fetch_trades are implemented
+        match trading_client.read().await.fetch_positions().await {
+            Ok(rest_positions) => {
+                result.positions_fetched = rest_positions.len();
+                let reported: std::collections::HashSet<Pair> = rest_positions
+                    .iter()
+                    .map(|p| p.instrument.pair.clone())
+                    .collect();
+                let mut ws_state = exchange_state.write().await;
+                for position in rest_positions {
+                    ws_state.update_position(position);
+                }
+                for pair in _configured_pairs {
+                    if !reported.contains(pair) {
+                        ws_state.remove_position(pair);
+                    }
+                }
+            }
+            Err(EngineError::NotSupported(_)) => {}
+            Err(e) => {
+                error!("Failed to fetch positions for reconciliation: {}", e);
+            }
+        }
 
         Ok(result)
     }
@@ -235,6 +257,8 @@ pub struct ReconciliationResult {
     pub orders_fetched: usize,
     /// Number of trades fetched from REST
     pub trades_fetched: usize,
+    /// Number of futures positions fetched from REST
+    pub positions_fetched: usize,
     /// List of discrepancies detected
     pub discrepancies: Vec<Discrepancy>,
 }

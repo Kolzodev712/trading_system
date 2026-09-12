@@ -199,14 +199,12 @@ impl DexQuoteManager {
                         self.pending_by_sig.remove(&sig);
                     }
                 }
-                DexQuoteState::Placed { order_id } => {
-                    if !open_ids.contains(order_id.as_ref()) {
-                        if runtime.config.auto_repost(&self.defaults) {
-                            let delay = Duration::from_secs(self.defaults.repost_delay_secs);
-                            runtime.state = DexQuoteState::RepostScheduled { after: now + delay };
-                        } else {
-                            runtime.state = DexQuoteState::Idle;
-                        }
+                DexQuoteState::Placed { order_id } if !open_ids.contains(order_id.as_ref()) => {
+                    if runtime.config.auto_repost(&self.defaults) {
+                        let delay = Duration::from_secs(self.defaults.repost_delay_secs);
+                        runtime.state = DexQuoteState::RepostScheduled { after: now + delay };
+                    } else {
+                        runtime.state = DexQuoteState::Idle;
                     }
                 }
                 _ => {}

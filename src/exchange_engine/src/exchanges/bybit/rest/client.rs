@@ -23,10 +23,6 @@ use trading_core::{
     rest::{HttpMethod, RestExchangeHandler},
 };
 
-/// Base URL for Bybit REST API
-const BYBIT_REST_URL: &str = "https://api.bybit.com/v5/";
-const BYBIT_TESTNET_URL: &str = "https://api-testnet.bybit.com/v5/";
-
 /// Bybit REST API handler
 #[derive(Debug, Clone)]
 pub struct BybitHandler;
@@ -175,11 +171,7 @@ pub struct BybitHttpClient {
 
 impl BybitHttpClient {
     pub fn new(config: BybitConfig) -> Self {
-        let base_url = if config.testnet {
-            BYBIT_TESTNET_URL.into()
-        } else {
-            BYBIT_REST_URL.into()
-        };
+        let base_url = config.rest_base_url().into();
 
         let rate_limiter = Arc::new(BybitRateLimiter::new(config.rate_limiter.clone()));
 

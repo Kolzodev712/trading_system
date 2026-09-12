@@ -114,6 +114,8 @@ mod tests {
                 api_secret: SecretString::from("test_secret"),
             },
             testnet: false,
+            demo: false,
+            leverage: None,
             rate_limiter: BybitRateLimiterConfig::default(),
         };
 
@@ -163,6 +165,8 @@ mod tests {
                     api_secret: SecretString::from("secret"),
                 },
                 testnet: false,
+                demo: false,
+                leverage: None,
                 rate_limiter: BybitRateLimiterConfig::default(),
             }),
         };
@@ -203,6 +207,8 @@ mod tests {
                 api_secret: SecretString::from("test_secret"),
             },
             testnet: true,
+            demo: false,
+            leverage: None,
             rate_limiter: BybitRateLimiterConfig::default(),
         };
 

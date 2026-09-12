@@ -88,11 +88,20 @@ impl StrategyOperator for FileStrategyOperator {
         let pair = Self::parse_symbol(symbol)?;
         let configs =
             StrategiesConfig::load_from_file(&self.strategies_path).map_err(|e| e.to_string())?;
-        let found = configs.as_vec().into_iter().find(|c| {
-            c.strategy_type.as_str() == strategy_name
-                && c.symbol.base == pair.base
-                && c.symbol.quote == pair.quote
-        });
+        let found = configs
+            .as_vec()
+            .into_iter()
+            .find(|c| {
+                c.strategy_type.as_str() == strategy_name
+                    && c.symbol.base == pair.base
+                    && c.symbol.quote == pair.quote
+            })
+            .or_else(|| {
+                configs
+                    .as_vec()
+                    .into_iter()
+                    .find(|c| c.symbol.base == pair.base && c.symbol.quote == pair.quote)
+            });
         found
             .map(Self::to_fields)
             .ok_or_else(|| format!("no strategy {strategy_name} {symbol}"))
@@ -138,9 +147,16 @@ impl StrategyOperator for FileStrategyOperator {
         let mut applied_cap;
         {
             let row = configs
-                .find_mut(&fields.strategy_type, &pair)
+                .find_mut_for_operator(&fields.strategy_type, &pair)
                 .ok_or_else(|| format!("no strategy {} {}", fields.strategy_type, fields.symbol))?;
             applied_cap = row.max_position;
+            if !fields.strategy_type.is_empty()
+                && fields.strategy_type != row.strategy_type.as_str()
+            {
+                let canonical = canonical_strategy_type(&fields.strategy_type)?;
+                row.strategy_type = canonical.into();
+                needs_restart = true;
+            }
             if !fields.position_size.is_empty() {
                 let v = Self::parse_decimal(&fields.position_size)?;
                 if v != row.position_size {
@@ -242,5 +258,14 @@ impl StrategyOperator for FileStrategyOperator {
         *self.trading_control.enabled_flag().write().await = false;
         self.shutdown.signal_shutdown();
         Ok(())
+    }
+}
+
+fn canonical_strategy_type(raw: &str) -> Result<&'static str, String> {
+    match raw {
+        "PropHold" | "prop_hold" => Ok("PropHold"),
+        "Donchian" | "donchian" => Ok("Donchian"),
+        "BuyLowSellHigh" | "buy_low_sell_high" => Ok("BuyLowSellHigh"),
+        other => Err(format!("unknown strategy type: {other}")),
     }
 }

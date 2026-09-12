@@ -463,6 +463,26 @@ impl StrategiesConfig {
         Ok(config)
     }
 
+    pub fn save_to_file(&self, path: &str) -> Result<(), Box<dyn std::error::Error>> {
+        std::fs::write(path, serde_json::to_string_pretty(self)? + "\n")?;
+        Ok(())
+    }
+
+    pub fn find_mut(&mut self, strategy_type: &str, symbol: &Pair) -> Option<&mut StrategyConfig> {
+        self.as_vec_mut().into_iter().find(|c| {
+            c.strategy_type.as_str() == strategy_type
+                && c.symbol.base.as_str() == symbol.base.as_str()
+                && c.symbol.quote.as_str() == symbol.quote.as_str()
+        })
+    }
+
+    fn as_vec_mut(&mut self) -> Vec<&mut StrategyConfig> {
+        match self {
+            StrategiesConfig::Single(config) => vec![config.as_mut()],
+            StrategiesConfig::Multiple { strategies } => strategies.iter_mut().collect(),
+        }
+    }
+
     /// Validate strategies configuration
     pub fn validate(&self) -> Result<(), String> {
         let configs = self.as_vec();

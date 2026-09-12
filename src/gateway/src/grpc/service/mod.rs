@@ -4,9 +4,11 @@ mod dex_quotes;
 mod dex_strategies;
 mod levels;
 mod monitoring;
+mod strategy_config;
 mod trading_control;
 
 pub use monitoring::{MonitoringService, StrategyInfo};
+pub use strategy_config::{OperatorFields, StrategyOperator, StrategyOperatorHandle};
 
 use async_trait::async_trait;
 use dex_engine::runtime::DexEngineRuntime;
@@ -47,6 +49,8 @@ pub struct TradingCliServiceImpl {
     dex_indicator_engine: Option<Arc<DexIndicatorEngine>>,
     dex_runtime: Option<Arc<DexEngineRuntime>>,
     dex_balance_manager_id: Option<SmolStr>,
+    strategy_operator: Option<strategy_config::StrategyOperatorHandle>,
+    strategy_caps: Option<Arc<RwLock<std::collections::HashMap<String, rust_decimal::Decimal>>>>,
 }
 
 impl TradingCliServiceImpl {
@@ -81,6 +85,8 @@ impl TradingCliServiceImpl {
             dex_indicator_engine: None,
             dex_runtime: None,
             dex_balance_manager_id: None,
+            strategy_operator: None,
+            strategy_caps: None,
         }
     }
 
@@ -156,6 +162,22 @@ impl TradingCliServiceImpl {
         self
     }
 
+    pub fn with_strategy_operator(
+        mut self,
+        operator: strategy_config::StrategyOperatorHandle,
+    ) -> Self {
+        self.strategy_operator = Some(operator);
+        self
+    }
+
+    pub fn with_strategy_caps(
+        mut self,
+        caps: Arc<RwLock<std::collections::HashMap<String, rust_decimal::Decimal>>>,
+    ) -> Self {
+        self.strategy_caps = Some(caps);
+        self
+    }
+
     fn clone_for_streaming(&self) -> Self {
         Self {
             level_manager: self.level_manager.clone(),
@@ -177,6 +199,8 @@ impl TradingCliServiceImpl {
             dex_indicator_engine: self.dex_indicator_engine.clone(),
             dex_runtime: self.dex_runtime.clone(),
             dex_balance_manager_id: self.dex_balance_manager_id.clone(),
+            strategy_operator: self.strategy_operator.clone(),
+            strategy_caps: self.strategy_caps.clone(),
         }
     }
 
@@ -210,6 +234,7 @@ impl TradingCliServiceImpl {
             dex_quote_manager: self.dex_quote_manager.clone(),
             dex_strategy_manager: self.dex_strategy_manager.clone(),
             dex_indicator_engine: self.dex_indicator_engine.clone(),
+            strategy_caps: self.strategy_caps.clone(),
         }
     }
 
@@ -534,5 +559,126 @@ impl TradingCliService for TradingCliServiceImpl {
         Ok(Response::new(
             tonic::codegen::tokio_stream::wrappers::ReceiverStream::new(rx),
         ))
+    }
+
+    async fn get_strategy_config(
+        &self,
+        request: Request<trading_cli::GetStrategyConfigRequest>,
+    ) -> Result<Response<trading_cli::GetStrategyConfigResponse>, Status> {
+        let req = request.into_inner();
+        let op = self.strategy_operator.as_ref().ok_or_else(|| {
+            Status::failed_precondition("Strategy config not available (not in strategies mode)")
+        })?;
+        let fields = op
+            .get_config(&req.strategy_name, &req.symbol)
+            .await
+            .map_err(Status::not_found)?;
+        Ok(Response::new(trading_cli::GetStrategyConfigResponse {
+            config: Some(operator_fields_to_proto(fields)),
+        }))
+    }
+
+    async fn update_strategy_cap(
+        &self,
+        request: Request<trading_cli::UpdateStrategyCapRequest>,
+    ) -> Result<Response<trading_cli::UpdateStrategyCapResponse>, Status> {
+        let req = request.into_inner();
+        let op = self.strategy_operator.as_ref().ok_or_else(|| {
+            Status::failed_precondition("Strategy config not available (not in strategies mode)")
+        })?;
+        op.update_cap(&req.strategy_name, &req.symbol, &req.max_position)
+            .await
+            .map_err(Status::invalid_argument)?;
+        Ok(Response::new(trading_cli::UpdateStrategyCapResponse {
+            success: true,
+            message: format!(
+                "Cap updated for {}:{} to {}",
+                req.strategy_name, req.symbol, req.max_position
+            ),
+        }))
+    }
+
+    async fn update_strategy_config(
+        &self,
+        request: Request<trading_cli::UpdateStrategyConfigRequest>,
+    ) -> Result<Response<trading_cli::UpdateStrategyConfigResponse>, Status> {
+        let req = request.into_inner();
+        let config = req
+            .config
+            .ok_or_else(|| Status::invalid_argument("UpdateStrategyConfig requires config"))?;
+        let op = self.strategy_operator.as_ref().ok_or_else(|| {
+            Status::failed_precondition("Strategy config not available (not in strategies mode)")
+        })?;
+        let needs_restart = op
+            .update_config(proto_to_operator_fields(config))
+            .await
+            .map_err(Status::invalid_argument)?;
+        Ok(Response::new(trading_cli::UpdateStrategyConfigResponse {
+            success: true,
+            message: if needs_restart {
+                "Saved. Restart the runner to apply non-cap fields.".to_string()
+            } else {
+                "Saved. Cap applied live.".to_string()
+            },
+            needs_restart,
+        }))
+    }
+
+    async fn request_restart(
+        &self,
+        request: Request<trading_cli::RequestRestartRequest>,
+    ) -> Result<Response<trading_cli::RequestRestartResponse>, Status> {
+        let req = request.into_inner();
+        let op = self.strategy_operator.as_ref().ok_or_else(|| {
+            Status::failed_precondition("Strategy config not available (not in strategies mode)")
+        })?;
+        let on_stop = if req.on_stop.is_empty() {
+            "cancel_working"
+        } else {
+            req.on_stop.as_str()
+        };
+        op.request_restart(on_stop)
+            .await
+            .map_err(Status::failed_precondition)?;
+        Ok(Response::new(trading_cli::RequestRestartResponse {
+            success: true,
+            message: "Restart requested. Supervisor script will relaunch.".to_string(),
+        }))
+    }
+}
+
+fn operator_fields_to_proto(
+    fields: strategy_config::OperatorFields,
+) -> trading_cli::OperatorStrategyConfig {
+    trading_cli::OperatorStrategyConfig {
+        strategy_type: fields.strategy_type,
+        symbol: fields.symbol,
+        position_size: fields.position_size,
+        max_position: fields.max_position,
+        buy_threshold_percent: fields.buy_threshold_percent,
+        sell_threshold_percent: fields.sell_threshold_percent,
+        stop_loss_percent: fields.stop_loss_percent,
+        take_profit_percent: fields.take_profit_percent,
+        max_active_orders: fields.max_active_orders,
+        price_history_size: fields.price_history_size,
+        min_price_history: fields.min_price_history,
+    }
+}
+
+fn proto_to_operator_fields(
+    config: trading_cli::OperatorStrategyConfig,
+) -> strategy_config::OperatorFields {
+    strategy_config::OperatorFields {
+        strategy_type: config.strategy_type,
+        symbol: config.symbol,
+        position_size: config.position_size,
+        max_position: config.max_position,
+        buy_threshold_percent: config.buy_threshold_percent,
+        sell_threshold_percent: config.sell_threshold_percent,
+        stop_loss_percent: config.stop_loss_percent,
+        take_profit_percent: config.take_profit_percent,
+        max_active_orders: config.max_active_orders,
+        price_history_size: config.price_history_size,
+        min_price_history: config.min_price_history,
     }
 }

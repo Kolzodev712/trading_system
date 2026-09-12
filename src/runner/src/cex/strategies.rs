@@ -4,6 +4,8 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{error, info, warn};
 
+use crate::cex::operator::FileStrategyOperator;
+use crate::config::runtime_snapshot::{RuntimeSnapshot, SNAPSHOT_FILE};
 use crate::config::{BotConfig, StrategiesConfig};
 use crate::grpc::TradingGrpcServer;
 use crate::platform::commands::RunnerCommandHandler;
@@ -14,8 +16,9 @@ use crate::SharedServices;
 use trading_core::grpc::TradingControl;
 use trading_engine::health::HealthServer as TradingHealthServer;
 use trading_engine::levels::LevelManager;
+use trading_engine::risk::{RiskLimits, RiskManager};
 use trading_engine::strategies::{
-    BuyLowSellHigh, StrategyExecutor, StrategyManager, StrategyManagerWrapper,
+    build_strategy, StrategyExecutor, StrategyFactoryArgs, StrategyManager, StrategyManagerWrapper,
 };
 use trading_networking::commands::{CommandDispatcher, MpscCommandRouter};
 
@@ -60,14 +63,57 @@ async fn execution_report_handler<F, Fut>(
     }
 }
 
+async fn flatten_open_positions(
+    trading_client: Arc<
+        RwLock<
+            dyn trading_core::venue::cex::traits::TradingClient<
+                trading_core::types::exchange::OrderRequest,
+            >,
+        >,
+    >,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let positions = trading_client.read().await.fetch_positions().await?;
+    let mut closed = 0usize;
+    for position in positions {
+        let qty = position.quantity.abs();
+        if qty <= rust_decimal::Decimal::new(1, 6) {
+            continue;
+        }
+        let side = if position.quantity > rust_decimal::Decimal::ZERO {
+            trading_core::types::common::Side::Sell
+        } else {
+            trading_core::types::common::Side::Buy
+        };
+        let mut exchange_params = std::collections::HashMap::new();
+        exchange_params.insert(
+            smol_str::SmolStr::new("reduceOnly"),
+            smol_str::SmolStr::new("true"),
+        );
+        info!("Flattening {} {:?} qty={}", position.pair(), side, qty);
+        let request = trading_core::types::exchange::OrderRequest {
+            instrument: position.instrument.clone(),
+            side,
+            order_type: trading_core::types::common::OrderType::Market,
+            price: rust_decimal::Decimal::ZERO,
+            amount: qty,
+            timestamp: None,
+            exchange_params,
+        };
+        let order = trading_client.write().await.open_order(request).await?;
+        info!("Flatten order placed: {:?}", order.order_id);
+        closed += 1;
+    }
+    if closed == 0 {
+        info!("Flatten: no open futures positions");
+    }
+    Ok(())
+}
+
 /// Run strategies mode
 pub async fn strategy_runner(
     bot_config: BotConfig,
     strategies_config_path: String,
     services: SharedServices,
-    _strategy_persistence: Option<
-        Arc<trading_engine::strategies::persistence::StrategyPersistence>,
-    >,
 ) -> Result<(), Box<dyn std::error::Error>> {
     info!("=== Running in STRATEGIES mode ===");
 
@@ -103,6 +149,7 @@ pub async fn strategy_runner(
     let mut strategy_manager = StrategyManager::new();
     let mut all_symbols = Vec::new();
     let mut strategy_infos = Vec::new(); // For gRPC monitoring
+    let mut strategy_caps = std::collections::HashMap::new();
 
     for config in strategy_configs.iter() {
         let pair = &config.symbol;
@@ -139,26 +186,25 @@ pub async fn strategy_runner(
             .min_notional
             .unwrap_or_else(|| rust_decimal::Decimal::new(5, 0));
 
-        let strategy = Arc::new(RwLock::new(BuyLowSellHigh::new(
-            services.trading_client()?.clone(),
-            pair.clone(),
-            config.position_size,
-            config.max_position,
-            config.buy_threshold_percent,
-            config.sell_threshold_percent,
-            config.stop_loss_percent,
-            config.take_profit_percent,
-            config.max_active_orders,
-            config.price_history_size,
-            config.min_price_history,
-            Some(services.indicator_calculator.clone()), // Use calculator directly (read-only, no Mutex)
-            services.asset_service.clone(),
-            bot_config.exchange_engine.exchange.clone(),
-            min_order_size,
-            step_size,
-            tick_size,
-            min_notional,
-        )));
+        let strategy = build_strategy(StrategyFactoryArgs {
+            strategy_type: config.strategy_type.to_string(),
+            symbol: pair.clone(),
+            base_position_size: config.position_size,
+            max_position: config.max_position,
+            base_buy_threshold: config.buy_threshold_percent,
+            base_sell_threshold: config.sell_threshold_percent,
+            stop_loss_percent: config.stop_loss_percent,
+            take_profit_percent: config.take_profit_percent,
+            max_active_orders: config.max_active_orders,
+            price_history_size: config.price_history_size,
+            min_price_history: config.min_price_history,
+            asset_service: services.asset_service.clone(),
+            exchange: bot_config.exchange_engine.exchange.clone(),
+            config_min_order_size: min_order_size,
+            config_step_size: step_size,
+            config_tick_size: tick_size,
+            config_min_notional: min_notional,
+        })?;
 
         // Create strategy ID: "strategy_name:symbol"
         let strategy_id =
@@ -169,6 +215,7 @@ pub async fn strategy_runner(
         strategy_manager
             .add_strategy(strategy, strategy_id.clone(), pair.clone())
             .await;
+        strategy_caps.insert(strategy_id, config.max_position);
         all_symbols.push(pair.clone());
         strategy_infos.push((
             config.strategy_type.to_string(),
@@ -195,13 +242,26 @@ pub async fn strategy_runner(
     // Create TradingControl for enable/disable trading
     let trading_control = Arc::new(TradingControl::new(services.trading_client()?.clone()));
 
+    let instrument_type = bot_config
+        .get_instrument_type()
+        .unwrap_or(trading_core::types::common::InstrumentType::Spot);
+
     // Wrap StrategyManager and set trading control for hierarchical control
-    let strategy_manager =
-        strategy_manager.with_trading_control(trading_control.enabled_flag().clone());
+    let strategy_manager = strategy_manager
+        .with_trading_control(trading_control.enabled_flag().clone())
+        .with_instrument_type(instrument_type.clone());
     let strategy_manager_arc = Arc::new(RwLock::new(strategy_manager));
     let strategy_wrapper = Arc::new(RwLock::new(StrategyManagerWrapper::new(
         strategy_manager_arc.clone(),
     )));
+    let strategy_caps = Arc::new(RwLock::new(strategy_caps));
+    let operator = Arc::new(FileStrategyOperator::new(
+        strategies_config_path.clone(),
+        strategy_caps.clone(),
+        strategy_manager_arc.clone(),
+        trading_control.clone(),
+        services.shutdown_manager.clone(),
+    ));
 
     info!(
         "Creating Strategy Executor for {} strategy(ies) with {} pair(s)...",
@@ -242,11 +302,6 @@ pub async fn strategy_runner(
             .collect::<Vec<_>>()
     );
 
-    // Get instrument type from config (defaults to Spot if not specified)
-    let instrument_type = bot_config
-        .get_instrument_type()
-        .unwrap_or(trading_core::types::common::InstrumentType::Spot);
-
     // Create gRPC service with strategy manager for individual toggling
     use crate::grpc::service::TradingCliServiceImpl;
     let grpc_service = TradingCliServiceImpl::new(
@@ -265,7 +320,9 @@ pub async fn strategy_runner(
     .with_strategy_infos(monitoring_strategy_infos)
     .with_strategy_manager(strategy_manager_arc.clone())
     .with_instrument_type(instrument_type.clone())
-    .with_exchange(format!("{:?}", bot_config.exchange_engine.exchange));
+    .with_exchange(format!("{:?}", bot_config.exchange_engine.exchange))
+    .with_strategy_operator(operator)
+    .with_strategy_caps(strategy_caps.clone());
 
     let grpc_server = TradingGrpcServer::from_service(grpc_service);
     let grpc_handle = grpc_server.start(grpc_addr).await?;
@@ -320,7 +377,14 @@ pub async fn strategy_runner(
         min_notional,
     )
     .with_trading_control(trading_control.enabled_flag())
-    .with_strategy_manager(strategy_manager_arc.clone());
+    .with_strategy_manager(strategy_manager_arc.clone())
+    .with_shared_strategy_caps(strategy_caps)
+    .with_risk_manager(Arc::new(RiskManager::new(
+        RiskLimits::default(),
+        Arc::new(trading_core::registry::symbol::SymbolRegistry::from_pairs(
+            all_symbols.clone(),
+        )),
+    )));
 
     // Set up execution report handler (StrategyManager handles routing to all strategies)
     let strategy_manager_for_reports = strategy_manager_arc.clone();
@@ -385,6 +449,31 @@ pub async fn strategy_runner(
             }
         }
     });
+
+    if std::env::var("TRADING_FLATTEN").ok().as_deref() == Some("1") {
+        info!("TRADING_FLATTEN=1: closing open futures positions (reduce-only)");
+        flatten_open_positions(services.trading_client()?.clone()).await?;
+    }
+
+    if let Some(snap) = RuntimeSnapshot::load(SNAPSHOT_FILE)? {
+        if snap.mode == "strategies" {
+            for entry in &snap.strategies {
+                strategy_manager_arc
+                    .read()
+                    .await
+                    .set_strategy_enabled(&entry.strategy_id, entry.enabled)
+                    .await;
+            }
+            if snap.global_trading {
+                *trading_control.enabled_flag().write().await = true;
+            }
+            info!(
+                "Restored runtime snapshot ({} strategies, trading={})",
+                snap.strategies.len(),
+                snap.global_trading
+            );
+        }
+    }
 
     info!("All systems ready! Starting strategy execution...");
     for (strategy_type, symbol, max_orders) in &strategy_infos {

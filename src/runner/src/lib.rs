@@ -240,9 +240,13 @@ pub async fn run(
 
     let trading_state_manager = match &venue {
         VenueInterface::Cex(cex) | VenueInterface::Both { cex, .. } => {
-            let tsm = Arc::new(TradingStateManager::new(
+            let instrument_type = bot_config
+                .get_instrument_type()
+                .unwrap_or(trading_core::types::common::InstrumentType::Spot);
+            let tsm = Arc::new(TradingStateManager::new_with_instrument_type(
                 cex.cex_update_rx.resubscribe(),
                 cex.exchange_state_manager.clone(),
+                instrument_type,
             ));
             platform::init::start_trading_state_subscriber(tsm.clone(), shutdown_manager.clone());
             Some(tsm)
@@ -271,15 +275,12 @@ pub async fn run(
 
     match mode.as_str() {
         "strategies" => {
-            let strategy_persistence =
-                platform::init::create_strategy_persistence(mongo_client.as_ref(), &bot_config);
             cex::strategy_runner(
                 bot_config,
                 config_paths
                     .strategies
                     .unwrap_or_else(|| "config/cex/strategies.json".to_string()),
                 services,
-                strategy_persistence,
             )
             .await?;
         }
@@ -373,7 +374,7 @@ pub use platform::venue;
 
 pub use platform::init::{
     build_cex_handle, build_dex_handle, create_level_persistence, create_shutdown_manager,
-    create_strategy_persistence, fetch_asset_data, initialize_asset_service,
-    initialize_exchange_engine, initialize_indicator_service, initialize_market_data_engine,
-    initialize_mongodb, initialize_venue, setup_shutdown_handler, start_trading_state_subscriber,
+    fetch_asset_data, initialize_asset_service, initialize_exchange_engine,
+    initialize_indicator_service, initialize_market_data_engine, initialize_mongodb,
+    initialize_venue, setup_shutdown_handler, start_trading_state_subscriber,
 };

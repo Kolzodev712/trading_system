@@ -16,7 +16,7 @@ use market_data_engine::{
     driver::{MarketDataDriver, Method},
 };
 use trading_core::persistence::mongo::client::MongoClient;
-use trading_core::types::common::{Exchange, Pair};
+use trading_core::types::common::{Exchange, InstrumentType, Pair};
 use trading_core::venue::cex::traits::TradingClient;
 use trading_core::venue::cex::types::exchange::OrderRequest;
 use trading_core::venue::{venue_id_from_exchange, VenueMode};
@@ -116,21 +116,6 @@ pub fn start_trading_state_subscriber(
             }
         }
     });
-}
-
-/// Create strategy persistence if MongoDB is enabled (used by `run` and by binaries).
-pub fn create_strategy_persistence(
-    mongo_client: Option<&Arc<MongoClient>>,
-    bot_config: &BotConfig,
-) -> Option<Arc<trading_engine::strategies::persistence::StrategyPersistence>> {
-    mongo_client.map(|client| {
-        Arc::new(
-            trading_engine::strategies::persistence::StrategyPersistence::new(
-                client.as_ref().clone(),
-                bot_config.mongo.bot_id.clone(),
-            ),
-        )
-    })
 }
 
 /// Create level persistence if MongoDB is enabled (used by `run` and by binaries).
@@ -277,7 +262,7 @@ pub fn initialize_market_data_engine(
             }
         }
         Exchange::Bybit => {
-            let _bybit_config: exchange_engine::exchanges::bybit::config::BybitConfig =
+            let bybit_config: exchange_engine::exchanges::bybit::config::BybitConfig =
                 serde_json::from_value(bot_config.exchange_engine.config.clone())
                     .map_err(|e| format!("Failed to deserialize Bybit config: {e}"))?;
 
@@ -285,12 +270,16 @@ pub fn initialize_market_data_engine(
             let category = config_json
                 .get("category")
                 .and_then(|v| v.as_str())
-                .map(|s| match s {
-                    "linear" => BybitCategory::Linear,
-                    "inverse" => BybitCategory::Inverse,
-                    _ => BybitCategory::Spot,
+                .and_then(|s| match s {
+                    "linear" => Some(BybitCategory::Linear),
+                    "inverse" => Some(BybitCategory::Inverse),
+                    "spot" => Some(BybitCategory::Spot),
+                    _ => None,
                 })
-                .unwrap_or(BybitCategory::Spot);
+                .unwrap_or(match bybit_config.instrument_type {
+                    InstrumentType::Futures | InstrumentType::Derivitives => BybitCategory::Linear,
+                    InstrumentType::Spot => BybitCategory::Spot,
+                });
 
             MarketDataConfig {
                 redis_url: None,

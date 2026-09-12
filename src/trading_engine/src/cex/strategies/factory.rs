@@ -1,0 +1,97 @@
+//! Build CEX strategies from config `strategy_type`. See design log 008.
+
+use crate::cex::state::Strategy;
+use crate::cex::strategies::{BuyLowSellHigh, PropHold};
+use asset_engine::AssetService;
+use rust_decimal::Decimal;
+use std::sync::Arc;
+use tokio::sync::RwLock;
+use trading_core::{
+    error::EngineError,
+    types::common::{Exchange, Pair},
+};
+
+pub struct StrategyFactoryArgs {
+    pub strategy_type: String,
+    pub symbol: Pair,
+    pub base_position_size: Decimal,
+    pub max_position: Decimal,
+    pub base_buy_threshold: Decimal,
+    pub base_sell_threshold: Decimal,
+    pub stop_loss_percent: Option<Decimal>,
+    pub take_profit_percent: Option<Decimal>,
+    pub max_active_orders: usize,
+    pub price_history_size: usize,
+    pub min_price_history: usize,
+    pub asset_service: Option<Arc<AssetService>>,
+    pub exchange: Exchange,
+    pub config_min_order_size: Decimal,
+    pub config_step_size: Decimal,
+    pub config_tick_size: Decimal,
+    pub config_min_notional: Decimal,
+}
+
+pub fn build_strategy(args: StrategyFactoryArgs) -> Result<Arc<RwLock<dyn Strategy>>, EngineError> {
+    match args.strategy_type.as_str() {
+        "PropHold" | "prop_hold" => Ok(Arc::new(RwLock::new(PropHold::new(args.symbol)))),
+        "BuyLowSellHigh" | "buy_low_sell_high" => Ok(Arc::new(RwLock::new(BuyLowSellHigh::new(
+            args.symbol,
+            args.base_position_size,
+            args.max_position,
+            args.base_buy_threshold,
+            args.base_sell_threshold,
+            args.stop_loss_percent,
+            args.take_profit_percent,
+            args.max_active_orders,
+            args.price_history_size,
+            args.min_price_history,
+            args.asset_service,
+            args.exchange,
+            args.config_min_order_size,
+            args.config_step_size,
+            args.config_tick_size,
+            args.config_min_notional,
+        )))),
+        other => Err(EngineError::CustomError(anyhow::anyhow!(
+            "Unknown strategy type: {other}"
+        ))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use trading_core::types::common::Exchange;
+
+    fn args(strategy_type: &str) -> StrategyFactoryArgs {
+        StrategyFactoryArgs {
+            strategy_type: strategy_type.to_string(),
+            symbol: Pair::new("BTC", "USDT"),
+            base_position_size: Decimal::new(1, 3),
+            max_position: Decimal::new(1, 3),
+            base_buy_threshold: Decimal::new(5, 1),
+            base_sell_threshold: Decimal::new(5, 1),
+            stop_loss_percent: None,
+            take_profit_percent: None,
+            max_active_orders: 2,
+            price_history_size: 10,
+            min_price_history: 2,
+            asset_service: None,
+            exchange: Exchange::Bybit,
+            config_min_order_size: Decimal::new(1, 5),
+            config_step_size: Decimal::new(1, 5),
+            config_tick_size: Decimal::new(1, 2),
+            config_min_notional: Decimal::new(5, 0),
+        }
+    }
+
+    #[test]
+    fn builds_prop_hold() {
+        assert!(build_strategy(args("PropHold")).is_ok());
+    }
+
+    #[test]
+    fn unknown_type_errors() {
+        assert!(build_strategy(args("NotAStrategy")).is_err());
+    }
+}

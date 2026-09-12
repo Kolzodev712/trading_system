@@ -74,6 +74,10 @@ tokio-test = { workspace = true }
 name = "test_runner"
 path = "src/bin/test_runner.rs"
 
+[[bin]]
+name = "prop_replay"
+path = "src/bin/prop_replay.rs"
+
 [features]
 default = []
 redis = ["dep:redis"]

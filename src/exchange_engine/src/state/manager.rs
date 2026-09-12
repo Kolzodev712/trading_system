@@ -324,6 +324,36 @@ impl ExchangeStateManager {
             );
         }
 
+        match self.trading_client.read().await.fetch_positions().await {
+            Ok(positions) => {
+                let reported: std::collections::HashSet<Pair> = positions
+                    .iter()
+                    .map(|p| p.instrument.pair.clone())
+                    .collect();
+                for position in positions {
+                    if let Err(e) = self.update_position(position).await {
+                        warn!("Bootstrap: Failed to apply position update: {}", e);
+                    }
+                }
+                let mut state = self.state.write().await;
+                for pair in configured_pairs {
+                    if !reported.contains(pair) {
+                        state.remove_position(pair);
+                    }
+                }
+                info!(
+                    "Bootstrap: Applied {} REST futures positions",
+                    reported.len()
+                );
+            }
+            Err(EngineError::NotSupported(_)) => {
+                info!("Bootstrap: fetch_positions not supported; skipping");
+            }
+            Err(e) => {
+                warn!("Bootstrap: Failed to fetch positions: {}", e);
+            }
+        }
+
         // Call reconciler for the result (it will log the counts)
         self.reconciler
             .bootstrap_reconcile(configured_pairs, self.state.clone(), total_trades)

@@ -8,6 +8,10 @@ service TradingCliService {
     rpc SetTradingEnabled(SetTradingEnabledRequest) returns (SetTradingEnabledResponse);
     rpc GetTradingStatus(GetTradingStatusRequest) returns (GetTradingStatusResponse);
     rpc ToggleStrategy(ToggleStrategyRequest) returns (ToggleStrategyResponse);
+    rpc GetStrategyConfig(GetStrategyConfigRequest) returns (GetStrategyConfigResponse);
+    rpc UpdateStrategyCap(UpdateStrategyCapRequest) returns (UpdateStrategyCapResponse);
+    rpc UpdateStrategyConfig(UpdateStrategyConfigRequest) returns (UpdateStrategyConfigResponse);
+    rpc RequestRestart(RequestRestartRequest) returns (RequestRestartResponse);
     
     // Level Management (Phase 3)
     rpc GetLevels(GetLevelsRequest) returns (GetLevelsResponse);
@@ -54,6 +58,61 @@ message ToggleStrategyResponse {
     bool success = 1;
     string message = 2;
     repeated string cancelled_orders = 3; // Order IDs that were cancelled
+}
+
+// Operator knobs only. Never includes keys, hosts, or venue identity.
+message OperatorStrategyConfig {
+    string strategy_type = 1;
+    string symbol = 2;
+    string position_size = 3;
+    string max_position = 4;
+    string buy_threshold_percent = 5;
+    string sell_threshold_percent = 6;
+    string stop_loss_percent = 7;
+    string take_profit_percent = 8;
+    int32 max_active_orders = 9;
+    int32 price_history_size = 10;
+    int32 min_price_history = 11;
+}
+
+message GetStrategyConfigRequest {
+    string strategy_name = 1;
+    string symbol = 2;
+}
+
+message GetStrategyConfigResponse {
+    OperatorStrategyConfig config = 1;
+}
+
+message UpdateStrategyCapRequest {
+    string strategy_name = 1;
+    string symbol = 2;
+    string max_position = 3;
+}
+
+message UpdateStrategyCapResponse {
+    bool success = 1;
+    string message = 2;
+}
+
+message UpdateStrategyConfigRequest {
+    OperatorStrategyConfig config = 1;
+}
+
+message UpdateStrategyConfigResponse {
+    bool success = 1;
+    string message = 2;
+    bool needs_restart = 3;
+}
+
+message RequestRestartRequest {
+    // cancel_working (default) | flatten | keep_working
+    string on_stop = 1;
+}
+
+message RequestRestartResponse {
+    bool success = 1;
+    string message = 2;
 }
 
 // Level Management Messages (Phase 3 - placeholders for now)
@@ -354,6 +413,7 @@ message StrategyStatus {
     int32 max_active_orders = 10;      // Maximum allowed active orders
     string last_signal = 11;           // "Buy", "Sell", or "None"
     string signal_strength = 12;     // Signal strength percentage (if available)
+    string max_position = 13;          // Live abs qty cap
 }
 
 message Orderbook {

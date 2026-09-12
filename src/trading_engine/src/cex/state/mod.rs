@@ -9,9 +9,8 @@ use std::collections::HashMap;
 use trading_core::{
     error::EngineError,
     types::{
-        common::{OrderId, OrderStatus, Pair},
-        exchange::{Order, OrderRequest},
-        market_data::Orderbook,
+        common::{OrderId, OrderStatus, Pair, Side},
+        exchange::Order,
     },
 };
 
@@ -34,6 +33,8 @@ pub struct TradingState {
     pub active_orders: HashMap<OrderId, Order>,
     /// Orders that are pending (not yet filled or cancelled)
     pub pending_orders: HashMap<OrderId, u64>, // order_id -> timestamp when order was placed
+    /// Last applied fill qty per order (idempotent fill accounting).
+    fill_applied: HashMap<OrderId, Decimal>,
 }
 
 impl TradingState {
@@ -42,6 +43,7 @@ impl TradingState {
             positions: HashMap::new(),
             active_orders: HashMap::new(),
             pending_orders: HashMap::new(),
+            fill_applied: HashMap::new(),
         }
     }
 
@@ -136,51 +138,97 @@ impl TradingState {
         self.positions.get(symbol)
     }
 
+    /// Replace the position for a pair with an absolute quantity (exchange truth).
+    /// Zero (or near-zero) quantity removes the position.
+    pub fn set_position(&mut self, symbol: Pair, quantity: Decimal, avg_price: Decimal) {
+        if quantity.abs() <= Decimal::new(1, 6) {
+            self.positions.remove(&symbol);
+            return;
+        }
+        self.positions.insert(
+            symbol.clone(),
+            Position {
+                symbol,
+                quantity,
+                avg_price,
+            },
+        );
+    }
+
     pub fn get_active_order_count(&self, symbol: &Pair) -> usize {
         self.active_orders
             .values()
             .filter(|o| &o.instrument.pair == symbol)
             .count()
     }
+
+    pub fn position_qty(&self, symbol: &Pair) -> Decimal {
+        self.positions
+            .get(symbol)
+            .map(|p| p.quantity)
+            .unwrap_or(Decimal::ZERO)
+    }
+
+    /// Signed remaining qty on working orders (buy +, sell −).
+    pub fn working_qty(&self, symbol: &Pair) -> Decimal {
+        self.active_orders
+            .values()
+            .filter(|o| {
+                o.instrument.pair == *symbol
+                    && matches!(o.status, OrderStatus::New | OrderStatus::PartiallyFilled)
+            })
+            .map(|o| {
+                let remaining = (o.amount - o.filled_amount).max(Decimal::ZERO);
+                match o.side {
+                    Side::Buy => remaining,
+                    Side::Sell => -remaining,
+                }
+            })
+            .sum()
+    }
+
+    /// Position plus in-flight working qty. Use this for `target − current`.
+    pub fn effective_position_qty(&self, symbol: &Pair) -> Decimal {
+        self.position_qty(symbol) + self.working_qty(symbol)
+    }
+
+    /// Apply an incremental fill once per order id. Safe to call twice with the same fill.
+    pub fn apply_fill(&mut self, order: &Order) {
+        let prev = self
+            .fill_applied
+            .get(&order.order_id)
+            .copied()
+            .unwrap_or(Decimal::ZERO);
+        let delta = (order.filled_amount - prev).max(Decimal::ZERO);
+        if delta <= Decimal::ZERO {
+            return;
+        }
+        let signed = match order.side {
+            Side::Buy => delta,
+            Side::Sell => -delta,
+        };
+        self.update_position(order.instrument.pair.clone(), signed, order.price);
+        self.fill_applied
+            .insert(order.order_id.clone(), order.filled_amount);
+    }
 }
 
 /// Trait that all trading strategies must implement
 #[async_trait]
 pub trait Strategy: Send + Sync {
-    /// Called when a new orderbook update arrives
-    /// Returns an optional OrderRequest if the strategy wants to place an order
-    async fn on_orderbook(
+    /// Evaluate desired exposure. Must not construct exchange orders.
+    async fn evaluate(
         &mut self,
-        orderbook: &Orderbook,
-        state: &TradingState,
-    ) -> Result<Option<OrderRequest>, EngineError>;
+        ctx: &crate::cex::intent::StrategyContext<'_>,
+    ) -> Result<crate::cex::intent::StrategyIntent, EngineError>;
 
-    /// Called when a new orderbook update arrives - returns order IDs to cancel
-    /// This allows strategies to cancel orders as part of their workflow
-    /// Returns a vector of order IDs that should be cancelled
-    /// Default implementation returns empty vector (no cancellations)
-    async fn on_orderbook_cancels(
-        &mut self,
-        _orderbook: &Orderbook,
-        _state: &TradingState,
-    ) -> Result<Vec<OrderId>, EngineError> {
-        Ok(Vec::new()) // Default: no cancellations
-    }
-
-    /// Called when an execution report is received
-    /// This allows the strategy to update its internal state
+    /// Called when an execution report is received.
+    /// Strategy-local bookkeeping only — account truth is `TradingState` via `ctx.account`.
     async fn on_execution_report(&mut self, order: &Order) -> Result<(), EngineError>;
 
-    /// Get the trading state (for external access)
-    fn get_state(&self) -> &TradingState;
-
-    /// Get mutable trading state
-    fn get_state_mut(&mut self) -> &mut TradingState;
-
-    /// Get the last known market price (for reconciliation)
-    /// Returns None if no price data is available
+    /// Last known market price for reconciliation. Default is unknown.
     fn get_last_price(&self) -> Option<rust_decimal::Decimal> {
-        None // Default implementation - strategies can override
+        None
     }
 }
 
@@ -428,5 +476,37 @@ mod tests {
 
         let stale = state.get_stale_orders(60); // 60 second timeout
         assert!(stale.contains(&order_id));
+    }
+
+    #[test]
+    fn effective_qty_includes_working_buy_and_fill_is_idempotent() {
+        let mut state = TradingState::new();
+        let pair = Pair::new("BTC", "USDT");
+        let order = Order {
+            order_id: OrderId::new("ord-1".into()),
+            client_order_id: None,
+            instrument: Instrument::new(InstrumentType::Futures, pair.clone()),
+            side: Side::Buy,
+            price: Decimal::new(77000, 0),
+            amount: Decimal::new(2, 3),
+            internal_created_at: 1,
+            exchange_created_at: None,
+            status: OrderStatus::New,
+            filled_amount: Decimal::ZERO,
+        };
+        state.add_order(order.clone());
+        assert_eq!(state.position_qty(&pair), Decimal::ZERO);
+        assert_eq!(state.working_qty(&pair), Decimal::new(2, 3));
+        assert_eq!(state.effective_position_qty(&pair), Decimal::new(2, 3));
+
+        let mut filled = order.clone();
+        filled.status = OrderStatus::Filled;
+        filled.filled_amount = Decimal::new(2, 3);
+        state.apply_fill(&filled);
+        state.apply_fill(&filled);
+        state.remove_order(&filled.order_id);
+        assert_eq!(state.position_qty(&pair), Decimal::new(2, 3));
+        assert_eq!(state.working_qty(&pair), Decimal::ZERO);
+        assert_eq!(state.effective_position_qty(&pair), Decimal::new(2, 3));
     }
 }

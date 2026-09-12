@@ -9,7 +9,7 @@ use tokio::sync::RwLock;
 use tracing::{debug, warn};
 use trading_core::{
     error::EngineError,
-    types::common::OrderStatus,
+    types::common::{InstrumentType, OrderStatus},
     types::exchange::{Balance, Order, Trade},
     venue::cex::channels::CexVenueUpdate,
 };
@@ -21,6 +21,7 @@ pub struct ExchangeStateSubscriber {
 
     /// Trading state to update
     trading_state: Arc<RwLock<TradingState>>,
+    instrument_type: InstrumentType,
 }
 
 impl ExchangeStateSubscriber {
@@ -36,7 +37,13 @@ impl ExchangeStateSubscriber {
         Self {
             exchange_update_rx,
             trading_state,
+            instrument_type: InstrumentType::Spot,
         }
+    }
+
+    pub fn with_instrument_type(mut self, instrument_type: InstrumentType) -> Self {
+        self.instrument_type = instrument_type;
+        self
     }
 
     /// Start listening for ExchangeStateManager updates
@@ -54,13 +61,8 @@ impl ExchangeStateSubscriber {
                 Ok(CexVenueUpdate::Trade { trade, .. }) => {
                     self.handle_trade_update(trade).await;
                 }
-                Ok(CexVenueUpdate::Position {
-                    position: _position,
-                    ..
-                }) => {
-                    // Positions are derived from balances, not directly tracked
-                    // This is for future use if exchanges provide position updates
-                    debug!("Received position update (derived from balances)");
+                Ok(CexVenueUpdate::Position { position, .. }) => {
+                    self.handle_position_update(position).await;
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Closed) => {
                     warn!("Exchange update channel closed, stopping subscriber");
@@ -84,14 +86,11 @@ impl ExchangeStateSubscriber {
     /// Terminal statuses (Filled, Canceled, Rejected, Expired) remove the order from active_orders.
     async fn handle_order_update(&self, order: Order) {
         let mut state = self.trading_state.write().await;
+        let tracked = state.active_orders.contains_key(&order.order_id);
 
-        if !state.active_orders.contains_key(&order.order_id) {
-            debug!(
-                "Ignoring order update (not our order): {}",
-                order.order_id.as_str()
-            );
-            return;
-        }
+        // Private stream is this account. Apply fills even if the place ack
+        // has not been written to TSM yet (demo fills can beat add_order).
+        state.apply_fill(&order);
 
         let is_terminal = matches!(
             order.status,
@@ -107,7 +106,12 @@ impl ExchangeStateSubscriber {
                 order.status,
                 order.order_id.as_str()
             );
-        } else {
+        } else if tracked
+            || matches!(
+                order.status,
+                OrderStatus::New | OrderStatus::PartiallyFilled
+            )
+        {
             state.add_order(order.clone());
             debug!(
                 "Updated trading state with order: {}",
@@ -136,11 +140,40 @@ impl ExchangeStateSubscriber {
         );
     }
 
+    async fn handle_position_update(&self, position: trading_core::types::exchange::Position) {
+        if !matches!(
+            self.instrument_type,
+            InstrumentType::Futures | InstrumentType::Derivitives
+        ) {
+            debug!("Ignoring position update in spot mode");
+            return;
+        }
+        let mut state = self.trading_state.write().await;
+        state.set_position(
+            position.instrument.pair.clone(),
+            position.quantity,
+            position.avg_price,
+        );
+        debug!(
+            "Updated trading state from exchange position: {} qty={}",
+            position.instrument.pair, position.quantity
+        );
+    }
+
     /// Handle trade update from ExchangeStateManager
     ///
     /// Updates positions based on trades (execution reports).
     /// Only processes trades for orders we placed.
     async fn handle_trade_update(&self, trade: Trade) {
+        if matches!(
+            self.instrument_type,
+            InstrumentType::Futures | InstrumentType::Derivitives
+        ) {
+            debug!(
+                "Ignoring trade-derived position in futures mode (ESM position is authoritative)"
+            );
+            return;
+        }
         let mut state = self.trading_state.write().await;
 
         // Check if this trade is for an order we placed

@@ -142,6 +142,8 @@ impl ExchangeClientBuilder {
                 api_secret: SecretString::from(self.config.secret_key.as_str()),
             },
             testnet: false,
+            demo: false,
+            leverage: None,
             rate_limiter: BybitRateLimiterConfig::default(),
         }
     }

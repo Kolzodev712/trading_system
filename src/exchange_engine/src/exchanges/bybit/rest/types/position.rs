@@ -11,9 +11,69 @@ use trading_core::{
     types::{
         common::{Instrument, InstrumentType, Pair},
         exchange::Position,
+        futures::PositionMode,
     },
     utils::{deserialize_smol_str, serialize_smol_str},
 };
+
+/// GET `position/list` query params.
+/// See: <https://bybit-exchange.github.io/docs/v5/position>
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BybitPositionListParams {
+    pub category: BybitCategory,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub symbol: Option<SmolStr>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub settle_coin: Option<SmolStr>,
+}
+
+/// POST `position/set-leverage` body.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BybitSetLeverageRequest {
+    pub category: BybitCategory,
+    pub symbol: SmolStr,
+    pub buy_leverage: SmolStr,
+    pub sell_leverage: SmolStr,
+}
+
+/// POST `position/switch-mode` body. `mode`: 0 = one-way, 3 = hedge.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BybitSwitchModeRequest {
+    pub category: BybitCategory,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub symbol: Option<SmolStr>,
+    pub mode: u8,
+}
+
+/// Minimal ack for Bybit POST endpoints that return an empty `result`.
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BybitAckResponse {
+    pub ret_code: i32,
+    #[serde(
+        serialize_with = "serialize_smol_str",
+        deserialize_with = "deserialize_smol_str"
+    )]
+    pub ret_msg: SmolStr,
+}
+
+/// Bybit `positionIdx`: 0 = one-way, 1 = hedge buy, 2 = hedge sell.
+pub fn position_idx_to_mode(position_idx: i32) -> PositionMode {
+    match position_idx {
+        1 | 2 => PositionMode::Hedge,
+        _ => PositionMode::OneWay,
+    }
+}
+
+pub fn position_mode_to_bybit(mode: PositionMode) -> u8 {
+    match mode {
+        PositionMode::OneWay => 0,
+        PositionMode::Hedge => 3,
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -100,6 +160,8 @@ pub struct BybitPosition {
         default
     )]
     pub liq_price: SmolStr,
+    #[serde(default)]
+    pub position_idx: i32,
     #[serde(
         serialize_with = "serialize_smol_str",
         deserialize_with = "deserialize_smol_str"
@@ -164,7 +226,7 @@ impl BybitPosition {
             leverage,
             liquidation_price,
             index_price: None,
-            position_mode: None,
+            position_mode: Some(position_idx_to_mode(self.position_idx)),
             margin_type: None,
         })
     }
@@ -242,6 +304,7 @@ mod tests {
             position_mm: Decimal::new(2500, 1),
             leverage: SmolStr::new("10"),
             liq_price: SmolStr::new("45000.0"),
+            position_idx: 0,
             updated_time: SmolStr::new("1690872862481"),
         };
 
@@ -256,6 +319,7 @@ mod tests {
         assert_eq!(position.avg_price, Decimal::new(500000, 2));
         assert_eq!(position.unrealized_pnl, Decimal::new(15000, 1));
         assert_eq!(position.leverage, Some(10));
+        assert_eq!(position.position_mode, Some(PositionMode::OneWay));
     }
 
     #[test]
@@ -274,6 +338,7 @@ mod tests {
             position_mm: Decimal::new(2000, 1),
             leverage: SmolStr::new("20"),
             liq_price: SmolStr::new("55000.0"),
+            position_idx: 0,
             updated_time: SmolStr::new("1690872862481"),
         };
 
@@ -302,6 +367,7 @@ mod tests {
             position_mm: Decimal::ZERO,
             leverage: SmolStr::new(""),
             liq_price: SmolStr::new(""),
+            position_idx: 0,
             updated_time: SmolStr::new("1690872862481"),
         };
 
@@ -327,6 +393,7 @@ mod tests {
             position_mm: Decimal::ZERO,
             leverage: SmolStr::new("10"),
             liq_price: SmolStr::new(""),
+            position_idx: 0,
             updated_time: SmolStr::new("1690872862481"),
         };
 
@@ -334,5 +401,14 @@ mod tests {
         let position = bybit_pos.to_position(&BybitCategory::Linear, symbol_registry);
 
         assert!(position.is_none());
+    }
+
+    #[test]
+    fn test_position_idx_to_mode() {
+        assert_eq!(position_idx_to_mode(0), PositionMode::OneWay);
+        assert_eq!(position_idx_to_mode(1), PositionMode::Hedge);
+        assert_eq!(position_idx_to_mode(2), PositionMode::Hedge);
+        assert_eq!(position_mode_to_bybit(PositionMode::OneWay), 0);
+        assert_eq!(position_mode_to_bybit(PositionMode::Hedge), 3);
     }
 }

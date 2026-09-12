@@ -44,6 +44,34 @@ impl TradingCliService for GatewayService {
         self.client().toggle_strategy(request).await
     }
 
+    async fn get_strategy_config(
+        &self,
+        request: Request<trading_cli::GetStrategyConfigRequest>,
+    ) -> Result<Response<trading_cli::GetStrategyConfigResponse>, Status> {
+        self.client().get_strategy_config(request).await
+    }
+
+    async fn update_strategy_cap(
+        &self,
+        request: Request<trading_cli::UpdateStrategyCapRequest>,
+    ) -> Result<Response<trading_cli::UpdateStrategyCapResponse>, Status> {
+        self.client().update_strategy_cap(request).await
+    }
+
+    async fn update_strategy_config(
+        &self,
+        request: Request<trading_cli::UpdateStrategyConfigRequest>,
+    ) -> Result<Response<trading_cli::UpdateStrategyConfigResponse>, Status> {
+        self.client().update_strategy_config(request).await
+    }
+
+    async fn request_restart(
+        &self,
+        request: Request<trading_cli::RequestRestartRequest>,
+    ) -> Result<Response<trading_cli::RequestRestartResponse>, Status> {
+        self.client().request_restart(request).await
+    }
+
     async fn get_levels(
         &self,
         request: Request<trading_cli::GetLevelsRequest>,

@@ -1,30 +1,27 @@
 //! Buy Low Sell High Strategy - Enhanced Mean Reversion Strategy
 
-use crate::cex::state::{Strategy, TradingState};
+use crate::cex::intent::{StrategyContext, StrategyIntent};
+use crate::cex::state::Strategy;
 use crate::cex::strategies::strategy_manager::{
-    LiquidityAnalyzer, OrderTypeSelector, PerformanceTracker, PositionSizer, TimeFilter,
-    TrendDetector, TrendDirection, VolatilityTracker,
+    LiquidityAnalyzer, PositionSizer, StrategyManager, TimeFilter, VolatilityTracker,
 };
 use crate::order_validation::get_trading_rules;
 use asset_engine::AssetService;
 use async_trait::async_trait;
 use rust_decimal::Decimal;
 use std::sync::Arc;
-use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 use trading_core::{
     error::EngineError,
     types::{
-        common::{Exchange, Instrument, InstrumentType, OrderStatus, OrderType, Pair, Side},
-        exchange::{Order, OrderRequest},
+        common::{Exchange, Instrument, InstrumentType, OrderStatus, Pair},
+        exchange::Order,
         market_data::Orderbook,
     },
-    venue::cex::traits::TradingClient,
 };
 
 /// Enhanced "Buy Low, Sell High" strategy with all improvements
 pub struct BuyLowSellHigh {
-    state: TradingState,
     symbol: Pair,
 
     // Asset service for exchange-agnostic trading rules
@@ -49,27 +46,15 @@ pub struct BuyLowSellHigh {
     stop_loss_percent: Option<Decimal>,
     take_profit_percent: Option<Decimal>,
 
-    // Enhancement components
     volatility_tracker: VolatilityTracker,
-    trend_detector: TrendDetector,
-    performance_tracker: PerformanceTracker,
     liquidity_analyzer: LiquidityAnalyzer,
     time_filter: TimeFilter,
     position_sizer: PositionSizer,
-    order_type_selector: OrderTypeSelector,
-
-    // Indicator support (optional - for EMA/RSI)
-    // Use calculator directly (read-only, uses RwLock internally - no deadlock risk)
-    indicator_calculator: Option<Arc<indicator_engine::calculator::IndicatorCalculator>>,
-    ema_fast_id: Option<smol_str::SmolStr>, // Fast EMA indicator ID
-    ema_slow_id: Option<smol_str::SmolStr>, // Slow EMA indicator ID
-    rsi_id: Option<smol_str::SmolStr>,      // RSI indicator ID
 }
 
 impl BuyLowSellHigh {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        _trading_client: Arc<RwLock<dyn TradingClient<OrderRequest>>>,
         symbol: Pair,
         base_position_size: Decimal,
         max_position: Decimal,
@@ -80,7 +65,6 @@ impl BuyLowSellHigh {
         max_active_orders: usize,
         price_history_size: usize,
         min_price_history: usize,
-        indicator_calculator: Option<Arc<indicator_engine::calculator::IndicatorCalculator>>,
         asset_service: Option<Arc<AssetService>>,
         exchange: Exchange,
         config_min_order_size: Decimal,
@@ -89,7 +73,6 @@ impl BuyLowSellHigh {
         config_min_notional: Decimal,
     ) -> Self {
         Self {
-            state: TradingState::new(),
             symbol,
             asset_service,
             exchange,
@@ -107,75 +90,34 @@ impl BuyLowSellHigh {
             stop_loss_percent,
             take_profit_percent,
             // Initialize enhancement components with defaults
-            volatility_tracker: VolatilityTracker::new(20), // 20-period volatility
-            trend_detector: TrendDetector::new(
-                Decimal::new(5, 1), // 0.5% for strong trend
-                Decimal::new(1, 1), // 0.1% for weak trend
-            ),
-            performance_tracker: PerformanceTracker::new(20), // Track last 20 trades
-            liquidity_analyzer: LiquidityAnalyzer::new(
-                Decimal::new(1, 2), // 0.1% max spread
-                Decimal::new(1, 0), // 1.0 minimum depth
-            ),
-            time_filter: TimeFilter::new(false), // Disable time filtering for now (was blocking trades)
+            volatility_tracker: VolatilityTracker::new(20),
+            liquidity_analyzer: LiquidityAnalyzer::new(Decimal::new(1, 2), Decimal::new(1, 0)),
+            time_filter: TimeFilter::new(false),
             position_sizer: PositionSizer::new(
                 base_position_size,
-                Decimal::from(2),   // Max 2x base size
-                Decimal::new(5, 1), // Min 0.5x base size
+                Decimal::from(2),
+                Decimal::new(5, 1),
             ),
-            order_type_selector: OrderTypeSelector::new(
-                false,              // ALWAYS use Limit orders for Buy Low Sell High strategy
-                Decimal::from(2),   // 2x threshold = strong signal (unused when market disabled)
-                Decimal::new(5, 3), // 0.05% max spread for market (unused when market disabled)
-                Decimal::new(1, 1), // 1% max volatility for market (unused when market disabled)
-            ),
-            indicator_calculator,
-            ema_fast_id: None,
-            ema_slow_id: None,
-            rsi_id: None,
         }
     }
 
-    /// Set indicator IDs (call after indicators are registered)
-    pub fn set_indicator_ids(
-        &mut self,
-        ema_fast_id: Option<smol_str::SmolStr>,
-        ema_slow_id: Option<smol_str::SmolStr>,
-        rsi_id: Option<smol_str::SmolStr>,
-    ) {
-        self.ema_fast_id = ema_fast_id;
-        self.ema_slow_id = ema_slow_id;
-        self.rsi_id = rsi_id;
+    fn strategy_id(&self) -> String {
+        StrategyManager::make_strategy_id("BuyLowSellHigh", &self.symbol)
     }
 
-    /// Get EMA value from indicator calculator (fallback to SMA if not available)
-    fn get_ema_value(&self, indicator_id: &Option<smol_str::SmolStr>) -> Option<Decimal> {
-        if let (Some(calculator), Some(id)) = (self.indicator_calculator.as_ref(), indicator_id) {
-            calculator.get_value(id.as_str()).map(|v| v.value)
-        } else {
-            None
-        }
+    fn hold(&self) -> StrategyIntent {
+        StrategyIntent::hold(self.strategy_id())
     }
 
-    /// Get RSI value from indicator calculator
-    fn get_rsi_value(&self) -> Option<Decimal> {
-        if let (Some(calculator), Some(id)) =
-            (self.indicator_calculator.as_ref(), self.rsi_id.as_ref())
-        {
-            calculator.get_value(id.as_str()).map(|v| v.value)
-        } else {
-            None
-        }
+    fn target(&self, qty: Decimal, instrument_type: InstrumentType) -> StrategyIntent {
+        StrategyIntent::target_position(
+            self.strategy_id(),
+            Instrument::new(instrument_type, self.symbol.clone()),
+            qty,
+        )
     }
 
-    /// Calculate average price (use EMA if available, else SMA fallback)
     fn calculate_average_price(&self) -> Option<Decimal> {
-        // Try to use slow EMA first (more stable)
-        if let Some(ema) = self.get_ema_value(&self.ema_slow_id) {
-            return Some(ema);
-        }
-
-        // Fallback to SMA
         if self.price_history.is_empty() {
             return None;
         }
@@ -187,83 +129,28 @@ impl BuyLowSellHigh {
         orderbook.mid_price()
     }
 
-    /// Get the last known price from price history (for reconciliation)
-    pub fn get_last_price(&self) -> Option<Decimal> {
-        self.price_history.last().copied()
-    }
-
-    /// Check if we should buy based on price, trend, and RSI
-    fn should_buy(
-        &self,
-        current_price: Decimal,
-        avg_price: Decimal,
-        trend: TrendDirection,
-        rsi: Option<Decimal>,
-    ) -> bool {
+    fn should_buy(&self, current_price: Decimal, avg_price: Decimal) -> bool {
         if avg_price <= Decimal::ZERO {
             return false;
         }
-
-        // Trend filter: don't buy in strong downtrends
-        if !self.trend_detector.should_allow_buy(trend) {
-            return false;
-        }
-
-        // RSI filter: only buy when oversold or neutral (relaxed for testing)
-        if let Some(rsi_val) = rsi {
-            if rsi_val > Decimal::from(60) {
-                // RSI above 60 = not oversold, skip buy (relaxed from 50 for more activity)
-                return false;
-            }
-        }
-
-        // Price threshold check
         let price_diff = (avg_price - current_price) / avg_price * Decimal::from(100);
-        // Temporarily disable adaptive threshold for testing - use base threshold directly
-        let adaptive_threshold = self.base_buy_threshold; // self.volatility_tracker.get_adaptive_threshold(self.base_buy_threshold);
-        price_diff >= adaptive_threshold
+        price_diff >= self.base_buy_threshold
     }
 
-    /// Check if we should sell based on price, trend, and RSI
-    fn should_sell(
-        &self,
-        current_price: Decimal,
-        avg_price: Decimal,
-        trend: TrendDirection,
-        rsi: Option<Decimal>,
-    ) -> bool {
+    fn should_sell(&self, current_price: Decimal, avg_price: Decimal) -> bool {
         if avg_price <= Decimal::ZERO {
             return false;
         }
-
-        // Trend filter: don't sell in strong uptrends
-        if !self.trend_detector.should_allow_sell(trend) {
-            return false;
-        }
-
-        // RSI filter: only sell when overbought or neutral (relaxed for testing)
-        if let Some(rsi_val) = rsi {
-            if rsi_val < Decimal::from(40) {
-                // RSI below 40 = not overbought, skip sell (relaxed from 50 for more activity)
-                return false;
-            }
-        }
-
-        // Price threshold check
         let price_diff = (current_price - avg_price) / avg_price * Decimal::from(100);
-        // Temporarily disable adaptive threshold for testing - use base threshold directly
-        let adaptive_threshold = self.base_sell_threshold; // self.volatility_tracker.get_adaptive_threshold(self.base_sell_threshold);
-        price_diff >= adaptive_threshold
+        price_diff >= self.base_sell_threshold
     }
 }
 
 #[async_trait]
 impl Strategy for BuyLowSellHigh {
-    async fn on_orderbook(
-        &mut self,
-        orderbook: &Orderbook,
-        state: &TradingState,
-    ) -> Result<Option<OrderRequest>, EngineError> {
+    async fn evaluate(&mut self, ctx: &StrategyContext<'_>) -> Result<StrategyIntent, EngineError> {
+        let orderbook = ctx.orderbook;
+        let state = ctx.account;
         // Log that we're processing orderbooks (every 20th)
         static CALL_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let call_count = CALL_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -275,17 +162,6 @@ impl Strategy for BuyLowSellHigh {
             );
         }
 
-        // Performance-based pause check
-        if self.performance_tracker.should_pause_trading() {
-            if should_log {
-                debug!(
-                    "[Strategy {}] Trading paused due to consecutive losses",
-                    self.symbol
-                );
-            }
-            return Ok(None);
-        }
-
         // Time filter
         if !self
             .time_filter
@@ -294,7 +170,7 @@ impl Strategy for BuyLowSellHigh {
             if should_log {
                 debug!("[Strategy {}] Blocked by time filter", self.symbol);
             }
-            return Ok(None);
+            return Ok(self.hold());
         }
 
         // Liquidity filter
@@ -306,13 +182,13 @@ impl Strategy for BuyLowSellHigh {
                     self.symbol, spread
                 );
             }
-            return Ok(None);
+            return Ok(self.hold());
         }
 
         // Get current mid price
         let mid_price = match self.get_mid_price(orderbook) {
             Some(p) => p,
-            None => return Ok(None),
+            None => return Ok(self.hold()),
         };
 
         // Update price history and volatility tracker
@@ -325,7 +201,7 @@ impl Strategy for BuyLowSellHigh {
 
         // Need minimum price history
         if self.price_history.len() < self.min_price_history {
-            return Ok(None);
+            return Ok(self.hold());
         }
 
         // Get average price (EMA preferred, SMA fallback)
@@ -333,9 +209,9 @@ impl Strategy for BuyLowSellHigh {
             Some(p) if p > Decimal::ZERO => p,
             Some(_) => {
                 warn!("Average price is zero, skipping trade decision");
-                return Ok(None);
+                return Ok(self.hold());
             }
-            None => return Ok(None),
+            None => return Ok(self.hold()),
         };
 
         // Log price comparison periodically (every 20 orderbooks to see what's happening)
@@ -344,32 +220,17 @@ impl Strategy for BuyLowSellHigh {
         let should_log = count.is_multiple_of(20);
         if should_log {
             let price_diff_percent = (avg_price - mid_price) / avg_price * Decimal::from(100);
-            // Temporarily disable adaptive threshold for testing - use base threshold directly
-            let adaptive_threshold = self.base_buy_threshold; // self.volatility_tracker.get_adaptive_threshold(self.base_buy_threshold);
             info!(
                 "[Strategy {}] Price check: current={}, avg={}, diff={:.3}%, threshold={:.3}%, history={}/{}",
                 self.symbol,
                 mid_price,
                 avg_price,
                 price_diff_percent,
-                adaptive_threshold,
+                self.base_buy_threshold,
                 self.price_history.len(),
                 self.min_price_history
             );
         }
-
-        // Get trend direction (if EMAs available)
-        let trend = if let (Some(fast_ema), Some(slow_ema)) = (
-            self.get_ema_value(&self.ema_fast_id),
-            self.get_ema_value(&self.ema_slow_id),
-        ) {
-            self.trend_detector.get_trend_direction(fast_ema, slow_ema)
-        } else {
-            TrendDirection::Neutral // No trend info available
-        };
-
-        // Get RSI
-        let rsi = self.get_rsi_value();
 
         // Check active orders limit
         let active_count = state.get_active_order_count(&self.symbol);
@@ -380,14 +241,13 @@ impl Strategy for BuyLowSellHigh {
                     self.symbol, active_count, self.max_active_orders
                 );
             }
-            return Ok(None);
+            return Ok(self.hold());
         }
 
-        // Check current position
+        // Inventory = filled position. Effective includes working orders so we do not rebuy.
         let current_position = state.get_position(&self.symbol);
-        let current_qty = current_position
-            .map(|p| p.quantity)
-            .unwrap_or(Decimal::ZERO);
+        let inventory = state.position_qty(&self.symbol);
+        let current_qty = state.effective_position_qty(&self.symbol);
 
         // Check stop-loss and take-profit
         // Only check if we have a position for THIS symbol (safety check)
@@ -443,19 +303,7 @@ impl Strategy for BuyLowSellHigh {
                                     "[Strategy {}] Stop-loss triggered: loss={loss_percent:.2}%, threshold={stop_loss}%, entry={}, current={}",
                                     self.symbol, position.avg_price, mid_price
                                 );
-                                let sell_price = orderbook.best_bid_price().unwrap_or(mid_price);
-                                return Ok(Some(OrderRequest {
-                                    instrument: Instrument::new(
-                                        InstrumentType::Spot,
-                                        self.symbol.clone(),
-                                    ),
-                                    side: Side::Sell,
-                                    order_type: OrderType::Limit,
-                                    price: sell_price,
-                                    amount: position.quantity,
-                                    timestamp: None,
-                                    exchange_params: Default::default(),
-                                }));
+                                return Ok(self.target(Decimal::ZERO, ctx.instrument_type.clone()));
                             }
                         }
                     }
@@ -468,19 +316,7 @@ impl Strategy for BuyLowSellHigh {
                                 * Decimal::from(100);
                             if profit_percent >= take_profit {
                                 info!("Take-profit triggered: profit={profit_percent:.2}%, threshold={take_profit}%");
-                                let sell_price = orderbook.best_bid_price().unwrap_or(mid_price);
-                                return Ok(Some(OrderRequest {
-                                    instrument: Instrument::new(
-                                        InstrumentType::Spot,
-                                        self.symbol.clone(),
-                                    ),
-                                    side: Side::Sell,
-                                    order_type: OrderType::Limit,
-                                    price: sell_price,
-                                    amount: position.quantity,
-                                    timestamp: None,
-                                    exchange_params: Default::default(),
-                                }));
+                                return Ok(self.target(Decimal::ZERO, ctx.instrument_type.clone()));
                             }
                         }
                     }
@@ -490,38 +326,17 @@ impl Strategy for BuyLowSellHigh {
 
         // Calculate price difference and signal strength
         if avg_price <= Decimal::ZERO {
-            return Ok(None);
+            return Ok(self.hold());
         }
 
-        // Get volatility and spread for dynamic sizing and order type
         let volatility = self.volatility_tracker.calculate_volatility();
-        let spread_percent = self.liquidity_analyzer.calculate_spread_percent(orderbook);
+        let buy_signal = self.should_buy(mid_price, avg_price);
 
-        // Apply performance-based threshold adjustment
-        let threshold_adjustment = self.performance_tracker.get_threshold_adjustment();
-        let adjusted_buy_threshold = self.base_buy_threshold * threshold_adjustment;
-        let adjusted_sell_threshold = self.base_sell_threshold * threshold_adjustment;
-
-        // Buy logic
-        let buy_signal = self.should_buy(mid_price, avg_price, trend, rsi);
-
-        // Log why buy signal failed (periodically)
         if !buy_signal && should_log {
             let price_diff = (avg_price - mid_price) / avg_price * Decimal::from(100);
-            // Temporarily disable adaptive threshold for testing
-            let adaptive_threshold = self.base_buy_threshold; // self.volatility_tracker.get_adaptive_threshold(self.base_buy_threshold);
-            let trend_allows = self.trend_detector.should_allow_buy(trend);
-            let rsi_allows = rsi.map(|r| r <= Decimal::from(60)).unwrap_or(true);
-            let price_allows = price_diff >= adaptive_threshold;
-
             info!(
-                "[Strategy {}] Buy blocked: price_diff={:.3}% (need {:.3}%), trend_ok={}, rsi_ok={}, price_ok={}",
-                self.symbol,
-                price_diff,
-                adaptive_threshold,
-                trend_allows,
-                rsi_allows,
-                price_allows
+                "[Strategy {}] Buy blocked: price_diff={:.3}% (need {:.3}%)",
+                self.symbol, price_diff, self.base_buy_threshold
             );
         }
 
@@ -531,7 +346,7 @@ impl Strategy for BuyLowSellHigh {
             // Calculate dynamic position size
             let position_size = self.position_sizer.calculate_size(
                 signal_strength,
-                adjusted_buy_threshold,
+                self.base_buy_threshold,
                 volatility,
             );
 
@@ -551,33 +366,11 @@ impl Strategy for BuyLowSellHigh {
 
             if current_qty + position_size <= self.max_position {
                 info!(
-                    "[Strategy {}] ✅ PLACING BUY ORDER: price={}, avg={}, diff={:.3}%, size={}, order_type={:?}",
-                    self.symbol,
-                    mid_price,
-                    avg_price,
-                    signal_strength,
-                    position_size,
-                    self.order_type_selector.select_order_type(
-                        signal_strength,
-                        adjusted_buy_threshold,
-                        spread_percent,
-                        volatility,
-                    )
+                    "[Strategy {}] BUY: price={}, avg={}, diff={:.3}%, size={}",
+                    self.symbol, mid_price, avg_price, signal_strength, position_size
                 );
 
-                // Select order type
-                let order_type = self.order_type_selector.select_order_type(
-                    signal_strength,
-                    adjusted_buy_threshold,
-                    spread_percent,
-                    volatility,
-                );
-
-                let buy_price = match order_type {
-                    OrderType::Market => mid_price, // Market orders use mid price
-                    OrderType::Limit => orderbook.best_ask_price().unwrap_or(mid_price),
-                    _ => orderbook.best_ask_price().unwrap_or(mid_price),
-                };
+                let buy_price = orderbook.best_ask_price().unwrap_or(mid_price);
 
                 // Get trading rules from Asset Engine (exchange-agnostic)
                 let rules = get_trading_rules(
@@ -625,7 +418,7 @@ impl Strategy for BuyLowSellHigh {
                                 self.max_position
                             );
                         }
-                        return Ok(None);
+                        return Ok(self.hold());
                     }
                 };
 
@@ -636,24 +429,12 @@ impl Strategy for BuyLowSellHigh {
                     final_amount.max(min_quantity)
                 };
 
-                let order_req = OrderRequest {
-                    instrument: Instrument::new(InstrumentType::Spot, self.symbol.clone()),
-                    side: Side::Buy,
-                    order_type,
-                    price: buy_price,
-                    amount: final_amount_rounded,
-                    timestamp: None,
-                    exchange_params: Default::default(),
-                };
+                let target_qty = (current_qty + final_amount_rounded).min(self.max_position);
                 info!(
-                    "[Strategy {}] ✅ RETURNING BUY ORDER REQUEST: symbol={}, side={:?}, price={}, amount={}",
-                    self.symbol,
-                    order_req.instrument.symbol(),
-                    order_req.side,
-                    order_req.price,
-                    order_req.amount
+                    "[Strategy {}] BUY intent: current={} delta={} target={}",
+                    self.symbol, current_qty, final_amount_rounded, target_qty
                 );
-                return Ok(Some(order_req));
+                return Ok(self.target(target_qty, ctx.instrument_type.clone()));
             } else if should_log {
                 warn!(
                     "[Strategy {}] Buy signal blocked: position would exceed max (current={}, size={}, max={})",
@@ -665,31 +446,15 @@ impl Strategy for BuyLowSellHigh {
             }
         }
         // Sell logic
-        else if self.should_sell(mid_price, avg_price, trend, rsi) && current_qty > Decimal::ZERO
-        {
+        else if self.should_sell(mid_price, avg_price) && inventory > Decimal::ZERO {
             let signal_strength = (mid_price - avg_price) / avg_price * Decimal::from(100);
-
-            // Calculate dynamic position size
             let position_size = self.position_sizer.calculate_size(
                 signal_strength,
-                adjusted_sell_threshold,
+                self.base_sell_threshold,
                 volatility,
             );
-            let sell_qty = position_size.min(current_qty);
-
-            // Select order type first to determine price
-            let order_type = self.order_type_selector.select_order_type(
-                signal_strength,
-                adjusted_sell_threshold,
-                spread_percent,
-                volatility,
-            );
-
-            let sell_price = match order_type {
-                OrderType::Market => mid_price, // Market orders use mid price
-                OrderType::Limit => orderbook.best_bid_price().unwrap_or(mid_price),
-                _ => orderbook.best_bid_price().unwrap_or(mid_price),
-            };
+            let sell_qty = position_size.min(inventory);
+            let sell_price = orderbook.best_bid_price().unwrap_or(mid_price);
 
             // Get trading rules from Asset Engine (exchange-agnostic)
             let rules = get_trading_rules(
@@ -714,91 +479,47 @@ impl Strategy for BuyLowSellHigh {
             } else {
                 min_quantity_raw.max(rules.min_order_size)
             };
-            let final_sell_qty = sell_qty.max(min_quantity).min(current_qty);
+            let final_sell_qty = sell_qty.max(min_quantity).min(inventory);
 
             // If we don't have enough to meet minimum notional, skip the order
             if final_sell_qty < min_quantity {
                 debug!(
                     "[Strategy {}] Sell order skipped: insufficient quantity to meet minimum notional (have={}, need={})",
                     self.symbol,
-                    current_qty,
+                    inventory,
                     min_quantity
                 );
-                return Ok(None);
+                return Ok(self.hold());
             }
 
             // Round final_sell_qty UP to step_size to ensure it still meets minimum notional after executor's floor rounding
             let final_sell_qty_rounded = if rules.step_size > Decimal::ZERO {
                 ((final_sell_qty / rules.step_size).ceil() * rules.step_size)
                     .max(min_quantity)
-                    .min(current_qty) // Don't exceed what we have
+                    .min(inventory)
             } else {
                 final_sell_qty.max(min_quantity)
             };
 
             debug!(
-                "SELL signal: price={mid_price}, avg={avg_price}, diff={diff:.2}%, qty={final_sell_qty_rounded}, trend={trend:?}, rsi={rsi:?}",
+                "SELL signal: price={mid_price}, avg={avg_price}, diff={diff:.2}%, qty={final_sell_qty_rounded}",
                 diff = signal_strength,
-                trend = trend,
-                rsi = rsi
             );
 
-            return Ok(Some(OrderRequest {
-                instrument: Instrument::new(InstrumentType::Spot, self.symbol.clone()),
-                side: Side::Sell,
-                order_type,
-                price: sell_price,
-                amount: final_sell_qty_rounded,
-                timestamp: None,
-                exchange_params: Default::default(),
-            }));
+            let target_qty = (inventory - final_sell_qty_rounded).max(Decimal::ZERO);
+            debug!(
+                "[Strategy {}] SELL intent: current={} delta={} target={}",
+                self.symbol, inventory, final_sell_qty_rounded, target_qty
+            );
+            return Ok(self.target(target_qty, ctx.instrument_type.clone()));
         }
 
-        Ok(None)
+        Ok(self.hold())
     }
 
     async fn on_execution_report(&mut self, order: &Order) -> Result<(), EngineError> {
-        let pair = self.symbol.clone();
-        let state = self.get_state_mut();
-
-        // Track previous filled amount for profit calculation
-        let previous_filled = state
-            .active_orders
-            .get(&order.order_id)
-            .map(|o| o.filled_amount)
-            .unwrap_or(Decimal::ZERO);
-
-        state.update_order_status(
-            &order.order_id,
-            order.status.clone(),
-            Some(order.filled_amount),
-        );
-
         match order.status {
             OrderStatus::Filled => {
-                let incremental_fill = order.filled_amount - previous_filled;
-
-                if incremental_fill > Decimal::ZERO {
-                    let qty_change = match order.side {
-                        Side::Buy => incremental_fill,
-                        Side::Sell => -incremental_fill,
-                    };
-
-                    state.remove_order(&order.order_id);
-                    state.update_position(pair.clone(), qty_change, order.price);
-
-                    // Track performance (calculate profit/loss)
-                    if let Some(position) = state.get_position(&pair) {
-                        if position.quantity == Decimal::ZERO {
-                            // Position closed - calculate P&L
-                            // This is simplified - in reality you'd track entry/exit prices better
-                            // For now, we'll track based on order fills
-                        }
-                    }
-                } else {
-                    state.remove_order(&order.order_id);
-                }
-
                 info!(
                     "Order FILLED: {side} {filled}/{total} {symbol} @ {price}",
                     side = order.side,
@@ -809,16 +530,6 @@ impl Strategy for BuyLowSellHigh {
                 );
             }
             OrderStatus::PartiallyFilled => {
-                let incremental_fill = order.filled_amount - previous_filled;
-
-                if incremental_fill > Decimal::ZERO {
-                    let qty_change = match order.side {
-                        Side::Buy => incremental_fill,
-                        Side::Sell => -incremental_fill,
-                    };
-                    state.update_position(pair, qty_change, order.price);
-                }
-
                 info!(
                     "Order PARTIALLY FILLED: {side} {filled}/{total} {symbol} @ {price}",
                     side = order.side,
@@ -828,20 +539,8 @@ impl Strategy for BuyLowSellHigh {
                     price = order.price
                 );
             }
-            OrderStatus::Canceled | OrderStatus::Rejected | OrderStatus::Expired => {
-                state.remove_order(&order.order_id);
-            }
             _ => {}
         }
-
         Ok(())
-    }
-
-    fn get_state(&self) -> &TradingState {
-        &self.state
-    }
-
-    fn get_state_mut(&mut self) -> &mut TradingState {
-        &mut self.state
     }
 }

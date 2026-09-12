@@ -9,7 +9,13 @@ use super::{
         client::BybitHttpClient,
         types::{
             balance::{BybitWalletBalanceParams, BybitWalletBalanceResponse},
+            collateral::BybitCollateralBalanceResponse,
             open_orders::{BybitOpenOrderParams, BybitOpenOrdersResponse},
+            position::{
+                position_idx_to_mode, position_mode_to_bybit, BybitAckResponse,
+                BybitPositionListParams, BybitPositionResponse, BybitSetLeverageRequest,
+                BybitSwitchModeRequest,
+            },
             trades::{BybitTradesParams, BybitTradesResponse},
         },
     },
@@ -40,8 +46,9 @@ use trading_core::{
         exchange::{
             Balance, BulkAmendItem, BulkAmendRequest, BulkAmendResponse, BulkCancelRequest,
             BulkCancelResponse, BulkOperationResult, BulkOrderRequest, BulkOrderResponse, Order,
-            OrderRequest, Trade,
+            OrderRequest, Position, Trade,
         },
+        futures::{FuturesBalance, LeverageInfo, PositionMode},
     },
     venue::cex::traits::TradingClient,
 };
@@ -132,13 +139,54 @@ impl BybitClient {
             category,
             time_in_force,
             order_link_id: None,
-            reduce_only: None,
+            reduce_only: req
+                .exchange_params
+                .get("reduceOnly")
+                .map(|value| value.eq_ignore_ascii_case("true")),
             position_idx: None,
             take_profit: None,
             stop_loss: None,
             tp_trigger_by: None,
             sl_trigger_by: None,
         })
+    }
+
+    fn linear_settle_coin(&self) -> smol_str::SmolStr {
+        self.config
+            .pairs
+            .first()
+            .map(|pair| pair.quote.as_str().into())
+            .unwrap_or_else(|| "USDT".into())
+    }
+
+    async fn fetch_position_list(
+        &self,
+        symbol: Option<&Pair>,
+    ) -> Result<BybitPositionResponse, EngineError> {
+        let category = self.get_category_from_instrument_type(self.config.instrument_type.clone());
+        let params = BybitPositionListParams {
+            category,
+            symbol: symbol.map(|pair| pair.convert_to_smolstr()),
+            settle_coin: if symbol.is_none() {
+                Some(self.linear_settle_coin())
+            } else {
+                None
+            },
+        };
+
+        self.rest_client
+            .call(
+                "position/list",
+                HttpMethod::GET,
+                Some(params),
+                None,
+                None,
+                true,
+            )
+            .await?
+            .ok_or_else(|| {
+                EngineError::CustomError(anyhow::anyhow!("No response from position/list"))
+            })
     }
 }
 
@@ -1067,5 +1115,181 @@ impl TradingClient<OrderRequest> for BybitClient {
             amended_orders,
             failed_amendments,
         })
+    }
+
+    async fn fetch_positions(&self) -> Result<Vec<Position>, EngineError> {
+        if matches!(self.config.instrument_type, InstrumentType::Spot) {
+            return Ok(Vec::new());
+        }
+        let response = self.fetch_position_list(None).await?;
+        Ok(response.to_positions(self.symbol_registry.clone()))
+    }
+
+    async fn fetch_position(&self, pair: &Pair) -> Result<Option<Position>, EngineError> {
+        if matches!(self.config.instrument_type, InstrumentType::Spot) {
+            return Ok(None);
+        }
+        let response = self.fetch_position_list(Some(pair)).await?;
+        Ok(response
+            .to_positions(self.symbol_registry.clone())
+            .into_iter()
+            .find(|position| position.pair() == pair))
+    }
+
+    async fn fetch_collateral_balance(&self) -> Result<Vec<FuturesBalance>, EngineError> {
+        let category = self.get_category_from_instrument_type(self.config.instrument_type.clone());
+        let category_str = match category {
+            BybitCategory::Linear => "linear",
+            BybitCategory::Inverse => "inverse",
+            BybitCategory::Spot => "spot",
+            BybitCategory::Option => "option",
+        };
+        let params = BybitWalletBalanceParams {
+            account_type: Some("UNIFIED".into()),
+            coin: None,
+            category: Some(category_str.into()),
+        };
+        let response: BybitCollateralBalanceResponse = self
+            .rest_client
+            .call(
+                "account/wallet-balance",
+                HttpMethod::GET,
+                Some(params),
+                None,
+                None,
+                true,
+            )
+            .await?
+            .ok_or_else(|| {
+                EngineError::CustomError(anyhow::anyhow!("No response from wallet-balance"))
+            })?;
+        Ok(response.into())
+    }
+
+    async fn set_leverage(&self, pair: &Pair, leverage: u32) -> Result<LeverageInfo, EngineError> {
+        if matches!(self.config.instrument_type, InstrumentType::Spot) {
+            return Err(EngineError::NotSupported(
+                "Leverage setting not supported for spot".into(),
+            ));
+        }
+        let category = self.get_category_from_instrument_type(self.config.instrument_type.clone());
+        let leverage_str: smol_str::SmolStr = leverage.to_string().into();
+        let request = BybitSetLeverageRequest {
+            category,
+            symbol: pair.convert_to_smolstr(),
+            buy_leverage: leverage_str.clone(),
+            sell_leverage: leverage_str,
+        };
+        let ack: BybitAckResponse = self
+            .rest_client
+            .call(
+                "position/set-leverage",
+                HttpMethod::POST,
+                None,
+                Some(request),
+                None,
+                true,
+            )
+            .await?
+            .ok_or_else(|| {
+                EngineError::CustomError(anyhow::anyhow!("No response from set-leverage"))
+            })?;
+        if ack.ret_code != 0 {
+            return Err(EngineError::CustomError(anyhow::anyhow!(
+                "set-leverage failed: {}",
+                ack.ret_msg
+            )));
+        }
+        Ok(LeverageInfo {
+            pair: pair.clone(),
+            leverage,
+            max_leverage: leverage,
+            last_update: chrono::Utc::now().timestamp_millis() as u64,
+        })
+    }
+
+    async fn get_leverage(&self, pair: &Pair) -> Result<LeverageInfo, EngineError> {
+        if matches!(self.config.instrument_type, InstrumentType::Spot) {
+            return Err(EngineError::NotSupported(
+                "Leverage query not supported for spot".into(),
+            ));
+        }
+        let response = self.fetch_position_list(Some(pair)).await?;
+        let row = response
+            .result
+            .list
+            .iter()
+            .find(|pos| {
+                pos.symbol == pair.convert_to_smolstr()
+                    || (!pos.base_coin.is_empty()
+                        && !pos.settle_coin.is_empty()
+                        && pos.base_coin == pair.base
+                        && pos.settle_coin == pair.quote)
+            })
+            .ok_or_else(|| {
+                EngineError::CustomError(anyhow::anyhow!("No leverage row for {}", pair))
+            })?;
+        let leverage = row.leverage.parse::<u32>().unwrap_or(0);
+        Ok(LeverageInfo {
+            pair: pair.clone(),
+            leverage,
+            max_leverage: leverage,
+            last_update: row.updated_time.parse().unwrap_or(0),
+        })
+    }
+
+    async fn set_position_mode(&self, mode: PositionMode) -> Result<(), EngineError> {
+        if matches!(self.config.instrument_type, InstrumentType::Spot) {
+            return Err(EngineError::NotSupported(
+                "Position mode setting not supported for spot".into(),
+            ));
+        }
+        let category = self.get_category_from_instrument_type(self.config.instrument_type.clone());
+        let request = BybitSwitchModeRequest {
+            category,
+            symbol: self
+                .config
+                .pairs
+                .first()
+                .map(|pair| pair.convert_to_smolstr()),
+            mode: position_mode_to_bybit(mode),
+        };
+        let ack: BybitAckResponse = self
+            .rest_client
+            .call(
+                "position/switch-mode",
+                HttpMethod::POST,
+                None,
+                Some(request),
+                None,
+                true,
+            )
+            .await?
+            .ok_or_else(|| {
+                EngineError::CustomError(anyhow::anyhow!("No response from switch-mode"))
+            })?;
+        if ack.ret_code != 0 {
+            return Err(EngineError::CustomError(anyhow::anyhow!(
+                "switch-mode failed: {}",
+                ack.ret_msg
+            )));
+        }
+        Ok(())
+    }
+
+    async fn get_position_mode(&self) -> Result<PositionMode, EngineError> {
+        if matches!(self.config.instrument_type, InstrumentType::Spot) {
+            return Err(EngineError::NotSupported(
+                "Position mode query not supported for spot".into(),
+            ));
+        }
+        let response = self.fetch_position_list(None).await?;
+        let idx = response
+            .result
+            .list
+            .first()
+            .map(|pos| pos.position_idx)
+            .unwrap_or(0);
+        Ok(position_idx_to_mode(idx))
     }
 }

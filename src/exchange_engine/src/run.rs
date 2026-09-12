@@ -123,6 +123,36 @@ pub async fn run(
         }
     };
 
+    if let ExchangeConfig::Bybit(bybit_config) = &config.exchange_config {
+        if !matches!(
+            bybit_config.instrument_type,
+            trading_core::types::common::InstrumentType::Spot
+        ) {
+            let client = trading_client.read().await;
+            match client
+                .set_position_mode(trading_core::types::futures::PositionMode::OneWay)
+                .await
+            {
+                Ok(()) => tracing::info!("Bybit position mode set to one-way"),
+                Err(e) => tracing::warn!("Bybit set_position_mode failed (continuing): {}", e),
+            }
+            if let Some(leverage) = bybit_config.leverage {
+                for pair in &pairs {
+                    match client.set_leverage(pair, leverage).await {
+                        Ok(info) => {
+                            tracing::info!("Bybit leverage for {} set to {}x", pair, info.leverage)
+                        }
+                        Err(e) => tracing::warn!(
+                            "Bybit set_leverage failed for {} (continuing): {}",
+                            pair,
+                            e
+                        ),
+                    }
+                }
+            }
+        }
+    }
+
     // 3. Create state manager (top-level setup)
     let state_manager = Arc::new(ExchangeStateManager::new(
         exchange_update_tx,

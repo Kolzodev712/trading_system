@@ -1,5 +1,6 @@
 //! CEX trading engines — levels and strategies mirror [`crate::dex`] layout.
 
+pub mod intent;
 pub mod levels;
 pub mod state;
 pub mod strategies;
@@ -10,4 +11,6 @@ pub use levels::{
 };
 pub use state::manager::TradingStateManager;
 pub use state::{Strategy, TradingState};
-pub use strategies::{BuyLowSellHigh, StrategyExecutor, StrategyManager, StrategyManagerWrapper};
+pub use strategies::{
+    BuyLowSellHigh, PropHold, StrategyExecutor, StrategyManager, StrategyManagerWrapper,
+};

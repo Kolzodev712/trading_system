@@ -1,3 +1,7 @@
+//! gRPC surface. `tonic::Status` is large, and the generated service
+//! trait requires `Result<_, Status>` — boxing it is not an option.
+#![allow(clippy::result_large_err)]
+
 pub mod grpc;
 
 // Backward-compat shims (older paths used `gateway::proto`, `gateway::server`, `gateway::service`)

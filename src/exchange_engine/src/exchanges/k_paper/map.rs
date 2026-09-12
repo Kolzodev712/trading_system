@@ -33,14 +33,6 @@ pub fn timestamp_iso_to_u64_secs(s: &str) -> u64 {
         .unwrap_or(0)
 }
 
-/// Unix seconds to ISO 8601 (for optional client use).
-#[allow(dead_code)]
-pub fn timestamp_u64_to_iso(secs: u64) -> String {
-    chrono::DateTime::from_timestamp(secs as i64, 0)
-        .map(|dt| dt.to_rfc3339())
-        .unwrap_or_else(|| "1970-01-01T00:00:00Z".to_string())
-}
-
 fn side_from_str(s: &str) -> Side {
     if s.eq_ignore_ascii_case("buy") {
         Side::Buy

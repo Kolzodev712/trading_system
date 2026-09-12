@@ -16,7 +16,7 @@ use trading_core::{
 };
 
 /// Qty at or below this is treated as flat (same epsilon as flatten / TSM).
-const FLAT_EPS: Decimal = Decimal::from_parts(1, 0, 0, false, 6);
+pub(crate) const FLAT_EPS: Decimal = Decimal::from_parts(1, 0, 0, false, 6);
 
 pub struct PropHold {
     symbol: Pair,

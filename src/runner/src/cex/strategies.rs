@@ -17,6 +17,7 @@ use trading_core::grpc::TradingControl;
 use trading_engine::health::HealthServer as TradingHealthServer;
 use trading_engine::levels::LevelManager;
 use trading_engine::risk::{RiskLimits, RiskManager};
+use trading_engine::state::Strategy;
 use trading_engine::strategies::{
     build_strategy, StrategyExecutor, StrategyFactoryArgs, StrategyManager, StrategyManagerWrapper,
 };
@@ -205,6 +206,22 @@ pub async fn strategy_runner(
             config_tick_size: tick_size,
             config_min_notional: min_notional,
         })?;
+
+        if matches!(config.strategy_type.as_str(), "Donchian" | "donchian") {
+            match crate::cex::fetch_bybit_klines(pair, "D", 60).await {
+                Ok(candles) => {
+                    let bars: Vec<_> = candles
+                        .iter()
+                        .map(|c| (c.timestamp_ms, c.high, c.low, c.close))
+                        .collect();
+                    Strategy::seed_daily_bars(&mut *strategy.write().await, &bars).await?;
+                    info!("Donchian warmup: {} daily bars for {}", bars.len(), pair);
+                }
+                Err(e) => {
+                    warn!("Donchian daily warmup failed for {pair}: {e}; will fill from live books")
+                }
+            }
+        }
 
         // Create strategy ID: "strategy_name:symbol"
         let strategy_id =
@@ -457,12 +474,20 @@ pub async fn strategy_runner(
 
     if let Some(snap) = RuntimeSnapshot::load(SNAPSHOT_FILE)? {
         if snap.mode == "strategies" {
-            for entry in &snap.strategies {
-                strategy_manager_arc
-                    .read()
-                    .await
-                    .set_strategy_enabled(&entry.strategy_id, entry.enabled)
-                    .await;
+            let manager = strategy_manager_arc.read().await;
+            for id in manager.strategy_ids().to_vec() {
+                let enabled = snap
+                    .strategies
+                    .iter()
+                    .find(|s| s.strategy_id == id)
+                    .or_else(|| {
+                        snap.strategies
+                            .iter()
+                            .find(|s| symbol_key(&s.strategy_id) == symbol_key(&id))
+                    })
+                    .map(|s| s.enabled)
+                    .unwrap_or(false);
+                manager.set_strategy_enabled(&id, enabled).await;
             }
             if snap.global_trading {
                 *trading_control.enabled_flag().write().await = true;
@@ -534,4 +559,11 @@ pub async fn strategy_runner(
     }
 
     Ok(())
+}
+
+fn symbol_key(strategy_id: &str) -> &str {
+    strategy_id
+        .rsplit_once(':')
+        .map(|(_, s)| s)
+        .unwrap_or(strategy_id)
 }

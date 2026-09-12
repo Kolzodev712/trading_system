@@ -476,6 +476,29 @@ impl StrategiesConfig {
         })
     }
 
+    /// Prefer type+symbol, then symbol only (type swap from the UI).
+    pub fn find_mut_for_operator(
+        &mut self,
+        strategy_type: &str,
+        symbol: &Pair,
+    ) -> Option<&mut StrategyConfig> {
+        let pos = {
+            let rows = self.as_vec();
+            let exact = rows.iter().position(|c| {
+                c.strategy_type.as_str() == strategy_type
+                    && c.symbol.base.as_str() == symbol.base.as_str()
+                    && c.symbol.quote.as_str() == symbol.quote.as_str()
+            });
+            exact.or_else(|| {
+                rows.iter().position(|c| {
+                    c.symbol.base.as_str() == symbol.base.as_str()
+                        && c.symbol.quote.as_str() == symbol.quote.as_str()
+                })
+            })
+        }?;
+        self.as_vec_mut().into_iter().nth(pos)
+    }
+
     fn as_vec_mut(&mut self) -> Vec<&mut StrategyConfig> {
         match self {
             StrategiesConfig::Single(config) => vec![config.as_mut()],

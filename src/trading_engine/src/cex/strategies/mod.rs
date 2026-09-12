@@ -9,5 +9,5 @@ pub use crate::cex::intent::{StrategyContext, StrategyIntent};
 pub use executor::StrategyExecutor;
 pub use factory::{build_strategy, StrategyFactoryArgs};
 pub use manager_wrapper::StrategyManagerWrapper;
-pub use rust_strategies::{BuyLowSellHigh, PropHold};
+pub use rust_strategies::{BuyLowSellHigh, Donchian, PropHold};
 pub use strategy_manager::StrategyManager;

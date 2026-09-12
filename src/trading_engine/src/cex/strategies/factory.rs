@@ -1,7 +1,7 @@
 //! Build CEX strategies from config `strategy_type`. See design log 008.
 
 use crate::cex::state::Strategy;
-use crate::cex::strategies::{BuyLowSellHigh, PropHold};
+use crate::cex::strategies::{BuyLowSellHigh, Donchian, PropHold};
 use asset_engine::AssetService;
 use rust_decimal::Decimal;
 use std::sync::Arc;
@@ -34,6 +34,12 @@ pub struct StrategyFactoryArgs {
 pub fn build_strategy(args: StrategyFactoryArgs) -> Result<Arc<RwLock<dyn Strategy>>, EngineError> {
     match args.strategy_type.as_str() {
         "PropHold" | "prop_hold" => Ok(Arc::new(RwLock::new(PropHold::new(args.symbol)))),
+        "Donchian" | "donchian" => Ok(Arc::new(RwLock::new(Donchian::new(
+            args.symbol,
+            args.base_position_size,
+            args.price_history_size,
+            args.min_price_history,
+        )))),
         "BuyLowSellHigh" | "buy_low_sell_high" => Ok(Arc::new(RwLock::new(BuyLowSellHigh::new(
             args.symbol,
             args.base_position_size,
@@ -88,6 +94,11 @@ mod tests {
     #[test]
     fn builds_prop_hold() {
         assert!(build_strategy(args("PropHold")).is_ok());
+    }
+
+    #[test]
+    fn builds_donchian() {
+        assert!(build_strategy(args("Donchian")).is_ok());
     }
 
     #[test]

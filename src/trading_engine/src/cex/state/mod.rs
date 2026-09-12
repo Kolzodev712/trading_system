@@ -230,6 +230,20 @@ pub trait Strategy: Send + Sync {
     fn get_last_price(&self) -> Option<rust_decimal::Decimal> {
         None
     }
+
+    /// Seed completed daily bars `(timestamp_ms, high, low, close)`. Default ignores.
+    async fn seed_daily_bars(
+        &mut self,
+        bars: &[(
+            u64,
+            rust_decimal::Decimal,
+            rust_decimal::Decimal,
+            rust_decimal::Decimal,
+        )],
+    ) -> Result<(), EngineError> {
+        let _ = bars;
+        Ok(())
+    }
 }
 
 #[cfg(test)]

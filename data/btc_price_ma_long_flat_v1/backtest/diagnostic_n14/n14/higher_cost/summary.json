@@ -1,0 +1,123 @@
+{
+  "book": "btc_price_ma_long_flat_v1_n14",
+  "book_note": "BTCPriceMALongFlatV1 with N=14 calendar-day geometric mean. Decisions come from offline replay; the simulator does not recompute the signal.",
+  "result_label": "prescribed synthetic research inputs, not verified account fees, measured slippage, or measured production latency",
+  "fill_assumption": "full fill: the entire required quantity fills at one adverse-adjusted one-minute open. This does not verify IOC fillability, liquidity, partial fills, historical exchange filters, or live execution correctness",
+  "scenario_name": "higher_cost",
+  "scenario_hash": "sha256:fd5d3d44f26682e6aaf970bdd2859ed44ed58ee0951b22460f208140fa66ff95",
+  "signal_config_hash": "sha256:7359e0e38ea3f855d1cf4d5438458c3d5b9805fb81b26ea07c223cd990d38c42",
+  "daily_dataset_hash": "",
+  "target_fingerprint": "sha256:8e136196fadcaca2dc62bfcc594913d8140ff4ca829b862d3c9a1a4fb2b8bbe0",
+  "fee_bps": "10",
+  "execution_adjustment_bps": "10",
+  "decision_delay_seconds": 10,
+  "decision_delay_ms": 10000,
+  "performance_start_ms": 1674259200000,
+  "performance_end_exclusive_ms": 1767225600000,
+  "coverage": [],
+  "limitations": [
+    "full fill: the entire required quantity fills at one adverse-adjusted one-minute open. This does not verify IOC fillability, liquidity, partial fills, historical exchange filters, or live execution correctness",
+    "prescribed synthetic research inputs, not verified account fees, measured slippage, or measured production latency",
+    "No capital, borrowing, margin, or liquidation model. Figures are futures PnL in USDT, not percentage account returns and not validated leveraged performance.",
+    "The execution-price adjustment is included in the fill price and is not subtracted again.",
+    "Equal timestamps apply funding to the pre-fill position, then the fill, then the mark sample. A fill does not pay a settlement timestamped before it.",
+    "An hourly funding settlement uses that hourly mark candle's open. This is the labelled settlement-mark proxy hourly_mark_open_at_settlement, not a trade print.",
+    "A position still open at the cutoff is marked to market. estimated_close_cost_usdt is disclosed and is not included in net PnL. The window is not extended to finish the trade.",
+    "No-change keeps the existing target and does not flatten or submit another entry.",
+    "The fixed long comparison uses the same perpetual, funding, and execution assumptions. It is not an unrelated spot return."
+  ],
+  "signal_changes": 158,
+  "fills": 157,
+  "completed_trades": 78,
+  "pending": [
+    {
+      "decision_id": "1767139200000-1767225600000",
+      "source_start_ms": 1767139200000,
+      "source_end_ms": 1767225600000,
+      "decision_time_ms": 1767225600000,
+      "available_at_ms": 1767225610000,
+      "blocked_fill_time_ms": 1767225660000,
+      "target_qty": "0",
+      "reason": "available_at or the next one-minute open is outside the performance window; no fill was invented"
+    }
+  ],
+  "model_direction_at_end": "flat",
+  "simulated_position_at_end": "0.001",
+  "gross_price_pnl": "30.2637538",
+  "realized_price_pnl": "31.1602384",
+  "unrealized_price_pnl": "-0.8964846",
+  "fees": "10.0780134548",
+  "funding": "-11.4993737284802",
+  "funding_paid": "11.8292336385416",
+  "funding_received": "0.3298599100614",
+  "net_pnl": "8.6863666167198",
+  "estimated_close_cost_usdt": "0.17510544348",
+  "estimated_close_cost_note": "Disclosed only. Not included in net PnL. A remaining position is not force-closed.",
+  "max_drawdown_usdt": "38.3704602842085",
+  "max_drawdown_time_ms": 1744426800000,
+  "max_drawdown_peak_time_ms": 1732312800000,
+  "drawdown_sampling": "hourly mark opens from the performance start through the performance end inclusive, plus a sample after each fill and each funding cash flow; drawdown is the decline in cumulative net PnL from its running peak, in USDT",
+  "time_in_market_ms": 50716740000,
+  "time_in_market_fraction": "0.5455383880627839735646427096",
+  "max_notional_usdt": "125.9719",
+  "winning_trades": 18,
+  "losing_trades": 60,
+  "breakeven_trades": 0,
+  "win_rate": {
+    "value": "0.2307692307692307692307692308",
+    "status": "defined"
+  },
+  "average_win": {
+    "value": "6.4020123674394666666666666667",
+    "status": "defined"
+  },
+  "average_loss": {
+    "value": "-1.7591284149366433333333333333",
+    "status": "defined"
+  },
+  "profit_factor": {
+    "value": "1.0917927843835166243444816022",
+    "status": "defined"
+  },
+  "largest_losing_trade": "-8.612351818997",
+  "long_net_pnl": "9.6885177177118",
+  "short_net_pnl": "0",
+  "open_mark_to_market": "-1.002151100992",
+  "calendar_years": [
+    {
+      "year": 2023,
+      "partial": true,
+      "partial_reason": "coverage is 2023-01-21T00:00:00Z through 2024-01-01T00:00:00Z, not the full calendar year",
+      "segment_start_ms": 1674259200000,
+      "segment_end_ms": 1704067200000,
+      "net_pnl": "-1.5799123117005"
+    },
+    {
+      "year": 2024,
+      "partial": false,
+      "partial_reason": null,
+      "segment_start_ms": 1704067200000,
+      "segment_end_ms": 1735689600000,
+      "net_pnl": "23.7307305275215"
+    },
+    {
+      "year": 2025,
+      "partial": false,
+      "partial_reason": null,
+      "segment_start_ms": 1735689600000,
+      "segment_end_ms": 1767225600000,
+      "net_pnl": "-13.4644515991012"
+    }
+  ],
+  "largest_winner_net": "21.3451217353776",
+  "largest_three_winners_net": "54.5677736006234",
+  "largest_winner_share_of_net": {
+    "value": "2.4573130144302012145480852412",
+    "status": "defined"
+  },
+  "largest_three_winners_share_of_net": {
+    "value": "6.2820021314308310177586554486",
+    "status": "defined"
+  },
+  "benchmark_entry_time_ms": null
+}

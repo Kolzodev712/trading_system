@@ -6,7 +6,5 @@
 /src/market_data_engine/config/
 /config
 /cli_debug.log
-/data/donchian_daily/
-/data/btc_price_ma_long_flat_v1/
 __pycache__/
 *.pyc

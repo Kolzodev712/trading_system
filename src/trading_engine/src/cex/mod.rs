@@ -1,5 +1,7 @@
 //! CEX trading engines — levels and strategies mirror [`crate::dex`] layout.
 
+pub mod bybit_public_klines;
+pub mod bybit_public_market;
 pub mod intent;
 pub mod levels;
 pub mod state;

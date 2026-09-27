@@ -105,4 +105,9 @@ mod tests {
     fn unknown_type_errors() {
         assert!(build_strategy(args("NotAStrategy")).is_err());
     }
+
+    #[test]
+    fn donchian_daily_v1_is_not_a_live_strategy() {
+        assert!(build_strategy(args("DonchianDailyV1")).is_err());
+    }
 }

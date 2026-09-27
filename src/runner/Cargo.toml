@@ -78,6 +78,10 @@ path = "src/bin/test_runner.rs"
 name = "prop_replay"
 path = "src/bin/prop_replay.rs"
 
+[[bin]]
+name = "donchian_daily_replay"
+path = "src/bin/donchian_daily_replay.rs"
+
 [features]
 default = []
 redis = ["dep:redis"]

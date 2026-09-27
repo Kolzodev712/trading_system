@@ -6,3 +6,4 @@
 /src/market_data_engine/config/
 /config
 /cli_debug.log
+/data/donchian_daily/

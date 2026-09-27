@@ -52,6 +52,8 @@ pub fn orderbook_to_structured(ob: &KPaperOrderbook) -> Option<StructuredOrderbo
         bids,
         asks,
         timestamp,
+        update_kind: trading_core::types::market_data::OrderbookUpdateKind::Snapshot,
+        sequence: None,
     })
 }
 

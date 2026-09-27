@@ -239,7 +239,11 @@ pub enum StrategiesConfig {
     /// Single strategy format (for backward compatibility)
     Single(Box<StrategyConfig>),
     /// Multiple strategies format (array)
-    Multiple { strategies: Vec<StrategyConfig> },
+    Multiple {
+        strategies: Vec<StrategyConfig>,
+        #[serde(default)]
+        risk_limits: Option<trading_engine::risk::RiskLimits>,
+    },
 }
 
 /// Individual strategy configuration
@@ -300,11 +304,22 @@ pub struct StrategyConfig {
 }
 
 impl StrategiesConfig {
+    /// Account-level limits for strategy mode. Absent means those checks are not configured.
+    pub fn risk_limits(&self) -> trading_engine::risk::RiskLimits {
+        match self {
+            StrategiesConfig::Multiple {
+                risk_limits: Some(limits),
+                ..
+            } => limits.clone(),
+            _ => trading_engine::risk::RiskLimits::default(),
+        }
+    }
+
     /// Get all strategy configs as a vector
     pub fn into_vec(self) -> Vec<StrategyConfig> {
         match self {
             StrategiesConfig::Single(config) => vec![*config],
-            StrategiesConfig::Multiple { strategies } => strategies,
+            StrategiesConfig::Multiple { strategies, .. } => strategies,
         }
     }
 
@@ -312,7 +327,7 @@ impl StrategiesConfig {
     pub fn as_vec(&self) -> Vec<&StrategyConfig> {
         match self {
             StrategiesConfig::Single(config) => vec![config],
-            StrategiesConfig::Multiple { strategies } => strategies.iter().collect(),
+            StrategiesConfig::Multiple { strategies, .. } => strategies.iter().collect(),
         }
     }
 }
@@ -502,7 +517,7 @@ impl StrategiesConfig {
     fn as_vec_mut(&mut self) -> Vec<&mut StrategyConfig> {
         match self {
             StrategiesConfig::Single(config) => vec![config.as_mut()],
-            StrategiesConfig::Multiple { strategies } => strategies.iter_mut().collect(),
+            StrategiesConfig::Multiple { strategies, .. } => strategies.iter_mut().collect(),
         }
     }
 

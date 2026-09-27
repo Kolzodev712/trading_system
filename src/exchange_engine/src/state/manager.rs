@@ -354,6 +354,21 @@ impl ExchangeStateManager {
             }
         }
 
+        match self.trading_client.read().await.fetch_open_orders().await {
+            Ok(orders) => {
+                let count = orders.len();
+                let mut state = self.state.write().await;
+                state.replace_open_orders(orders);
+                info!("Bootstrap: Replaced open orders from REST ({count})");
+            }
+            Err(EngineError::NotSupported(_)) => {
+                info!("Bootstrap: fetch_open_orders not supported; skipping");
+            }
+            Err(e) => {
+                warn!("Bootstrap: Failed to fetch open orders: {}", e);
+            }
+        }
+
         // Call reconciler for the result (it will log the counts)
         self.reconciler
             .bootstrap_reconcile(configured_pairs, self.state.clone(), total_trades)

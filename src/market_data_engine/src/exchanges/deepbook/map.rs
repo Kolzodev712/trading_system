@@ -15,6 +15,8 @@ pub fn orderbook_to_structured(
         bids: snapshot.bids.clone(),
         asks: snapshot.asks.clone(),
         timestamp: snapshot.timestamp_ms,
+        update_kind: trading_core::types::market_data::OrderbookUpdateKind::Snapshot,
+        sequence: None,
     }
 }
 

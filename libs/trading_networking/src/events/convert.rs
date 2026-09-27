@@ -119,6 +119,8 @@ mod tests {
             timestamp: 1,
             bids: vec![(Decimal::new(100, 0), Decimal::ONE)],
             asks: vec![(Decimal::new(101, 0), Decimal::ONE)],
+            update_kind: Default::default(),
+            sequence: None,
         };
         let hot = hot_event_from_market_data(MarketDataUpdate::Orderbook {
             orderbook: ob,

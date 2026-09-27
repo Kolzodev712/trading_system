@@ -45,6 +45,14 @@ pub fn candles_from_bybit_body(body: &str) -> Result<Vec<Candle>, String> {
     Ok(candles)
 }
 
+/// Drop candles whose period has not ended. Daily Bybit klines include the open bar.
+pub fn completed_candles(candles: Vec<Candle>, now_ms: u64, period_ms: u64) -> Vec<Candle> {
+    candles
+        .into_iter()
+        .filter(|candle| candle.timestamp_ms.saturating_add(period_ms) <= now_ms)
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

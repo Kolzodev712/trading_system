@@ -61,6 +61,10 @@ impl BinanceOrderbook {
             bids,
             asks,
             timestamp: self.event_time,
+            // Diff-depth events are not snapshots. This stream does not carry a
+            // snapshot marker, so sequence gating is left to a later snapshot sync.
+            update_kind: trading_core::types::market_data::OrderbookUpdateKind::Delta,
+            sequence: None,
         }
     }
 }

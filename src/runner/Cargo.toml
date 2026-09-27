@@ -82,6 +82,10 @@ path = "src/bin/prop_replay.rs"
 name = "donchian_daily_replay"
 path = "src/bin/donchian_daily_replay.rs"
 
+[[bin]]
+name = "btc_price_ma_experiment"
+path = "src/bin/btc_price_ma_experiment.rs"
+
 [features]
 default = []
 redis = ["dep:redis"]

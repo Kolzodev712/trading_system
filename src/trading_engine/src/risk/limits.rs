@@ -5,6 +5,7 @@ use smol_str::SmolStr;
 
 /// Global risk limits
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(default)]
 pub struct RiskLimits {
     /// Maximum total position size across all levels
     pub total_max_position: Option<Decimal>,

@@ -106,16 +106,28 @@ impl MarketDataStateManager {
         let orderbook_for_state = orderbook.clone();
         let pair_for_state = orderbook_for_state.pair.clone();
 
-        // 1. Update in-memory state (pair is moved, no need to clone again)
-        {
+        // 1. Apply snapshot (replace) or delta (merge). A gap drops the book and is not published.
+        let published = {
             let mut state = self.state.write().await;
-            state.update_orderbook(pair_for_state, orderbook_for_state);
-        }
+            if !state.update_orderbook(pair_for_state.clone(), orderbook_for_state) {
+                warn!(
+                    "Dropped orderbook delta for {} (no snapshot or sequence gap); waiting for the next snapshot",
+                    pair_for_state
+                );
+                None
+            } else {
+                state.get_orderbook(&pair_for_state).cloned()
+            }
+        };
 
-        // 2. Publish via broadcast channel (use original orderbook)
+        let Some(published) = published else {
+            return Ok(());
+        };
+
+        // 2. Publish the maintained book, not the raw delta.
         // Note: Publishing failures are logged but don't fail the state update
         // In tests, channels may be closed (no consumers), which is fine
-        if let Err(e) = self.publisher.publish_orderbook(&orderbook).await {
+        if let Err(e) = self.publisher.publish_orderbook(&published).await {
             warn!(
                 "Failed to publish orderbook update (channel may have no consumers): {}",
                 e
@@ -205,6 +217,8 @@ mod tests {
             bids: vec![(Decimal::new(50000, 0), Decimal::new(1, 0))],
             asks: vec![(Decimal::new(51000, 0), Decimal::new(1, 0))],
             timestamp: 1234567890,
+            update_kind: Default::default(),
+            sequence: None,
         }
     }
 

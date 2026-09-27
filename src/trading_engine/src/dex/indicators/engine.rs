@@ -162,6 +162,8 @@ mod tests {
             bids: vec![(dec!(3.0), dec!(1.0))],
             asks: vec![(dec!(3.2), dec!(1.0))],
             timestamp: 42,
+            update_kind: Default::default(),
+            sequence: None,
         };
         engine.on_orderbook(book).await;
         let values = engine.values().await;

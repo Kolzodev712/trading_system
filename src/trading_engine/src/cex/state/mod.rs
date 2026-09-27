@@ -5,6 +5,7 @@
 
 use async_trait::async_trait;
 use rust_decimal::Decimal;
+use smol_str::SmolStr;
 use std::collections::HashMap;
 use trading_core::{
     error::EngineError,
@@ -26,6 +27,16 @@ pub struct Position {
     pub avg_price: Decimal,
 }
 
+/// A submission whose exchange outcome is not yet known.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PendingSubmission {
+    pub client_order_id: SmolStr,
+    pub symbol: Pair,
+    pub side: Side,
+    pub amount: Decimal,
+    pub price: Decimal,
+}
+
 /// Manages active orders and positions
 #[derive(Debug, Clone, Default)]
 pub struct TradingState {
@@ -35,6 +46,8 @@ pub struct TradingState {
     pub pending_orders: HashMap<OrderId, u64>, // order_id -> timestamp when order was placed
     /// Last applied fill qty per order (idempotent fill accounting).
     fill_applied: HashMap<OrderId, Decimal>,
+    /// Intended orders recorded before the exchange acknowledges them.
+    submissions: HashMap<SmolStr, PendingSubmission>,
 }
 
 impl TradingState {
@@ -44,6 +57,7 @@ impl TradingState {
             active_orders: HashMap::new(),
             pending_orders: HashMap::new(),
             fill_applied: HashMap::new(),
+            submissions: HashMap::new(),
         }
     }
 
@@ -187,9 +201,21 @@ impl TradingState {
             .sum()
     }
 
-    /// Position plus in-flight working qty. Use this for `target − current`.
+    /// Position plus working quantity plus submissions whose ack is still unknown.
     pub fn effective_position_qty(&self, symbol: &Pair) -> Decimal {
-        self.position_qty(symbol) + self.working_qty(symbol)
+        self.position_qty(symbol) + self.working_qty(symbol) + self.reserved_submission_qty(symbol)
+    }
+
+    /// Signed quantity reserved by submissions recorded before an ack.
+    pub fn reserved_submission_qty(&self, symbol: &Pair) -> Decimal {
+        self.submissions
+            .values()
+            .filter(|submission| &submission.symbol == symbol)
+            .map(|submission| match submission.side {
+                Side::Buy => submission.amount,
+                Side::Sell => -submission.amount,
+            })
+            .sum()
     }
 
     /// Apply an incremental fill once per order id. Safe to call twice with the same fill.
@@ -210,6 +236,30 @@ impl TradingState {
         self.update_position(order.instrument.pair.clone(), signed, order.price);
         self.fill_applied
             .insert(order.order_id.clone(), order.filled_amount);
+    }
+
+    /// Record an intended order before calling the exchange.
+    pub fn begin_submission(&mut self, submission: PendingSubmission) {
+        self.submissions
+            .insert(submission.client_order_id.clone(), submission);
+    }
+
+    /// Exchange answered. The id may now belong to an active order or a known reject.
+    pub fn clear_submission(&mut self, client_order_id: &str) {
+        self.submissions.remove(client_order_id);
+    }
+
+    pub fn clear_submission_for_order(&mut self, order: &Order) {
+        if let Some(client_order_id) = order.client_order_id.as_ref() {
+            self.submissions.remove(client_order_id.as_str());
+        }
+    }
+
+    /// True while any submission on this pair has not been reconciled.
+    pub fn has_unresolved_submission(&self, symbol: &Pair) -> bool {
+        self.submissions
+            .values()
+            .any(|submission| &submission.symbol == symbol)
     }
 }
 

@@ -10,7 +10,8 @@ pub use executor::StrategyExecutor;
 pub use factory::{build_strategy, StrategyFactoryArgs};
 pub use manager_wrapper::StrategyManagerWrapper;
 pub use rust_strategies::{
-    donchian_daily_aux, donchian_daily_backtest, donchian_daily_offline, BuyLowSellHigh, Donchian,
-    PropHold,
+    btc_price_ma_experiment, btc_price_ma_gates, btc_price_ma_offline, position_qty,
+    DIAGNOSTIC_LOOKBACKS, PRIMARY_LOOKBACK, donchian_daily_aux,
+    donchian_daily_backtest, donchian_daily_offline, BuyLowSellHigh, Donchian, PropHold,
 };
 pub use strategy_manager::StrategyManager;

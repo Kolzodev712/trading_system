@@ -1,10 +1,15 @@
 //! Individual trading strategy implementations.
 
+mod btc_price_ma_long_flat_v1;
 mod donchian;
 mod donchian_daily_v1;
 mod low_high;
 mod prop_hold;
 
+pub use btc_price_ma_long_flat_v1::{
+    experiment as btc_price_ma_experiment, gates as btc_price_ma_gates,
+    offline as btc_price_ma_offline, position_qty, DIAGNOSTIC_LOOKBACKS, PRIMARY_LOOKBACK,
+};
 pub use donchian::Donchian;
 pub use donchian_daily_v1::aux as donchian_daily_aux;
 pub use donchian_daily_v1::backtest as donchian_daily_backtest;

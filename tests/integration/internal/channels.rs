@@ -18,6 +18,8 @@ async fn test_market_data_channel() {
         bids: vec![],
         asks: vec![],
         timestamp: 1000,
+        update_kind: Default::default(),
+        sequence: None,
     };
 
     tx.send(

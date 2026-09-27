@@ -120,7 +120,9 @@ def compare_decisions(exp, stored, n, out):
         r=by.get(e.start)
         if r is None:
             add(out,"decisions",e.start,"presence","row","missing",f"N={n}"); econ+=1; continue
-        exact=[("end_time_exclusive_ms",e.end,r["end_time_exclusive_ms"]),
+        exact=[("venue","bybit",r["venue"]),("product","linear",r["product"]),
+               ("instrument","BTCUSDT",r["instrument"]),("interval","D",r["interval"]),
+               ("end_time_exclusive_ms",e.end,r["end_time_exclusive_ms"]),
                ("close",e.close,D(r["close"])),("previous_direction",e.prev,r["previous_direction"]),
                ("direction",e.direction,r["direction"]),("readiness",e.readiness,r["readiness"]),
                ("target.kind",e.kind,r["target"]["kind"])]
@@ -134,6 +136,8 @@ def compare_decisions(exp, stored, n, out):
             add(out,"decisions",e.start,"target.quantity",None,rq,f"N={n}"); econ+=1
         if r.get("exit_high") is not None or r.get("exit_low") is not None:
             add(out,"decisions",e.start,"exit diagnostics","null/null",f"{r.get('exit_high')}/{r.get('exit_low')}",f"N={n}"); econ+=1
+        if r.get("suspension") is not None:
+            add(out,"decisions",e.start,"suspension",None,r.get("suspension"),f"N={n}"); econ+=1
         if e.readiness=="not_ready":
             if r.get("entry_high") is not None or r.get("entry_low") is not None:
                 add(out,"decisions",e.start,"warmup diagnostics","null/null","present",f"N={n}"); econ+=1

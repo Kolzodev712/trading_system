@@ -206,6 +206,18 @@ impl StateReconciler {
             }
         }
 
+        match trading_client.read().await.fetch_open_orders().await {
+            Ok(rest_orders) => {
+                result.orders_fetched = rest_orders.len();
+                let mut ws_state = exchange_state.write().await;
+                ws_state.replace_open_orders(rest_orders);
+            }
+            Err(EngineError::NotSupported(_)) => {}
+            Err(e) => {
+                error!("Failed to fetch open orders for reconciliation: {}", e);
+            }
+        }
+
         Ok(result)
     }
 }

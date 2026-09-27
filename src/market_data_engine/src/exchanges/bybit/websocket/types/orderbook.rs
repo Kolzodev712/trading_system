@@ -79,6 +79,15 @@ impl BybitOrderbookMessage {
             bids,
             asks,
             timestamp: self.timestamp,
+            update_kind: match self.message_type {
+                BybitMessageType::Snapshot => {
+                    trading_core::types::market_data::OrderbookUpdateKind::Snapshot
+                }
+                BybitMessageType::Delta => {
+                    trading_core::types::market_data::OrderbookUpdateKind::Delta
+                }
+            },
+            sequence: Some(self.data.update_id),
         }
     }
 }

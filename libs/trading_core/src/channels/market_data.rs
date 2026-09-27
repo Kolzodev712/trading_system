@@ -68,6 +68,8 @@ mod tests {
             bids: vec![(Decimal::new(50000, 0), Decimal::new(1, 0))],
             asks: vec![(Decimal::new(51000, 0), Decimal::new(1, 0))],
             timestamp: 1234567890,
+            update_kind: Default::default(),
+            sequence: None,
         };
 
         // Send orderbook update
@@ -137,6 +139,8 @@ mod tests {
             bids: vec![(Decimal::new(50000, 0), Decimal::new(1, 0))],
             asks: vec![(Decimal::new(51000, 0), Decimal::new(1, 0))],
             timestamp: 1234567890,
+            update_kind: Default::default(),
+            sequence: None,
         };
 
         tx.send(MarketDataUpdate::Orderbook {

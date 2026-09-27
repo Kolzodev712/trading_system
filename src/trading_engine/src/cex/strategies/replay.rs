@@ -50,6 +50,8 @@ pub fn candle_to_book(pair: Pair, candle: &Candle) -> Orderbook {
         bids: vec![(candle.close - tick, Decimal::ONE)],
         asks: vec![(candle.close + tick, Decimal::ONE)],
         timestamp: candle.timestamp_ms,
+        update_kind: Default::default(),
+        sequence: None,
     }
 }
 

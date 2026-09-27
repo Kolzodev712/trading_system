@@ -103,6 +103,15 @@ impl ExchangeState {
             .as_millis() as u64;
     }
 
+    /// Replace the open-order set with a REST snapshot.
+    pub fn replace_open_orders(&mut self, orders: Vec<Order>) {
+        self.orders.clear();
+        self.orders_by_pair.clear();
+        for order in orders {
+            self.update_order(order);
+        }
+    }
+
     /// Remove an order
     pub fn remove_order(&mut self, order_id: &OrderId) {
         if let Some(order) = self.orders.remove(order_id) {

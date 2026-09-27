@@ -156,6 +156,22 @@ impl PositionReconciler {
             reconciled = true;
         }
 
+        for order in exchange_orders {
+            if !matches!(
+                order.status,
+                trading_core::types::common::OrderStatus::New
+                    | trading_core::types::common::OrderStatus::PartiallyFilled
+            ) {
+                continue;
+            }
+            if trading_state.active_orders.contains_key(&order.order_id) {
+                continue;
+            }
+            trading_state.clear_submission_for_order(order);
+            trading_state.add_order(order.clone());
+            reconciled = true;
+        }
+
         if reconciled {
             tracing::debug!(
                 "Trading-level reconciliation for {} completed: state updated",

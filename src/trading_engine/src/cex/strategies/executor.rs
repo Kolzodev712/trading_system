@@ -60,6 +60,9 @@ pub struct StrategyExecutor<S: Strategy + 'static> {
     risk_manager: Option<Arc<RiskManager>>,
     /// `max_position` per strategy id. Shared so gRPC can update without restart.
     strategy_caps: Arc<RwLock<std::collections::HashMap<StrategyId, Decimal>>>,
+    max_active_orders: usize,
+    /// Futures leverage used only to scale quote margin checks. `None` requires full notional.
+    leverage: Option<u32>,
 }
 
 impl<S: Strategy> StrategyExecutor<S> {
@@ -102,6 +105,8 @@ impl<S: Strategy> StrategyExecutor<S> {
             strategy_manager: None,
             risk_manager: None,
             strategy_caps: Arc::new(RwLock::new(std::collections::HashMap::new())),
+            max_active_orders: 5,
+            leverage: None,
         }
     }
 
@@ -110,6 +115,16 @@ impl<S: Strategy> StrategyExecutor<S> {
         strategy_caps: Arc<RwLock<std::collections::HashMap<StrategyId, Decimal>>>,
     ) -> Self {
         self.strategy_caps = strategy_caps;
+        self
+    }
+
+    pub fn with_max_active_orders(mut self, max_active_orders: usize) -> Self {
+        self.max_active_orders = max_active_orders;
+        self
+    }
+
+    pub fn with_leverage(mut self, leverage: Option<u32>) -> Self {
+        self.leverage = leverage;
         self
     }
 
@@ -430,9 +445,45 @@ impl<S: Strategy> StrategyExecutor<S> {
                         );
 
                         // Check active orders limit
-                        if active_count >= 5 {
+                        if active_count >= self.max_active_orders {
                             debug!(
                                 "Too many active orders ({active_count}), skipping order placement"
+                            );
+                            continue;
+                        }
+
+                        let position_qty = state.position_qty(&orderbook_pair);
+                        let futures = matches!(
+                            req.instrument.instrument_type(),
+                            trading_core::types::common::InstrumentType::Futures
+                                | trading_core::types::common::InstrumentType::Derivitives
+                        );
+                        if futures
+                            && !crate::risk::order_increases_exposure(
+                                req.side.clone(),
+                                position_qty,
+                            )
+                        {
+                            req.exchange_params.insert(
+                                smol_str::SmolStr::new("reduceOnly"),
+                                smol_str::SmolStr::new("true"),
+                            );
+                        }
+
+                        let mut prices = std::collections::HashMap::new();
+                        if let Some(mid) = orderbook.mid_price() {
+                            prices.insert(orderbook_pair.clone(), mid);
+                        }
+                        let balance_ok = crate::risk::check_order_balance(
+                            &req,
+                            balances.as_deref().unwrap_or(&[]),
+                            position_qty,
+                            self.leverage,
+                        );
+                        if !balance_ok.allowed {
+                            warn!(
+                                "Balance check blocked order: {}",
+                                balance_ok.reason.unwrap_or_else(|| "unknown".into())
                             );
                             continue;
                         }
@@ -463,47 +514,29 @@ impl<S: Strategy> StrategyExecutor<S> {
                                 (existing_order.amount - req.amount).abs() > Decimal::new(1, 10);
 
                             if price_changed || quantity_changed {
-                                // Collect for batch amendment
+                                if let Some(ref risk) = self.risk_manager {
+                                    let check = risk
+                                        .check_pre_trade(
+                                            &req,
+                                            &state,
+                                            balances.as_deref().unwrap_or(&[]),
+                                            Some(&prices),
+                                            position_qty,
+                                            self.leverage,
+                                        )
+                                        .await;
+                                    if !check.allowed {
+                                        warn!(
+                                            "Risk blocked amendment: {}",
+                                            check.reason.unwrap_or_else(|| "unknown".into())
+                                        );
+                                        continue;
+                                    }
+                                }
                                 to_amend.push((existing_order.order_id, req));
                                 continue;
                             } else {
                                 // No amendment needed
-                                continue;
-                            }
-                        }
-
-                        // Validate balance
-                        if let Some(ref balances) = balances {
-                            let balance_ok = match req.side {
-                                trading_core::types::common::Side::Buy => {
-                                    let quote_balance = balances
-                                        .iter()
-                                        .find(|b| {
-                                            let balance_symbol = b.symbol.as_ref();
-                                            balance_symbol == orderbook_pair.quote.as_str()
-                                                || balance_symbol
-                                                    .ends_with(orderbook_pair.quote.as_str())
-                                        })
-                                        .map(|b| b.free)
-                                        .unwrap_or(Decimal::ZERO);
-                                    quote_balance >= req.price * req.amount
-                                }
-                                trading_core::types::common::Side::Sell => {
-                                    let base_balance = balances
-                                        .iter()
-                                        .find(|b| {
-                                            let balance_symbol = b.symbol.as_ref();
-                                            balance_symbol == orderbook_pair.base.as_str()
-                                                || balance_symbol
-                                                    .starts_with(orderbook_pair.base.as_str())
-                                        })
-                                        .map(|b| b.free)
-                                        .unwrap_or(Decimal::ZERO);
-                                    base_balance >= req.amount
-                                }
-                            };
-                            if !balance_ok {
-                                warn!("Insufficient balance, skipping order");
                                 continue;
                             }
                         }
@@ -524,7 +557,9 @@ impl<S: Strategy> StrategyExecutor<S> {
                                     &req,
                                     &state,
                                     balances.as_deref().unwrap_or(&[]),
-                                    None,
+                                    Some(&prices),
+                                    position_qty,
+                                    self.leverage,
                                 )
                                 .await;
                             if !check.allowed {
@@ -540,7 +575,37 @@ impl<S: Strategy> StrategyExecutor<S> {
                         to_post.push(req);
                     }
 
-                    // Second pass: Batch process posts and amendments
+                    // Second pass: record intent, then submit. A pair with an unresolved
+                    // submission does not send another order.
+                    {
+                        let live = trading_state.read().await;
+                        if live.has_unresolved_submission(&orderbook_pair) {
+                            warn!(
+                                "Unresolved order submission for {}; not sending new exposure",
+                                orderbook_pair
+                            );
+                            continue;
+                        }
+                    }
+
+                    for req in &mut to_post {
+                        let client_order_id =
+                            smol_str::SmolStr::new(uuid::Uuid::new_v4().to_string());
+                        req.exchange_params.insert(
+                            smol_str::SmolStr::new("orderLinkId"),
+                            client_order_id.clone(),
+                        );
+                        trading_state.write().await.begin_submission(
+                            crate::cex::state::PendingSubmission {
+                                client_order_id,
+                                symbol: orderbook_pair.clone(),
+                                side: req.side.clone(),
+                                amount: req.amount,
+                                price: req.price,
+                            },
+                        );
+                    }
+
                     let trading_client_guard = trading_client.write().await;
 
                     // Batch process posts
@@ -559,7 +624,11 @@ impl<S: Strategy> StrategyExecutor<S> {
                         match bulk_response {
                             Ok(response) => {
                                 let results = response.results;
-                                for (idx, _req) in to_post.iter().enumerate() {
+                                for (idx, req) in to_post.iter().enumerate() {
+                                    let client_id = req
+                                        .exchange_params
+                                        .get("orderLinkId")
+                                        .map(|id| id.to_string());
                                     if idx >= results.len() {
                                         warn!("Bulk response missing result for index {}", idx);
                                         continue;
@@ -581,6 +650,14 @@ impl<S: Strategy> StrategyExecutor<S> {
 
                                     match order_result {
                                         Ok(mut order) => {
+                                            if order.client_order_id.is_none() {
+                                                order.client_order_id = client_id
+                                                    .as_deref()
+                                                    .map(smol_str::SmolStr::new);
+                                            }
+                                            if let Some(id) = client_id.as_deref() {
+                                                trading_state.write().await.clear_submission(id);
+                                            }
                                             order.status =
                                                 trading_core::types::common::OrderStatus::New;
                                             order.filled_amount = Decimal::ZERO;
@@ -593,6 +670,9 @@ impl<S: Strategy> StrategyExecutor<S> {
                                             self.trading_state_manager.add_order(order).await;
                                         }
                                         Err(e) => {
+                                            if let Some(id) = client_id.as_deref() {
+                                                trading_state.write().await.clear_submission(id);
+                                            }
                                             warn!("Failed to place order in batch: {}", e);
                                             circuit_breaker.lock().await.record_failure();
                                         }

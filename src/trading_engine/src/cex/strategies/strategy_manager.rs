@@ -237,6 +237,30 @@ impl StrategyManager {
         Ok(requests)
     }
 
+    /// Push completed daily candles into every strategy on `pair`.
+    pub async fn seed_daily_bars(
+        &self,
+        pair: &Pair,
+        bars: &[(
+            u64,
+            rust_decimal::Decimal,
+            rust_decimal::Decimal,
+            rust_decimal::Decimal,
+        )],
+    ) -> Result<(), EngineError> {
+        let indices = self
+            .pair_to_indices
+            .get(pair)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[]);
+        for &idx in indices {
+            let strategy = &self.strategies[idx];
+            let mut strat = strategy.write().await;
+            strat.seed_daily_bars(bars).await?;
+        }
+        Ok(())
+    }
+
     pub async fn on_execution_report(&self, order: &Order) -> Result<(), EngineError> {
         for strategy in &self.strategies {
             let mut strat_guard = strategy.write().await;

@@ -138,7 +138,11 @@ impl BybitClient {
             },
             category,
             time_in_force,
-            order_link_id: None,
+            order_link_id: req
+                .exchange_params
+                .get("orderLinkId")
+                .cloned()
+                .or_else(|| req.exchange_params.get("clientOrderId").cloned()),
             reduce_only: req
                 .exchange_params
                 .get("reduceOnly")

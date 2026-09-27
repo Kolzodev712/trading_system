@@ -90,6 +90,7 @@ impl ExchangeStateSubscriber {
 
         // Private stream is this account. Apply fills even if the place ack
         // has not been written to TSM yet (demo fills can beat add_order).
+        state.clear_submission_for_order(&order);
         state.apply_fill(&order);
 
         let is_terminal = matches!(

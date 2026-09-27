@@ -35,7 +35,7 @@ pub struct BacktestError {
 }
 
 impl BacktestError {
-    fn new(message: impl Into<String>) -> Self {
+    pub fn new(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
         }
@@ -511,12 +511,36 @@ pub fn required_execution_minutes_for_experiment(
     performance_end_exclusive_ms: u64,
     position_qty: Decimal,
 ) -> Result<BTreeSet<u64>, BacktestError> {
+    let strategy = changes_for(
+        Book::DonchianDailyV1,
+        decisions,
+        performance_start_ms,
+        position_qty,
+    )?;
+    required_execution_minutes_for_target_changes(
+        &strategy,
+        performance_start_ms,
+        performance_end_exclusive_ms,
+        position_qty,
+    )
+}
+
+/// Minutes needed for a strategy's target changes plus the fixed-long benchmark.
+pub fn required_execution_minutes_for_target_changes(
+    strategy_changes: &[TargetChange],
+    performance_start_ms: u64,
+    performance_end_exclusive_ms: u64,
+    position_qty: Decimal,
+) -> Result<BTreeSet<u64>, BacktestError> {
     let scenarios = research_scenarios(performance_start_ms, performance_end_exclusive_ms);
-    let mut minutes = BTreeSet::new();
-    for book in [Book::DonchianDailyV1, Book::FixedLongBenchmark] {
-        let changes = changes_for(book, decisions, performance_start_ms, position_qty)?;
-        minutes.extend(required_execution_minutes(&changes, &scenarios)?);
-    }
+    let mut minutes = required_execution_minutes(strategy_changes, &scenarios)?;
+    let benchmark = changes_for(
+        Book::FixedLongBenchmark,
+        &[],
+        performance_start_ms,
+        position_qty,
+    )?;
+    minutes.extend(required_execution_minutes(&benchmark, &scenarios)?);
     Ok(minutes)
 }
 

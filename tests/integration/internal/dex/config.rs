@@ -59,6 +59,8 @@ async fn dex_levels_example_builds_place_commands_with_pool_meta() {
         bids: vec![(dec!(3.0), dec!(1.0))],
         asks: vec![(dec!(3.2), dec!(1.0))],
         timestamp: 1,
+        update_kind: Default::default(),
+        sequence: None,
     };
     engine.on_orderbook(book).await;
 

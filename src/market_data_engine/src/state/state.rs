@@ -6,7 +6,7 @@
 use std::collections::HashMap;
 use trading_core::types::{
     common::Pair,
-    market_data::{StructuredOrderbook, StructuredPublicTrade},
+    market_data::{OrderbookUpdateKind, StructuredOrderbook, StructuredPublicTrade},
 };
 
 /// In-memory state for market data
@@ -17,6 +17,9 @@ use trading_core::types::{
 pub struct MarketDataState {
     /// Orderbooks by pair (latest orderbook per pair)
     orderbooks: HashMap<Pair, StructuredOrderbook>,
+
+    /// Last applied exchange sequence per pair. Absent after a gap until the next snapshot.
+    last_sequence: HashMap<Pair, u64>,
 
     /// Recent public trades by pair (last N per pair)
     public_trades: HashMap<Pair, Vec<StructuredPublicTrade>>,
@@ -30,27 +33,59 @@ impl MarketDataState {
     pub fn new() -> Self {
         Self {
             orderbooks: HashMap::new(),
+            last_sequence: HashMap::new(),
             public_trades: HashMap::new(),
             last_update: 0,
         }
     }
 
-    /// Update orderbook for a pair
-    /// If orderbook already exists, merges delta updates; otherwise replaces with snapshot
-    pub fn update_orderbook(&mut self, pair: Pair, orderbook: StructuredOrderbook) {
-        // Use timestamp from orderbook if available, otherwise use current time
+    /// Apply a snapshot or delta.
+    ///
+    /// Snapshots replace the local book. Deltas merge only when `sequence == last + 1`.
+    /// A gap or a delta before any snapshot drops the local book and returns false.
+    /// Sources without a sequence merge onto an existing book and do not replace it.
+    pub fn update_orderbook(&mut self, pair: Pair, orderbook: StructuredOrderbook) -> bool {
         let timestamp = orderbook.timestamp;
+        let applied = match orderbook.update_kind {
+            OrderbookUpdateKind::Snapshot => {
+                if let Some(seq) = orderbook.sequence {
+                    self.last_sequence.insert(pair.clone(), seq);
+                } else {
+                    self.last_sequence.remove(&pair);
+                }
+                self.orderbooks.insert(pair, orderbook);
+                true
+            }
+            OrderbookUpdateKind::Delta => self.apply_delta(pair, orderbook),
+        };
+        if applied {
+            self.last_update = timestamp;
+        }
+        applied
+    }
 
-        // If orderbook exists, merge delta updates; otherwise replace (snapshot)
-        if let Some(existing) = self.orderbooks.get_mut(&pair) {
-            // Merge delta: update/remove changed levels, keep unchanged levels
-            Self::merge_orderbook_delta(existing, &orderbook);
-        } else {
-            // First snapshot: replace entirely
-            self.orderbooks.insert(pair, orderbook);
+    fn apply_delta(&mut self, pair: Pair, delta: StructuredOrderbook) -> bool {
+        if let Some(seq) = delta.sequence {
+            match self.last_sequence.get(&pair).copied() {
+                Some(last) if seq == last.saturating_add(1) => {}
+                _ => {
+                    self.orderbooks.remove(&pair);
+                    self.last_sequence.remove(&pair);
+                    return false;
+                }
+            }
+            self.last_sequence.insert(pair.clone(), seq);
+        } else if !self.orderbooks.contains_key(&pair) {
+            self.orderbooks.insert(pair, delta);
+            return true;
         }
 
-        self.last_update = timestamp;
+        if let Some(existing) = self.orderbooks.get_mut(&pair) {
+            Self::merge_orderbook_delta(existing, &delta);
+            true
+        } else {
+            false
+        }
     }
 
     /// Merge delta update into existing orderbook
@@ -159,6 +194,8 @@ mod tests {
             bids: vec![(Decimal::new(100, 0), Decimal::new(1, 0))],
             asks: vec![(Decimal::new(101, 0), Decimal::new(1, 0))],
             timestamp: 1000,
+            update_kind: OrderbookUpdateKind::Snapshot,
+            sequence: Some(1),
         }
     }
 
@@ -227,5 +264,63 @@ mod tests {
         // Should only keep last 100
         let trades = state.get_public_trades(&pair);
         assert_eq!(trades.len(), 100);
+    }
+
+    fn level(pair: Pair, bid: i64, seq: u64, kind: OrderbookUpdateKind) -> StructuredOrderbook {
+        StructuredOrderbook {
+            pair,
+            bids: vec![(Decimal::new(bid, 0), Decimal::ONE)],
+            asks: vec![(Decimal::new(bid + 1, 0), Decimal::ONE)],
+            timestamp: seq,
+            update_kind: kind,
+            sequence: Some(seq),
+        }
+    }
+
+    #[test]
+    fn snapshot_replaces_existing_book() {
+        let mut state = MarketDataState::new();
+        let pair = Pair::new("BTC", "USDT");
+        assert!(state.update_orderbook(
+            pair.clone(),
+            level(pair.clone(), 100, 1, OrderbookUpdateKind::Snapshot)
+        ));
+        assert!(state.update_orderbook(
+            pair.clone(),
+            level(pair.clone(), 50, 8, OrderbookUpdateKind::Snapshot)
+        ));
+        let book = state.get_orderbook(&pair).unwrap();
+        assert_eq!(book.bids.len(), 1);
+        assert_eq!(book.bids[0].0, Decimal::new(50, 0));
+        assert_eq!(state.last_sequence.get(&pair), Some(&8));
+    }
+
+    #[test]
+    fn delta_merges_only_when_sequence_continues() {
+        let mut state = MarketDataState::new();
+        let pair = Pair::new("BTC", "USDT");
+        state.update_orderbook(
+            pair.clone(),
+            level(pair.clone(), 100, 1, OrderbookUpdateKind::Snapshot),
+        );
+        let mut delta = level(pair.clone(), 90, 2, OrderbookUpdateKind::Delta);
+        delta.bids = vec![(Decimal::new(100, 0), Decimal::ZERO)];
+        assert!(state.update_orderbook(pair.clone(), delta));
+        assert!(state.get_orderbook(&pair).unwrap().bids.is_empty());
+
+        let gap = level(pair.clone(), 70, 9, OrderbookUpdateKind::Delta);
+        assert!(!state.update_orderbook(pair.clone(), gap));
+        assert!(state.get_orderbook(&pair).is_none());
+    }
+
+    #[test]
+    fn delta_before_snapshot_is_dropped() {
+        let mut state = MarketDataState::new();
+        let pair = Pair::new("BTC", "USDT");
+        assert!(!state.update_orderbook(
+            pair.clone(),
+            level(pair.clone(), 100, 1, OrderbookUpdateKind::Delta)
+        ));
+        assert!(state.get_orderbook(&pair).is_none());
     }
 }

@@ -32,7 +32,7 @@ pub struct OfflineError {
 }
 
 impl OfflineError {
-    fn new(message: impl Into<String>) -> Self {
+    pub fn new(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
         }
@@ -671,7 +671,7 @@ fn find_gaps(completed: &[DatasetCandle], from: u64, to_exclusive: u64) -> Vec<G
     gaps
 }
 
-fn completed_series(dataset: &HistoricalDataset) -> Result<Vec<DatasetCandle>, OfflineError> {
+pub fn completed_series(dataset: &HistoricalDataset) -> Result<Vec<DatasetCandle>, OfflineError> {
     let mut candles = dataset.candles.clone();
     candles.sort_by_key(|candle| candle.start_time_ms);
     let mut unique: Vec<DatasetCandle> = Vec::new();
@@ -695,7 +695,7 @@ fn completed_series(dataset: &HistoricalDataset) -> Result<Vec<DatasetCandle>, O
     Ok(unique)
 }
 
-fn window_series(
+pub fn window_series(
     completed: &[DatasetCandle],
     evaluation_start: u64,
     evaluation_end: u64,

@@ -225,6 +225,8 @@ mod tests {
             bids: vec![(mid - Decimal::ONE, Decimal::ONE)],
             asks: vec![(mid + Decimal::ONE, Decimal::ONE)],
             timestamp: ts_ms,
+            update_kind: Default::default(),
+            sequence: None,
         }
     }
 

@@ -3,6 +3,18 @@ use crate::types::common::Pair;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 
+/// How an order book message should be applied to local state.
+///
+/// A snapshot replaces the local book. A delta is applied only when it
+/// continues the previous sequence; a gap drops the local book until the next snapshot.
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, Eq, PartialEq, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum OrderbookUpdateKind {
+    #[default]
+    Snapshot,
+    Delta,
+}
+
 /// New Orderbook format (with pair and structured bids/asks)
 /// This is the new format for the refactored system
 #[derive(Debug, Deserialize, Serialize, Clone, Eq, PartialEq)]
@@ -16,6 +28,12 @@ pub struct StructuredOrderbook {
     pub asks: Vec<(Decimal, Decimal)>,
     /// Last update timestamp
     pub timestamp: u64,
+    /// Snapshot replaces local state. Delta merges when the sequence continues.
+    #[serde(default)]
+    pub update_kind: OrderbookUpdateKind,
+    /// Exchange sequence (`u` on Bybit). `None` means the source has no sequence.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sequence: Option<u64>,
 }
 
 impl StructuredOrderbook {
@@ -87,6 +105,8 @@ mod tests {
                 (Decimal::new(91100, 0), Decimal::new(2, 0)),
             ],
             timestamp: 1734819696263,
+            update_kind: Default::default(),
+            sequence: None,
         };
 
         assert_eq!(orderbook.best_bid_price(), Some(Decimal::new(90000, 0)));
@@ -102,6 +122,8 @@ mod tests {
                 (Decimal::new(91100, 0), Decimal::new(2, 0)),
             ],
             timestamp: 1734819696263,
+            update_kind: Default::default(),
+            sequence: None,
         };
 
         assert_eq!(orderbook.best_ask_price(), Some(Decimal::new(91000, 0)));
@@ -114,6 +136,8 @@ mod tests {
             bids: vec![],
             asks: vec![],
             timestamp: 1734819696263,
+            update_kind: Default::default(),
+            sequence: None,
         };
 
         assert_eq!(orderbook.best_bid_price(), None);
@@ -127,6 +151,8 @@ mod tests {
             bids: vec![(Decimal::new(90000, 0), Decimal::new(1, 0))],
             asks: vec![(Decimal::new(91000, 0), Decimal::new(1, 0))],
             timestamp: 1734819696263,
+            update_kind: Default::default(),
+            sequence: None,
         };
 
         let mid = orderbook.mid_price().unwrap();
@@ -140,6 +166,8 @@ mod tests {
             bids: vec![],
             asks: vec![(Decimal::new(91000, 0), Decimal::new(1, 0))],
             timestamp: 1734819696263,
+            update_kind: Default::default(),
+            sequence: None,
         };
 
         assert_eq!(orderbook.mid_price(), None);
@@ -158,6 +186,8 @@ mod tests {
                 (Decimal::new(91100, 0), Decimal::new(4, 0)),
             ],
             timestamp: 1734819696263,
+            update_kind: Default::default(),
+            sequence: None,
         };
 
         let total_volume = orderbook.total_volume();
@@ -171,6 +201,8 @@ mod tests {
             bids: vec![],
             asks: vec![],
             timestamp: 1734819696263,
+            update_kind: Default::default(),
+            sequence: None,
         };
 
         assert_eq!(orderbook.total_volume(), Decimal::ZERO);
@@ -188,6 +220,8 @@ mod tests {
             ],
             asks: vec![(Decimal::new(91000, 0), Decimal::new(1, 0))],
             timestamp: 1734819696263,
+            update_kind: Default::default(),
+            sequence: None,
         };
 
         let serialized = serde_json::to_string(&orderbook).unwrap();

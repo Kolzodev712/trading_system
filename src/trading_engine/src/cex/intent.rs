@@ -230,6 +230,8 @@ mod tests {
             bids: vec![(Decimal::new(77000, 0), Decimal::ONE)],
             asks: vec![(Decimal::new(77010, 0), Decimal::ONE)],
             timestamp: 1,
+            update_kind: Default::default(),
+            sequence: None,
         };
         let req = intent_to_order_request(&intent, Decimal::ZERO, &book).expect("delta");
         assert_eq!(req.instrument.instrument_type(), InstrumentType::Futures);

@@ -16,7 +16,7 @@ use crate::SharedServices;
 use trading_core::grpc::TradingControl;
 use trading_engine::health::HealthServer as TradingHealthServer;
 use trading_engine::levels::LevelManager;
-use trading_engine::risk::{RiskLimits, RiskManager};
+use trading_engine::risk::RiskManager;
 use trading_engine::state::Strategy;
 use trading_engine::strategies::{
     build_strategy, StrategyExecutor, StrategyFactoryArgs, StrategyManager, StrategyManagerWrapper,
@@ -120,6 +120,7 @@ pub async fn strategy_runner(
 
     let strategies_config = StrategiesConfig::load_from_file(&strategies_config_path)?;
     strategies_config.validate()?;
+    let risk_limits = strategies_config.risk_limits();
 
     // Get pairs from exchange config
     let configured_pairs = bot_config.get_pairs()?;
@@ -210,12 +211,21 @@ pub async fn strategy_runner(
         if matches!(config.strategy_type.as_str(), "Donchian" | "donchian") {
             match crate::cex::fetch_bybit_klines(pair, "D", 60).await {
                 Ok(candles) => {
-                    let bars: Vec<_> = candles
+                    let now_ms = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_millis() as u64)
+                        .unwrap_or(0);
+                    let closed = crate::cex::completed_candles(candles, now_ms, 86_400_000);
+                    let bars: Vec<_> = closed
                         .iter()
                         .map(|c| (c.timestamp_ms, c.high, c.low, c.close))
                         .collect();
                     Strategy::seed_daily_bars(&mut *strategy.write().await, &bars).await?;
-                    info!("Donchian warmup: {} daily bars for {}", bars.len(), pair);
+                    info!(
+                        "Donchian warmup: {} closed daily bars for {}",
+                        bars.len(),
+                        pair
+                    );
                 }
                 Err(e) => {
                     warn!("Donchian daily warmup failed for {pair}: {e}; will fill from live books")
@@ -397,11 +407,20 @@ pub async fn strategy_runner(
     .with_strategy_manager(strategy_manager_arc.clone())
     .with_shared_strategy_caps(strategy_caps)
     .with_risk_manager(Arc::new(RiskManager::new(
-        RiskLimits::default(),
+        risk_limits,
         Arc::new(trading_core::registry::symbol::SymbolRegistry::from_pairs(
             all_symbols.clone(),
         )),
-    )));
+    )))
+    .with_max_active_orders(first_config.max_active_orders)
+    .with_leverage(
+        bot_config
+            .exchange_engine
+            .config
+            .get("leverage")
+            .and_then(|value| value.as_u64())
+            .map(|value| value as u32),
+    );
 
     // Set up execution report handler (StrategyManager handles routing to all strategies)
     let strategy_manager_for_reports = strategy_manager_arc.clone();
@@ -421,6 +440,57 @@ pub async fn strategy_runner(
         })
         .await;
     });
+
+    let refresh_daily = strategy_configs
+        .iter()
+        .any(|config| matches!(config.strategy_type.as_str(), "Donchian" | "donchian"));
+    if refresh_daily {
+        let refresh_manager = strategy_manager_arc.clone();
+        let refresh_pairs = all_symbols.clone();
+        let mut refresh_shutdown = services.shutdown_manager.subscribe();
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(std::time::Duration::from_secs(60));
+            loop {
+                tokio::select! {
+                    _ = tick.tick() => {
+                        let now_ms = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.as_millis() as u64)
+                            .unwrap_or(0);
+                        for pair in &refresh_pairs {
+                            match crate::cex::fetch_bybit_klines(pair, "D", 60).await {
+                                Ok(candles) => {
+                                    let closed = crate::cex::completed_candles(candles, now_ms, 86_400_000);
+                                    let bars: Vec<_> = closed
+                                        .iter()
+                                        .map(|c| (c.timestamp_ms, c.high, c.low, c.close))
+                                        .collect();
+                                    if let Err(e) = refresh_manager
+                                        .read()
+                                        .await
+                                        .seed_daily_bars(pair, &bars)
+                                        .await
+                                    {
+                                        warn!("Daily candle refresh failed for {pair}: {e}");
+                                    }
+                                }
+                                Err(e) => warn!("Daily kline refresh failed for {pair}: {e}"),
+                            }
+                        }
+                    }
+                    _ = refresh_shutdown.recv() => break,
+                }
+            }
+        });
+    }
+
+    if let Some(tsm) = services.trading_state_manager.clone() {
+        for symbol in &all_symbols {
+            if let Err(e) = tsm.reconcile(symbol, None).await {
+                warn!("Startup order import failed for {symbol}: {e}");
+            }
+        }
+    }
 
     // Get TradingState from TradingStateManager for health server
     let trading_state_for_health = services

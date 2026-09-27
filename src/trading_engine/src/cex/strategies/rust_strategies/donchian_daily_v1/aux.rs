@@ -330,6 +330,73 @@ where
     })
 }
 
+pub async fn download_trade_minutes_for(
+    request: &AuxDownloadRequest,
+    required: std::collections::BTreeSet<u64>,
+    format_label: &str,
+) -> Result<PriceSeriesFile, AuxError> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|err| AuxError::new(format!("http client: {err}")))?;
+    download_trade_minutes_with(request, required, format_label, |url| {
+        let client = client.clone();
+        async move { fetch_public_body(&client, &url).await }
+    })
+    .await
+}
+
+pub async fn download_trade_minutes_with<F, Fut>(
+    request: &AuxDownloadRequest,
+    required: std::collections::BTreeSet<u64>,
+    format_label: &str,
+    mut fetch: F,
+) -> Result<PriceSeriesFile, AuxError>
+where
+    F: FnMut(String) -> Fut,
+    Fut: Future<Output = Result<String, AuxError>>,
+{
+    validate_request(request)?;
+    let windows = merge_minute_windows(&required, 10 * MINUTE_MS);
+    let mut trade_points = BTreeMap::new();
+    let mut trade_pages = 0u32;
+    for (start, end) in &windows {
+        let url = format!(
+            "{}/v5/market/kline?category=linear&symbol={SYMBOL}&interval=1&start={start}&end={end}&limit={PAGE_LIMIT_KLINE}",
+            request.environment.public_rest_base()
+        );
+        let body = fetch(url).await?;
+        trade_pages += 1;
+        let page =
+            parse_bybit_public_kline_page(&body).map_err(|err| AuxError::new(err.to_string()))?;
+        check_identity(page.category.as_deref(), page.symbol.as_deref())?;
+        for row in page.rows {
+            insert_price(&mut trade_points, row.start_time_ms, row.open)?;
+        }
+    }
+    let trade_gaps = missing_hours_as_gaps(&required, &trade_points);
+    seal_prices(
+        request,
+        SeriesSpec {
+            format: format_label,
+            series: "trade_1m",
+            endpoint: TRADE_ENDPOINT,
+            requested_start_ms: request.performance_start_ms,
+            requested_end_exclusive_ms: request.performance_end_exclusive_ms,
+            pages_fetched: trade_pages,
+            pagination_complete: true,
+            gaps: trade_gaps,
+            notes: vec![format!(
+                "one-minute trade opens for {} execution minutes across {} merged windows; not a full three-year tape",
+                required.len(),
+                windows.len()
+            )],
+        },
+        trade_points,
+    )
+}
+
 pub fn save_bundle(dir: &Path, bundle: &AuxBundle) -> Result<(), AuxError> {
     std::fs::create_dir_all(dir)
         .map_err(|err| AuxError::new(format!("create {}: {err}", dir.display())))?;

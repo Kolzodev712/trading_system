@@ -12,7 +12,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{error, warn};
 use trading_core::registry::symbol::SymbolRegistry;
-use trading_core::types::common::{Instrument, InstrumentType, Pair};
+use trading_core::types::common::{Instrument, InstrumentType, Pair, Side};
 use trading_core::types::exchange::{Balance, OrderRequest};
 
 /// Risk manager - orchestrates all risk checks
@@ -139,13 +139,19 @@ impl RiskManager {
         RiskCheckResult::allowed()
     }
 
-    /// Pre-trade risk check (for any order request)
+    /// Pre-trade risk check (for any order request).
+    ///
+    /// `position_qty` is the filled position. Futures orders that reduce it are not
+    /// blocked for lack of the base asset. `leverage` scales the quote margin
+    /// required to increase a futures position.
     pub async fn check_pre_trade(
         &self,
         order_request: &OrderRequest,
         trading_state: &TradingState,
         balances: &[Balance],
         current_prices: Option<&HashMap<Pair, Decimal>>,
+        position_qty: Decimal,
+        leverage: Option<u32>,
     ) -> RiskCheckResult {
         // Check circuit breaker first (highest priority)
         if !self.circuit_breaker.is_allowed().await {
@@ -178,8 +184,8 @@ impl RiskManager {
             }
         }
 
-        // Check balance
-        let balance_check = self.check_balance(order_request, balances);
+        // Check balance. Futures reductions are allowed through; increases use quote margin.
+        let balance_check = check_order_balance(order_request, balances, position_qty, leverage);
         if !balance_check.allowed {
             return balance_check;
         }
@@ -420,5 +426,139 @@ impl RiskManager {
         }
 
         RiskCheckResult::allowed()
+    }
+}
+
+/// Buy increases exposure when the position is flat or long. Sell increases it when flat or short.
+pub fn order_increases_exposure(side: Side, position_qty: Decimal) -> bool {
+    match side {
+        Side::Buy => position_qty >= Decimal::ZERO,
+        Side::Sell => position_qty <= Decimal::ZERO,
+    }
+}
+
+/// Spot checks inventory. Futures increases require quote margin. Futures reductions do not
+/// require the base asset, so a long can be sold and a short can be bought back.
+pub fn check_order_balance(
+    order_request: &OrderRequest,
+    balances: &[Balance],
+    position_qty: Decimal,
+    leverage: Option<u32>,
+) -> RiskCheckResult {
+    let pair = order_request.instrument.pair.clone();
+    if matches!(
+        order_request.instrument.instrument_type(),
+        InstrumentType::Futures | InstrumentType::Derivitives
+    ) {
+        if !order_increases_exposure(order_request.side.clone(), position_qty) {
+            return RiskCheckResult::allowed();
+        }
+        let mut required = order_request.price * order_request.amount;
+        if let Some(lev) = leverage {
+            if lev > 0 {
+                required /= Decimal::from(lev);
+            }
+        }
+        let available = balances
+            .iter()
+            .find(|b| b.symbol.as_ref() == pair.quote.as_str())
+            .map(|b| b.free)
+            .unwrap_or(Decimal::ZERO);
+        if available < required {
+            return RiskCheckResult::blocked(SmolStr::new(format!(
+                "Insufficient futures margin: need {} {}, have {}",
+                required, pair.quote, available
+            )));
+        }
+        return RiskCheckResult::allowed();
+    }
+
+    match order_request.side {
+        Side::Buy => {
+            let required = order_request.price * order_request.amount;
+            let available = balances
+                .iter()
+                .find(|b| b.symbol.as_ref() == pair.quote.as_str())
+                .map(|b| b.free)
+                .unwrap_or(Decimal::ZERO);
+            if available < required {
+                return RiskCheckResult::blocked(SmolStr::new(format!(
+                    "Insufficient balance: need {} {}, have {}",
+                    required, pair.quote, available
+                )));
+            }
+        }
+        Side::Sell => {
+            let required = order_request.amount;
+            let available = balances
+                .iter()
+                .find(|b| b.symbol.as_ref() == pair.base.as_str())
+                .map(|b| b.free)
+                .unwrap_or(Decimal::ZERO);
+            if available < required {
+                return RiskCheckResult::blocked(SmolStr::new(format!(
+                    "Insufficient balance: need {} {}, have {}",
+                    required, pair.base, available
+                )));
+            }
+        }
+    }
+    RiskCheckResult::allowed()
+}
+
+#[cfg(test)]
+mod balance_tests {
+    use super::*;
+    use rust_decimal_macros::dec;
+    use trading_core::types::common::{Instrument, OrderType};
+
+    fn req(instrument_type: InstrumentType, side: Side) -> OrderRequest {
+        OrderRequest {
+            instrument: Instrument::new(instrument_type, Pair::new("BTC", "USDT")),
+            side,
+            order_type: OrderType::Limit,
+            price: dec!(100),
+            amount: dec!(1),
+            timestamp: None,
+            exchange_params: Default::default(),
+        }
+    }
+
+    fn usdt(free: Decimal) -> Balance {
+        Balance {
+            symbol: "USDT".into(),
+            free,
+            used: Decimal::ZERO,
+            total: free,
+        }
+    }
+
+    #[test]
+    fn futures_sell_to_close_does_not_require_base_inventory() {
+        let result = check_order_balance(
+            &req(InstrumentType::Futures, Side::Sell),
+            &[],
+            dec!(1),
+            Some(5),
+        );
+        assert!(result.allowed);
+    }
+
+    #[test]
+    fn futures_short_open_uses_quote_margin() {
+        let blocked = check_order_balance(
+            &req(InstrumentType::Futures, Side::Sell),
+            &[usdt(dec!(10))],
+            Decimal::ZERO,
+            Some(5),
+        );
+        assert!(!blocked.allowed);
+        let allowed = check_order_balance(
+            &req(InstrumentType::Futures, Side::Sell),
+            &[usdt(dec!(20))],
+            Decimal::ZERO,
+            Some(5),
+        );
+        assert!(allowed.allowed);
     }
 }

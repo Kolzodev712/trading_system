@@ -49,6 +49,8 @@ async fn test_indicator_resolver_orderbook_price() {
         bids: vec![(dec!(50000), dec!(1.0))],
         asks: vec![(dec!(50100), dec!(1.0))],
         timestamp: 1000,
+        update_kind: Default::default(),
+        sequence: None,
     };
 
     let price_config = PriceConfig::MidPrice {

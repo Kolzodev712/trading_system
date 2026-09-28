@@ -290,6 +290,15 @@ pub async fn strategy_runner(
         services.shutdown_manager.clone(),
     ));
 
+    {
+        let mut daily_source = crate::cex::DailyCompletedCandleSource::new(
+            bot_config.exchange_engine.exchange.clone(),
+            instrument_type.clone(),
+        );
+        let manager = strategy_manager_arc.read().await;
+        daily_source.poll_pairs(&all_symbols, &manager).await;
+    }
+
     info!(
         "Creating Strategy Executor for {} strategy(ies) with {} pair(s)...",
         strategy_infos.len(),
@@ -397,7 +406,7 @@ pub async fn strategy_runner(
         trading_reconciliation_interval_secs,
         services.asset_service.clone(),
         bot_config.exchange_engine.exchange.clone(),
-        instrument_type,
+        instrument_type.clone(),
         min_order_size,
         step_size,
         tick_size,
@@ -441,48 +450,57 @@ pub async fn strategy_runner(
         .await;
     });
 
-    let refresh_daily = strategy_configs
+    let refresh_manager = strategy_manager_arc.clone();
+    let refresh_pairs = all_symbols.clone();
+    let mut refresh_shutdown = services.shutdown_manager.subscribe();
+    let mut daily_source = crate::cex::DailyCompletedCandleSource::new(
+        bot_config.exchange_engine.exchange.clone(),
+        instrument_type.clone(),
+    );
+    let refresh_donchian = strategy_configs
         .iter()
         .any(|config| matches!(config.strategy_type.as_str(), "Donchian" | "donchian"));
-    if refresh_daily {
-        let refresh_manager = strategy_manager_arc.clone();
-        let refresh_pairs = all_symbols.clone();
-        let mut refresh_shutdown = services.shutdown_manager.subscribe();
-        tokio::spawn(async move {
-            let mut tick = tokio::time::interval(std::time::Duration::from_secs(60));
-            loop {
-                tokio::select! {
-                    _ = tick.tick() => {
-                        let now_ms = std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .map(|d| d.as_millis() as u64)
-                            .unwrap_or(0);
-                        for pair in &refresh_pairs {
-                            match crate::cex::fetch_bybit_klines(pair, "D", 60).await {
-                                Ok(candles) => {
-                                    let closed = crate::cex::completed_candles(candles, now_ms, 86_400_000);
-                                    let bars: Vec<_> = closed
-                                        .iter()
-                                        .map(|c| (c.timestamp_ms, c.high, c.low, c.close))
-                                        .collect();
-                                    if let Err(e) = refresh_manager
-                                        .read()
-                                        .await
-                                        .seed_daily_bars(pair, &bars)
-                                        .await
-                                    {
-                                        warn!("Daily candle refresh failed for {pair}: {e}");
-                                    }
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(std::time::Duration::from_secs(60));
+        loop {
+            tokio::select! {
+                _ = tick.tick() => {
+                    let now_ms = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_millis() as u64)
+                        .unwrap_or(0);
+                    {
+                        let manager = refresh_manager.read().await;
+                        daily_source.poll_pairs(&refresh_pairs, &manager).await;
+                    }
+                    if !refresh_donchian {
+                        continue;
+                    }
+                    for pair in &refresh_pairs {
+                        match crate::cex::fetch_bybit_klines(pair, "D", 60).await {
+                            Ok(candles) => {
+                                let closed = crate::cex::completed_candles(candles, now_ms, 86_400_000);
+                                let bars: Vec<_> = closed
+                                    .iter()
+                                    .map(|c| (c.timestamp_ms, c.high, c.low, c.close))
+                                    .collect();
+                                if let Err(e) = refresh_manager
+                                    .read()
+                                    .await
+                                    .seed_daily_bars(pair, &bars)
+                                    .await
+                                {
+                                    warn!("Daily candle refresh failed for {pair}: {e}");
                                 }
-                                Err(e) => warn!("Daily kline refresh failed for {pair}: {e}"),
                             }
+                            Err(e) => warn!("Daily kline refresh failed for {pair}: {e}"),
                         }
                     }
-                    _ = refresh_shutdown.recv() => break,
                 }
+                _ = refresh_shutdown.recv() => break,
             }
-        });
-    }
+        }
+    });
 
     if let Some(tsm) = services.trading_state_manager.clone() {
         for symbol in &all_symbols {

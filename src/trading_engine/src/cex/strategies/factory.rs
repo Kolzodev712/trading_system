@@ -58,6 +58,12 @@ pub fn build_strategy(args: StrategyFactoryArgs) -> Result<Arc<RwLock<dyn Strate
             args.config_tick_size,
             args.config_min_notional,
         )))),
+        rejected @ ("DonchianDailyV1"
+        | "donchian_daily_v1"
+        | "BTCPriceMALongFlatV1"
+        | "btc_price_ma_long_flat_v1") => Err(EngineError::CustomError(anyhow::anyhow!(
+            "{rejected} is not a live strategy"
+        ))),
         other => Err(EngineError::CustomError(anyhow::anyhow!(
             "Unknown strategy type: {other}"
         ))),
@@ -108,6 +114,17 @@ mod tests {
 
     #[test]
     fn donchian_daily_v1_is_not_a_live_strategy() {
-        assert!(build_strategy(args("DonchianDailyV1")).is_err());
+        match build_strategy(args("DonchianDailyV1")) {
+            Err(err) => assert!(err.to_string().contains("not a live strategy")),
+            Ok(_) => panic!("DonchianDailyV1 must not be a live factory strategy"),
+        }
+    }
+
+    #[test]
+    fn btc_price_ma_long_flat_v1_is_not_a_live_strategy() {
+        match build_strategy(args("BTCPriceMALongFlatV1")) {
+            Err(err) => assert!(err.to_string().contains("not a live strategy")),
+            Ok(_) => panic!("BTCPriceMALongFlatV1 must not be a live factory strategy"),
+        }
     }
 }

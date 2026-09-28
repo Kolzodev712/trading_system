@@ -48,4 +48,12 @@ impl Strategy for StrategyManagerWrapper {
         let manager = self.strategy_manager.read().await;
         manager.on_execution_report(order).await
     }
+
+    async fn on_completed_candle(
+        &mut self,
+        candle: &trading_core::types::CompletedCandle,
+    ) -> Result<(), EngineError> {
+        let manager = self.strategy_manager.read().await;
+        manager.on_completed_candle(candle).await
+    }
 }

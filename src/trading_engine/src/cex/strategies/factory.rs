@@ -1,14 +1,20 @@
 //! Build CEX strategies from config `strategy_type`. See design log 008.
 
 use crate::cex::state::Strategy;
-use crate::cex::strategies::{BuyLowSellHigh, Donchian, PropHold};
+use crate::cex::strategies::{
+    BtcPriceMaLongFlatV1, BtcPriceMaLongFlatV1Config, BuyLowSellHigh, Donchian, PropHold,
+    PRIMARY_LOOKBACK,
+};
 use asset_engine::AssetService;
 use rust_decimal::Decimal;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use trading_core::{
     error::EngineError,
-    types::common::{Exchange, Pair},
+    types::{
+        common::{Exchange, InstrumentType, Pair},
+        ExecutionMode,
+    },
 };
 
 pub struct StrategyFactoryArgs {
@@ -29,6 +35,10 @@ pub struct StrategyFactoryArgs {
     pub config_step_size: Decimal,
     pub config_tick_size: Decimal,
     pub config_min_notional: Decimal,
+    pub execution_mode: ExecutionMode,
+    pub instrument_type: InstrumentType,
+    pub max_entry_age_secs: Option<u64>,
+    pub lookback: Option<usize>,
 }
 
 pub fn build_strategy(args: StrategyFactoryArgs) -> Result<Arc<RwLock<dyn Strategy>>, EngineError> {
@@ -58,12 +68,23 @@ pub fn build_strategy(args: StrategyFactoryArgs) -> Result<Arc<RwLock<dyn Strate
             args.config_tick_size,
             args.config_min_notional,
         )))),
-        rejected @ ("DonchianDailyV1"
-        | "donchian_daily_v1"
-        | "BTCPriceMALongFlatV1"
-        | "btc_price_ma_long_flat_v1") => Err(EngineError::CustomError(anyhow::anyhow!(
-            "{rejected} is not a live strategy"
-        ))),
+        "BTCPriceMALongFlatV1" | "btc_price_ma_long_flat_v1" => {
+            if args.execution_mode != ExecutionMode::Shadow {
+                return Err(EngineError::CustomError(anyhow::anyhow!(
+                    "BTCPriceMALongFlatV1 is not a live strategy"
+                )));
+            }
+            let adapter = BtcPriceMaLongFlatV1::new(BtcPriceMaLongFlatV1Config {
+                symbol: args.symbol,
+                lookback: args.lookback.unwrap_or(PRIMARY_LOOKBACK),
+                instrument_type: args.instrument_type,
+                max_entry_age_secs: args.max_entry_age_secs,
+            })?;
+            Ok(Arc::new(RwLock::new(adapter)))
+        }
+        rejected @ ("DonchianDailyV1" | "donchian_daily_v1") => Err(EngineError::CustomError(
+            anyhow::anyhow!("{rejected} is not a live strategy"),
+        )),
         other => Err(EngineError::CustomError(anyhow::anyhow!(
             "Unknown strategy type: {other}"
         ))),
@@ -94,6 +115,10 @@ mod tests {
             config_step_size: Decimal::new(1, 5),
             config_tick_size: Decimal::new(1, 2),
             config_min_notional: Decimal::new(5, 0),
+            execution_mode: ExecutionMode::Exchange,
+            instrument_type: InstrumentType::Futures,
+            max_entry_age_secs: None,
+            lookback: None,
         }
     }
 
@@ -126,5 +151,12 @@ mod tests {
             Err(err) => assert!(err.to_string().contains("not a live strategy")),
             Ok(_) => panic!("BTCPriceMALongFlatV1 must not be a live factory strategy"),
         }
+    }
+
+    #[test]
+    fn btc_price_ma_long_flat_v1_builds_in_shadow() {
+        let mut shadow = args("BTCPriceMALongFlatV1");
+        shadow.execution_mode = ExecutionMode::Shadow;
+        assert!(build_strategy(shadow).is_ok());
     }
 }

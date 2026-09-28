@@ -77,12 +77,15 @@ impl DailyCompletedCandleSource {
         Ok(n)
     }
 
-    pub async fn poll_pairs(&mut self, pairs: &[Pair], manager: &StrategyManager) {
+    pub async fn poll_pairs(&mut self, pairs: &[Pair], manager: &StrategyManager) -> usize {
+        let mut accepted = 0;
         for pair in pairs {
-            if let Err(err) = self.poll_pair(pair, manager).await {
-                warn!("Completed daily candle poll failed for {pair}: {err}");
+            match self.poll_pair(pair, manager).await {
+                Ok(n) => accepted += n,
+                Err(err) => warn!("Completed daily candle poll failed for {pair}: {err}"),
             }
         }
+        accepted
     }
 }
 

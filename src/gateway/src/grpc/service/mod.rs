@@ -51,6 +51,9 @@ pub struct TradingCliServiceImpl {
     dex_balance_manager_id: Option<SmolStr>,
     strategy_operator: Option<strategy_config::StrategyOperatorHandle>,
     strategy_caps: Option<Arc<RwLock<std::collections::HashMap<String, rust_decimal::Decimal>>>>,
+    execution_mode: trading_core::types::ExecutionMode,
+    venue_label: String,
+    environment: String,
 }
 
 impl TradingCliServiceImpl {
@@ -87,6 +90,9 @@ impl TradingCliServiceImpl {
             dex_balance_manager_id: None,
             strategy_operator: None,
             strategy_caps: None,
+            execution_mode: trading_core::types::ExecutionMode::Exchange,
+            venue_label: "UNKNOWN".to_string(),
+            environment: "UNKNOWN".to_string(),
         }
     }
 
@@ -178,6 +184,18 @@ impl TradingCliServiceImpl {
         self
     }
 
+    pub fn with_execution_status(
+        mut self,
+        execution_mode: trading_core::types::ExecutionMode,
+        venue_label: impl Into<String>,
+        environment: impl Into<String>,
+    ) -> Self {
+        self.execution_mode = execution_mode;
+        self.venue_label = venue_label.into();
+        self.environment = environment.into();
+        self
+    }
+
     fn clone_for_streaming(&self) -> Self {
         Self {
             level_manager: self.level_manager.clone(),
@@ -201,6 +219,9 @@ impl TradingCliServiceImpl {
             dex_balance_manager_id: self.dex_balance_manager_id.clone(),
             strategy_operator: self.strategy_operator.clone(),
             strategy_caps: self.strategy_caps.clone(),
+            execution_mode: self.execution_mode,
+            venue_label: self.venue_label.clone(),
+            environment: self.environment.clone(),
         }
     }
 
@@ -235,6 +256,7 @@ impl TradingCliServiceImpl {
             dex_strategy_manager: self.dex_strategy_manager.clone(),
             dex_indicator_engine: self.dex_indicator_engine.clone(),
             strategy_caps: self.strategy_caps.clone(),
+            execution_mode: self.execution_mode,
         }
     }
 
@@ -270,11 +292,15 @@ impl TradingCliService for TradingCliServiceImpl {
 
     async fn get_trading_status(
         &self,
-        request: Request<trading_cli::GetTradingStatusRequest>,
+        _request: Request<trading_cli::GetTradingStatusRequest>,
     ) -> Result<Response<trading_cli::GetTradingStatusResponse>, Status> {
-        self.trading_control_service()
-            .get_trading_status(request)
-            .await
+        let enabled = self.trading_control.is_enabled().await;
+        Ok(Response::new(trading_cli::GetTradingStatusResponse {
+            enabled,
+            execution_mode: self.execution_mode.as_str().to_string(),
+            venue: self.venue_label.clone(),
+            environment: self.environment.clone(),
+        }))
     }
 
     async fn get_levels(

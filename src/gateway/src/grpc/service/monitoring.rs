@@ -30,6 +30,7 @@ pub struct MonitoringService {
     pub exchange: String,
     pub dex_venue_label: Option<String>,
     pub strategy_caps: Option<Arc<RwLock<HashMap<String, rust_decimal::Decimal>>>>,
+    pub execution_mode: trading_core::types::ExecutionMode,
 }
 
 #[derive(Clone)]
@@ -498,6 +499,25 @@ impl MonitoringService {
             true
         };
 
+        let snapshot = if let Some(ref strategy_manager) = self.strategy_manager {
+            let now_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0);
+            strategy_manager
+                .read()
+                .await
+                .runtime_snapshot(&strategy_id, now_ms)
+                .await
+        } else {
+            None
+        };
+
+        let operational_role = match self.execution_mode {
+            trading_core::types::ExecutionMode::Shadow => "SHADOW".to_string(),
+            trading_core::types::ExecutionMode::Exchange => "BASELINE".to_string(),
+        };
+
         Some(trading_cli::StrategyStatus {
             strategy_id: strategy_id.clone(),
             strategy_name: strategy_info.strategy_name.clone(),
@@ -509,8 +529,15 @@ impl MonitoringService {
             unrealized_pnl_percent,
             active_orders: active_orders as i32,
             max_active_orders: strategy_info.max_active_orders as i32,
-            last_signal: "None".to_string(),
-            signal_strength: String::new(),
+            last_signal: snapshot
+                .as_ref()
+                .map(|s| s.model_direction.clone())
+                .unwrap_or_else(|| "None".to_string()),
+            signal_strength: snapshot
+                .as_ref()
+                .and_then(|s| s.log_spread)
+                .map(|v| v.to_string())
+                .unwrap_or_default(),
             max_position: if let Some(caps) = &self.strategy_caps {
                 caps.read()
                     .await
@@ -520,6 +547,74 @@ impl MonitoringService {
             } else {
                 String::new()
             },
+            execution_mode: self.execution_mode.as_str().to_string(),
+            readiness: snapshot
+                .as_ref()
+                .map(|s| s.readiness.clone())
+                .unwrap_or_default(),
+            readiness_reason: snapshot
+                .as_ref()
+                .map(|s| s.readiness_reason.clone())
+                .unwrap_or_default(),
+            last_completed_candle_start_ms: snapshot
+                .as_ref()
+                .and_then(|s| s.last_completed_start_ms)
+                .unwrap_or(0) as i64,
+            last_completed_candle_end_ms: snapshot
+                .as_ref()
+                .and_then(|s| s.last_completed_end_ms)
+                .unwrap_or(0) as i64,
+            last_close: snapshot
+                .as_ref()
+                .and_then(|s| s.last_close)
+                .map(|d| d.to_string())
+                .unwrap_or_default(),
+            geometric_mean: snapshot
+                .as_ref()
+                .and_then(|s| s.geometric_mean)
+                .map(|d| d.to_string())
+                .unwrap_or_default(),
+            log_spread: snapshot
+                .as_ref()
+                .and_then(|s| s.log_spread)
+                .map(|v| v.to_string())
+                .unwrap_or_default(),
+            model_direction: snapshot
+                .as_ref()
+                .map(|s| s.model_direction.clone())
+                .unwrap_or_default(),
+            desired_target: snapshot
+                .as_ref()
+                .map(|s| s.desired_target.clone())
+                .unwrap_or_default(),
+            filled_position: trading_state
+                .position_qty(&strategy_info.symbol)
+                .to_string(),
+            working_qty: trading_state.working_qty(&strategy_info.symbol).to_string(),
+            reserved_qty: trading_state
+                .reserved_submission_qty(&strategy_info.symbol)
+                .to_string(),
+            effective_qty: trading_state
+                .effective_position_qty(&strategy_info.symbol)
+                .to_string(),
+            fresh_entry_eligible: snapshot
+                .as_ref()
+                .map(|s| s.fresh_entry_eligible)
+                .unwrap_or(false),
+            unresolved_submission: trading_state.has_unresolved_submission(&strategy_info.symbol),
+            research_disposition: snapshot
+                .as_ref()
+                .map(|s| s.research_disposition.clone())
+                .unwrap_or_default(),
+            operational_role,
+            strategy_version: snapshot
+                .as_ref()
+                .map(|s| s.strategy_version.clone())
+                .unwrap_or_default(),
+            config_hash: snapshot
+                .as_ref()
+                .map(|s| s.config_hash.clone())
+                .unwrap_or_default(),
         })
     }
 

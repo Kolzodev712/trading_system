@@ -31,7 +31,7 @@ pub enum CandleIngestEvent {
         last_start_ms: u64,
         candle: Box<CompletedCandle>,
     },
-    Accepted(CompletedCandle),
+    Accepted(Box<CompletedCandle>),
 }
 
 impl SequentialCandleIngest {
@@ -71,7 +71,7 @@ impl SequentialCandleIngest {
             }
         }
         self.last = Some(candle.clone());
-        CandleIngestEvent::Accepted(candle)
+        CandleIngestEvent::Accepted(Box::new(candle))
     }
 
     /// Push a chronological batch. Returns accepted candles only; gaps/conflicts are not applied.
@@ -83,7 +83,7 @@ impl SequentialCandleIngest {
         let mut accepted = Vec::new();
         for candle in candles {
             if let CandleIngestEvent::Accepted(candle) = self.observe(candle, now_ms) {
-                accepted.push(candle);
+                accepted.push(*candle);
             }
         }
         accepted

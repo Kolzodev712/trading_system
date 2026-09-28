@@ -118,6 +118,10 @@ fn factory_args(strategy_type: &str, symbol: Pair) -> StrategyFactoryArgs {
         config_step_size: Decimal::new(1, 5),
         config_tick_size: Decimal::new(1, 2),
         config_min_notional: Decimal::new(5, 0),
+        execution_mode: trading_core::types::ExecutionMode::Exchange,
+        instrument_type: InstrumentType::Futures,
+        max_entry_age_secs: None,
+        lookback: None,
     }
 }
 

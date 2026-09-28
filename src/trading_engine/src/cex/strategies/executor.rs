@@ -16,7 +16,7 @@ use trading_core::{
     types::{
         common::{Exchange, InstrumentType, OrderId},
         exchange::{Order, OrderRequest},
-        Pair,
+        ExecutionMode, Pair,
     },
     venue::cex::traits::TradingClient,
 };
@@ -54,6 +54,7 @@ pub struct StrategyExecutor<S: Strategy + 'static> {
     config_min_notional: Decimal,
     /// Trading control - checks if trading is enabled (optional, for TUI control)
     trading_enabled: Option<Arc<tokio::sync::RwLock<bool>>>,
+    execution_mode: ExecutionMode,
     /// Optional StrategyManager for batching (only set when using StrategyManagerWrapper)
     strategy_manager:
         Option<Arc<RwLock<crate::cex::strategies::strategy_manager::StrategyManager>>>,
@@ -102,6 +103,7 @@ impl<S: Strategy> StrategyExecutor<S> {
             config_tick_size,
             config_min_notional,
             trading_enabled: None,
+            execution_mode: ExecutionMode::Exchange,
             strategy_manager: None,
             risk_manager: None,
             strategy_caps: Arc::new(RwLock::new(std::collections::HashMap::new())),
@@ -136,6 +138,11 @@ impl<S: Strategy> StrategyExecutor<S> {
     /// Set trading enabled flag (for TUI control)
     pub fn with_trading_control(mut self, trading_enabled: Arc<tokio::sync::RwLock<bool>>) -> Self {
         self.trading_enabled = Some(trading_enabled);
+        self
+    }
+
+    pub fn with_execution_mode(mut self, execution_mode: ExecutionMode) -> Self {
+        self.execution_mode = execution_mode;
         self
     }
 
@@ -218,10 +225,14 @@ impl<S: Strategy> StrategyExecutor<S> {
         let trading_state_manager_for_cleanup = Arc::clone(&self.trading_state_manager);
         let trading_client_for_cleanup = Arc::clone(&trading_client);
         let order_timeout = self.order_timeout_secs;
+        let skip_exchange_orders = self.execution_mode == ExecutionMode::Shadow;
         tokio::spawn(async move {
             let mut interval = interval(Duration::from_secs(60)); // Every minute
             loop {
                 interval.tick().await;
+                if skip_exchange_orders {
+                    continue;
+                }
 
                 // Get stale orders from TradingStateManager
                 let trading_state = trading_state_manager_for_cleanup.get_state();
@@ -280,23 +291,13 @@ impl<S: Strategy> StrategyExecutor<S> {
                         continue;
                     }
 
-                    // Check global trading control first
-                    let global_enabled = if let Some(ref trading_enabled) = self.trading_enabled {
+                    // Evaluate even when exchange execution is forbidden (Shadow / paused).
+                    let trading_enabled = if let Some(ref trading_enabled) = self.trading_enabled {
                         *trading_enabled.read().await
                     } else {
-                        true // Default to enabled if no control set
+                        true
                     };
-
-                    if !global_enabled {
-                        static SKIP_COUNT: std::sync::atomic::AtomicU64 =
-                            std::sync::atomic::AtomicU64::new(0);
-                        let skip_count =
-                            SKIP_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                        if skip_count.is_multiple_of(100) {
-                            info!("[StrategyExecutor] Global trading disabled, skipping orderbook (skipped {} so far)", skip_count);
-                        }
-                        continue; // Global trading disabled, skip this orderbook
-                    }
+                    let may_submit = self.execution_mode.permits_exchange_orders(trading_enabled);
 
                     // Log that we're processing orderbooks (periodically)
                     static OB_COUNT: std::sync::atomic::AtomicU64 =
@@ -381,6 +382,17 @@ impl<S: Strategy> StrategyExecutor<S> {
                     drop(caps);
 
                     if all_requests.is_empty() {
+                        continue;
+                    }
+
+                    if !may_submit {
+                        if self.execution_mode == ExecutionMode::Shadow {
+                            info!(
+                                "[StrategyExecutor] Shadow mode: {} would-be order(s) for {} not sent",
+                                all_requests.len(),
+                                orderbook_pair
+                            );
+                        }
                         continue;
                     }
 

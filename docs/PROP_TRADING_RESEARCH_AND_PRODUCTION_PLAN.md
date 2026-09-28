@@ -1,6 +1,6 @@
 # Prop Trading Productionization and Research Architecture Plan
 
-**Status:** Increments 0–5 are implemented. 5R composition code is in `a641304`; follow-up tests/recipes and initial 5A backend fields are in `6295913`, with UI work in `trading-system-ui` `66025f4`. The 5R verification record and 5A acceptance remain open. Complete the correction gate below before 5B.  
+**Status:** Increments 0–5 are implemented. 5R composition is in `a641304`; backend follow-up through `9a0dd97` and UI 5A work through `0476c58` address most code-review findings. 5R runtime/command evidence and 5A browser acceptance remain open, with one timestamp fail-open correction below. Complete these gates before 5B.  
 **Date:** 2026-09-28  
 **Repository:** `trading_system`  
 **Audience:** Cursor / implementation agent / repository owner  
@@ -2019,8 +2019,8 @@ This document is the authority for **the Candidate #2 research/runtime separatio
 | Increment | Repositories and guide |
 | --- | --- |
 | 0–5 | `trading_system`: functionally implemented on current master; check the status table in section 67 |
-| 5R (verification pending) | `trading_system`: code in `a641304`, local test recipes in `6295913`; record real results and enforcement |
-| 5A (correction pending) | Backend `6295913`, UI `66025f4`; close the 5A review findings below before 5B |
+| 5R (verification pending) | `trading_system`: composition in `a641304`, local gate in `9a0dd97`; record real command results and runtime parity |
+| 5A (acceptance pending) | Backend `9a0dd97`, UI `0476c58`; fix timestamp fail-open and record real browser evidence before 5B |
 | 5B | [`k-paper` integration guide](https://github.com/Kolzodev712/k-paper/blob/master/docs/PROP_TRADING_INTEGRATION_GUIDE.md) for existing Spot connectivity only, with the UI on the same runner |
 | 6–7 | `trading_system` recovery/futures logic and K-paper protocol/futures support; change producer and adapter together |
 | 8–9 | `trading_system` risk/ledger and UI controls/economic display; sync the proto and generated UI client |
@@ -2029,7 +2029,7 @@ This document is the authority for **the Candidate #2 research/runtime separatio
 
 Check out the relevant repositories with write access before starting a cross-repo increment. Record starting and ending SHAs for each; pin matching revisions and run both producer/consumer checks before marking the increment complete. After 5R, use the Candidate #2 app binary for Shadow/Paper/demo rather than assuming the default runner binary can instantiate it. Implement backend state and the source proto first, then sync the UI proto and generated code. When a precise simulator accounting rule, API shape or security mechanism is not fixed here, document the bounded choice and its acceptance tests within that increment rather than silently guessing or postponing the safety gate.
 
-`trading_system` Increments 0–5, 5R code and initial 5A backend work are implemented (see section 67); the UI also has initial 5A work. **Close 5R verification and 5A corrections before 5B or 6.** This plan does not authorize implementation of a future portfolio allocator, strategy registry/graveyard, broader instrument/venue expansion, a self-hosting operations program, Candidate #3's trading rule or mainnet deployment. Those need separate decisions/specifications when the evidence and need exist.
+`trading_system` Increments 0–5, 5R code and 5A backend/UI corrections are implemented (see section 67). **Close 5R verification and the remaining 5A correction/acceptance before 5B or 6.** This plan does not authorize implementation of a future portfolio allocator, strategy registry/graveyard, broader instrument/venue expansion, a self-hosting operations program, Candidate #3's trading rule or mainnet deployment. Those need separate decisions/specifications when the evidence and need exist.
 
 ---
 
@@ -2203,7 +2203,7 @@ Stop and report.
 
 ## Increment 5R — remove live/research coupling (verification gate still open)
 
-**Code status:** Implemented in `a64130422f8aee3e25d6d9b1a089c7015c5964b6`; `62959135d13e43369229be1f8cc78d7198191f2c` added package test/graph recipes and two adapter tests. Source review supports the one-process app, removal of live/research Cargo edges and Exchange refusal. Acceptance still requires recorded execution of the checks and behavioral evidence below.
+**Code status:** Implemented in `a64130422f8aee3e25d6d9b1a089c7015c5964b6`; `62959135d13e43369229be1f8cc78d7198191f2c` added package test/graph recipes and adapter tests; `9a0dd97d7a67595a793002ac1d40f9645c759828` wires a local `just gate-5r` and strengthens the adapter/guard assertions. Source review supports the one-process app, removal of live/research Cargo edges and Exchange refusal. Acceptance still requires recorded command results and runtime behavioral evidence below.
 
 **Starting point:** `master` `44f3b02a72f8a60ec41ed33e0ad8516651dec8af` recorded Increments 0–5. Record the actual starting SHA when work begins; do not overwrite a newer commit. Do not redo the frozen research or Shadow logic. This is a boundary correction with parity gates, not permission for Exchange execution.
 
@@ -2222,13 +2222,13 @@ Stop and report.
 1. At `a641304` (or a subsequent fix SHA), run `cargo test -p btc_price_ma_app --all-targets` and `cargo build -p btc_price_ma_app --bin btc_price_ma_app`; exercise the factory refusal in Exchange and the frozen N=28 adapter parity test. Run focused package tests for `strategy_core`, `research_engine`, `research_cli`, `trading_engine` and `runner` (use `cargo test -p <crate> --all-targets` for each), plus the existing Shadow guard, journal and restart tests. Record exact test counts and outcomes, not just a root `just test` result.
 2. Run `cargo tree -p trading_engine -e normal,build,dev --all-features` and `cargo tree -p runner -e normal,build,dev --all-features`; confirm no `strategy_core`, `research_engine`, `research_cli` or `btc_price_ma_app` anywhere in either tree. Run the matching `cargo tree -p btc_price_ma_app -e normal,build,dev --all-features` and confirm both `strategy_core` and `runner` are present. Check the default runner's explicit rejection of Candidate #2 and the app's Shadow-only construction.
 3. Produce a deterministic Shadow before/after comparison at the same config and candles: strategy ID/config hash, decisions, journal fields, snapshot/restart behavior and zero guarded exchange order calls. If a test does not yet cover one of these, add a focused assertion or harness. Keep the old research command parity and frozen decision logs unchanged.
-4. Make the 5R package checks an enforced automated gate by explicitly selecting the relevant packages or using an appropriate `--workspace` invocation; retain a clear record of existing failures. A green root `just test` with zero tests is not 5R evidence. If a focused check fails, fix it before continuing. Initial 5A code was committed before this acceptance record; close both open gates before 5B.
+4. Run the focused package checks with explicit packages or an appropriate `--workspace` invocation and retain exact local output/test counts at a pinned SHA. `just gate-5r` is now a runnable local recipe, but its existence alone is not a passing result or a repository-enforced CI check. GitHub Actions is intentionally disabled here. Do not describe the gate as remotely enforced; if the owner requires pre-merge automation, add a separate required check. A green root `just test` with zero tests is not 5R evidence. If a focused check fails, fix it before continuing. Close both open gates before 5B.
 
 **Review of 5R follow-up `6295913` (2026-09-28):** `just test` and `just check` now select workspace packages, and `just test-5r-graph` exists, but no command outputs, test counts or Cargo trees were recorded with the commit. The same commit deleted `.github/workflows/ci.yml`; `just ci` does not call `test-5r-graph`, and there is no replacement automated gate visible in this repository. If removal of GitHub Actions was intentional, supply an enforceable alternative or explicitly revise the acceptance requirement with the owner; do not call a local recipe a CI gate. The two new adapter tests replay the same frozen log into two fresh adapters and pass zero as an input to the journal; they establish deterministic replay/serialization, not a real runner restart or zero outbound order calls. Keep 5R open until the relevant package tests, graph check and guarded runtime evidence are run and reported.
 
-## Increment 5A — Trading System UI Shadow observability
+**Review of `9a0dd97` (2026-09-28):** `just gate-5r` now selects the six relevant packages, builds the app, runs `test-5r-graph`, checks formatting and applies focused Clippy; local `just ci` invokes it. Bybit's `demo` configuration selects the dedicated demo REST/private-stream hosts and matches the new venue label. The adapter asserts baseline role, research disposition and deterministic intent after replay; the guard test counts attempted forbidden calls and its inner dummy panics if reached. These are useful source-level checks, but the commit includes no actual gate output/test counts/Cargo trees, and no GitHub Actions run exists for this SHA. The adapter test still compares two fresh replays of the frozen log rather than a persisted runner restart. The journal test intentionally supplies a nonzero would-have-requested count; it does not prove zero exchange calls. Record a deterministic runner Shadow run across process restart, comparing decisions/journal/snapshot with the pre-5R baseline and checking actual venue open orders and the guarded mutation path. A pinned, passing local `just gate-5r` transcript with the parity evidence can close this phase's verification; do not claim remote enforcement where none exists.\n\n## Increment 5A — Trading System UI Shadow observability
 
-**Status:** Initial backend status/proto implementation in `trading_system` `6295913` and UI implementation in `trading-system-ui` `66025f4`; acceptance is **not complete**. Perform the correction pass below before 5B.
+**Status:** Initial backend status/proto implementation in `trading_system` `6295913` and UI implementation in `trading-system-ui` `66025f4`; fixes in backend `9a0dd97` and UI `0476c58` address the venue/role and most stream/Shadow-display findings. Acceptance is **not complete**. Fix the timestamp fail-open and produce the recorded checks and browser/runtime evidence below before 5B.
 
 After the runner's authoritative status/proto fields exist, update the separate `trading-system-ui` repository and generated client. Show Candidate #2's **rejected-as-alpha / operational-baseline** distinction, last completed candle, signal/target, Shadow execution state, venue/environment, pair readiness and reason, freshness and errors. Keep model status visible when execution is paused. Connect to the actual runner; the old Rust TUI is not the deliverable.
 
@@ -2244,9 +2244,9 @@ Acceptance: proto copies and generated types match; UI unit/build checks pass; a
 
 **Restart control follow-up:** `initially_enabled` is reapplied after runtime snapshot restore in `runner` and can overwrite a persisted per-strategy disable. This preserves the previous Candidate #2 Shadow startup behavior, but before adding a UI strategy-disable control or enabling Exchange execution, define and test precedence so an operator disable survives restart while Shadow model evaluation and global entry pause remain distinct.
 
-## Increment 5B — existing Paper connectivity preflight
+**Review of backend `9a0dd97` and UI `0476c58` (2026-09-28):** The CEX strategy, CEX levels and DEX gRPC paths now publish independently derived venue/environment/mode. Candidate #2 publishes `BASELINE` from its model snapshot, separate from Shadow execution. Bybit testnet is `TESTNET`; `DEMO` follows the actual `demo` host setting. The UI starts the stream on the main screen, waits for its first update, expires silent/old data, marks stream end/failure stale, disables several control paths when not live, and displays the actual strategy `active_orders` count with a Shadow-violation marker. Unit/component tests cover these cases in source. One actionable bug remains: `computeStatusFreshness` treats a missing, zero or invalid `snapshotUnixMs` as live once other fields are set, because it only checks snapshot age when conversion succeeds. It also accepts a truthy `executionMode` value of `UNKNOWN`. Reject incomplete/invalid timestamp and unknown mode as `unknown` (controls disabled); add tests for those fields and a real stream payload. The strategy order count comes from runner trading state; corroborate the Shadow zero-order claim against an exchange-side read and guard evidence, not the UI text alone. No recorded `npm run generate`, `npm test`, `npm run build`, or browser -> Envoy -> matching runner session accompanies these commits. Capture that evidence with exact SHAs; keep 5B blocked until it passes.\n\n## Increment 5B — existing Paper connectivity preflight
 
-**Status:** Not started. Blocked until the 5R verification record and 5A correction/acceptance report are complete.
+**Status:** Not started. Blocked until the 5R verification record and 5A timestamp correction/browser acceptance report are complete.
 
 Run the existing `k-paper` server and `trading_system` Paper adapters with the documented Spot/levels configuration: market WS, trading WS, REST balance/open-order/trade reconciliation and asset rules. Connect the browser UI to the same runner and verify venue labeling. Record exact working endpoints and identify missing Candidate #2 futures operations and scenario controls.
 
@@ -2417,17 +2417,17 @@ Do not implement Candidate #3's trading rule until a separate strategy research 
 
 # 67. Current Cursor instruction
 
-The 5R composition is in `trading_system` `a641304`; the 5R follow-up and initial 5A backend fields are in `62959135d13e43369229be1f8cc78d7198191f2c`. Initial 5A UI is in `trading-system-ui` `66025f4a4352429ab364b4dea7a3fa0964a6be53`. K-paper remains at `7159249a2a591c8587c7a52f75023e363f8f2186`.
+The latest reviewed code is `trading_system` `9a0dd97d7a67595a793002ac1d40f9645c759828` and `trading-system-ui` `0476c5882b9507097459680010688fa121c2fb26`. K-paper remains at `70874973f0f9e38b7f3f5853ca51f604445ef3d1`. These SHAs identify reviewed implementation, not a passing runtime gate.
 
 | Increment | Status | Gate |
 | --- | --- | --- |
 | 0–5 | Done | Prior SHAs and audit evidence above |
-| 5R | Code and test recipes committed; acceptance evidence open | Record package tests, Cargo trees, Shadow runtime proof and an enforced validation path |
-| 5A | Initial backend/UI committed; correction required | Complete the five findings in section 5A, then report real browser and package tests |
+| 5R | Local gate and strengthened source tests committed; acceptance evidence open | Record `just gate-5r`, Cargo trees, frozen parity and actual Shadow restart/zero-order proof at pinned SHAs |
+| 5A | Most code corrections committed; acceptance open | Fix missing/invalid timestamp and unknown mode fail-open, then record UI generate/test/build and browser -> Envoy -> runner results |
 | 5B | Not started | Begin only after 5R and 5A acceptance |
 | 6+ | Not started | Follow section 54 after prior gates |
 
-Cursor: sync the three repositories and record starting SHAs. Complete the remaining 5R verification and the **5A correction pass only**. Treat source proto, generated UI client and runtime status as one contract. If a focused check fails, fix and report it. Do not begin 5B or later increments until the 5R evidence and 5A acceptance are complete and reviewed. This supersedes the earlier 5A-start handoff.
+Cursor: sync the three repositories and record starting SHAs. Finish the **5A timestamp/mode correction and the 5R/5A verification only**. Run the local gates and a pinned browser-to-runner Shadow session; compare actual exchange state and journal across runner restart. Report commands, test counts, observed runtime state and any failures. Stop at this acceptance boundary for review. Do not begin 5B or later increments until the gates pass; the local recipe is not evidence that it was executed.
 
 ---
 

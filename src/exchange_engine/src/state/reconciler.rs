@@ -4,8 +4,10 @@
 //! and provides reconciliation logic.
 
 use std::sync::Arc;
-use tokio::sync::{Notify, RwLock};
+use tokio::sync::RwLock;
 use tracing::{error, info};
+
+use super::ImmediateTrigger;
 use trading_core::{
     error::EngineError,
     types::{
@@ -26,7 +28,7 @@ pub struct StateReconciler {
     trading_client: Arc<RwLock<dyn TradingClient<OrderRequest>>>,
     reconciliation_interval: std::time::Duration,
     enabled: bool,
-    immediate: Arc<Notify>,
+    immediate: Arc<ImmediateTrigger>,
 }
 
 impl StateReconciler {
@@ -39,13 +41,14 @@ impl StateReconciler {
             trading_client,
             reconciliation_interval: std::time::Duration::from_secs(reconciliation_interval_secs),
             enabled,
-            immediate: Arc::new(Notify::new()),
+            immediate: Arc::new(ImmediateTrigger::new()),
         }
     }
 
     /// Wake the periodic task so REST is fetched without waiting for the next interval.
+    /// A request made while reconciliation is running is retained for the next cycle.
     pub fn request_immediate(&self) {
-        self.immediate.notify_waiters();
+        self.immediate.request();
     }
 
     /// Perform initial bootstrap reconciliation
@@ -121,11 +124,8 @@ impl StateReconciler {
             );
 
             loop {
-                tokio::select! {
-                    _ = interval.tick() => {}
-                    _ = immediate.notified() => {
-                        tracing::debug!("Immediate exchange-level reconciliation requested");
-                    }
+                if immediate.wait_tick_or_request(&mut interval).await {
+                    tracing::debug!("Immediate exchange-level reconciliation requested");
                 }
 
                 tracing::debug!("Running periodic exchange-level reconciliation (WS vs REST)");

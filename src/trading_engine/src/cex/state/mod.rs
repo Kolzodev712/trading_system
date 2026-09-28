@@ -55,6 +55,8 @@ pub struct TradingState {
     fill_applied: HashMap<OrderId, Decimal>,
     /// Intended orders recorded before the exchange acknowledges them.
     submissions: HashMap<SmolStr, PendingSubmission>,
+    /// Journal or recovery failure: block further sends until the process is repaired.
+    exposure_halt: Option<String>,
 }
 
 impl TradingState {
@@ -65,6 +67,7 @@ impl TradingState {
             pending_orders: HashMap::new(),
             fill_applied: HashMap::new(),
             submissions: HashMap::new(),
+            exposure_halt: None,
         }
     }
 
@@ -263,9 +266,29 @@ impl TradingState {
     }
 
     /// Transfer reserved exposure into a found working order without a gap or double count.
+    ///
+    /// Cumulative `filled_amount` is applied before the reservation is released so a missed
+    /// private fill cannot disappear from effective exposure.
     pub fn import_working_order(&mut self, order: Order) {
+        self.apply_fill(&order);
         self.clear_submission_for_order(&order);
         self.add_order(order);
+    }
+
+    /// Block further order sends after a durability or recovery failure.
+    pub fn halt_new_exposure(&mut self, reason: impl Into<String>) {
+        let reason = reason.into();
+        tracing::error!(reason = %reason, "new exposure halted");
+        self.exposure_halt = Some(reason);
+    }
+
+    pub fn exposure_halt_reason(&self) -> Option<&str> {
+        self.exposure_halt.as_deref()
+    }
+
+    /// True when the pair has an unresolved submission or the account is halted.
+    pub fn blocks_new_exposure(&self, symbol: &Pair) -> bool {
+        self.exposure_halt.is_some() || self.has_unresolved_submission(symbol)
     }
 
     pub fn pending_submissions(&self) -> &HashMap<SmolStr, PendingSubmission> {
@@ -607,5 +630,15 @@ mod tests {
         assert_eq!(state.position_qty(&pair), Decimal::new(2, 3));
         assert_eq!(state.working_qty(&pair), Decimal::ZERO);
         assert_eq!(state.effective_position_qty(&pair), Decimal::new(2, 3));
+    }
+
+    #[test]
+    fn halt_blocks_new_exposure_without_a_submission() {
+        let mut state = TradingState::new();
+        let pair = Pair::new("BTC", "USDT");
+        assert!(!state.blocks_new_exposure(&pair));
+        state.halt_new_exposure("journal unwritable");
+        assert!(state.blocks_new_exposure(&pair));
+        assert_eq!(state.exposure_halt_reason(), Some("journal unwritable"));
     }
 }

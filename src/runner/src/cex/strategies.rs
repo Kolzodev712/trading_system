@@ -1,5 +1,6 @@
 //! Strategy-based trading mode runner.
 
+use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -324,12 +325,6 @@ pub async fn strategy_runner_with(
         strategy_manager
             .add_strategy(strategy, strategy_id.clone(), pair.clone())
             .await;
-        if config.initially_enabled {
-            strategy_manager
-                .set_strategy_enabled(&strategy_id, true)
-                .await;
-            info!("Enabled {strategy_id} from initially_enabled");
-        }
         strategy_caps.insert(strategy_id, config.max_position);
         all_symbols.push(pair.clone());
         strategy_infos.push((
@@ -691,23 +686,21 @@ pub async fn strategy_runner_with(
         }
     }
 
-    if let Some(snap) = RuntimeSnapshot::load(SNAPSHOT_FILE)? {
-        apply_strategy_enablement(
-            &*strategy_manager_arc.read().await,
-            &strategy_configs,
-            Some(&snap),
-        )
-        .await;
-        if snap.mode == "strategies" {
-            if snap.global_trading {
-                *trading_control.enabled_flag().write().await = true;
-            }
-            info!(
-                "Restored runtime snapshot ({} strategies, trading={})",
-                snap.strategies.len(),
-                snap.global_trading
-            );
+    let snap = load_and_apply_strategy_enablement(
+        &*strategy_manager_arc.read().await,
+        &strategy_configs,
+        SNAPSHOT_FILE,
+    )
+    .await?;
+    if let Some(snap) = snap.filter(|s| s.mode == "strategies") {
+        if snap.global_trading {
+            *trading_control.enabled_flag().write().await = true;
         }
+        info!(
+            "Restored runtime snapshot ({} strategies, trading={})",
+            snap.strategies.len(),
+            snap.global_trading
+        );
     }
 
     info!("All systems ready! Starting strategy execution...");
@@ -802,6 +795,19 @@ pub(crate) async fn apply_strategy_enablement(
         };
         manager.set_strategy_enabled(&id, enabled).await;
     }
+}
+
+/// Production startup path: load an optional snapshot, then always apply enablement.
+/// A missing file is a cold start (`initially_enabled` wins). A strategies snapshot
+/// overlays saved `enabled` afterward. Global trading restore stays with the caller.
+pub(crate) async fn load_and_apply_strategy_enablement(
+    manager: &StrategyManager,
+    strategy_configs: &[crate::config::StrategyConfig],
+    snapshot_path: impl AsRef<Path>,
+) -> Result<Option<RuntimeSnapshot>, String> {
+    let snap = RuntimeSnapshot::load(snapshot_path)?;
+    apply_strategy_enablement(manager, strategy_configs, snap.as_ref()).await;
+    Ok(snap)
 }
 
 /// Shadow never issues order mutations on stop, including via the unwrapped venue client.
@@ -1096,10 +1102,49 @@ mod tests {
         );
 
         let restored = manager_with_c2().await;
-        apply_strategy_enablement(&restored, &[sample_config(true)], Some(&loaded)).await;
+        assert!(
+            !restored.is_strategy_enabled(&C2_ID.to_string()).await,
+            "add_strategy must start disabled so startup enablement is the sole path"
+        );
+        let loaded_again =
+            load_and_apply_strategy_enablement(&restored, &[sample_config(true)], &snapshot_path)
+                .await
+                .unwrap()
+                .expect("snapshot still present for restore");
+        assert_eq!(loaded_again.strategies, loaded.strategies);
         assert!(
             !restored.is_strategy_enabled(&C2_ID.to_string()).await,
             "persisted enabled=false must survive initially_enabled=true"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn clean_start_load_path_honors_initially_enabled_without_snapshot() {
+        let dir = std::env::temp_dir().join(format!(
+            "ts-clean-start-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let missing = dir.join("runtime-snapshot.json");
+        assert!(!missing.exists());
+
+        let manager = manager_with_c2().await;
+        assert!(
+            !manager.is_strategy_enabled(&C2_ID.to_string()).await,
+            "add_strategy defaults to disabled"
+        );
+        let snap = load_and_apply_strategy_enablement(&manager, &[sample_config(true)], &missing)
+            .await
+            .unwrap();
+        assert!(snap.is_none(), "missing snapshot must be a cold start");
+        assert!(
+            manager.is_strategy_enabled(&C2_ID.to_string()).await,
+            "production startup with no snapshot must honor initially_enabled=true"
         );
         let _ = std::fs::remove_dir_all(&dir);
     }

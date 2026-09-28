@@ -1,6 +1,6 @@
 # Prop Trading Productionization and Research Architecture Plan
 
-**Status:** Increments 0–5 are implemented. Backend `5a0c8c4` fixes Shadow shutdown, persisted disable and gRPC teardown; local checks and a Paper+Shadow restart/browser session are reported. Review found one 5R regression: on a cold start with no runtime snapshot, production never applies `initially_enabled` because the new helper is called only inside the snapshot-present branch. 5B is blocked until this path is fixed and reverified. UI is at `2636d5e`; placeholder Bybit credentials remain an environment limitation.  
+**Status:** Increments 0–5 are implemented. This commit (parent `1f18689`) applies strategy enablement on cold start with no snapshot; `just gate-5r` passed and a clean Paper+Shadow start was enabled with no snapshot; persisted `enabled=false` still wins after `RequestRestart`. UI guide is `2636d5e`. 5B is **not started**; stop for review of this record. Placeholder Bybit sample credentials remain an environment limitation, not a local-gate defect.  
 **Date:** 2026-09-28  
 **Repository:** `trading_system`  
 **Audience:** Cursor / implementation agent / repository owner  
@@ -2019,7 +2019,7 @@ This document is the authority for **the Candidate #2 research/runtime separatio
 | Increment | Repositories and guide |
 | --- | --- |
 | 0–5 | `trading_system`: functionally implemented on current master; check the status table in section 67 |
-| 5R (cold-start correction pending) | `trading_system` `5a0c8c4`; reported shutdown/restart verification passes, but no-snapshot startup leaves configured strategies disabled |
+| 5R (cold-start enablement recorded locally; review before 5B) | `trading_system` this commit (parent `1f18689`); `just gate-5r` rerun; clean Paper+Shadow start enabled, persist-disable still wins |
 | 5A (affected browser rechecked) | UI `2636d5e` against that Paper+Shadow runner; Envoy first-update / stale / reconnect / disabled Enable Strategy / orders 0 |
 | 5B | [`k-paper` integration guide](https://github.com/Kolzodev712/k-paper/blob/master/docs/PROP_TRADING_INTEGRATION_GUIDE.md) for existing Spot connectivity only, with the UI on the same runner |
 | 6–7 | `trading_system` recovery/futures logic and K-paper protocol/futures support; change producer and adapter together |
@@ -2250,6 +2250,12 @@ Dummy adapter/open-order unit tests are still not this evidence. Bybit sample pl
 
 **Review of `5a0c8c4` after push (2026-09-28):** The shutdown, saved-disable and gRPC teardown changes are present in the pushed code. A new cold-start regression prevents 5R acceptance: `StrategyManager::add_strategy` initializes entries as disabled; `strategy_runner_with` calls `apply_strategy_enablement` only inside `if let Some(snap) = RuntimeSnapshot::load(SNAPSHOT_FILE)?`. When no snapshot exists, the helper never runs, so `initially_enabled=true` is ignored. The new `initially_enabled_applies_when_snapshot_absent` unit test calls the helper directly and cannot detect this wiring error. Invoke the helper once regardless of snapshot presence, then conditionally restore global control only for a matching snapshot. Verify the app starts Candidate #2 enabled from a clean data directory with no snapshot and that the persisted-disable restart still wins. Repeat the focused gate and clean Paper+Shadow runtime check. Do not mark 5R complete or begin 5B before that result.
 
+**Verification of cold-start enablement in this commit, parent `1f18689` (2026-09-28):** Starting SHA `1f1868909a519101bd521773b43462e9edded60a`. `strategy_runner_with` now always calls `load_and_apply_strategy_enablement` (load snapshot if present, then `apply_strategy_enablement`). Global trading restore remains gated on a `mode == "strategies"` snapshot. Construction-time `set_strategy_enabled(true)` was removed so this is the sole startup path. Regression `clean_start_load_path_honors_initially_enabled_without_snapshot` exercises that helper with a missing file; the persist-disable test restores through the same helper.
+
+`just gate-5r` exit 0. Counts: `btc_price_ma_app` 14, `research_cli` frozen_parity 2, `research_engine` 50, `runner` 30 (was 29), `strategy_core` 3+3 frozen, `trading_engine` 93. Frozen N=14/28/70 hashes unchanged (`a543c2ae…`, `658d506b…`, `1fd63eff…`). Trees: engine/runner 0 forbidden crates; app has `strategy_core` and `runner`.
+
+Paper+Shadow runtime (`btc_price_ma_app --mode strategies` against k-paper `:19999`, Candidate #2 strategies `initially_enabled=true`, `execution_mode=shadow`): after deleting `config/cex/runtime-snapshot.json`, `grpc_ctl status` showed `BTCPriceMALongFlatV1:BTC/USDT enabled=true` with no snapshot file and no `Restored runtime snapshot` log. `GET :19999/open_orders` → `[]`. `k-paper: sent place_order` = 0. Executor `would-be` > 0 while enabled. After disable + `RequestRestart`, snapshot `enabled=false`; shutdown skipped cancel_all, forbidden 0, not the 30s timeout. Relaunch logged `Restored runtime snapshot (1 strategies, trading=false)` and `grpc_ctl status` `enabled=false`. Dummy adapter tests are still not this evidence. Stop for review before 5B.
+
 ## Increment 5A — Trading System UI Shadow observability
 
 **Status:** The timestamp/UNKNOWN fail-open fix is in UI `d8c7b271` (guide `2636d5e`). Affected Envoy browser checks were rerun against the Paper+Shadow runner after the backend shutdown/restart fixes. 5B is not started.
@@ -2276,7 +2282,7 @@ Acceptance: proto copies and generated types match; UI unit/build checks pass; a
 
 ## Increment 5B — existing Paper connectivity preflight
 
-**Status:** Not started. Blocked until no-snapshot strategy startup honors `initially_enabled` and a clean-start regression check passes; then review the completed 5R record.
+**Status:** Not started. Stop for review of the cold-start enablement record before beginning.
 
 Run the existing `k-paper` server and `trading_system` Paper adapters with the documented Spot/levels configuration: market WS, trading WS, REST balance/open-order/trade reconciliation and asset rules. Connect the browser UI to the same runner and verify venue labeling. Record exact working endpoints and identify missing Candidate #2 futures operations and scenario controls.
 
@@ -2447,17 +2453,17 @@ Do not implement Candidate #3's trading rule until a separate strategy research 
 
 # 67. Current Cursor instruction
 
-The latest recorded SHAs are `trading_system` `5a0c8c49f6f5221e8369b064ca2f42cb36120fc1`, `trading-system-ui` `2636d5e7d56fc4aa6adecbe5dd303fc5499b3800`, and `k-paper` `70874973f0f9e38b7f3f5853ca51f604445ef3d1`. Local `just gate-5r` was rerun after the edits. This is **not** a remotely enforced CI result.
+The latest recorded SHAs are `trading_system` this commit (parent `1f1868909a519101bd521773b43462e9edded60a`), `trading-system-ui` `2636d5e7d56fc4aa6adecbe5dd303fc5499b3800`, and `k-paper` `70874973f0f9e38b7f3f5853ca51f604445ef3d1`. Local `just gate-5r` was rerun after the edits. This is **not** a remotely enforced CI result.
 
 | Increment | Status | Gate |
 | --- | --- | --- |
 | 0–5 | Done | Prior SHAs and audit evidence above |
-| 5R | Shutdown, restore and timeout fixes reported; cold-start regression found | Move enablement application outside the snapshot-present branch, prove a clean start without a snapshot honors config, and rerun the focused gate/runtime check |
+| 5R | Cold-start enablement recorded locally | Review this record; dummy adapter tests are not this evidence; Bybit sample keys are not a local-gate defect |
 | 5A | Affected Envoy status rechecked after backend fixes | Paper+Shadow live/stale/reconnect, persisted disable, orders 0 |
 | 5B | Not started | Begin only after review acceptance |
 | 6+ | Not started | Follow section 54 after prior gates |
 
-Cursor: fix the no-snapshot startup call path for `apply_strategy_enablement`, add a regression check that exercises production startup with no runtime snapshot and `initially_enabled=true`, then rerun `just gate-5r` and a clean Paper+Shadow Candidate #2 start. Record exact results and stop for review before 5B.
+Cursor: stop here for review. Do not begin 5B.
 
 ---
 

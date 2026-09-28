@@ -1,6 +1,6 @@
 # Prop Trading Productionization and Research Architecture Plan
 
-**Status:** Increments 0–5 and the local 5R/5A gates are complete. The bounded Increment 5B Spot/levels K-paper connectivity preflight is accepted locally. Increment 6 review-hold corrections are implemented locally at `trading_system` `ac6fdb3`, k-paper `ebf4c90`; UI proto was unchanged (`028ea16`). **Stop for review before Increment 7.** This does not qualify Candidate #2 futures, order execution, the fault matrix or Bybit demo. Placeholder Bybit sample credentials remain an environment limitation.  
+**Status:** Increments 0–6 are accepted locally. Increment 6 section-61 findings are closed at `trading_system` `ac6fdb3` plus the restart-journal halt test, matching k-paper `ebf4c90`; UI proto was unchanged (`028ea16`). Increment 7 is next. This does not qualify Candidate #2 futures, order execution, the fault matrix or Bybit demo. Placeholder Bybit sample credentials remain an environment limitation. Candidate #2 remains an operational baseline, not validated alpha.  
 **Date:** 2026-09-28  
 **Repository:** `trading_system`  
 **Audience:** Cursor / implementation agent / repository owner  
@@ -2029,7 +2029,7 @@ This document is the authority for **the Candidate #2 research/runtime separatio
 
 Check out the relevant repositories with write access before starting a cross-repo increment. Record starting and ending SHAs for each; pin matching revisions and run both producer/consumer checks before marking the increment complete. After 5R, use the Candidate #2 app binary for Shadow/Paper/demo rather than assuming the default runner binary can instantiate it. Implement backend state and the source proto first, then sync the UI proto and generated code. When a precise simulator accounting rule, API shape or security mechanism is not fixed here, document the bounded choice and its acceptance tests within that increment rather than silently guessing or postponing the safety gate.
 
-`trading_system` Increments 0–5 and the local 5R/5A/5B gates are accepted for proceeding (see section 67). Increment 6 review-hold corrections are implemented at the SHAs in section 67 and **await review** before Increment 7. This plan does not authorize implementation of a future portfolio allocator, strategy registry/graveyard, broader instrument/venue expansion, a self-hosting operations program, Candidate #3's trading rule or mainnet deployment. Those need separate decisions/specifications when the evidence and need exist.
+`trading_system` Increments 0–6 are accepted locally for proceeding (see section 67). Increment 7 is next. This plan does not authorize implementation of a future portfolio allocator, strategy registry/graveyard, broader instrument/venue expansion, a self-hosting operations program, Candidate #3's trading rule or mainnet deployment. Those need separate decisions/specifications when the evidence and need exist.
 
 ---
 
@@ -2308,7 +2308,7 @@ The 5B gate is closed for its stated connectivity scope. The process kills in th
 
 # 61. Increment 6 — CEX recovery hardening
 
-**Status:** Review-hold corrections implemented locally at `trading_system` `ac6fdb38365ad73f799ee9a94ad690e3a673ab01`, matching k-paper `ebf4c903b7e393ce9843467f91d378697d022250`; UI proto/status contract was unchanged (`028ea16cb53f83871df1ee4053b7caeb36fbb9a8`). **Stop for review before Increment 7.** Isolated tests and one focused Spot strategy-runner → Paper lost-ACK/restart check were run locally; neither the section 49 matrix, futures qualification nor Bybit demo was run.
+**Status:** Accepted locally. Section-61 review findings are closed. Matching k-paper `ebf4c903b7e393ce9843467f91d378697d022250`; UI proto/status contract unchanged (`028ea16cb53f83871df1ee4053b7caeb36fbb9a8`). Isolated tests and one focused Spot strategy-runner → Paper lost-ACK/restart check were run locally; neither the section 49 matrix, futures qualification nor Bybit demo was run.
 
 Implemented paths:
 
@@ -2325,7 +2325,7 @@ Implemented paths:
 | Command | Result |
 | --- | --- |
 | `cargo test -p exchange_engine --lib` | 251 passed, 0 failed, 1 ignored (includes pagination and `request_while_busy_runs_before_next_interval`) |
-| `cargo test -p trading_engine --lib` | 104 passed, 0 failed (unwritable journal, torn JSONL recovery halt, partial working fill, partial canceled fill, persist-before-crash, missing lookup retains reservation) |
+| `cargo test -p trading_engine --lib` | 105 passed, 0 failed (unwritable journal, torn JSONL recovery halt, **restart with damaged journal halt**, partial working fill, partial canceled fill, persist-before-crash, missing lookup retains reservation) |
 | `cargo check -p runner` | ok |
 | `cargo test -p paper-exchange-core` | 7 passed, 0 failed (`suppress_next_place_ack_any_without_client_id` plus prior lookup/suppress tests) |
 | `cargo check -p paper-exchange-server` | ok |
@@ -2335,12 +2335,12 @@ Implemented paths:
 
 **Prior review findings at `c16a7be` / `ed9568b` and how they were closed at these SHAs:**
 
-1. Pre-send persistence no longer fails open. Journal append/load errors halt new exposure; unwritable path and torn JSONL are tested.
-2. Recovered partial fills are applied before unblocking. Working remainder plus fill, and canceled-with-fill, are tested including repeat delivery.
-3. Immediate reconcile stores a pending request; a request during busy work runs before the next interval.
+1. Pre-send persistence no longer fails open. Journal append/load errors halt new exposure; unwritable path, torn JSONL, and **restart reopen of a damaged journal** (`restart_with_damaged_journal_halts_new_exposure`) are tested. Recovery failure sets `halt_new_exposure`; no replacement send.
+2. Recovered partial fills are applied before unblocking. Working remainder plus fill, and canceled-with-fill, are tested including missed and repeated events.
+3. Immediate reconcile stores a pending request; a request during busy work runs before the next interval (`request_while_busy_runs_before_next_interval`).
 4. Next-place suppress (no client id) plus controlled lab ID proved one Spot runner restart while Paper retained the accepted order.
 
-Do not mark Increment 6 accepted until this review passes. Stop for review again before Increment 7.
+Increment 6 is accepted locally. Continue Increment 7.
 
 ---
 
@@ -2483,7 +2483,7 @@ Do not implement Candidate #3's trading rule until a separate strategy research 
 
 # 67. Current Cursor instruction
 
-The Increment 6 review-hold correction record is `trading_system` `ac6fdb38365ad73f799ee9a94ad690e3a673ab01`, `trading-system-ui` `028ea16cb53f83871df1ee4053b7caeb36fbb9a8` (unchanged proto), and `k-paper` `ebf4c903b7e393ce9843467f91d378697d022250`. These are **reported local checks**, not a remotely enforced CI result. The accepted 5B connectivity record remains `trading_system` `043ca64523f42212cd8a2616ba6201d61d7c878a` (evidence `1f00fdc80f7bbbb39b836da9445e041eb18e6c77`).
+The Increment 6 local-acceptance record includes `trading_system` `ac6fdb38365ad73f799ee9a94ad690e3a673ab01` plus the restart-journal halt test in this commit, `trading-system-ui` `028ea16cb53f83871df1ee4053b7caeb36fbb9a8` (unchanged proto), and `k-paper` `ebf4c903b7e393ce9843467f91d378697d022250`. These are **reported local checks**, not a remotely enforced CI result. The accepted 5B connectivity record remains `trading_system` `043ca64523f42212cd8a2616ba6201d61d7c878a` (evidence `1f00fdc80f7bbbb39b836da9445e041eb18e6c77`).
 
 | Increment | Status | Gate |
 | --- | --- | --- |
@@ -2491,10 +2491,10 @@ The Increment 6 review-hold correction record is `trading_system` `ac6fdb38365ad
 | 5R | Accepted locally for 5B | Dependency boundary, focused packages, frozen parity and Paper+Shadow runtime/restart evidence reported; no remote CI claim |
 | 5A | Accepted locally for 5B | Matching browser/runner Paper+Shadow live/stale/reconnect, persisted disable and observed order state reported |
 | 5B | Accepted locally for Spot/levels connectivity | Market/trade WS, REST bootstrap and UI labels; no order posting, futures or fault qualification |
-| 6 | Review pending | Fail-closed journal, partial-fill recovery, pending immediate recon, and one focused Paper lost-ACK/restart check reported at the SHAs above |
-| 7+ | Not started | Follow section 54 and each increment's gate |
+| 6 | Accepted locally | Fail-closed journal including restart of a damaged record, partial-fill recovery with missed/repeated events, pending immediate recon, and one focused Paper lost-ACK/restart check |
+| 7+ | In progress | Follow section 54 and each increment's gate |
 
-Cursor: stop for review of the Increment 6 corrections in section 61. Do not begin Increment 7. UI remains at `028ea16cb53f83871df1ee4053b7caeb36fbb9a8` unless the runner proto/status contract changes.
+Cursor: Increment 6 is accepted locally. Continue Increment 7. UI remains at `028ea16cb53f83871df1ee4053b7caeb36fbb9a8` unless the runner proto/status contract changes.
 
 ---
 

@@ -23,13 +23,23 @@ where
         self,
         addr: SocketAddr,
     ) -> Result<JoinHandle<Result<(), tonic::transport::Error>>, Box<dyn std::error::Error>> {
+        self.start_with_shutdown(addr, std::future::pending()).await
+    }
+
+    /// Stop accepting after `shutdown` completes so runner teardown does not wait
+    /// out `shutdown_timeout_secs` on a server that never exits.
+    pub async fn start_with_shutdown(
+        self,
+        addr: SocketAddr,
+        shutdown: impl std::future::Future<Output = ()> + Send + 'static,
+    ) -> Result<JoinHandle<Result<(), tonic::transport::Error>>, Box<dyn std::error::Error>> {
         let trading_cli_service = TradingCliServiceServer::new(self.service);
 
         let handle = tokio::spawn(async move {
             tracing::info!("[gateway/grpc] Starting server on {}", addr);
             Server::builder()
                 .add_service(trading_cli_service)
-                .serve(addr)
+                .serve_with_shutdown(addr, shutdown)
                 .await
         });
 

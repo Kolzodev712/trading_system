@@ -145,7 +145,12 @@ pub async fn level_runner(
     };
 
     let grpc_server = TradingGrpcServer::from_service(grpc_service);
-    let grpc_handle = grpc_server.start(grpc_addr).await?;
+    let mut shutdown_rx_grpc = services.shutdown_manager.subscribe();
+    let grpc_handle = grpc_server
+        .start_with_shutdown(grpc_addr, async move {
+            let _ = shutdown_rx_grpc.recv().await;
+        })
+        .await?;
     info!("gRPC server started on {}", grpc_addr);
 
     let (router, cmd_rx) = MpscCommandRouter::new(1024);
@@ -392,6 +397,7 @@ pub async fn level_runner(
     }
 
     services.shutdown_manager.signal_shutdown();
+    grpc_handle.abort();
 
     let shutdown_timeout =
         tokio::time::Duration::from_secs(bot_config.system.shutdown_timeout_secs);

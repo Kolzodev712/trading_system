@@ -1,5 +1,6 @@
 //! Strategy-based trading mode runner.
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{error, info, warn};
@@ -209,10 +210,14 @@ pub async fn strategy_runner_with(
     let instrument_type = bot_config
         .get_instrument_type()
         .unwrap_or(trading_core::types::common::InstrumentType::Spot);
+    let shadow_forbidden_calls = Arc::new(AtomicU64::new(0));
     let trading_client = {
         let raw = services.trading_client()?.clone();
         if execution_mode == trading_core::types::ExecutionMode::Shadow {
-            trading_engine::cex::shadow::ShadowGuardClient::wrap(raw)
+            trading_engine::cex::shadow::ShadowGuardClient::wrap_counted(
+                raw,
+                shadow_forbidden_calls.clone(),
+            )
         } else {
             raw
         }
@@ -460,7 +465,12 @@ pub async fn strategy_runner_with(
         .with_strategy_caps(strategy_caps.clone());
 
     let grpc_server = TradingGrpcServer::from_service(grpc_service);
-    let grpc_handle = grpc_server.start(grpc_addr).await?;
+    let mut shutdown_rx_grpc = services.shutdown_manager.subscribe();
+    let grpc_handle = grpc_server
+        .start_with_shutdown(grpc_addr, async move {
+            let _ = shutdown_rx_grpc.recv().await;
+        })
+        .await?;
     info!("gRPC server started on {}", grpc_addr);
 
     let (router, cmd_rx) = MpscCommandRouter::new(1024);
@@ -682,22 +692,13 @@ pub async fn strategy_runner_with(
     }
 
     if let Some(snap) = RuntimeSnapshot::load(SNAPSHOT_FILE)? {
+        apply_strategy_enablement(
+            &*strategy_manager_arc.read().await,
+            &strategy_configs,
+            Some(&snap),
+        )
+        .await;
         if snap.mode == "strategies" {
-            let manager = strategy_manager_arc.read().await;
-            for id in manager.strategy_ids().to_vec() {
-                let enabled = snap
-                    .strategies
-                    .iter()
-                    .find(|s| s.strategy_id == id)
-                    .or_else(|| {
-                        snap.strategies
-                            .iter()
-                            .find(|s| symbol_key(&s.strategy_id) == symbol_key(&id))
-                    })
-                    .map(|s| s.enabled)
-                    .unwrap_or(false);
-                manager.set_strategy_enabled(&id, enabled).await;
-            }
             if snap.global_trading {
                 *trading_control.enabled_flag().write().await = true;
             }
@@ -706,15 +707,6 @@ pub async fn strategy_runner_with(
                 snap.strategies.len(),
                 snap.global_trading
             );
-        }
-    }
-
-    for config in &strategy_configs {
-        if config.initially_enabled {
-            let manager = strategy_manager_arc.read().await;
-            let strategy_id =
-                StrategyManager::make_strategy_id(config.strategy_type.as_str(), &config.symbol);
-            manager.set_strategy_enabled(&strategy_id, true).await;
         }
     }
 
@@ -743,21 +735,19 @@ pub async fn strategy_runner_with(
     services.shutdown_manager.wait_for_shutdown().await;
 
     info!("Shutting down gracefully...");
-    if let Ok(trading_client) = services.trading_client() {
-        for symbol in &all_symbols {
-            info!("Cancelling all open orders for {}...", symbol);
-            match trading_client.write().await.cancel_all_orders(symbol).await {
-                Ok(_) => info!("All orders cancelled successfully for {}", symbol),
-                Err(e) => warn!(
-                    "Failed to cancel all orders for {}: {error}",
-                    symbol,
-                    error = e
-                ),
-            }
-        }
+    cancel_working_orders_on_stop(execution_mode, &trading_client, &all_symbols).await;
+    if execution_mode == trading_core::types::ExecutionMode::Shadow {
+        info!(
+            "Shadow guard forbidden mutation attempts: {}",
+            shadow_forbidden_calls.load(Ordering::Relaxed)
+        );
     }
 
     services.shutdown_manager.signal_shutdown();
+    // Long-lived Monitor RPCs keep tonic `serve_with_shutdown` from returning.
+    // Abort the server task so a connected UI cannot pin the process for
+    // `shutdown_timeout_secs` (the previous 30s forced-exit after RequestRestart).
+    grpc_handle.abort();
 
     let shutdown_timeout =
         tokio::time::Duration::from_secs(bot_config.system.shutdown_timeout_secs);
@@ -779,9 +769,345 @@ pub async fn strategy_runner_with(
     Ok(())
 }
 
+/// Snapshot `enabled` overrides `initially_enabled` for strategies listed in the snapshot.
+/// Strategies absent from the snapshot keep the config flag (cold start).
+pub(crate) async fn apply_strategy_enablement(
+    manager: &StrategyManager,
+    strategy_configs: &[crate::config::StrategyConfig],
+    snapshot: Option<&RuntimeSnapshot>,
+) {
+    for config in strategy_configs {
+        let strategy_id =
+            StrategyManager::make_strategy_id(config.strategy_type.as_str(), &config.symbol);
+        manager
+            .set_strategy_enabled(&strategy_id, config.initially_enabled)
+            .await;
+    }
+    let Some(snap) = snapshot.filter(|s| s.mode == "strategies") else {
+        return;
+    };
+    for id in manager.strategy_ids().to_vec() {
+        let Some(enabled) = snap
+            .strategies
+            .iter()
+            .find(|s| s.strategy_id == id)
+            .or_else(|| {
+                snap.strategies
+                    .iter()
+                    .find(|s| symbol_key(&s.strategy_id) == symbol_key(&id))
+            })
+            .map(|s| s.enabled)
+        else {
+            continue;
+        };
+        manager.set_strategy_enabled(&id, enabled).await;
+    }
+}
+
+/// Shadow never issues order mutations on stop, including via the unwrapped venue client.
+pub(crate) async fn cancel_working_orders_on_stop(
+    execution_mode: trading_core::types::ExecutionMode,
+    trading_client: &Arc<
+        RwLock<
+            dyn trading_core::venue::cex::traits::TradingClient<
+                trading_core::types::exchange::OrderRequest,
+            >,
+        >,
+    >,
+    symbols: &[trading_core::types::common::Pair],
+) {
+    if execution_mode == trading_core::types::ExecutionMode::Shadow {
+        info!("Shadow mode: skipping cancel_all_orders on shutdown");
+        return;
+    }
+    for symbol in symbols {
+        info!("Cancelling all open orders for {symbol}...");
+        match trading_client.write().await.cancel_all_orders(symbol).await {
+            Ok(_) => info!("All orders cancelled successfully for {symbol}"),
+            Err(e) => warn!(
+                "Failed to cancel all orders for {symbol}: {error}",
+                error = e
+            ),
+        }
+    }
+}
+
 fn symbol_key(strategy_id: &str) -> &str {
     strategy_id
         .rsplit_once(':')
         .map(|(_, s)| s)
         .unwrap_or(strategy_id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::runtime_snapshot::SnapshotStrategy;
+    use crate::config::StrategyConfig;
+    use crate::platform::shutdown::ShutdownManager;
+    use gateway::grpc::service::StrategyOperator;
+    use rust_decimal::Decimal;
+    use std::sync::{Arc, Mutex};
+    use tokio::sync::RwLock;
+    use trading_core::error::EngineError;
+    use trading_core::grpc::TradingControl;
+    use trading_core::types::common::{Exchange, OrderId, Pair};
+    use trading_core::types::exchange::{
+        BulkAmendRequest, BulkAmendResponse, BulkCancelRequest, BulkCancelResponse,
+        BulkOrderRequest, BulkOrderResponse, Order, OrderRequest, Trade,
+    };
+    use trading_core::types::ExecutionMode;
+    use trading_core::venue::cex::traits::TradingClient;
+    use trading_engine::cex::intent::{StrategyContext, StrategyIntent};
+    use trading_engine::cex::shadow::ShadowGuardClient;
+    use trading_engine::state::Strategy;
+
+    #[derive(Debug, Default)]
+    struct RecordingClient {
+        mutations: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl RecordingClient {
+        fn record(&self, method: &str) {
+            self.mutations.lock().unwrap().push(method.to_string());
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl TradingClient<OrderRequest> for RecordingClient {
+        fn exchange_id(&self) -> Exchange {
+            Exchange::Paper
+        }
+
+        async fn test_open_order(&self, _req: OrderRequest) -> Result<(), EngineError> {
+            self.record("test_open_order");
+            Ok(())
+        }
+
+        async fn open_order(&self, _req: OrderRequest) -> Result<Order, EngineError> {
+            self.record("open_order");
+            Err(EngineError::new_custom_error("recording".into()))
+        }
+
+        async fn cancel_order_by_id(&self, _order_id: OrderId) -> Result<(), EngineError> {
+            self.record("cancel_order_by_id");
+            Ok(())
+        }
+
+        async fn cancel_all_orders(&self, _pair: &Pair) -> Result<(), EngineError> {
+            self.record("cancel_all_orders");
+            Ok(())
+        }
+
+        async fn fetch_balance(
+            &self,
+        ) -> Result<Vec<trading_core::venue::cex::types::exchange::Balance>, EngineError> {
+            Ok(vec![])
+        }
+
+        async fn fetch_open_orders(&self) -> Result<Vec<Order>, EngineError> {
+            Ok(vec![])
+        }
+
+        async fn fetch_trades(&self, _pair: Option<&Pair>) -> Result<Vec<Trade>, EngineError> {
+            Ok(vec![])
+        }
+
+        async fn fetch_market_data_snapshot(&self, _pair: &Pair) -> Result<(), EngineError> {
+            Ok(())
+        }
+
+        async fn amend_order(
+            &self,
+            _order_id: OrderId,
+            _new_request: OrderRequest,
+        ) -> Result<Order, EngineError> {
+            self.record("amend_order");
+            Err(EngineError::new_custom_error("recording".into()))
+        }
+
+        async fn bulk_open_orders(
+            &self,
+            _req: BulkOrderRequest,
+        ) -> Result<BulkOrderResponse, EngineError> {
+            self.record("bulk_open_orders");
+            Err(EngineError::new_custom_error("recording".into()))
+        }
+
+        async fn bulk_amend_orders(
+            &self,
+            _req: BulkAmendRequest,
+        ) -> Result<BulkAmendResponse, EngineError> {
+            self.record("bulk_amend_orders");
+            Err(EngineError::new_custom_error("recording".into()))
+        }
+
+        async fn bulk_cancel_orders(
+            &self,
+            _req: BulkCancelRequest,
+        ) -> Result<BulkCancelResponse, EngineError> {
+            self.record("bulk_cancel_orders");
+            Err(EngineError::new_custom_error("recording".into()))
+        }
+    }
+
+    struct NoopStrategy;
+
+    #[async_trait::async_trait]
+    impl Strategy for NoopStrategy {
+        async fn evaluate(
+            &mut self,
+            _ctx: &StrategyContext<'_>,
+        ) -> Result<StrategyIntent, EngineError> {
+            Ok(StrategyIntent::hold("noop"))
+        }
+
+        async fn on_execution_report(&mut self, _order: &Order) -> Result<(), EngineError> {
+            Ok(())
+        }
+    }
+
+    fn sample_config(initially_enabled: bool) -> StrategyConfig {
+        StrategyConfig {
+            strategy_type: "BTCPriceMALongFlatV1".into(),
+            symbol: Pair::new("BTC", "USDT"),
+            position_size: Decimal::ONE,
+            max_position: Decimal::ONE,
+            buy_threshold_percent: Decimal::ZERO,
+            sell_threshold_percent: Decimal::ZERO,
+            stop_loss_percent: None,
+            take_profit_percent: None,
+            max_active_orders: 1,
+            price_history_size: 1,
+            min_price_history: 1,
+            min_order_size: None,
+            step_size: None,
+            tick_size: None,
+            min_notional: None,
+            lookback: None,
+            max_entry_age_secs: None,
+            initially_enabled,
+        }
+    }
+
+    const C2_ID: &str = "BTCPriceMALongFlatV1:BTC/USDT";
+
+    async fn manager_with_c2() -> StrategyManager {
+        let mut manager = StrategyManager::new();
+        manager
+            .add_strategy(
+                Arc::new(RwLock::new(NoopStrategy)),
+                C2_ID.into(),
+                Pair::new("BTC", "USDT"),
+            )
+            .await;
+        manager
+    }
+
+    #[tokio::test]
+    async fn shadow_ordinary_shutdown_records_zero_inner_mutations() {
+        let inner = RecordingClient::default();
+        let mutations = inner.mutations.clone();
+        let client: Arc<RwLock<dyn TradingClient<OrderRequest>>> = Arc::new(RwLock::new(inner));
+        cancel_working_orders_on_stop(ExecutionMode::Shadow, &client, &[Pair::new("BTC", "USDT")])
+            .await;
+        assert!(
+            mutations.lock().unwrap().is_empty(),
+            "Shadow shutdown must not reach the backing client: {:?}",
+            mutations.lock().unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn exchange_shutdown_records_cancel_all_on_backing_client() {
+        let inner = RecordingClient::default();
+        let mutations = inner.mutations.clone();
+        let client: Arc<RwLock<dyn TradingClient<OrderRequest>>> = Arc::new(RwLock::new(inner));
+        cancel_working_orders_on_stop(
+            ExecutionMode::Exchange,
+            &client,
+            &[Pair::new("BTC", "USDT")],
+        )
+        .await;
+        assert_eq!(*mutations.lock().unwrap(), vec!["cancel_all_orders"]);
+    }
+
+    #[tokio::test]
+    async fn shadow_request_restart_save_load_keeps_disabled_and_zero_mutations() {
+        let dir = std::env::temp_dir().join(format!(
+            "ts-shadow-restart-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let snapshot_path = dir.join("runtime-snapshot.json");
+        let restart_flag_path = dir.join("restart.requested");
+        let strategies_path = dir.join("strategies.json");
+        std::fs::write(&strategies_path, "{}").unwrap();
+
+        let inner = RecordingClient::default();
+        let mutations = inner.mutations.clone();
+        let backing: Arc<RwLock<dyn TradingClient<OrderRequest>>> = Arc::new(RwLock::new(inner));
+        let guarded = ShadowGuardClient::wrap_counted(backing.clone(), Default::default());
+
+        let manager = Arc::new(RwLock::new(manager_with_c2().await));
+        manager
+            .read()
+            .await
+            .set_strategy_enabled(&C2_ID.to_string(), false)
+            .await;
+
+        let shutdown = ShutdownManager::new(8);
+        let trading_control = Arc::new(TradingControl::new(guarded.clone()));
+        let operator = FileStrategyOperator::new(
+            strategies_path.to_string_lossy().into_owned(),
+            Arc::new(RwLock::new(Default::default())),
+            manager.clone(),
+            trading_control,
+            shutdown.clone(),
+        )
+        .with_persist_paths(
+            snapshot_path.to_string_lossy().into_owned(),
+            restart_flag_path.to_string_lossy().into_owned(),
+        );
+
+        operator.request_restart("cancel_working").await.unwrap();
+        cancel_working_orders_on_stop(ExecutionMode::Shadow, &guarded, &[Pair::new("BTC", "USDT")])
+            .await;
+
+        assert!(
+            mutations.lock().unwrap().is_empty(),
+            "RequestRestart Shadow stop must not mutate the venue: {:?}",
+            mutations.lock().unwrap()
+        );
+
+        let loaded = RuntimeSnapshot::load(&snapshot_path)
+            .unwrap()
+            .expect("snapshot written by RequestRestart");
+        assert_eq!(
+            loaded.strategies,
+            vec![SnapshotStrategy {
+                strategy_id: "BTCPriceMALongFlatV1:BTC/USDT".into(),
+                enabled: false,
+            }]
+        );
+
+        let restored = manager_with_c2().await;
+        apply_strategy_enablement(&restored, &[sample_config(true)], Some(&loaded)).await;
+        assert!(
+            !restored.is_strategy_enabled(&C2_ID.to_string()).await,
+            "persisted enabled=false must survive initially_enabled=true"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn initially_enabled_applies_when_snapshot_absent() {
+        let manager = manager_with_c2().await;
+        apply_strategy_enablement(&manager, &[sample_config(true)], None).await;
+        assert!(manager.is_strategy_enabled(&C2_ID.to_string()).await);
+    }
 }

@@ -134,21 +134,57 @@ pub async fn run(
                 .await
             {
                 Ok(()) => tracing::info!("Bybit position mode set to one-way"),
-                Err(e) => tracing::warn!("Bybit set_position_mode failed (continuing): {}", e),
+                Err(e) => {
+                    return Err(EngineError::CustomError(anyhow::anyhow!(
+                        "startup set_position_mode failed (fail-closed): {e}"
+                    )));
+                }
             }
-            if let Some(leverage) = bybit_config.leverage {
-                for pair in &pairs {
-                    match client.set_leverage(pair, leverage).await {
-                        Ok(info) => {
-                            tracing::info!("Bybit leverage for {} set to {}x", pair, info.leverage)
-                        }
-                        Err(e) => tracing::warn!(
-                            "Bybit set_leverage failed for {} (continuing): {}",
-                            pair,
-                            e
-                        ),
+            let leverage = bybit_config.leverage.ok_or_else(|| {
+                EngineError::CustomError(anyhow::anyhow!(
+                    "Bybit futures leverage must be set explicitly; no default is invented"
+                ))
+            })?;
+            for pair in &pairs {
+                match client.set_leverage(pair, leverage).await {
+                    Ok(info) => {
+                        tracing::info!("Bybit leverage for {} set to {}x", pair, info.leverage)
+                    }
+                    Err(e) => {
+                        return Err(EngineError::CustomError(anyhow::anyhow!(
+                            "startup set_leverage failed for {pair} (fail-closed): {e}"
+                        )));
                     }
                 }
+            }
+        }
+    }
+
+    if let ExchangeConfig::Paper(paper_config) = &config.exchange_config {
+        if !matches!(
+            paper_config.instrument_type,
+            trading_core::types::common::InstrumentType::Spot
+        ) {
+            let client = trading_client.read().await;
+            client
+                .set_position_mode(trading_core::types::futures::PositionMode::OneWay)
+                .await
+                .map_err(|e| {
+                    EngineError::CustomError(anyhow::anyhow!(
+                        "startup set_position_mode failed (fail-closed): {e}"
+                    ))
+                })?;
+            let leverage = paper_config.leverage.ok_or_else(|| {
+                EngineError::CustomError(anyhow::anyhow!(
+                    "Paper futures leverage must be set explicitly; no default is invented"
+                ))
+            })?;
+            for pair in &pairs {
+                client.set_leverage(pair, leverage).await.map_err(|e| {
+                    EngineError::CustomError(anyhow::anyhow!(
+                        "startup set_leverage failed for {pair} (fail-closed): {e}"
+                    ))
+                })?;
             }
         }
     }

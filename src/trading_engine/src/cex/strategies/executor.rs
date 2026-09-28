@@ -64,6 +64,8 @@ pub struct StrategyExecutor<S: Strategy + 'static> {
     max_active_orders: usize,
     /// Futures leverage used only to scale quote margin checks. `None` requires full notional.
     leverage: Option<u32>,
+    /// Required for Exchange+Futures. None means freshness is not enforced (Spot / Shadow).
+    max_market_data_age_ms: Option<u64>,
     submission_journal: Option<Arc<crate::cex::state::SubmissionJournal>>,
     exchange_state_manager: Option<Arc<exchange_engine::state::manager::ExchangeStateManager>>,
     immediate_recon: Arc<exchange_engine::state::ImmediateTrigger>,
@@ -112,6 +114,7 @@ impl<S: Strategy> StrategyExecutor<S> {
             strategy_caps: Arc::new(RwLock::new(std::collections::HashMap::new())),
             max_active_orders: 5,
             leverage: None,
+            max_market_data_age_ms: None,
             submission_journal: None,
             exchange_state_manager: None,
             immediate_recon: Arc::new(exchange_engine::state::ImmediateTrigger::new()),
@@ -133,6 +136,11 @@ impl<S: Strategy> StrategyExecutor<S> {
 
     pub fn with_leverage(mut self, leverage: Option<u32>) -> Self {
         self.leverage = leverage;
+        self
+    }
+
+    pub fn with_max_market_data_age_ms(mut self, max_market_data_age_ms: Option<u64>) -> Self {
+        self.max_market_data_age_ms = max_market_data_age_ms;
         self
     }
 
@@ -716,8 +724,34 @@ impl<S: Strategy> StrategyExecutor<S> {
                         }
                     }
 
+                    let stale_md =
+                        market_data_is_stale(orderbook.timestamp, self.max_market_data_age_ms);
+                    let position_qty = {
+                        let live = trading_state.read().await;
+                        live.position_qty(&orderbook_pair)
+                    };
+
                     let mut ready_to_post: Vec<OrderRequest> = Vec::new();
                     for req in &mut to_post {
+                        let increasing = is_exposure_increase(req, position_qty);
+                        if increasing {
+                            let live = trading_state.read().await;
+                            if live.blocks_exposure_increase(&orderbook_pair) {
+                                warn!(
+                                    "Exposure increase blocked for {} (sync_pending={})",
+                                    orderbook_pair,
+                                    live.position_sync_pending(&orderbook_pair)
+                                );
+                                continue;
+                            }
+                            if stale_md {
+                                warn!(
+                                    "Stale market data blocks exposure increase for {}",
+                                    orderbook_pair
+                                );
+                                continue;
+                            }
+                        }
                         let client_order_id = lab_client_order_id();
                         req.exchange_params.insert(
                             smol_str::SmolStr::new("orderLinkId"),
@@ -1040,4 +1074,27 @@ fn lab_force_place_request(
         timestamp: None,
         exchange_params: Default::default(),
     })
+}
+
+fn is_exposure_increase(req: &OrderRequest, position_qty: Decimal) -> bool {
+    match req.side {
+        Side::Buy => true,
+        Side::Sell => position_qty <= Decimal::ZERO,
+    }
+}
+
+fn market_data_is_stale(orderbook_ts: u64, max_age_ms: Option<u64>) -> bool {
+    let Some(max_age_ms) = max_age_ms else {
+        return false;
+    };
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    let ts_ms = if orderbook_ts > 10_000_000_000 {
+        orderbook_ts
+    } else {
+        orderbook_ts.saturating_mul(1000)
+    };
+    now_ms.saturating_sub(ts_ms) > max_age_ms
 }

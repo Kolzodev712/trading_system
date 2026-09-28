@@ -39,6 +39,7 @@ pub struct KPaperConfig {
     pub url: String,
     pub pairs: Vec<Pair>,
     pub instrument_type: InstrumentType,
+    pub leverage: Option<u32>,
 }
 
 impl From<PaperConfig> for KPaperConfig {
@@ -47,6 +48,7 @@ impl From<PaperConfig> for KPaperConfig {
             url: c.paper_exchange_url,
             pairs: c.pairs,
             instrument_type: c.instrument_type,
+            leverage: c.leverage,
         }
     }
 }
@@ -158,6 +160,12 @@ impl TradingClient<OrderRequest> for KPaperClient {
             .map(|id| vec![id.to_string()])
             .or_else(|| Some(vec![uuid::Uuid::new_v4().to_string()]));
 
+        let reduce_only = req
+            .exchange_params
+            .get("reduceOnly")
+            .map(|value| value.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+
         let cmd = KPaperCommand::PlaceOrder {
             request: KPaperPlaceOrderRequest {
                 instrument_id: instrument_id.to_string(),
@@ -166,6 +174,7 @@ impl TradingClient<OrderRequest> for KPaperClient {
                 quantity,
                 limit_price,
                 client_order_id,
+                reduce_only,
             },
         };
         self.send_command(cmd)?;
@@ -351,6 +360,73 @@ impl TradingClient<OrderRequest> for KPaperClient {
             .await
             .map_err(|e| EngineError::CustomError(anyhow::anyhow!("REST trades JSON: {}", e)))?;
         Ok(rest_trades.iter().filter_map(rest_trade_to_core).collect())
+    }
+
+    async fn fetch_positions(
+        &self,
+    ) -> Result<Vec<trading_core::types::exchange::Position>, EngineError> {
+        let url = format!("{}/positions", self.rest_base);
+        let res =
+            self.http_client.get(&url).send().await.map_err(|e| {
+                EngineError::CustomError(anyhow::anyhow!("REST GET /positions: {}", e))
+            })?;
+        if !res.status().is_success() {
+            let status = res.status();
+            let body = res.text().await.unwrap_or_default();
+            return Err(EngineError::CustomError(anyhow::anyhow!(
+                "REST GET /positions: {} {}",
+                status,
+                body
+            )));
+        }
+        let rest_positions: Vec<crate::exchanges::k_paper::rest::RestPosition> =
+            res.json().await.map_err(|e| {
+                EngineError::CustomError(anyhow::anyhow!("REST positions JSON: {}", e))
+            })?;
+        Ok(rest_positions
+            .iter()
+            .filter_map(|p| {
+                crate::exchanges::k_paper::rest::rest_position_to_core(
+                    p,
+                    self.config.instrument_type.clone(),
+                )
+            })
+            .collect())
+    }
+
+    async fn set_leverage(
+        &self,
+        _pair: &trading_core::types::common::Pair,
+        leverage: u32,
+    ) -> Result<trading_core::types::futures::LeverageInfo, EngineError> {
+        match self.config.leverage {
+            Some(expected) if expected == leverage => {
+                Ok(trading_core::types::futures::LeverageInfo {
+                    pair: _pair.clone(),
+                    leverage,
+                    max_leverage: leverage,
+                    last_update: 0,
+                })
+            }
+            Some(expected) => Err(EngineError::CustomError(anyhow::anyhow!(
+                "k-paper leverage {expected}x does not match requested {leverage}x"
+            ))),
+            None => Err(EngineError::CustomError(anyhow::anyhow!(
+                "k-paper futures leverage must be set explicitly in bot.json"
+            ))),
+        }
+    }
+
+    async fn set_position_mode(
+        &self,
+        mode: trading_core::types::futures::PositionMode,
+    ) -> Result<(), EngineError> {
+        if !matches!(mode, trading_core::types::futures::PositionMode::OneWay) {
+            return Err(EngineError::CustomError(anyhow::anyhow!(
+                "k-paper linear contract is one-way only"
+            )));
+        }
+        Ok(())
     }
 
     async fn fetch_market_data_snapshot(&self, _pair: &Pair) -> Result<(), EngineError> {

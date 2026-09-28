@@ -5,7 +5,7 @@
 use rust_decimal::Decimal;
 use serde::Deserialize;
 use trading_core::types::common::{Instrument, InstrumentType, OrderId, OrderStatus, Side};
-use trading_core::types::exchange::{Balance, Order, Trade};
+use trading_core::types::exchange::{Balance, Order, Position, Trade};
 
 use super::map::{parse_instrument_id, timestamp_iso_to_u64_secs};
 
@@ -148,6 +148,42 @@ pub fn rest_trade_to_core(t: &RestTrade) -> Option<Trade> {
             .as_deref()
             .map(trading_core::types::common::Symbol::from)
             .unwrap_or_else(|| trading_core::types::common::Symbol::from("USDT")),
+    })
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct RestPosition {
+    pub instrument_id: String,
+    pub side: String,
+    #[serde(deserialize_with = "super::messages::decimal_flexible::deserialize")]
+    pub quantity: Decimal,
+    #[serde(deserialize_with = "super::messages::decimal_flexible::deserialize")]
+    pub entry_price: Decimal,
+    #[serde(default)]
+    pub unrealized_pnl: Option<Decimal>,
+}
+
+pub fn rest_position_to_core(
+    p: &RestPosition,
+    instrument_type: InstrumentType,
+) -> Option<Position> {
+    let pair = parse_instrument_id(&p.instrument_id)?;
+    Some(Position {
+        instrument: Instrument::new(instrument_type, pair),
+        quantity: p.quantity,
+        avg_price: p.entry_price,
+        current_price: p.entry_price,
+        unrealized_pnl: p.unrealized_pnl.unwrap_or(Decimal::ZERO),
+        last_update: 0,
+        mark_price: None,
+        index_price: None,
+        realized_pnl: None,
+        initial_margin: None,
+        maintenance_margin: None,
+        leverage: None,
+        position_mode: None,
+        margin_type: None,
+        liquidation_price: None,
     })
 }
 

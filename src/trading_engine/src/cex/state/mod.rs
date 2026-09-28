@@ -6,11 +6,11 @@
 use async_trait::async_trait;
 use rust_decimal::Decimal;
 use smol_str::SmolStr;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use trading_core::{
     error::EngineError,
     types::{
-        common::{OrderId, OrderStatus, Pair, Side},
+        common::{InstrumentType, OrderId, OrderStatus, Pair, Side},
         exchange::Order,
     },
 };
@@ -57,6 +57,9 @@ pub struct TradingState {
     submissions: HashMap<SmolStr, PendingSubmission>,
     /// Journal or recovery failure: block further sends until the process is repaired.
     exposure_halt: Option<String>,
+    instrument_type: InstrumentType,
+    /// Futures pairs whose REST/WS position snapshot has not been applied yet.
+    position_sync_pending: HashSet<Pair>,
 }
 
 impl TradingState {
@@ -68,7 +71,39 @@ impl TradingState {
             fill_applied: HashMap::new(),
             submissions: HashMap::new(),
             exposure_halt: None,
+            instrument_type: InstrumentType::Spot,
+            position_sync_pending: HashSet::new(),
         }
+    }
+
+    pub fn with_instrument_type(mut self, instrument_type: InstrumentType) -> Self {
+        self.instrument_type = instrument_type;
+        self
+    }
+
+    pub fn instrument_type(&self) -> &InstrumentType {
+        &self.instrument_type
+    }
+
+    fn is_futures(&self) -> bool {
+        matches!(
+            self.instrument_type,
+            InstrumentType::Futures | InstrumentType::Derivitives
+        )
+    }
+
+    pub fn mark_position_sync_pending(&mut self, pair: Pair) {
+        if self.is_futures() {
+            self.position_sync_pending.insert(pair);
+        }
+    }
+
+    pub fn mark_position_synced(&mut self, pair: &Pair) {
+        self.position_sync_pending.remove(pair);
+    }
+
+    pub fn position_sync_pending(&self, pair: &Pair) -> bool {
+        self.position_sync_pending.contains(pair)
     }
 
     pub fn add_order(&mut self, order: Order) {
@@ -167,16 +202,18 @@ impl TradingState {
     pub fn set_position(&mut self, symbol: Pair, quantity: Decimal, avg_price: Decimal) {
         if quantity.abs() <= Decimal::new(1, 6) {
             self.positions.remove(&symbol);
+            self.mark_position_synced(&symbol);
             return;
         }
         self.positions.insert(
             symbol.clone(),
             Position {
-                symbol,
+                symbol: symbol.clone(),
                 quantity,
                 avg_price,
             },
         );
+        self.mark_position_synced(&symbol);
     }
 
     pub fn get_active_order_count(&self, symbol: &Pair) -> usize {
@@ -239,13 +276,17 @@ impl TradingState {
         if delta <= Decimal::ZERO {
             return;
         }
+        self.fill_applied
+            .insert(order.order_id.clone(), order.filled_amount);
+        // Futures quantity is REST/WS position truth. Fills only update the ledger cursor.
+        if self.is_futures() {
+            return;
+        }
         let signed = match order.side {
             Side::Buy => delta,
             Side::Sell => -delta,
         };
         self.update_position(order.instrument.pair.clone(), signed, order.price);
-        self.fill_applied
-            .insert(order.order_id.clone(), order.filled_amount);
     }
 
     /// Record an intended order before calling the exchange.
@@ -289,6 +330,12 @@ impl TradingState {
     /// True when the pair has an unresolved submission or the account is halted.
     pub fn blocks_new_exposure(&self, symbol: &Pair) -> bool {
         self.exposure_halt.is_some() || self.has_unresolved_submission(symbol)
+    }
+
+    /// Increases (opens/enlarges) are blocked until position sync and halt/unknown are clear.
+    /// Reductions remain allowed unless the account is halted or a submission is unresolved.
+    pub fn blocks_exposure_increase(&self, symbol: &Pair) -> bool {
+        self.blocks_new_exposure(symbol) || self.position_sync_pending(symbol)
     }
 
     pub fn pending_submissions(&self) -> &HashMap<SmolStr, PendingSubmission> {
@@ -640,5 +687,39 @@ mod tests {
         state.halt_new_exposure("journal unwritable");
         assert!(state.blocks_new_exposure(&pair));
         assert_eq!(state.exposure_halt_reason(), Some("journal unwritable"));
+    }
+
+    #[test]
+    fn futures_fill_does_not_double_count_with_position_event() {
+        let mut state = TradingState::new().with_instrument_type(InstrumentType::Futures);
+        let pair = Pair::new("BTC", "USDT");
+        state.mark_position_sync_pending(pair.clone());
+        assert!(state.blocks_exposure_increase(&pair));
+        assert!(!state.blocks_new_exposure(&pair));
+
+        let order = Order {
+            order_id: OrderId::new("fut-1".into()),
+            client_order_id: None,
+            instrument: Instrument::new(InstrumentType::Futures, pair.clone()),
+            side: Side::Buy,
+            price: Decimal::new(50000, 0),
+            amount: Decimal::new(1, 3),
+            internal_created_at: 1,
+            exchange_created_at: None,
+            status: OrderStatus::Filled,
+            filled_amount: Decimal::new(1, 3),
+        };
+        state.apply_fill(&order);
+        state.apply_fill(&order);
+        assert_eq!(
+            state.position_qty(&pair),
+            Decimal::ZERO,
+            "fills must not set futures position"
+        );
+
+        state.set_position(pair.clone(), Decimal::new(1, 3), Decimal::new(50000, 0));
+        assert_eq!(state.position_qty(&pair), Decimal::new(1, 3));
+        assert!(!state.position_sync_pending(&pair));
+        assert!(!state.blocks_exposure_increase(&pair));
     }
 }

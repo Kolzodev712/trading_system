@@ -211,6 +211,22 @@ pub async fn strategy_runner_with(
     let instrument_type = bot_config
         .get_instrument_type()
         .unwrap_or(trading_core::types::common::InstrumentType::Spot);
+    if execution_mode == trading_core::types::ExecutionMode::Exchange
+        && matches!(
+            instrument_type,
+            trading_core::types::common::InstrumentType::Futures
+                | trading_core::types::common::InstrumentType::Derivitives
+        )
+    {
+        for config in &strategy_configs {
+            if config.max_market_data_age_ms.is_none() {
+                return Err(
+                    "max_market_data_age_ms is required for Exchange futures; no default is invented"
+                        .into(),
+                );
+            }
+        }
+    }
     let shadow_forbidden_calls = Arc::new(AtomicU64::new(0));
     let trading_client = {
         let raw = services.trading_client()?.clone();
@@ -497,6 +513,38 @@ pub async fn strategy_runner_with(
     });
     maybe_start_zenoh_gateway(bridge.hot_rx, bridge.cold_bus, bridge.dex_bus, router).await;
 
+    if matches!(
+        instrument_type,
+        trading_core::types::common::InstrumentType::Futures
+            | trading_core::types::common::InstrumentType::Derivitives
+    ) {
+        let tsm = services
+            .trading_state_manager
+            .as_ref()
+            .ok_or("Trading state requires venue.mode \"cex\"")?;
+        let trading_state = tsm.get_state();
+        {
+            let mut state = trading_state.write().await;
+            for pair in &all_symbols {
+                state.mark_position_sync_pending(pair.clone());
+            }
+        }
+        let positions = trading_client.read().await.fetch_positions().await?;
+        {
+            let mut state = trading_state.write().await;
+            for position in positions {
+                state.set_position(
+                    position.instrument.pair.clone(),
+                    position.quantity,
+                    position.avg_price,
+                );
+            }
+            for pair in &all_symbols {
+                state.mark_position_synced(pair);
+            }
+        }
+    }
+
     // Pass all pairs to executor (no .first() - single source of truth)
     let executor = StrategyExecutor::new(
         strategy_wrapper.clone(),
@@ -535,6 +583,7 @@ pub async fn strategy_runner_with(
             .and_then(|value| value.as_u64())
             .map(|value| value as u32),
     )
+    .with_max_market_data_age_ms(first_config.max_market_data_age_ms)
     .with_submission_journal(std::sync::Arc::new(
         trading_engine::state::SubmissionJournal::open(&bot_config.submission_journal_path)
             .map_err(|err| format!("submission journal: {err}"))?,
@@ -998,6 +1047,7 @@ mod tests {
             lookback: None,
             max_entry_age_secs: None,
             initially_enabled,
+            max_market_data_age_ms: None,
         }
     }
 

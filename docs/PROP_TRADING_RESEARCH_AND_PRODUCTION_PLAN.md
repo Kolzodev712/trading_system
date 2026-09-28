@@ -1,6 +1,6 @@
 # Prop Trading Productionization and Research Architecture Plan
 
-**Status:** Increments 0–6 are accepted locally. Increment 6 section-61 findings are closed at `trading_system` `ac6fdb3` plus the restart-journal halt test, matching k-paper `ebf4c90`; UI proto was unchanged (`028ea16`). Increment 7 is next. This does not qualify Candidate #2 futures, order execution, the fault matrix or Bybit demo. Placeholder Bybit sample credentials remain an environment limitation. Candidate #2 remains an operational baseline, not validated alpha.  
+**Status:** Increments 0–7 are accepted locally. Increment 6 section-61 findings are closed. Increment 7 futures/Paper linear is recorded in section 62. UI proto was unchanged (`028ea16`). Increment 8 is next. This does not qualify the section 49 fault matrix or Bybit demo. Placeholder Bybit sample credentials remain an environment limitation. Candidate #2 remains an operational baseline, not validated alpha.  
 **Date:** 2026-09-28  
 **Repository:** `trading_system`  
 **Audience:** Cursor / implementation agent / repository owner  
@@ -2346,27 +2346,30 @@ Increment 6 is accepted locally. Continue Increment 7.
 
 # 62. Increment 7 — futures state correctness and readiness
 
-Implement:
+**Status:** Accepted locally. Matching k-paper SHA recorded with this increment. UI proto unchanged (`028ea16`). Candidate #2 remains an operational baseline, not validated alpha.
 
-- authoritative futures-position synchronization model;
-- PositionSyncPending;
-- no double application of fills + position events;
-- per-pair readiness;
-- market-data freshness;
-- one executing strategy owner per account/instrument;
-- startup account-mode/leverage fail-closed behavior.
+Implemented:
 
-In `k-paper` and the Paper adapter, implement the **minimum explicit linear-perpetual one-way BTCUSDT test contract** required for Candidate #2: order/fill -> position and account updates, REST position snapshot/recovery, signed quantity, reduce-only exit enforcement, required leverage/margin readiness, instrument sizing, fees and controlled funding where the ledger tests need it. Version/document Paper's intentional differences from Bybit. Do not reuse spot base/quote reservation as if it were futures margin. Feed controlled completed daily candles to the runner separately from Paper orderbook data.
+- Futures fills update `fill_applied` only; `set_position` from REST/WS is quantity truth (`PositionSyncPending` until the snapshot).
+- Per-pair increase block while pending or while market data is older than required `max_market_data_age_ms` (Exchange+futures; no invented default). Reductions remain allowed unless halted/unresolved.
+- Second executing strategy on the same pair is rejected at config validate.
+- Bybit and Paper Exchange futures: `set_position_mode` / `set_leverage` fail-closed at startup; leverage must be explicit.
+- k-paper one-way USDT-linear BTCUSDT: IM = notional/leverage in USDT, reduce-only cannot open/enlarge a short, `GET /positions`, signed qty, taker fee from `linear.taker_fee_bps`, optional `apply_funding`. Default `config/instruments.yaml` stays spot; linear fixture is `config/linear-btcusdt.yaml`.
+- Completed dailies remain the runner candle source, separate from Paper books.
 
-Acceptance:
+**Tests (local, not remote CI):**
 
-- all event-order tests pass;
-- stale/unready market data blocks exposure increases;
-- reductions still possible where designed;
-- second executing BTCUSDT strategy rejected;
-- Paper position and REST/WS account state agree with independently inspected fills; one-way/reduce-only and restart-with-existing-position tests pass for the simulated contract.
+| Command | Result |
+| --- | --- |
+| `cargo test -p paper-exchange-core` | 15 passed (linear IM, reduce-only flatten, reduce-only cannot short, one-way naked sell rejected; spot tests unchanged) |
+| `cargo check -p paper-exchange-server` | ok |
+| `cargo test -p trading_engine --lib` | 106 passed (`futures_fill_does_not_double_count_with_position_event`) |
+| `cargo test -p exchange_engine --lib` | 251 passed, 1 ignored |
+| `cargo test -p runner --lib` | 31 passed (`second_executing_strategy_on_same_pair_is_rejected`) |
 
-Stop and report.
+Paper vs Bybit (intentional): isolated one-way only; no hedge/cross; no liquidation engine; funding is `apply_funding` with fixture `funding_rate`, not an 8h clock; IM is notional/leverage with no Bybit IM table; mark for UPnL is last fill; Paper process restart still loses the account (runner restart while Paper stays up is Increment 6/9A).
+
+Stop and report. Continue Increment 8.
 
 ---
 
@@ -2492,9 +2495,10 @@ The Increment 6 local-acceptance record includes `trading_system` `ac6fdb38365ad
 | 5A | Accepted locally for 5B | Matching browser/runner Paper+Shadow live/stale/reconnect, persisted disable and observed order state reported |
 | 5B | Accepted locally for Spot/levels connectivity | Market/trade WS, REST bootstrap and UI labels; no order posting, futures or fault qualification |
 | 6 | Accepted locally | Fail-closed journal including restart of a damaged record, partial-fill recovery with missed/repeated events, pending immediate recon, and one focused Paper lost-ACK/restart check |
-| 7+ | In progress | Follow section 54 and each increment's gate |
+| 7 | Accepted locally | Futures PositionSyncPending, no fill+position double count, MD freshness required for Exchange futures, one strategy per pair, fail-closed leverage/mode, Paper one-way USDT-linear BTCUSDT |
+| 8+ | In progress | Follow section 54 and each increment's gate |
 
-Cursor: Increment 6 is accepted locally. Continue Increment 7. UI remains at `028ea16cb53f83871df1ee4053b7caeb36fbb9a8` unless the runner proto/status contract changes.
+Cursor: Increment 7 is accepted locally. Continue Increment 8. UI remains at `028ea16cb53f83871df1ee4053b7caeb36fbb9a8` unless the runner proto/status contract changes.
 
 ---
 

@@ -52,7 +52,9 @@ impl TradingStateManager {
         exchange_state_manager: Arc<ExchangeStateManager>,
         instrument_type: InstrumentType,
     ) -> Self {
-        let state = Arc::new(RwLock::new(TradingState::new()));
+        let state = Arc::new(RwLock::new(
+            TradingState::new().with_instrument_type(instrument_type.clone()),
+        ));
         let subscriber = Arc::new(tokio::sync::Mutex::new(
             ExchangeStateSubscriber::new(exchange_update_rx, state.clone())
                 .with_instrument_type(instrument_type.clone()),

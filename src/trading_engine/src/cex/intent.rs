@@ -131,6 +131,18 @@ pub fn intent_to_order_request(
     if price <= Decimal::ZERO {
         return None;
     }
+    let mut exchange_params = std::collections::HashMap::new();
+    if matches!(
+        instrument.instrument_type(),
+        InstrumentType::Futures | InstrumentType::Derivitives
+    ) && delta < Decimal::ZERO
+        && current_qty > Decimal::ZERO
+    {
+        exchange_params.insert(
+            smol_str::SmolStr::new("reduceOnly"),
+            smol_str::SmolStr::new("true"),
+        );
+    }
     Some(OrderRequest {
         instrument: Instrument::new(
             instrument.instrument_type().clone(),
@@ -141,7 +153,7 @@ pub fn intent_to_order_request(
         price,
         amount: delta.abs(),
         timestamp: None,
-        exchange_params: Default::default(),
+        exchange_params,
     })
 }
 

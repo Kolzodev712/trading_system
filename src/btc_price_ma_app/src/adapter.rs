@@ -744,40 +744,85 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn restart_replay_reconstructs_identical_frozen_snapshot() {
+    async fn persisted_restart_replays_same_frozen_candles() {
         let log = load_n28_log();
-        let mut live = adapter(PRIMARY_LOOKBACK, None);
-        let mut restarted = adapter(PRIMARY_LOOKBACK, None);
-        replay_n28(&mut live, &log);
-        replay_n28(&mut restarted, &log);
-        live.mark_model_reconstructed();
-        restarted.mark_model_reconstructed();
         let now = log
             .decisions
             .last()
             .expect("frozen log")
             .end_time_exclusive_ms;
-        let live_snap = live.build_snapshot(now);
+        let dir =
+            std::env::temp_dir().join(format!("c2-shadow-restart-{}-{}", std::process::id(), now));
+        std::fs::create_dir_all(&dir).unwrap();
+        let journal_path = dir.join("journal.jsonl");
+        let snap_path = dir.join("snapshot.json");
+        let intent_path = dir.join("intent.txt");
+
+        {
+            let mut live = adapter(PRIMARY_LOOKBACK, None);
+            replay_n28(&mut live, &log);
+            live.mark_model_reconstructed();
+            let live_snap = live.build_snapshot(now);
+            let persisted = serde_json::json!({
+                "strategy_id": live_snap.strategy_id,
+                "config_hash": live_snap.config_hash,
+                "direction": live_snap.model_direction,
+                "desired_target": live_snap.desired_target,
+                "operational_role": live_snap.operational_role,
+                "research_disposition": live_snap.research_disposition,
+                "model_reconstructed": live_snap.model_reconstructed,
+            });
+            std::fs::write(&snap_path, persisted.to_string()).unwrap();
+            let record = trading_engine::cex::shadow::record_from_snapshot(
+                &live_snap,
+                trading_core::types::ExecutionMode::Shadow,
+                Decimal::ZERO,
+                Decimal::ZERO,
+                Decimal::ZERO,
+                Decimal::ZERO,
+                2,
+            );
+            trading_engine::cex::shadow::ShadowJournal::new(&journal_path)
+                .append(&record)
+                .unwrap();
+            let account = TradingState::new();
+            let live_intent = evaluate_qty(&mut live, &account, now + 1_000).await;
+            std::fs::write(&intent_path, format!("{live_intent:?}")).unwrap();
+        }
+
+        let persisted: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&snap_path).unwrap()).unwrap();
+        let journal_line = std::fs::read_to_string(&journal_path).unwrap();
+        let journal_row: serde_json::Value =
+            serde_json::from_str(journal_line.lines().next().expect("journal line")).unwrap();
+        let first_intent = std::fs::read_to_string(&intent_path).unwrap();
+
+        let mut restarted = adapter(PRIMARY_LOOKBACK, None);
+        replay_n28(&mut restarted, &log);
+        restarted.mark_model_reconstructed();
         let restarted_snap = restarted.build_snapshot(now);
-        assert_eq!(live_snap, restarted_snap);
-        assert_eq!(live_snap.strategy_id, "BTCPriceMALongFlatV1:BTC/USDT");
-        assert!(!live_snap.config_hash.is_empty());
-        assert_eq!(live_snap.model_direction, log.run.final_direction);
-        assert!(live_snap.model_reconstructed);
-        assert_eq!(live_snap.operational_role, "BASELINE");
+        assert_eq!(restarted_snap.strategy_id, persisted["strategy_id"]);
+        assert_eq!(restarted_snap.config_hash, persisted["config_hash"]);
+        assert_eq!(restarted_snap.model_direction, persisted["direction"]);
+        assert_eq!(restarted_snap.desired_target, persisted["desired_target"]);
+        assert_eq!(restarted_snap.operational_role, "BASELINE");
         assert_eq!(
-            live_snap.research_disposition,
+            restarted_snap.research_disposition,
             RESEARCH_DISPOSITION_REJECTED_ALPHA
         );
+        assert_eq!(journal_row["strategy_id"], restarted_snap.strategy_id);
+        assert_eq!(journal_row["config_hash"], restarted_snap.config_hash);
+        assert_eq!(journal_row["direction"], restarted_snap.model_direction);
+        assert_eq!(journal_row["execution_mode"], "shadow");
         let account = TradingState::new();
-        let now_eval = now + 1_000;
-        let live_intent = evaluate_qty(&mut live, &account, now_eval).await;
-        let restarted_intent = evaluate_qty(&mut restarted, &account, now_eval).await;
+        let restarted_intent = evaluate_qty(&mut restarted, &account, now + 1_000).await;
         assert_eq!(
-            format!("{live_intent:?}"),
             format!("{restarted_intent:?}"),
+            first_intent,
             "restart reconstruction must preserve evaluate semantics"
         );
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

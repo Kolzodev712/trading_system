@@ -1,6 +1,8 @@
-# Local development: k-paper + trading system + CLI
+# Local development: k-paper + trading system + legacy CLI smoke
 
-This guide runs the full **Paper** stack on your machine: the **k-paper** mock exchange, the **trading system runner** (levels mode), and the **TUI CLI**.
+This guide runs the existing **Spot/levels connectivity smoke test**: the **k-paper** exchange, the **trading system runner**, and the old **TUI CLI**. It does not qualify the Candidate #2 futures or fault-injection stages.
+
+For the primary browser control layer and later Paper qualification, read the [prop-trading roadmap](PROP_TRADING_RESEARCH_AND_PRODUCTION_PLAN.md), [K-paper integration guide](https://github.com/Kolzodev712/k-paper/blob/master/docs/PROP_TRADING_INTEGRATION_GUIDE.md), and [Trading System UI control-plane guide](https://github.com/Kolzodev712/trading-system-ui/blob/main/docs/PROP_TRADING_CONTROL_PLANE_GUIDE.md).
 
 Use **three terminals**. Start services in order: k-paper → runner → CLI.
 
@@ -43,15 +45,15 @@ cp sample_config/k-paper/indicators.json config/indicators.json
 
 Edit `config/bot.json` so **`paper_exchange_url` uses the same host/port as k-paper** (see below). Default recommendation: port **19999**.
 
-## Recommended fixed port (19999)
+## Paper port and market feed
 
-k-paper uses a **random port** if `PAPER_EXCHANGE_PORT` is unset. The trading system must use the **same** port in `bot.json`.
+Current K-paper `runtime.rs` defaults to fixed port **19999** if `PAPER_EXCHANGE_PORT` is unset. Set it explicitly for this smoke test so the server and `bot.json` visibly agree.
 
-**k-paper** (always set both):
+**k-paper:**
 
 ```bash
 export PAPER_EXCHANGE_PORT=19999
-export PAPER_EXCHANGE_DUMMY_OB=1   # required for orderbooks + indicator warmup
+export PAPER_EXCHANGE_PROFILE=dev
 ```
 
 **`config/bot.json`** (exchange section):
@@ -68,13 +70,13 @@ Use path **`/ws/trade`** for the runner (orders + account). Market data uses `/w
 
 ```bash
 cd ~/Desktop/k-paper
-PAPER_EXCHANGE_PORT=19999 PAPER_EXCHANGE_DUMMY_OB=1 cargo run
+PAPER_EXCHANGE_PORT=19999 PAPER_EXCHANGE_PROFILE=dev cargo run
 ```
 
 **Success lines:**
 
 ```text
-dummy orderbook generator enabled (BTC-USDT)
+profile=Dev scenario=None market_engine=true instruments=5
 paper exchange listening on 127.0.0.1:19999
 ```
 
@@ -87,10 +89,10 @@ curl -s http://127.0.0.1:19999/exchange_info | head
 
 Leave this terminal running.
 
-### Dummy orderbook notes
+### Market feed notes
 
-- `PAPER_EXCHANGE_DUMMY_OB=1` is **off by default**. Without it you get balances but **no orderbooks** and **no live indicators** in the CLI.
-- Default dummy feed is **BTC-USDT only**. Pairs in `bot.json` (e.g. ETH/USDT) will not get synthetic orderbooks unless you extend k-paper’s dummy config.
+- The checked-in `config/instruments.yaml` has a `market` section with BTC, ETH, SOL, BNB and XRP. Current `runtime.rs` can start the market engine from this section even without the legacy `PAPER_EXCHANGE_DUMMY_OB=1` flag; `PAPER_EXCHANGE_PROFILE=dev` makes interactive intent explicit.
+- A **static** `PAPER_EXCHANGE_SCENARIO` without the legacy dummy flag suppresses the random market engine. Verify the `market_engine=...` startup log instead of inferring feed behavior solely from the profile name.
 - After starting the runner, wait **~15–20 seconds** for SMA(20) to warm up before expecting indicator values.
 
 ---
@@ -156,7 +158,7 @@ cargo run --release --package cli
 ```bash
 # 1) k-paper
 cd ~/Desktop/k-paper
-PAPER_EXCHANGE_PORT=19999 PAPER_EXCHANGE_DUMMY_OB=1 cargo run
+PAPER_EXCHANGE_PORT=19999 PAPER_EXCHANGE_PROFILE=dev cargo run
 
 # 2) runner (new terminal)
 cd ~/Desktop/trading_system
@@ -180,7 +182,7 @@ ss -tlnp | grep 19999    # or 33223 if you use that port
 kill -9 <k-paper-pid>
 ```
 
-Stop the **runner** first if it still holds connections to the old server (`kill <runner-pid>`), then kill k-paper, then start k-paper with `PAPER_EXCHANGE_DUMMY_OB=1`, then start the runner again.
+Stop the **runner** first if it still holds connections to the old server (`kill <runner-pid>`), then kill k-paper, start it with the intended profile/scenario, and restart the runner.
 
 ### CLI connection error / nothing on port 50051
 
@@ -195,8 +197,8 @@ Stop the **runner** first if it still holds connections to the old server (`kill
 
 ### No orderbooks / no indicators in CLI
 
-- k-paper started **without** `PAPER_EXCHANGE_DUMMY_OB=1`, or old instance still running without dummy OB.
-- Only **BTC/USDT** gets dummy books by default; ETH may stay empty.
+- Check K-paper's `market_engine=...` startup log and `config/instruments.yaml`; a static lab scenario may provide no continuing market feed.
+- Confirm the pair is configured in both `bot.json` and K-paper's instruments/market settings.
 - Wait ~15–20s after runner start for indicator warmup.
 
 ### Jaeger / OpenTelemetry warnings

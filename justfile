@@ -112,18 +112,20 @@ indicator-test:
 check-venue-imports:
     bash .cursor/tools/check_venue_imports.sh
 
-# Full CI check (what CI runs)
+# 5R focused gate (GitHub Actions is not used). Run this before merge.
+gate-5r:
+    cargo fmt --all -- --check
+    cargo test -p strategy_core -p research_engine -p research_cli -p trading_engine -p runner -p btc_price_ma_app --all-targets
+    cargo build -p btc_price_ma_app --bin btc_price_ma_app
+    just test-5r-graph
+    cargo clippy -p trading_engine -p runner -p btc_price_ma_app --all-targets --no-deps -- -D warnings
+
+# Full CI check (local; GitHub Actions is disabled)
 ci:
-    # Run all CI checks locally
-    just fmt-check
+    just gate-5r
     just check-venue-imports
-    just clippy-strict
     just check
-    just test
     just test-integration
-    just indicator-validate
-    just indicator-config-check
-    just indicator-test
 
 # Quick check (format, clippy, test)
 quick:

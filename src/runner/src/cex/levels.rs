@@ -136,6 +136,8 @@ pub async fn level_runner(
     )
     .with_instrument_type(instrument_type.clone())
     .with_exchange(format!("{:?}", bot_config.exchange_engine.exchange));
+    let (exec_mode, venue, environment) = crate::config::execution_status_from_bot(&bot_config);
+    let grpc_service = grpc_service.with_execution_status(exec_mode, venue, environment);
     let grpc_service = if let Some(dex_sm) = services.venue.dex_state_manager() {
         grpc_service.with_dex_state_manager(dex_sm, format!("{:?}", services.venue.mode()))
     } else {

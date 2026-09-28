@@ -452,36 +452,12 @@ pub async fn strategy_runner_with(
     .with_strategy_infos(monitoring_strategy_infos)
     .with_strategy_manager(strategy_manager_arc.clone())
     .with_instrument_type(instrument_type.clone())
-    .with_exchange(format!("{:?}", bot_config.exchange_engine.exchange))
-    .with_execution_status(
-        execution_mode,
-        match bot_config.exchange_engine.exchange {
-            trading_core::types::common::Exchange::Bybit => "BYBIT",
-            trading_core::types::common::Exchange::Binance => "BINANCE",
-            trading_core::types::common::Exchange::Paper => "PAPER",
-            trading_core::types::common::Exchange::DeepBook => "DEEPBOOK",
-            trading_core::types::common::Exchange::Unsupported => "UNKNOWN",
-        }
-        .to_string(),
-        if matches!(
-            bot_config.exchange_engine.exchange,
-            trading_core::types::common::Exchange::Paper
-        ) {
-            "LOCAL".to_string()
-        } else if bot_config
-            .exchange_engine
-            .config
-            .get("testnet")
-            .and_then(|v| v.as_bool())
-            == Some(true)
-        {
-            "DEMO".to_string()
-        } else {
-            "MAINNET".to_string()
-        },
-    )
-    .with_strategy_operator(operator)
-    .with_strategy_caps(strategy_caps.clone());
+    .with_exchange(format!("{:?}", bot_config.exchange_engine.exchange));
+    let (_, venue, environment) = crate::config::execution_status_from_bot(&bot_config);
+    let grpc_service = grpc_service
+        .with_execution_status(execution_mode, venue, environment)
+        .with_strategy_operator(operator)
+        .with_strategy_caps(strategy_caps.clone());
 
     let grpc_server = TradingGrpcServer::from_service(grpc_service);
     let grpc_handle = grpc_server.start(grpc_addr).await?;

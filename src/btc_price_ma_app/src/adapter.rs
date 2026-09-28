@@ -19,7 +19,7 @@ use trading_core::{
     },
 };
 use trading_engine::cex::intent::{StrategyContext, StrategyIntent};
-use trading_engine::cex::shadow::StrategyRuntimeSnapshot;
+use trading_engine::cex::shadow::{StrategyRuntimeSnapshot, OPERATIONAL_ROLE_BASELINE};
 use trading_engine::cex::state::Strategy;
 use trading_engine::strategies::strategy_manager::StrategyManager;
 
@@ -224,6 +224,7 @@ impl BtcPriceMaLongFlatV1 {
                 RecoveryState::UnexpectedShort => "recovery_required".to_string(),
             },
             research_disposition: RESEARCH_DISPOSITION_REJECTED_ALPHA.to_string(),
+            operational_role: OPERATIONAL_ROLE_BASELINE.to_string(),
             model_reconstructed: self.model_reconstructed,
         }
     }
@@ -742,8 +743,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn restart_replay_reconstructs_identical_frozen_snapshot() {
+    #[tokio::test]
+    async fn restart_replay_reconstructs_identical_frozen_snapshot() {
         let log = load_n28_log();
         let mut live = adapter(PRIMARY_LOOKBACK, None);
         let mut restarted = adapter(PRIMARY_LOOKBACK, None);
@@ -763,10 +764,24 @@ mod tests {
         assert!(!live_snap.config_hash.is_empty());
         assert_eq!(live_snap.model_direction, log.run.final_direction);
         assert!(live_snap.model_reconstructed);
+        assert_eq!(live_snap.operational_role, "BASELINE");
+        assert_eq!(
+            live_snap.research_disposition,
+            RESEARCH_DISPOSITION_REJECTED_ALPHA
+        );
+        let account = TradingState::new();
+        let now_eval = now + 1_000;
+        let live_intent = evaluate_qty(&mut live, &account, now_eval).await;
+        let restarted_intent = evaluate_qty(&mut restarted, &account, now_eval).await;
+        assert_eq!(
+            format!("{live_intent:?}"),
+            format!("{restarted_intent:?}"),
+            "restart reconstruction must preserve evaluate semantics"
+        );
     }
 
     #[test]
-    fn shadow_journal_keeps_identity_and_zero_exchange_orders() {
+    fn shadow_journal_serializes_identity_fields() {
         let log = load_n28_log();
         let mut strat = adapter(PRIMARY_LOOKBACK, None);
         replay_n28(&mut strat, &log);
@@ -784,9 +799,12 @@ mod tests {
             Decimal::ZERO,
             Decimal::ZERO,
             Decimal::ZERO,
-            0,
+            2,
         );
-        assert_eq!(record.would_have_requested_orders, 0);
+        assert_eq!(
+            record.would_have_requested_orders, 2,
+            "journal records the executor-supplied count; it is not a zero-order proof"
+        );
         assert_eq!(record.strategy_id, snap.strategy_id);
         assert_eq!(record.config_hash, snap.config_hash);
         assert_eq!(record.direction, snap.model_direction);
@@ -799,7 +817,7 @@ mod tests {
         let body = std::fs::read_to_string(&path).unwrap();
         let parsed: serde_json::Value =
             serde_json::from_str(body.lines().next().expect("journal line")).unwrap();
-        assert_eq!(parsed["would_have_requested_orders"], 0);
+        assert_eq!(parsed["would_have_requested_orders"], 2);
         assert_eq!(parsed["strategy_id"], snap.strategy_id);
         assert_eq!(parsed["config_hash"], snap.config_hash);
         let _ = std::fs::remove_file(&path);

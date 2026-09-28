@@ -1,7 +1,7 @@
 //! k-paper WebSocket client: connects to k-paper, maps messages to channels, implements TradingClient.
 //! REST is used for fetch_balance, fetch_open_orders, fetch_trades (reconciliation).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -25,7 +25,8 @@ use trading_core::venue::cex::traits::{ConnectionState, TradingClient};
 use super::config::PaperConfig;
 use super::map::{
     balance_to_core, execution_ack_to_order, execution_to_order, execution_to_trade,
-    orderbook_to_structured, position_to_core, public_trade_to_structured, to_instrument_id,
+    merge_fill_into_working_order, orderbook_to_structured, position_to_core,
+    public_trade_to_structured, to_instrument_id,
 };
 use super::messages::{KPaperCommand, KPaperMessage, KPaperPlaceOrderRequest};
 use super::rest::{
@@ -232,19 +233,39 @@ impl TradingClient<OrderRequest> for KPaperClient {
     }
 
     async fn cancel_all_orders(&self, pair: &Pair) -> Result<(), EngineError> {
-        let order_ids: Vec<OrderId> = {
+        let mut order_ids = HashSet::new();
+        {
             let state = self.state.read().await;
-            state
-                .open_orders
-                .values()
-                .filter(|o| o.instrument.pair == *pair)
-                .map(|o| o.order_id.clone())
-                .collect()
-        };
-        for id in order_ids {
-            let _ = self.cancel_order_by_id(id).await;
+            for order in state.open_orders.values() {
+                if order.instrument.pair == *pair {
+                    order_ids.insert(order.order_id.clone());
+                }
+            }
         }
-        Ok(())
+        match self.fetch_open_orders().await {
+            Ok(rest) => {
+                for order in rest {
+                    if order.instrument.pair == *pair {
+                        order_ids.insert(order.order_id);
+                    }
+                }
+            }
+            Err(e) => {
+                warn!("k-paper: REST open_orders for cancel_all failed: {e}");
+            }
+        }
+        let mut first_err = None;
+        for id in order_ids {
+            if let Err(e) = self.cancel_order_by_id(id).await {
+                if first_err.is_none() {
+                    first_err = Some(e);
+                }
+            }
+        }
+        match first_err {
+            Some(e) => Err(e),
+            None => Ok(()),
+        }
     }
 
     async fn fetch_balance(&self) -> Result<Vec<Balance>, EngineError> {
@@ -782,7 +803,17 @@ async fn handle_message(
                     (None, None)
                 }
             } else {
-                let order = execution_to_order(&exec, instrument_type.clone());
+                let order_id = OrderId::new(exec.order_id.clone().into());
+                let incoming = execution_to_order(&exec, instrument_type.clone());
+                let order = match incoming {
+                    Some(fill_order) if !is_reject && st.open_orders.contains_key(&order_id) => {
+                        Some(merge_fill_into_working_order(
+                            st.open_orders.get(&order_id).expect("contains_key"),
+                            fill_order.filled_amount,
+                        ))
+                    }
+                    other => other,
+                };
                 let pending_tx = st.pending_place.take().map(|(tx, _)| tx);
                 (order, pending_tx)
             };

@@ -726,4 +726,38 @@ mod tests {
         assert!(!state.position_sync_pending(&pair));
         assert!(!state.blocks_exposure_increase(&pair));
     }
+
+    #[test]
+    fn rest_position_overwrites_lying_ws_update() {
+        let mut state = TradingState::new().with_instrument_type(InstrumentType::Futures);
+        let pair = Pair::new("BTC", "USDT");
+        state.set_position(pair.clone(), Decimal::new(1, 3), Decimal::new(50000, 0));
+        state.set_position(pair.clone(), Decimal::new(1, 0), Decimal::new(50000, 0));
+        assert_eq!(state.position_qty(&pair), Decimal::new(1, 0));
+        state.set_position(pair.clone(), Decimal::new(1, 3), Decimal::new(50000, 0));
+        assert_eq!(
+            state.position_qty(&pair),
+            Decimal::new(1, 3),
+            "authoritative REST/snapshot qty must replace a bad WS update"
+        );
+        let order = Order {
+            order_id: OrderId::new("ord-1".into()),
+            client_order_id: Some(smol_str::SmolStr::new("cid-1")),
+            instrument: Instrument::new(InstrumentType::Futures, pair.clone()),
+            side: Side::Buy,
+            price: Decimal::new(50000, 0),
+            amount: Decimal::new(2, 3),
+            internal_created_at: 1,
+            exchange_created_at: None,
+            status: OrderStatus::PartiallyFilled,
+            filled_amount: Decimal::new(1, 3),
+        };
+        state.apply_fill(&order);
+        state.add_order(order.clone());
+        assert_eq!(state.position_qty(&pair), Decimal::new(1, 3));
+        assert_eq!(state.working_qty(&pair), Decimal::new(1, 3));
+        state.remove_order(&order.order_id);
+        assert_eq!(state.working_qty(&pair), Decimal::ZERO);
+        assert_eq!(state.effective_position_qty(&pair), Decimal::new(1, 3));
+    }
 }

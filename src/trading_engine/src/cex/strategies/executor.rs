@@ -823,7 +823,7 @@ impl<S: Strategy> StrategyExecutor<S> {
                                 continue;
                             }
                         }
-                        let client_order_id = lab_client_order_id();
+                        let client_order_id = lab_client_order_id(req);
                         req.exchange_params.insert(
                             smol_str::SmolStr::new("orderLinkId"),
                             client_order_id.clone(),
@@ -948,20 +948,37 @@ impl<S: Strategy> StrategyExecutor<S> {
                                             trading_state.write().await.import_working_order(order);
                                         }
                                         Err(e) => {
-                                            if let Some(pending) = pending {
+                                            if place_error_is_unknown(&e) {
+                                                if let Some(pending) = pending {
+                                                    let _ = self
+                                                        .persist_or_halt(
+                                                            &pending,
+                                                            crate::cex::state::SubmissionState::Unknown,
+                                                        )
+                                                        .await;
+                                                }
+                                                warn!(
+                                                    "Failed to place order in batch (reservation retained): {}",
+                                                    e
+                                                );
+                                                circuit_breaker.lock().await.record_failure();
+                                                need_recovery = true;
+                                            } else if let Some(pending) = pending {
+                                                warn!(
+                                                    "Known place rejection (reservation released): {}",
+                                                    e
+                                                );
+                                                trading_state.write().await.clear_submission(
+                                                    pending.client_order_id.as_str(),
+                                                );
                                                 let _ = self
                                                     .persist_or_halt(
                                                         &pending,
-                                                        crate::cex::state::SubmissionState::Unknown,
+                                                        crate::cex::state::SubmissionState::Rejected,
                                                     )
                                                     .await;
+                                                circuit_breaker.lock().await.record_failure();
                                             }
-                                            warn!(
-                                                "Failed to place order in batch (reservation retained): {}",
-                                                e
-                                            );
-                                            circuit_breaker.lock().await.record_failure();
-                                            need_recovery = true;
                                         }
                                     }
                                 }
@@ -1093,7 +1110,15 @@ impl<S: Strategy> StrategyExecutor<S> {
     }
 }
 
-fn lab_client_order_id() -> smol_str::SmolStr {
+fn lab_client_order_id(req: &OrderRequest) -> smol_str::SmolStr {
+    let reduce_only = req
+        .exchange_params
+        .get("reduceOnly")
+        .map(|value| value.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+    if reduce_only {
+        return smol_str::SmolStr::new(uuid::Uuid::new_v4().to_string());
+    }
     match std::env::var("TRADING_TEST_CLIENT_ORDER_ID") {
         Ok(id) if !id.is_empty() => smol_str::SmolStr::new(id),
         _ => smol_str::SmolStr::new(uuid::Uuid::new_v4().to_string()),
@@ -1105,6 +1130,13 @@ fn apply_lab_order_overrides(req: &mut OrderRequest) {
         if let Ok(price) = raw.parse::<Decimal>() {
             if price > Decimal::ZERO {
                 req.price = price;
+            }
+        }
+    }
+    if let Ok(raw) = std::env::var("TRADING_TEST_ORDER_QTY") {
+        if let Ok(qty) = raw.parse::<Decimal>() {
+            if qty > Decimal::ZERO {
+                req.amount = qty;
             }
         }
     }
@@ -1168,4 +1200,41 @@ fn market_data_is_stale(orderbook_ts: u64, max_age_ms: Option<u64>) -> bool {
         orderbook_ts.saturating_mul(1000)
     };
     now_ms.saturating_sub(ts_ms) > max_age_ms
+}
+
+fn place_error_is_unknown(err: &EngineError) -> bool {
+    let text = err.to_string();
+    text.contains("timeout")
+        || text.contains("disconnected")
+        || text.contains("dropped")
+        || text.contains("pending place")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn aged_timestamp_is_stale() {
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+        assert!(market_data_is_stale(
+            now_ms.saturating_sub(5_000),
+            Some(1_000)
+        ));
+        assert!(!market_data_is_stale(now_ms, Some(60_000)));
+    }
+
+    #[test]
+    fn timeout_place_error_stays_unknown() {
+        let timeout =
+            EngineError::CustomError(anyhow::anyhow!("k-paper: open_order timeout (15s)"));
+        assert!(place_error_is_unknown(&timeout));
+        let reject = EngineError::CustomError(anyhow::anyhow!("lab_reject"));
+        assert!(!place_error_is_unknown(&reject));
+        let dup = EngineError::CustomError(anyhow::anyhow!("duplicate client_order_id"));
+        assert!(!place_error_is_unknown(&dup));
+    }
 }

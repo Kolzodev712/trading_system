@@ -1,6 +1,6 @@
 # Prop Trading Productionization and Research Architecture Plan
 
-**Status:** Increments 0–9 are accepted locally. Increment 9A has useful Candidate #2 Paper linear evidence but is on owner-review hold: the full Stage C / section 49 matrix has not yet been demonstrated. Increment 10 / Bybit demo is blocked until the 9A gaps below are closed and reviewed. Candidate #2 remains an operational baseline, not validated alpha.  
+**Status:** Increments 0–9 are accepted locally. Increment 9A's remaining section 49 faults, N=28 decision comparison, grpc CancelWorking and browser CancelWorking are now reported locally and wait owner re-review. Increment 10 / Bybit demo stays blocked. Candidate #2 remains an operational baseline, not validated alpha.  
 **Date:** 2026-09-28  
 **Repository:** `trading_system`  
 **Audience:** Cursor / implementation agent / repository owner  
@@ -2460,7 +2460,33 @@ Remaining Paper/Bybit differences (Stage D, not claimed here): Paper MD is snaps
 
 **Increment 10 control preflight:** Before enabling demo mutations, ensure operator authorization is enforced at a trusted server or proxy boundary. The current runner allows mutation when `TRADING_OPERATOR_TOKEN` is unset; the UI reads `VITE_OPERATOR_TOKEN` into browser code, and `x-operator-id` comes from client storage. A browser-distributed token and client-supplied identity do not establish protected per-operator demo controls. Verify unauthorized commands are denied and the displayed/audited operator identity is authenticated. This can be completed as the first guarded work inside Increment 10 after the 9A gate; do not enable demo entries until it passes.
 
-Candidate #2 remains an operational baseline, not validated alpha. Keep Increment 10 / Bybit demo on hold pending the completed 9A report and owner review.
+**Revised Increment 9A report (2026-09-28; this commit; pending owner re-review):** `trading_system` (this commit) + k-paper `1feee383052a0b37e9f155e9190ce3b086efee75` + UI `10496e72094f8136cb51b237ae2787fbace3d764`. Candidate #2 `btc_price_ma_app --mode strategies` against Paper linear BTCUSDT (`PAPER_EXCHANGE_CONFIG=config/linear-btcusdt.yaml`, dummy book separate from runner-owned fixture candles `scripts/inc9a_long_candles.json`, lookback=2 lab window). `scripts/inc9a_matrix.sh` exit 0 against k-paper `:19995` (`INC9A_WORKDIR=/tmp/inc9a-matrix`). Package fixtures in that script: `frozen_n28_runtime_transitions_match_offline` passed; `delta_merges_only_when_sequence_continues` passed; `aged_timestamp_is_stale`, `timeout_place_error_stays_unknown`, `rest_position_overwrites_lying_ws_update`, `record_trade_uses_trade_id` passed. k-paper `cargo test -p paper-exchange-core --lib` 23 passed. Paper GET/POST failures fail the script; journal/ledger records are required.
+
+| Section 49 row | Result |
+| --- | --- |
+| Normal accept → ack → fill | Pass. Journal `prepared submitted acknowledged`; ledger unique fills ≥ 1; Paper REST trades nonempty |
+| Lost ACK + runner restart, Paper kept | Pass. `POST /test/suppress_place_ack {}`; client `inc9a-lost-ack-1` limit 49000 New `b62fca58-…`; SIGKILL; Paper same row; relaunch `imported_working=1`, grpc `orders=1` same id, no replacement `place_order` |
+| Explicit reject | Pass. `POST /test/reject_next_place`; runner `Known place rejection`/`lab_reject`; journal `rejected`; Paper orders stayed 0 |
+| Duplicate fill | Pass. `POST /test/duplicate_next_fill`; unique ledger fills 2→3; Paper and grpc `pos=0.001`, not `0.002` |
+| Private/public disconnect | Pass. Disconnect logged; `reconnecting trade WS` required; Paper still `0.001`; grpc `pos=0.001` after reconnect |
+| Stale book | Pass. `POST /test/stale_orderbook`; runner `Stale market data blocks exposure increase`; Paper `open_orders=[]` and `positions=[]` |
+| Runner restart with position | Pass. After fill, disable, SIGKILL; Paper kept position+trade; relaunch no replacement place; Paper still `0.001` |
+| Operator pause/flatten/resume | Pass. grpc PauseEntries `entries_paused=true`; FlattenAndPause latch then TSM `positions=0` matching Paper; Resume clears latch |
+| Partial fill then cancel/fill race | Pass. Far limit qty 0.002; `lab_fill_open` `PartiallyFilled` 0.001; journal acknowledged; unique ledger +1; grpc `CancelWorking` of `d064b1dd-…`; Paper working `[]`, position remained `0.001`; grpc `orders=0` `pos=0.001` |
+| Position-before-fill event order | Pass. Unique ledger fills 4→5; grpc `pos=0.001` |
+| Transient send failure (drop) | Pass. `POST /test/drop_next_place`; runner `open_order timeout`; journal `unknown`; Paper did not book `inc9a-drop-1` |
+| Duplicate client ID | Pass. Second place with `inc9a-dup-cid` `Known place rejection`; journal `rejected`; Paper extra working orders 0 |
+| REST/WS disagreement | Pass. `POST /test/emit_ws_position` qty 1 reached grpc `pos=1`; Paper REST unchanged; reconnect restored grpc `pos=0.001` |
+| Frozen N=28 decision comparison | Pass. `cargo test -p btc_price_ma_app --lib frozen_n28_runtime_transitions_match_offline` through the completed-candle interface (not the lookback=2 live lab) |
+| Sequence-gap book | Bounded fixture only: `cargo test -p market_data_engine --lib delta_merges_only_when_sequence_continues`. Paper MD is snapshot-only (`sequence: None`) |
+
+Browser UI `http://127.0.0.1:5173/` → Envoy `:8081` → composition `:50051`: **PAPER LOCAL + EXCHANGE**. Cancel working confirmation: venue/mode `PAPER LOCAL + EXCHANGE`, scope account, `Working orders: 1`, `Positions: none reported`, consequence text that cancel/fill races must reconcile. Confirm sent Paper `cancel_order` `05dc0701-…` (`inc9a-ui-cancel` limit 49000); CancelAck; independent `GET /open_orders` `[]`; grpc `orders=0` `positions=0` `entries_paused=true`. Prior Pause/Flatten/Resume browser evidence is unchanged.
+
+Runner fixes shipped with this report: known place errors persist `rejected` and release reservation; timeouts stay `unknown`; Paper fill events merge into the working order instead of marking the whole order `Filled`; `cancel_all_orders` unions REST `/open_orders` so CancelWorking reaches a partial remainder. `paper_get`/`paper_post` fail closed.
+
+Remaining Paper/Bybit differences (Stage D, not claimed here): Paper MD is snapshot-only, so Bybit sequence-gap drops are not reproduced on the live Paper path; dummy book is not the frozen N=28 series (N=28 is the adapter/offline comparison above); REST futures positions remain recon truth (lying WS was used instead of poisoning REST); Paper process restart still loses the in-memory account; funding is `apply_funding` fixture not an 8h clock; isolated one-way, no liquidation engine.
+
+Candidate #2 remains an operational baseline, not validated alpha. Keep Increment 10 / Bybit demo on hold pending owner re-review of this report. Do not implement the operator-token/Vite control change until that 10 preflight.
 
 ---
 
@@ -2515,7 +2541,7 @@ Do not implement Candidate #3's trading rule until a separate strategy research 
 
 # 67. Current Cursor instruction
 
-The Increment 9A record above is **reported local evidence under review**, not a remotely enforced CI result or a completed Stage C / section 49 qualification. The pinned implementation SHAs are listed in section 64; the sibling guides record their own revisions. The accepted 5B connectivity record remains `trading_system` `043ca64523f42212cd8a2616ba6201d61d7c878a` (evidence `1f00fdc80f7bbbb39b836da9445e041eb18e6c77`).
+The Increment 9A record above is **reported local evidence pending owner re-review**, not a remotely enforced CI result. The first incomplete matrix at `b136111` remains on file; this revision drives and asserts the previously unasserted section 49 rows. The pinned implementation SHAs are listed in section 64; the sibling guides record their own revisions. The accepted 5B connectivity record remains `trading_system` `043ca64523f42212cd8a2616ba6201d61d7c878a` (evidence `1f00fdc80f7bbbb39b836da9445e041eb18e6c77`).
 
 | Increment | Status | Gate |
 | --- | --- | --- |
@@ -2527,10 +2553,10 @@ The Increment 9A record above is **reported local evidence under review**, not a
 | 7 | Accepted locally | Futures PositionSyncPending, no fill+position double count, MD freshness required for Exchange futures, one strategy per pair, fail-closed leverage/mode, Paper one-way USDT-linear BTCUSDT |
 | 8 | Accepted locally | Explicit Exchange risk, prospective effective exposure, PauseEntries/CancelWorking/FlattenAndPause/Resume, operator token on mutating RPCs, UI confirmation does not treat flatten RPC as flat |
 | 9 | Accepted locally | Durable execution ledger, fees/funding/weighted PnL, restart replay, daily-loss from ledger or fail-closed if configured without it, UI simulation label for Paper |
-| 9A | Review hold | Normal fill, position and lost-ACK runner restarts, and manual pause/flatten/resume observed; complete the unasserted section 49 faults, partial fill/cancel race, N=28 decision-equivalence and UI CancelWorking before re-review |
+| 9A | Reported complete locally; pending owner re-review | Section 49 rows driven through C2→Paper with journal/ledger/grpc asserts; frozen N=28 adapter comparison; grpc and browser CancelWorking recorded; stop before Bybit demo |
 | 10 | Blocked | Start demo only after 9A acceptance; protect mutating operator commands before enabling demo entries |
 
-Cursor: Finish the listed 9A qualification gaps and submit a revised Paper readiness report with row-level evidence. Stop for owner review. Do not start Increment 10 / Bybit demo until 9A is accepted; the operator authorization preflight is a guarded first action of 10 before any demo entries.
+Cursor: Stop for owner review. Do not start Increment 10 / Bybit demo until 9A is accepted; the operator authorization preflight is a guarded first action of 10 before any demo entries.
 
 ---
 

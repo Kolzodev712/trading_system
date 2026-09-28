@@ -10,23 +10,28 @@ mod trading_cli {
 use trading_cli::trading_cli_service_client::TradingCliServiceClient;
 use trading_cli::{
     GetMonitoringDataRequest, GetStrategyConfigRequest, GetTradingStatusRequest,
-    RequestRestartRequest, SetTradingEnabledRequest, ToggleStrategyRequest,
+    OperatorCommandRequest, RequestRestartRequest, SetTradingEnabledRequest, ToggleStrategyRequest,
     UpdateStrategyCapRequest,
 };
 
 fn usage() -> ! {
     eprintln!(
-        "usage: grpc_ctl <enable|disable|status|cap|config|restart> [args]
+        "usage: grpc_ctl <enable|disable|status|cap|config|restart|pause|cancel|flatten|resume> [args]
   enable [StrategyName]
   disable [StrategyName]
   status
   cap <StrategyName> <BASE/QUOTE> <qty>
   config [StrategyName] [BASE/QUOTE]
-  restart [cancel_working]
+  restart [cancel_working|flatten|keep_working]
+  pause [request_id] [symbol]
+  cancel [request_id] [symbol]
+  flatten [request_id] [symbol]
+  resume [request_id] [symbol]
 
 env: TRADING_GRPC (default http://127.0.0.1:50051)
      TRADING_STRATEGY (default PropHold)
-     TRADING_SYMBOL (default BTC/USDT)"
+     TRADING_SYMBOL (default BTC/USDT)
+     TRADING_OPERATOR_TOKEN (optional; sent as x-operator-token)"
     );
     std::process::exit(2);
 }
@@ -86,18 +91,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("trading disabled={} msg={}", resp.success, resp.message);
         }
         "status" => {
-            let enabled = client
+            let status = client
                 .get_trading_status(GetTradingStatusRequest {})
                 .await?
-                .into_inner()
-                .enabled;
+                .into_inner();
             let data = client
                 .get_monitoring_data(GetMonitoringDataRequest {})
                 .await?
                 .into_inner()
                 .data
                 .unwrap_or_default();
-            println!("global_trading={enabled}");
+            println!("global_trading={}", status.enabled);
+            println!(
+                "entries_paused={} flatten_latched={}",
+                status.entries_paused, status.flatten_latched
+            );
+            println!("global_toggle_semantics={}", status.global_toggle_semantics);
             println!(
                 "runner_mode={} venue={} environment={} execution_mode={} snapshot_unix_ms={}",
                 data.runner_mode,
@@ -192,6 +201,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .await?
                 .into_inner();
             println!("restart success={} msg={}", resp.success, resp.message);
+        }
+        "pause" | "cancel" | "flatten" | "resume" => {
+            let request_id = args.next().unwrap_or_default();
+            let symbol = args.next().unwrap_or_default();
+            let req = OperatorCommandRequest { request_id, symbol };
+            let resp = match cmd.as_str() {
+                "pause" => client.pause_entries(req).await?.into_inner(),
+                "cancel" => client.cancel_working(req).await?.into_inner(),
+                "flatten" => client.flatten_and_pause(req).await?.into_inner(),
+                _ => client.resume(req).await?.into_inner(),
+            };
+            println!(
+                "accepted={} state={} venue={} environment={} scope={} msg={}",
+                resp.accepted, resp.state, resp.venue, resp.environment, resp.scope, resp.message
+            );
+            if !resp.order_ids.is_empty() {
+                println!("order_ids={}", resp.order_ids.join(","));
+            }
         }
         _other => usage(),
     }

@@ -168,4 +168,32 @@ impl TradingCliService for GatewayService {
 
         Ok(Response::new(Box::pin(ReceiverStream::new(rx))))
     }
+
+    async fn pause_entries(
+        &self,
+        request: Request<trading_cli::OperatorCommandRequest>,
+    ) -> Result<Response<trading_cli::OperatorCommandResponse>, Status> {
+        self.client().pause_entries(request).await
+    }
+
+    async fn cancel_working(
+        &self,
+        request: Request<trading_cli::OperatorCommandRequest>,
+    ) -> Result<Response<trading_cli::OperatorCommandResponse>, Status> {
+        self.client().cancel_working(request).await
+    }
+
+    async fn flatten_and_pause(
+        &self,
+        request: Request<trading_cli::OperatorCommandRequest>,
+    ) -> Result<Response<trading_cli::OperatorCommandResponse>, Status> {
+        self.client().flatten_and_pause(request).await
+    }
+
+    async fn resume(
+        &self,
+        request: Request<trading_cli::OperatorCommandRequest>,
+    ) -> Result<Response<trading_cli::OperatorCommandResponse>, Status> {
+        self.client().resume(request).await
+    }
 }

@@ -30,6 +30,8 @@ pub struct LevelExecutor {
     config_min_notional: rust_decimal::Decimal,
     /// Trading control - checks if trading is enabled (optional, for TUI control)
     trading_enabled: Option<Arc<tokio::sync::RwLock<bool>>>,
+    entries_paused: Option<Arc<tokio::sync::RwLock<bool>>>,
+    flatten_latched: Option<Arc<tokio::sync::RwLock<bool>>>,
 }
 
 impl LevelExecutor {
@@ -64,12 +66,24 @@ impl LevelExecutor {
             config_tick_size,
             config_min_notional,
             trading_enabled: None,
+            entries_paused: None,
+            flatten_latched: None,
         }
     }
 
     /// Set trading enabled flag (for TUI control)
     pub fn with_trading_control(mut self, trading_enabled: Arc<tokio::sync::RwLock<bool>>) -> Self {
         self.trading_enabled = Some(trading_enabled);
+        self
+    }
+
+    pub fn with_operator_flags(
+        mut self,
+        entries_paused: Arc<tokio::sync::RwLock<bool>>,
+        flatten_latched: Arc<tokio::sync::RwLock<bool>>,
+    ) -> Self {
+        self.entries_paused = Some(entries_paused);
+        self.flatten_latched = Some(flatten_latched);
         self
     }
 
@@ -84,6 +98,20 @@ impl LevelExecutor {
             *trading_enabled.read().await
         } else {
             true // Default to enabled if no control set
+        }
+    }
+
+    pub async fn entries_paused(&self) -> bool {
+        match &self.entries_paused {
+            Some(flag) => *flag.read().await,
+            None => false,
+        }
+    }
+
+    pub async fn flatten_latched(&self) -> bool {
+        match &self.flatten_latched {
+            Some(flag) => *flag.read().await,
+            None => false,
         }
     }
 

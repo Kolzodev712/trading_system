@@ -9,4 +9,4 @@ pub use client::*;
 pub use connection_pool::*;
 pub use retry::*;
 pub use server::check_port_available;
-pub use trading_control::TradingControl;
+pub use trading_control::{operator_allows_submit, TradingControl, GLOBAL_TOGGLE_SEMANTICS};

@@ -15,10 +15,11 @@ use dex_engine::runtime::DexEngineRuntime;
 use exchange_engine::state::manager::ExchangeStateManager;
 use indicator_engine::IndicatorService;
 use smol_str::SmolStr;
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
 use tonic::{Request, Response, Status};
-use trading_core::grpc::TradingControl;
+use trading_core::grpc::{TradingControl, GLOBAL_TOGGLE_SEMANTICS};
 use trading_core::types::exchange::OrderRequest;
 use trading_core::venue::cex::traits::TradingClient;
 use trading_engine::dex::{DexIndicatorEngine, DexQuoteManager, DexStrategyManager};
@@ -54,6 +55,7 @@ pub struct TradingCliServiceImpl {
     execution_mode: trading_core::types::ExecutionMode,
     venue_label: String,
     environment: String,
+    operator_results: Arc<Mutex<HashMap<String, trading_cli::OperatorCommandResponse>>>,
 }
 
 impl TradingCliServiceImpl {
@@ -93,6 +95,7 @@ impl TradingCliServiceImpl {
             execution_mode: trading_core::types::ExecutionMode::Exchange,
             venue_label: "UNKNOWN".to_string(),
             environment: "UNKNOWN".to_string(),
+            operator_results: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -222,6 +225,7 @@ impl TradingCliServiceImpl {
             execution_mode: self.execution_mode,
             venue_label: self.venue_label.clone(),
             environment: self.environment.clone(),
+            operator_results: self.operator_results.clone(),
         }
     }
 
@@ -278,7 +282,12 @@ impl TradingCliServiceImpl {
             trading_state_manager: self.trading_state_manager.clone(),
             exchange_state_manager: self.exchange_state_manager.clone(),
             level_manager: self.level_manager.clone(),
+            operator_results: self.operator_results.clone(),
         }
+    }
+
+    fn require_mutating<T>(&self, request: &Request<T>) -> Result<(), Status> {
+        crate::grpc::access::check_mutating_access(request.metadata())
     }
 }
 
@@ -288,6 +297,7 @@ impl TradingCliService for TradingCliServiceImpl {
         &self,
         request: Request<trading_cli::SetTradingEnabledRequest>,
     ) -> Result<Response<trading_cli::SetTradingEnabledResponse>, Status> {
+        self.require_mutating(&request)?;
         self.trading_control_service()
             .set_trading_enabled(request)
             .await
@@ -303,7 +313,55 @@ impl TradingCliService for TradingCliServiceImpl {
             execution_mode: self.execution_mode.as_str().to_string(),
             venue: self.venue_label.clone(),
             environment: self.environment.clone(),
+            entries_paused: self.trading_control.entries_paused().await,
+            flatten_latched: self.trading_control.flatten_latched().await,
+            global_toggle_semantics: GLOBAL_TOGGLE_SEMANTICS.to_string(),
         }))
+    }
+
+    async fn pause_entries(
+        &self,
+        request: Request<trading_cli::OperatorCommandRequest>,
+    ) -> Result<Response<trading_cli::OperatorCommandResponse>, Status> {
+        self.require_mutating(&request)?;
+        self.trading_control_service()
+            .pause_entries(request, self.venue_label.clone(), self.environment.clone())
+            .await
+    }
+
+    async fn cancel_working(
+        &self,
+        request: Request<trading_cli::OperatorCommandRequest>,
+    ) -> Result<Response<trading_cli::OperatorCommandResponse>, Status> {
+        self.require_mutating(&request)?;
+        self.trading_control_service()
+            .cancel_working(request, self.venue_label.clone(), self.environment.clone())
+            .await
+    }
+
+    async fn flatten_and_pause(
+        &self,
+        request: Request<trading_cli::OperatorCommandRequest>,
+    ) -> Result<Response<trading_cli::OperatorCommandResponse>, Status> {
+        self.require_mutating(&request)?;
+        self.trading_control_service()
+            .flatten_and_pause(
+                request,
+                self.venue_label.clone(),
+                self.environment.clone(),
+                self.instrument_type.clone(),
+            )
+            .await
+    }
+
+    async fn resume(
+        &self,
+        request: Request<trading_cli::OperatorCommandRequest>,
+    ) -> Result<Response<trading_cli::OperatorCommandResponse>, Status> {
+        self.require_mutating(&request)?;
+        self.trading_control_service()
+            .resume(request, self.venue_label.clone(), self.environment.clone())
+            .await
     }
 
     async fn get_levels(
@@ -324,6 +382,7 @@ impl TradingCliService for TradingCliServiceImpl {
         &self,
         request: Request<trading_cli::CreateLevelRequest>,
     ) -> Result<Response<trading_cli::CreateLevelResponse>, Status> {
+        self.require_mutating(&request)?;
         self.level_service().create_level(request).await
     }
 
@@ -331,13 +390,15 @@ impl TradingCliService for TradingCliServiceImpl {
         &self,
         request: Request<trading_cli::UpdateLevelRequest>,
     ) -> Result<Response<trading_cli::UpdateLevelResponse>, Status> {
+        self.require_mutating(&request)?;
         self.level_service().update_level(request).await
     }
 
     async fn delete_level(
         &self,
-        _request: Request<trading_cli::DeleteLevelRequest>,
+        request: Request<trading_cli::DeleteLevelRequest>,
     ) -> Result<Response<trading_cli::DeleteLevelResponse>, Status> {
+        self.require_mutating(&request)?;
         Err(Status::unimplemented("Not yet implemented"))
     }
 
@@ -345,6 +406,7 @@ impl TradingCliService for TradingCliServiceImpl {
         &self,
         request: Request<trading_cli::ToggleLevelRequest>,
     ) -> Result<Response<trading_cli::ToggleLevelResponse>, Status> {
+        self.require_mutating(&request)?;
         self.level_service().toggle_level(request).await
     }
 
@@ -352,6 +414,7 @@ impl TradingCliService for TradingCliServiceImpl {
         &self,
         request: Request<trading_cli::ToggleDexQuoteRequest>,
     ) -> Result<Response<trading_cli::ToggleDexQuoteResponse>, Status> {
+        self.require_mutating(&request)?;
         let Some(service) = self.dex_quote_service() else {
             return Err(Status::failed_precondition(
                 "DEX quote control not available (not in dex levels mode)",
@@ -364,6 +427,7 @@ impl TradingCliService for TradingCliServiceImpl {
         &self,
         request: Request<trading_cli::CancelDexPoolOrdersRequest>,
     ) -> Result<Response<trading_cli::CancelDexPoolOrdersResponse>, Status> {
+        self.require_mutating(&request)?;
         let Some(service) = self.dex_quote_service() else {
             return Err(Status::failed_precondition(
                 "DEX quote control not available (not in dex levels mode)",
@@ -376,6 +440,7 @@ impl TradingCliService for TradingCliServiceImpl {
         &self,
         request: Request<trading_cli::ToggleDexStrategyRequest>,
     ) -> Result<Response<trading_cli::ToggleDexStrategyResponse>, Status> {
+        self.require_mutating(&request)?;
         let Some(service) = self.dex_strategy_service() else {
             return Err(Status::failed_precondition(
                 "DEX strategy control not available (not in dex-strategies mode)",
@@ -388,6 +453,7 @@ impl TradingCliService for TradingCliServiceImpl {
         &self,
         request: Request<trading_cli::ToggleStrategyRequest>,
     ) -> Result<Response<trading_cli::ToggleStrategyResponse>, Status> {
+        self.require_mutating(&request)?;
         // keep exact behavior from runner version
         let req = request.into_inner();
 
@@ -611,6 +677,7 @@ impl TradingCliService for TradingCliServiceImpl {
         &self,
         request: Request<trading_cli::UpdateStrategyCapRequest>,
     ) -> Result<Response<trading_cli::UpdateStrategyCapResponse>, Status> {
+        self.require_mutating(&request)?;
         let req = request.into_inner();
         let op = self.strategy_operator.as_ref().ok_or_else(|| {
             Status::failed_precondition("Strategy config not available (not in strategies mode)")
@@ -631,6 +698,7 @@ impl TradingCliService for TradingCliServiceImpl {
         &self,
         request: Request<trading_cli::UpdateStrategyConfigRequest>,
     ) -> Result<Response<trading_cli::UpdateStrategyConfigResponse>, Status> {
+        self.require_mutating(&request)?;
         let req = request.into_inner();
         let config = req
             .config
@@ -657,6 +725,7 @@ impl TradingCliService for TradingCliServiceImpl {
         &self,
         request: Request<trading_cli::RequestRestartRequest>,
     ) -> Result<Response<trading_cli::RequestRestartResponse>, Status> {
+        self.require_mutating(&request)?;
         let req = request.into_inner();
         let op = self.strategy_operator.as_ref().ok_or_else(|| {
             Status::failed_precondition("Strategy config not available (not in strategies mode)")

@@ -180,6 +180,7 @@ pub async fn strategy_runner_with(
     let strategies_config = StrategiesConfig::load_from_file(&strategies_config_path)?;
     strategies_config.validate()?;
     let risk_limits = strategies_config.risk_limits();
+    risk_limits.require_explicit_for_exchange(bot_config.execution_mode)?;
 
     // Get pairs from exchange config
     let configured_pairs = bot_config.get_pairs()?;
@@ -565,6 +566,10 @@ pub async fn strategy_runner_with(
         min_notional,
     )
     .with_trading_control(trading_control.enabled_flag())
+    .with_operator_flags(
+        trading_control.entries_paused_flag(),
+        trading_control.flatten_latched_flag(),
+    )
     .with_execution_mode(execution_mode)
     .with_strategy_manager(strategy_manager_arc.clone())
     .with_shared_strategy_caps(strategy_caps)
@@ -782,7 +787,22 @@ pub async fn strategy_runner_with(
     services.shutdown_manager.wait_for_shutdown().await;
 
     info!("Shutting down gracefully...");
-    cancel_working_orders_on_stop(execution_mode, &trading_client, &all_symbols).await;
+    let on_stop = RuntimeSnapshot::load(crate::config::runtime_snapshot::SNAPSHOT_FILE)
+        .ok()
+        .flatten()
+        .map(|snap| snap.on_stop)
+        .unwrap_or_else(|| "cancel_working".into());
+    match on_stop.as_str() {
+        "keep_working" => {
+            info!("shutdown policy keep_working: leaving working orders");
+        }
+        "flatten" => {
+            info!("shutdown policy flatten: flatten orders already submitted; skip cancel_all");
+        }
+        _ => {
+            cancel_working_orders_on_stop(execution_mode, &trading_client, &all_symbols).await;
+        }
+    }
     if execution_mode == trading_core::types::ExecutionMode::Shadow {
         info!(
             "Shadow guard forbidden mutation attempts: {}",

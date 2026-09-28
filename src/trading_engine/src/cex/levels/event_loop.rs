@@ -211,6 +211,10 @@ impl LevelBasedEventLoop {
         indicator_cache: &Arc<RwLock<HashMap<SmolStr, IndicatorValue>>>,
     ) -> Result<(), EngineError> {
         // When trading is disabled, skip resolve/risk/post entirely (no "blocked by risk" spam)
+        if self.level_executor.flatten_latched().await || self.level_executor.entries_paused().await
+        {
+            return Ok(());
+        }
         if !self.level_executor.is_trading_enabled().await {
             return Ok(());
         }
@@ -554,7 +558,10 @@ impl LevelBasedEventLoop {
         }
 
         // Check trading control before batching
-        if !self.level_executor.is_trading_enabled().await {
+        if self.level_executor.flatten_latched().await
+            || self.level_executor.entries_paused().await
+            || !self.level_executor.is_trading_enabled().await
+        {
             // Only log periodically to avoid spam
             static SKIP_COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
             let skip_count = SKIP_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);

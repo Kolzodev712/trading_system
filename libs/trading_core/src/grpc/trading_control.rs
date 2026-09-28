@@ -11,6 +11,10 @@ use tokio::sync::RwLock;
 /// When disabled, prevents new orders and cancels all active orders
 pub struct TradingControl {
     enabled: Arc<RwLock<bool>>,
+    /// PauseEntries: evaluation continues; exposure increases stop.
+    entries_paused: Arc<RwLock<bool>>,
+    /// FlattenAndPause latch: strategy target cannot reopen until Resume.
+    flatten_latched: Arc<RwLock<bool>>,
     trading_client: Arc<RwLock<dyn TradingClient<OrderRequest>>>,
 }
 
@@ -19,6 +23,8 @@ impl TradingControl {
     pub fn new(trading_client: Arc<RwLock<dyn TradingClient<OrderRequest>>>) -> Self {
         Self {
             enabled: Arc::new(RwLock::new(false)), // Default to disabled
+            entries_paused: Arc::new(RwLock::new(false)),
+            flatten_latched: Arc::new(RwLock::new(false)),
             trading_client,
         }
     }
@@ -160,5 +166,150 @@ impl TradingControl {
             total_pairs
         );
         Ok(cancelled_order_ids)
+    }
+
+    pub fn entries_paused_flag(&self) -> Arc<RwLock<bool>> {
+        self.entries_paused.clone()
+    }
+
+    pub fn flatten_latched_flag(&self) -> Arc<RwLock<bool>> {
+        self.flatten_latched.clone()
+    }
+
+    pub async fn entries_paused(&self) -> bool {
+        *self.entries_paused.read().await
+    }
+
+    pub async fn flatten_latched(&self) -> bool {
+        *self.flatten_latched.read().await
+    }
+
+    /// PauseEntries: stop increases; do not flatten; do not change the legacy global toggle.
+    pub async fn pause_entries(&self) {
+        *self.entries_paused.write().await = true;
+    }
+
+    /// Resume clears PauseEntries and the flatten latch.
+    pub async fn resume_entries(&self) {
+        *self.entries_paused.write().await = false;
+        *self.flatten_latched.write().await = false;
+    }
+
+    /// FlattenAndPause latch: target zero until Resume.
+    pub async fn latch_flatten_and_pause(&self) {
+        *self.entries_paused.write().await = true;
+        *self.flatten_latched.write().await = true;
+    }
+
+    pub fn trading_client(&self) -> Arc<RwLock<dyn TradingClient<OrderRequest>>> {
+        self.trading_client.clone()
+    }
+
+    /// Cancel working orders without changing the legacy global toggle.
+    pub async fn cancel_working(
+        &self,
+        active_order_ids: Vec<crate::types::common::OrderId>,
+        pairs_with_orders: Vec<crate::types::common::Pair>,
+    ) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+        self.cancel_all_orders_for_pairs(pairs_with_orders, active_order_ids)
+            .await
+    }
+
+    /// Place reduce-only market exits for open positions. Does not claim flat.
+    pub async fn submit_reduce_only_flatten(
+        &self,
+    ) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+        let positions = match self.trading_client.read().await.fetch_positions().await {
+            Ok(positions) => positions,
+            Err(err) => {
+                let msg = err.to_string().to_lowercase();
+                if msg.contains("not supported") {
+                    Vec::new()
+                } else {
+                    return Err(err.into());
+                }
+            }
+        };
+        let mut flatten_ids = Vec::new();
+        for position in positions {
+            let qty = position.quantity.abs();
+            if qty <= rust_decimal::Decimal::new(1, 6) {
+                continue;
+            }
+            let side = if position.quantity > rust_decimal::Decimal::ZERO {
+                crate::types::common::Side::Sell
+            } else {
+                crate::types::common::Side::Buy
+            };
+            let mut exchange_params = std::collections::HashMap::new();
+            exchange_params.insert(
+                smol_str::SmolStr::new("reduceOnly"),
+                smol_str::SmolStr::new("true"),
+            );
+            let request = OrderRequest {
+                instrument: position.instrument.clone(),
+                side,
+                order_type: crate::types::common::OrderType::Market,
+                price: rust_decimal::Decimal::ZERO,
+                amount: qty,
+                timestamp: None,
+                exchange_params,
+            };
+            let order = self
+                .trading_client
+                .write()
+                .await
+                .open_order(request)
+                .await?;
+            flatten_ids.push(order.order_id.as_str().to_string());
+        }
+        Ok(flatten_ids)
+    }
+}
+
+/// PauseEntries blocks increases. FlattenAndPause allows reductions even when the
+/// legacy global toggle is off, and blocks strategy reopen until Resume.
+pub fn operator_allows_submit(
+    increasing: bool,
+    trading_enabled: bool,
+    entries_paused: bool,
+    flatten_latched: bool,
+) -> bool {
+    if flatten_latched {
+        return !increasing;
+    }
+    if !trading_enabled {
+        return false;
+    }
+    if entries_paused && increasing {
+        return false;
+    }
+    true
+}
+
+pub const GLOBAL_TOGGLE_SEMANTICS: &str =
+    "legacy SetTradingEnabled: disabling cancels working orders; not PauseEntries/FlattenAndPause";
+
+#[cfg(test)]
+mod tests {
+    use super::operator_allows_submit;
+
+    #[test]
+    fn pause_blocks_increase_allows_reduce() {
+        assert!(!operator_allows_submit(true, true, true, false));
+        assert!(operator_allows_submit(false, true, true, false));
+    }
+
+    #[test]
+    fn flatten_latch_allows_reduce_when_global_off() {
+        assert!(operator_allows_submit(false, false, true, true));
+        assert!(!operator_allows_submit(true, false, true, true));
+        assert!(!operator_allows_submit(true, true, true, true));
+    }
+
+    #[test]
+    fn resume_requires_global_enable_for_increases() {
+        assert!(!operator_allows_submit(true, false, false, false));
+        assert!(operator_allows_submit(true, true, false, false));
     }
 }

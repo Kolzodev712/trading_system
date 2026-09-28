@@ -29,6 +29,12 @@ service TradingCliService {
     // Monitoring Data (Phase 2)
     rpc GetMonitoringData(GetMonitoringDataRequest) returns (GetMonitoringDataResponse);
     rpc StreamMonitoringData(StreamMonitoringDataRequest) returns (stream MonitoringDataUpdate);
+
+    // Prop-trading operator commands (not aliases of SetTradingEnabled).
+    rpc PauseEntries(OperatorCommandRequest) returns (OperatorCommandResponse);
+    rpc CancelWorking(OperatorCommandRequest) returns (OperatorCommandResponse);
+    rpc FlattenAndPause(OperatorCommandRequest) returns (OperatorCommandResponse);
+    rpc Resume(OperatorCommandRequest) returns (OperatorCommandResponse);
 }
 
 // Trading Control Messages
@@ -49,6 +55,24 @@ message GetTradingStatusResponse {
     string execution_mode = 2; // "shadow" | "exchange"
     string venue = 3;          // e.g. BYBIT, PAPER
     string environment = 4;    // e.g. MAINNET, DEMO, LOCAL
+    bool entries_paused = 5;
+    bool flatten_latched = 6;
+    string global_toggle_semantics = 7; // legacy SetTradingEnabled cancels working when disabling
+}
+
+message OperatorCommandRequest {
+    string request_id = 1;
+    string symbol = 2; // e.g. BTC/USDT; empty means all configured pairs
+}
+
+message OperatorCommandResponse {
+    bool accepted = 1;
+    string state = 2; // accepted | in_progress | completed | failed
+    string message = 3;
+    string venue = 4;
+    string environment = 5;
+    string scope = 6;
+    repeated string order_ids = 7;
 }
 
 message ToggleStrategyRequest {
@@ -259,6 +283,9 @@ message MonitoringData {
     int64 snapshot_unix_ms = 15;
     bool trading_enabled = 16;  // global entries/execution switch; not inferred from strategies
     string runner_mode = 17;    // "levels" | "strategies" | "dex"
+    bool entries_paused = 18;
+    bool flatten_latched = 19;
+    string global_toggle_semantics = 20;
 }
 
 message DexVenueSnapshot {

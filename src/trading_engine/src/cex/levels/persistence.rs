@@ -58,6 +58,8 @@ impl LevelPersistence {
         let risk_limits_doc = RiskLimitsDocument {
             total_max_position: risk_limits.total_max_position,
             max_total_orders: risk_limits.max_total_orders,
+            max_notional: risk_limits.max_notional,
+            max_order_qty: risk_limits.max_order_qty,
             daily_loss_limit_all_pairs: risk_limits.daily_loss_limit_all_pairs,
             daily_loss_limit_per_pair: risk_limits
                 .daily_loss_limit_per_pair
@@ -205,6 +207,8 @@ impl LevelPersistence {
         let risk_limits_doc = RiskLimitsDocument {
             total_max_position: risk_limits.total_max_position,
             max_total_orders: risk_limits.max_total_orders,
+            max_notional: risk_limits.max_notional,
+            max_order_qty: risk_limits.max_order_qty,
             daily_loss_limit_all_pairs: risk_limits.daily_loss_limit_all_pairs,
             daily_loss_limit_per_pair: risk_limits
                 .daily_loss_limit_per_pair

@@ -239,10 +239,13 @@ impl StrategyOperator for FileStrategyOperator {
     }
 
     async fn request_restart(&self, on_stop: &str) -> Result<(), String> {
-        if on_stop != "cancel_working" {
-            return Err(format!(
-                "on_stop={on_stop} is not implemented; use cancel_working"
-            ));
+        match on_stop {
+            "cancel_working" | "flatten" | "keep_working" => {}
+            other => {
+                return Err(format!(
+                    "on_stop={other} is not implemented; use cancel_working, flatten, or keep_working"
+                ));
+            }
         }
         let manager = self.strategy_manager.read().await;
         let mut strategies = Vec::new();
@@ -263,6 +266,12 @@ impl StrategyOperator for FileStrategyOperator {
         snap.save(&self.snapshot_path)?;
         write_restart_flag(&self.restart_flag_path)?;
         *self.trading_control.enabled_flag().write().await = false;
+        if on_stop == "flatten" {
+            self.trading_control.latch_flatten_and_pause().await;
+            if let Err(e) = self.trading_control.submit_reduce_only_flatten().await {
+                return Err(format!("flatten on_stop failed: {e}"));
+            }
+        }
         self.shutdown.signal_shutdown();
         Ok(())
     }

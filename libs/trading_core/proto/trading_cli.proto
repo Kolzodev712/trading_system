@@ -286,6 +286,13 @@ message MonitoringData {
     bool entries_paused = 18;
     bool flatten_latched = 19;
     string global_toggle_semantics = 20;
+    string economic_source = 21; // "simulation" for Paper/local; "exchange" otherwise
+    string realized_pnl = 22;
+    string unrealized_pnl = 23;
+    string daily_pnl = 24;
+    string fees_paid = 25;
+    string funding_pnl = 26;
+    string ledger_equity = 27;
 }
 
 message DexVenueSnapshot {

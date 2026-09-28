@@ -1,6 +1,6 @@
 # Prop Trading Productionization and Research Architecture Plan
 
-**Status:** Increments 0–8 are accepted locally. Increment 6 section-61 findings are closed. Increment 7 futures/Paper linear is recorded in section 62. Increment 8 risk/controls and UI operator workflows are recorded in section 63. Candidate #2 remains an operational baseline, not validated alpha. This does not qualify the section 49 fault matrix or Bybit demo.  
+**Status:** Increments 0–9 are accepted locally. Increment 6 section-61 findings are closed. Increment 7 futures/Paper linear is recorded in section 62. Increment 8 risk/controls and UI operator workflows are recorded in section 63. Increment 9 execution ledger and daily-loss from economic PnL are recorded in section 64. Candidate #2 remains an operational baseline, not validated alpha. This does not qualify the section 49 fault matrix or Bybit demo.  
 **Date:** 2026-09-28  
 **Repository:** `trading_system`  
 **Audience:** Cursor / implementation agent / repository owner  
@@ -2427,6 +2427,8 @@ Acceptance:
 - partial close calculations tested;
 - daily-loss limit uses real economic PnL.
 
+**Local Increment 9 record (2026-09-28):** `trading_system` (this commit) + `trading-system-ui` matching proto/client. `k-paper` `c2466dc64a274a5b164fb7bcf2005bacb71b7c18` unchanged (Paper fill `fee` already mapped; `apply_funding` remains a fixture, not an 8h clock). Package tests: `cargo test -p trading_engine --lib` 118 passed (ledger open/partial/full/win/loss/fees/funding/duplicate/restart; `daily_loss_uses_ledger_realized_pnl`; missing ledger fail-closed); `cargo test -p trading_core --lib grpc::trading_control` 3 passed; `cargo test -p runner --lib` 31 passed; `cargo test -p gateway --lib` 3 passed; `cargo test -p exchange_engine --lib execution_to_trade_copies` 1 passed. UI `npm test` 54 passed; `npm run build` exit 0. Daily-loss is real when `daily_loss_limit_*` is set and the execution ledger is attached; unset daily-loss stays explicitly disabled. Paper/local `economic_source=simulation`. Candidate #2 remains an operational baseline, not validated alpha.
+
 Stop and report.
 
 ## Increment 9A — full-stack K-paper qualification
@@ -2488,7 +2490,7 @@ Do not implement Candidate #3's trading rule until a separate strategy research 
 
 # 67. Current Cursor instruction
 
-The Increment 8 local-acceptance record includes `trading_system` (this commit), `trading-system-ui` matching proto/client, and `k-paper` `c2466dc64a274a5b164fb7bcf2005bacb71b7c18` (unchanged). These are **reported local checks**, not a remotely enforced CI result. The accepted 5B connectivity record remains `trading_system` `043ca64523f42212cd8a2616ba6201d61d7c878a` (evidence `1f00fdc80f7bbbb39b836da9445e041eb18e6c77`).
+The Increment 9 local-acceptance record includes `trading_system` (this commit), `trading-system-ui` matching proto/client, and `k-paper` `c2466dc64a274a5b164fb7bcf2005bacb71b7c18` (unchanged). These are **reported local checks**, not a remotely enforced CI result. The accepted 5B connectivity record remains `trading_system` `043ca64523f42212cd8a2616ba6201d61d7c878a` (evidence `1f00fdc80f7bbbb39b836da9445e041eb18e6c77`).
 
 | Increment | Status | Gate |
 | --- | --- | --- |
@@ -2499,9 +2501,10 @@ The Increment 8 local-acceptance record includes `trading_system` (this commit),
 | 6 | Accepted locally | Fail-closed journal including restart of a damaged record, partial-fill recovery with missed/repeated events, pending immediate recon, and one focused Paper lost-ACK/restart check |
 | 7 | Accepted locally | Futures PositionSyncPending, no fill+position double count, MD freshness required for Exchange futures, one strategy per pair, fail-closed leverage/mode, Paper one-way USDT-linear BTCUSDT |
 | 8 | Accepted locally | Explicit Exchange risk, prospective effective exposure, PauseEntries/CancelWorking/FlattenAndPause/Resume, operator token on mutating RPCs, UI confirmation does not treat flatten RPC as flat |
-| 9+ | Next | Follow section 54 and each increment's gate |
+| 9 | Accepted locally | Durable execution ledger, fees/funding/weighted PnL, restart replay, daily-loss from ledger or fail-closed if configured without it, UI simulation label for Paper |
+| 9A+ | Next | Follow section 54 and each increment's gate |
 
-Cursor: Increment 8 is accepted locally. Continue Increment 9. After 9A, stop for a Paper readiness report before Increment 10.
+Cursor: Increment 9 is accepted locally. Continue Increment 9A. After 9A, stop for a Paper readiness report before Increment 10.
 
 ---
 

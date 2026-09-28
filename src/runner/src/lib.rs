@@ -246,11 +246,18 @@ pub async fn run(
             let instrument_type = bot_config
                 .get_instrument_type()
                 .unwrap_or(trading_core::types::common::InstrumentType::Spot);
-            let tsm = Arc::new(TradingStateManager::new_with_instrument_type(
-                cex.cex_update_rx.resubscribe(),
-                cex.exchange_state_manager.clone(),
-                instrument_type,
-            ));
+            let ledger = Arc::new(
+                trading_engine::state::ExecutionLedger::open(&bot_config.execution_ledger_path)
+                    .map_err(|err| format!("execution ledger: {err}"))?,
+            );
+            let tsm = Arc::new(
+                TradingStateManager::new_with_instrument_type(
+                    cex.cex_update_rx.resubscribe(),
+                    cex.exchange_state_manager.clone(),
+                    instrument_type,
+                )
+                .with_execution_ledger(ledger),
+            );
             platform::init::start_trading_state_subscriber(tsm.clone(), shutdown_manager.clone());
             Some(tsm)
         }

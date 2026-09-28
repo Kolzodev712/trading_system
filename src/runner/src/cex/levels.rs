@@ -113,7 +113,15 @@ pub async fn level_runner(
     );
 
     // Create risk manager with symbol registry
-    let risk_manager = Arc::new(RiskManager::new(risk_limits, symbol_registry.clone()));
+    let risk_manager = Arc::new(
+        RiskManager::new(risk_limits, symbol_registry.clone()).with_execution_ledger(
+            services
+                .trading_state_manager
+                .as_ref()
+                .and_then(|tsm| tsm.execution_ledger())
+                .ok_or("execution ledger is required")?,
+        ),
+    );
 
     // Wrap level_manager in Arc<RwLock<>> for sharing with LiveConfig and event loop
     let level_manager = Arc::new(RwLock::new(level_manager));
@@ -189,10 +197,15 @@ pub async fn level_runner(
 
     // Wrap risk_manager in Arc<RwLock<>> for LiveConfig service
     let risk_limits_for_live_config = risk_manager.get_limits().clone();
-    let risk_manager_for_live_config = Arc::new(RwLock::new(RiskManager::new(
-        risk_limits_for_live_config,
-        symbol_registry.clone(),
-    )));
+    let mut live_risk = RiskManager::new(risk_limits_for_live_config, symbol_registry.clone());
+    if let Some(ledger) = services
+        .trading_state_manager
+        .as_ref()
+        .and_then(|tsm| tsm.execution_ledger())
+    {
+        live_risk = live_risk.with_execution_ledger(ledger);
+    }
+    let risk_manager_for_live_config = Arc::new(RwLock::new(live_risk));
 
     // Create LiveConfig service for runtime configuration updates
     let audit_log_file = format!(

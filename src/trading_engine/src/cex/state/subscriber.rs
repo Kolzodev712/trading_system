@@ -3,8 +3,9 @@
 //! Subscribes to ExchangeStateManager updates and updates TradingState accordingly.
 //! This is how TradingState stays in sync with ExchangeStateManager.
 
+use crate::cex::state::ledger::ExecutionLedger;
 use crate::cex::state::TradingState;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tokio::sync::RwLock;
 use tracing::{debug, warn};
 use trading_core::{
@@ -22,6 +23,7 @@ pub struct ExchangeStateSubscriber {
     /// Trading state to update
     trading_state: Arc<RwLock<TradingState>>,
     instrument_type: InstrumentType,
+    execution_ledger: Arc<Mutex<Option<Arc<ExecutionLedger>>>>,
 }
 
 impl ExchangeStateSubscriber {
@@ -38,11 +40,20 @@ impl ExchangeStateSubscriber {
             exchange_update_rx,
             trading_state,
             instrument_type: InstrumentType::Spot,
+            execution_ledger: Arc::new(Mutex::new(None)),
         }
     }
 
     pub fn with_instrument_type(mut self, instrument_type: InstrumentType) -> Self {
         self.instrument_type = instrument_type;
+        self
+    }
+
+    pub fn with_execution_ledger_slot(
+        mut self,
+        slot: Arc<Mutex<Option<Arc<ExecutionLedger>>>>,
+    ) -> Self {
+        self.execution_ledger = slot;
         self
     }
 
@@ -163,9 +174,11 @@ impl ExchangeStateSubscriber {
 
     /// Handle trade update from ExchangeStateManager
     ///
-    /// Updates positions based on trades (execution reports).
-    /// Only processes trades for orders we placed.
+    /// Economic fills go to the execution ledger for every instrument type.
+    /// Spot still derives position from trades; futures position is REST/WS truth.
     async fn handle_trade_update(&self, trade: Trade) {
+        self.record_ledger_trade(&trade).await;
+
         if matches!(
             self.instrument_type,
             InstrumentType::Futures | InstrumentType::Derivitives
@@ -193,6 +206,22 @@ impl ExchangeStateSubscriber {
             );
         } else {
             debug!("Ignoring trade update (not our order): {}", trade.trade_id);
+        }
+    }
+
+    async fn record_ledger_trade(&self, trade: &Trade) {
+        let ledger = self
+            .execution_ledger
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        let Some(ledger) = ledger else {
+            return;
+        };
+        if let Err(err) = ledger.record_trade(trade) {
+            warn!("execution ledger write failed: {err}");
+            let mut state = self.trading_state.write().await;
+            state.halt_new_exposure(format!("execution ledger write failed: {err}"));
         }
     }
 }

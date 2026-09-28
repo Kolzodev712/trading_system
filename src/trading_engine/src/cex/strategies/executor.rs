@@ -262,6 +262,29 @@ impl<S: Strategy> StrategyExecutor<S> {
             }
         }
         drop(state);
+        if let Some(ledger) = self.trading_state_manager.execution_ledger() {
+            match client.fetch_trades(None).await {
+                Ok(trades) => {
+                    for trade in trades {
+                        if let Err(err) = ledger.record_trade(&trade) {
+                            error!("execution ledger replay failed: {err}");
+                            self.halt_new_exposure(format!(
+                                "execution ledger replay failed: {err}"
+                            ))
+                            .await;
+                            break;
+                        }
+                    }
+                }
+                Err(err) => {
+                    error!("execution ledger trade fetch failed: {err}");
+                    self.halt_new_exposure(format!("execution ledger trade fetch failed: {err}"))
+                        .await;
+                }
+            }
+        } else {
+            self.halt_new_exposure("execution ledger is required").await;
+        }
         drop(client);
         self.request_immediate_reconciliation();
     }

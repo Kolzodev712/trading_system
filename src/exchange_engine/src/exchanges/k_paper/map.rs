@@ -264,4 +264,25 @@ mod tests {
         assert_eq!(order.status, OrderStatus::New);
         assert_eq!(order.amount, Decimal::new(2, 3));
     }
+
+    #[test]
+    fn execution_to_trade_copies_paper_fee() {
+        let exec = KPaperExecution {
+            order_id: "ord-fill".to_string(),
+            trade_id: Some("paper-exec-9".to_string()),
+            instrument_id: "BTC-USDT".to_string(),
+            side: "Buy".to_string(),
+            price: Decimal::new(100, 0),
+            quantity: Decimal::new(1, 2),
+            fee: Some(Decimal::new(6, 2)),
+            timestamp: "2026-01-01T00:00:00Z".to_string(),
+            reject_reason: None,
+            client_order_id: None,
+        };
+        let trade = execution_to_trade(&exec).unwrap();
+        assert_eq!(trade.trade_id.as_str(), "paper-exec-9");
+        assert_eq!(trade.fee, Decimal::new(6, 2));
+        assert_eq!(trade.fee_currency, Symbol::from("USDT"));
+        assert_eq!(trade.quantity, Decimal::new(1, 2));
+    }
 }

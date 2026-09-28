@@ -2040,6 +2040,24 @@ Every increment:
 
 When an increment changes a cross-repo contract, report **separate changes and tests** for `trading_system`, `k-paper` and/or `trading-system-ui` as applicable. A green unit test in one repository cannot satisfy an end-to-end acceptance gate. Implement optional simulator features and the Simulation Lab only after the minimum pre-demo gates are met.
 
+## 54.1 Cursor cross-repository handoff
+
+This document is the authority for **the Candidate #2 research/runtime separation through Bybit demo and preparation for Candidate #3 research**. Read the repository-specific implementation guides when their increment begins:
+
+| Increment | Repositories and guide |
+| --- | --- |
+| 0–5 | `trading_system`: this document; no Paper futures or browser control implementation in the first task |
+| 5A | [`trading-system-ui` control-plane guide](https://github.com/Kolzodev712/trading-system-ui/blob/main/docs/PROP_TRADING_CONTROL_PLANE_GUIDE.md) after runner status/proto changes |
+| 5B | [`k-paper` integration guide](https://github.com/Kolzodev712/k-paper/blob/master/docs/PROP_TRADING_INTEGRATION_GUIDE.md) for existing Spot connectivity only, with the UI on the same runner |
+| 6–7 | `trading_system` recovery/futures logic and K-paper protocol/futures support; change producer and adapter together |
+| 8–9 | `trading_system` risk/ledger and UI controls/economic display; sync the proto and generated UI client |
+| 9A | All three repositories: deterministic Paper qualification and browser operator checks |
+| 10 | `trading_system` and UI on Bybit demo; K-paper remains the deterministic failure lab |
+
+Check out the relevant repositories with write access before starting a cross-repo increment. Record starting and ending SHAs for each; pin matching revisions and run both producer/consumer checks before marking the increment complete. Implement backend state and the source proto first, then sync the UI proto and generated code. When a precise simulator accounting rule, API shape or security mechanism is not fixed here, document the bounded choice and its acceptance tests within that increment rather than silently guessing or postponing the safety gate.
+
+The first instruction in section 67 still limits Cursor to **Increments 0 and 1**. This plan does not authorize implementation of a future portfolio allocator, strategy registry/graveyard, broader instrument/venue expansion, a self-hosting operations program, Candidate #3's trading rule or mainnet deployment. Those need separate decisions/specifications when the evidence and need exist; none blocks the first increment.
+
 ---
 
 # 55. Increment 0 — baseline lock

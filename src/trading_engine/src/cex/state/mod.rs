@@ -15,11 +15,15 @@ use trading_core::{
     },
 };
 
+pub mod ledger;
 pub mod manager;
 mod reconciler;
 pub mod submission;
 mod subscriber;
 
+pub use ledger::{
+    economic_source, ExecutionLedger, FillRecord, FundingRecord, LedgerRecord, LedgerSnapshot,
+};
 pub use submission::{
     recover_unknown_submissions, RecoveryReport, SubmissionJournal, SubmissionRecord,
     SubmissionState,

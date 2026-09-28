@@ -272,7 +272,7 @@ impl MonitoringService {
             "levels"
         };
 
-        let data = trading_cli::MonitoringData {
+        let mut data = trading_cli::MonitoringData {
             orders,
             balances,
             trades,
@@ -293,7 +293,39 @@ impl MonitoringService {
             entries_paused: self.trading_control.entries_paused().await,
             flatten_latched: self.trading_control.flatten_latched().await,
             global_toggle_semantics: trading_core::grpc::GLOBAL_TOGGLE_SEMANTICS.to_string(),
+            economic_source: trading_engine::state::economic_source(
+                &self.venue_label,
+                &self.environment,
+            )
+            .to_string(),
+            realized_pnl: String::new(),
+            unrealized_pnl: String::new(),
+            daily_pnl: String::new(),
+            fees_paid: String::new(),
+            funding_pnl: String::new(),
+            ledger_equity: String::new(),
         };
+
+        if let Some(ledger) = self.trading_state_manager.execution_ledger() {
+            let marks = self.ledger_marks().await;
+            match ledger.snapshot(&marks, snapshot_unix_ms as u64) {
+                Ok(snap) => {
+                    data.realized_pnl = snap.net_realized.to_string();
+                    data.unrealized_pnl = snap.unrealized_pnl.to_string();
+                    data.daily_pnl = snap.daily_pnl.to_string();
+                    data.fees_paid = snap.fees_paid.to_string();
+                    data.funding_pnl = snap.funding_pnl.to_string();
+                    data.ledger_equity = snap.equity.to_string();
+                    if let Some(overall) = data.aggregated.as_mut().and_then(|a| a.overall.as_mut())
+                    {
+                        overall.total_pnl = snap.equity.to_string();
+                    }
+                }
+                Err(err) => {
+                    tracing::warn!("execution ledger snapshot for monitoring failed: {err}")
+                }
+            }
+        }
 
         tracing::debug!("[gRPC] collect_monitoring_data: Returning data successfully");
         Ok(data)
@@ -780,5 +812,26 @@ impl MonitoringService {
 
         orderbooks.sort_by_key(|a| a.pair.clone());
         Ok(orderbooks)
+    }
+
+    async fn ledger_marks(
+        &self,
+    ) -> std::collections::HashMap<trading_core::types::common::Pair, rust_decimal::Decimal> {
+        use rust_decimal::Decimal;
+        let mut marks = std::collections::HashMap::new();
+        let md = self.market_data_state_manager.get_state();
+        let state = md.read().await;
+        for pair in state.get_pairs_with_orderbooks() {
+            if let Some(book) = state.get_orderbook(&pair) {
+                let bid = book.bids.first().map(|(price, _)| *price);
+                let ask = book.asks.first().map(|(price, _)| *price);
+                if let (Some(bid), Some(ask)) = (bid, ask) {
+                    marks.insert(pair, (bid + ask) / Decimal::from(2));
+                } else if let Some(price) = bid.or(ask) {
+                    marks.insert(pair, price);
+                }
+            }
+        }
+        marks
     }
 }

@@ -4,6 +4,7 @@
 use super::circuit_breaker::CircuitBreaker;
 use super::limits::{RiskCheckResult, RiskLimits};
 use super::metrics::{RiskMetrics, RiskMetricsCalculator};
+use crate::cex::state::ledger::ExecutionLedger;
 use crate::cex::state::TradingState;
 use rust_decimal::Decimal;
 use smol_str::SmolStr;
@@ -21,6 +22,7 @@ pub struct RiskManager {
     circuit_breaker: Arc<CircuitBreaker>,
     /// Cached metrics (updated periodically)
     cached_metrics: Arc<RwLock<Option<RiskMetrics>>>,
+    execution_ledger: Option<Arc<ExecutionLedger>>,
 }
 
 impl RiskManager {
@@ -30,7 +32,18 @@ impl RiskManager {
             limits,
             circuit_breaker: Arc::new(CircuitBreaker::new()),
             cached_metrics: Arc::new(RwLock::new(None)),
+            execution_ledger: None,
         }
+    }
+
+    pub fn with_execution_ledger(mut self, ledger: Arc<ExecutionLedger>) -> Self {
+        self.execution_ledger = Some(ledger);
+        self
+    }
+
+    fn daily_loss_configured(&self) -> bool {
+        self.limits.daily_loss_limit_all_pairs.is_some()
+            || !self.limits.daily_loss_limit_per_pair.is_empty()
     }
 
     /// Get current risk limits
@@ -58,7 +71,20 @@ impl RiskManager {
         // For now, we'll create a new calculator each time. In the future, we should
         // wrap it in RwLock or Mutex if we need to maintain state.
         let mut calc = RiskMetricsCalculator::new();
-        let metrics = calc.calculate(trading_state, current_prices);
+        let ledger_snap = match &self.execution_ledger {
+            Some(ledger) => match ledger
+                .snapshot(current_prices, chrono::Utc::now().timestamp_millis() as u64)
+            {
+                Ok(snap) => Some(snap),
+                Err(err) => {
+                    error!("execution ledger snapshot failed: {err}");
+                    None
+                }
+            },
+            None => None,
+        };
+        let metrics =
+            calc.calculate_with_ledger(trading_state, current_prices, ledger_snap.as_ref());
         *self.cached_metrics.write().await = Some(metrics);
     }
 
@@ -100,21 +126,15 @@ impl RiskManager {
             exchange_params: std::collections::HashMap::new(),
         };
 
-        // Check daily loss limits (if metrics available)
-        if let Some(prices) = current_prices {
-            // Update metrics if needed
-            self.update_metrics(trading_state, prices).await;
-
-            if let Some(metrics) = self.get_metrics().await {
-                // Use pair from instrument
-                let pair = order_request.instrument.pair.clone();
-
-                let daily_loss_check = self.check_daily_loss_limits(&metrics, &pair);
-
-                if !daily_loss_check.allowed {
-                    return daily_loss_check;
-                }
-            }
+        let daily_loss_check = self
+            .enforce_daily_loss_limits(
+                trading_state,
+                Some(&order_request.instrument.pair),
+                current_prices,
+            )
+            .await;
+        if !daily_loss_check.allowed {
+            return daily_loss_check;
         }
 
         // Check balance
@@ -167,21 +187,15 @@ impl RiskManager {
             )));
         }
 
-        // Check daily loss limits (if metrics available)
-        if let Some(prices) = current_prices {
-            // Update metrics if needed
-            self.update_metrics(trading_state, prices).await;
-
-            if let Some(metrics) = self.get_metrics().await {
-                // Use pair from instrument
-                let pair = order_request.instrument.pair.clone();
-
-                let daily_loss_check = self.check_daily_loss_limits(&metrics, &pair);
-
-                if !daily_loss_check.allowed {
-                    return daily_loss_check;
-                }
-            }
+        let daily_loss_check = self
+            .enforce_daily_loss_limits(
+                trading_state,
+                Some(&order_request.instrument.pair),
+                current_prices,
+            )
+            .await;
+        if !daily_loss_check.allowed {
+            return daily_loss_check;
         }
 
         // Check balance. Futures reductions are allowed through; increases use quote margin.
@@ -261,12 +275,11 @@ impl RiskManager {
             )));
         }
 
-        if let Some(metrics) = self.get_metrics().await {
-            // Check daily loss limits (global only for post-trade, pair-specific would need order info)
-            let daily_loss_check = self.check_daily_loss_limits_global(&metrics);
-            if !daily_loss_check.allowed {
-                return daily_loss_check;
-            }
+        let daily_loss_check = self
+            .enforce_daily_loss_limits(trading_state, None, Some(current_prices))
+            .await;
+        if !daily_loss_check.allowed {
+            return daily_loss_check;
         }
 
         RiskCheckResult::allowed()
@@ -295,15 +308,47 @@ impl RiskManager {
             )));
         }
 
-        if let Some(metrics) = self.get_metrics().await {
-            // Check daily loss limits (global only for periodic check)
-            let daily_loss_check = self.check_daily_loss_limits_global(&metrics);
-            if !daily_loss_check.allowed {
-                return daily_loss_check;
-            }
+        let daily_loss_check = self
+            .enforce_daily_loss_limits(trading_state, None, Some(current_prices))
+            .await;
+        if !daily_loss_check.allowed {
+            return daily_loss_check;
         }
 
         RiskCheckResult::allowed()
+    }
+
+    async fn enforce_daily_loss_limits(
+        &self,
+        trading_state: &TradingState,
+        pair: Option<&Pair>,
+        current_prices: Option<&HashMap<Pair, Decimal>>,
+    ) -> RiskCheckResult {
+        if !self.daily_loss_configured() {
+            return RiskCheckResult::allowed();
+        }
+        let Some(ledger) = &self.execution_ledger else {
+            return RiskCheckResult::blocked(SmolStr::new(
+                "daily-loss limit requires execution ledger",
+            ));
+        };
+        let empty = HashMap::new();
+        let prices = current_prices.unwrap_or(&empty);
+        let snap = match ledger.snapshot(prices, chrono::Utc::now().timestamp_millis() as u64) {
+            Ok(snap) => snap,
+            Err(err) => {
+                return RiskCheckResult::blocked(SmolStr::new(format!(
+                    "execution ledger snapshot failed: {err}"
+                )));
+            }
+        };
+        let mut calc = RiskMetricsCalculator::new();
+        let metrics = calc.calculate_with_ledger(trading_state, prices, Some(&snap));
+        *self.cached_metrics.write().await = Some(metrics.clone());
+        match pair {
+            Some(pair) => self.check_daily_loss_limits(&metrics, pair),
+            None => self.check_daily_loss_limits_global(&metrics),
+        }
     }
 
     /// Check daily loss limits (with pair context)
@@ -639,5 +684,109 @@ mod balance_tests {
             )
             .await;
         assert!(reduce.allowed);
+    }
+
+    #[tokio::test]
+    async fn daily_loss_without_ledger_is_blocked() {
+        let limits = RiskLimits {
+            daily_loss_limit_all_pairs: Some(dec!(1)),
+            max_order_qty: Some(dec!(10)),
+            ..RiskLimits::default()
+        };
+        let risk = RiskManager::new(
+            limits,
+            Arc::new(trading_core::registry::symbol::SymbolRegistry::from_pairs(
+                vec![Pair::new("BTC", "USDT")],
+            )),
+        );
+        let blocked = risk
+            .check_pre_trade(
+                &req(InstrumentType::Spot, Side::Buy),
+                &TradingState::new(),
+                &[usdt(dec!(1000))],
+                None,
+                Decimal::ZERO,
+                None,
+            )
+            .await;
+        assert!(!blocked.allowed);
+        assert!(blocked
+            .reason
+            .unwrap()
+            .contains("daily-loss limit requires execution ledger"));
+    }
+
+    #[tokio::test]
+    async fn daily_loss_uses_ledger_realized_pnl() {
+        let dir = std::env::temp_dir().join(format!(
+            "inc9-daily-loss-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let ledger = crate::cex::state::ExecutionLedger::open(dir.join("ledger.jsonl")).unwrap();
+        ledger
+            .record_fill(crate::cex::state::FillRecord {
+                execution_id: "b".into(),
+                order_id: "o1".into(),
+                client_order_id: None,
+                strategy_id: None,
+                symbol_base: "BTC".into(),
+                symbol_quote: "USDT".into(),
+                side: "Buy".into(),
+                quantity: "1".into(),
+                price: "100".into(),
+                fee: "0".into(),
+                fee_currency: "USDT".into(),
+                exchange_ts_ms: chrono::Utc::now().timestamp_millis() as u64,
+                receive_ts_ms: chrono::Utc::now().timestamp_millis() as u64,
+            })
+            .unwrap();
+        ledger
+            .record_fill(crate::cex::state::FillRecord {
+                execution_id: "s".into(),
+                order_id: "o2".into(),
+                client_order_id: None,
+                strategy_id: None,
+                symbol_base: "BTC".into(),
+                symbol_quote: "USDT".into(),
+                side: "Sell".into(),
+                quantity: "1".into(),
+                price: "90".into(),
+                fee: "0".into(),
+                fee_currency: "USDT".into(),
+                exchange_ts_ms: chrono::Utc::now().timestamp_millis() as u64,
+                receive_ts_ms: chrono::Utc::now().timestamp_millis() as u64,
+            })
+            .unwrap();
+        let limits = RiskLimits {
+            daily_loss_limit_all_pairs: Some(dec!(5)),
+            max_order_qty: Some(dec!(10)),
+            ..RiskLimits::default()
+        };
+        let risk = RiskManager::new(
+            limits,
+            Arc::new(trading_core::registry::symbol::SymbolRegistry::from_pairs(
+                vec![Pair::new("BTC", "USDT")],
+            )),
+        )
+        .with_execution_ledger(Arc::new(ledger));
+        let blocked = risk
+            .check_pre_trade(
+                &req(InstrumentType::Spot, Side::Buy),
+                &TradingState::new(),
+                &[usdt(dec!(1000))],
+                None,
+                Decimal::ZERO,
+                None,
+            )
+            .await;
+        assert!(!blocked.allowed);
+        assert!(blocked
+            .reason
+            .unwrap()
+            .contains("Daily loss limit exceeded"));
     }
 }

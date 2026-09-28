@@ -3,11 +3,12 @@
 //! Manages trading-specific state (positions, active orders) derived from ExchangeStateManager.
 //! Does NOT call exchange directly - relies on ExchangeStateManager via channel subscriptions.
 
+use crate::cex::state::ledger::ExecutionLedger;
 use crate::cex::state::reconciler::{PositionReconciler, ReconciliationResult};
 use crate::cex::state::subscriber::ExchangeStateSubscriber;
 use crate::cex::state::TradingState;
 use exchange_engine::state::manager::ExchangeStateManager;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tokio::sync::RwLock;
 use trading_core::{
     error::EngineError,
@@ -28,6 +29,9 @@ pub struct TradingStateManager {
 
     /// Reconciler for TradingState vs ExchangeStateManager reconciliation
     reconciler: PositionReconciler,
+
+    /// Durable fill/funding ledger. Required for live PnL and daily-loss.
+    execution_ledger: Arc<Mutex<Option<Arc<ExecutionLedger>>>>,
 }
 
 impl TradingStateManager {
@@ -55,9 +59,11 @@ impl TradingStateManager {
         let state = Arc::new(RwLock::new(
             TradingState::new().with_instrument_type(instrument_type.clone()),
         ));
+        let execution_ledger = Arc::new(Mutex::new(None));
         let subscriber = Arc::new(tokio::sync::Mutex::new(
             ExchangeStateSubscriber::new(exchange_update_rx, state.clone())
-                .with_instrument_type(instrument_type.clone()),
+                .with_instrument_type(instrument_type.clone())
+                .with_execution_ledger_slot(execution_ledger.clone()),
         ));
         let reconciler =
             PositionReconciler::new(exchange_state_manager).with_instrument_type(instrument_type);
@@ -66,7 +72,23 @@ impl TradingStateManager {
             state,
             subscriber,
             reconciler,
+            execution_ledger,
         }
+    }
+
+    pub fn with_execution_ledger(self, ledger: Arc<ExecutionLedger>) -> Self {
+        *self
+            .execution_ledger
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = Some(ledger);
+        self
+    }
+
+    pub fn execution_ledger(&self) -> Option<Arc<ExecutionLedger>> {
+        self.execution_ledger
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 
     /// Start the subscriber to listen for ExchangeStateManager updates

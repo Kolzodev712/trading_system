@@ -1,5 +1,5 @@
 //! Risk metrics - P&L tracking and calculations
-use crate::cex::state::{Position, TradingState};
+use crate::cex::state::{ledger::LedgerSnapshot, Position, TradingState};
 use chrono::Utc;
 use rust_decimal::Decimal;
 use std::collections::HashMap;
@@ -20,6 +20,12 @@ pub struct RiskMetrics {
     /// Daily P&L (tracked per day, resets at midnight)
     pub daily_pnl: Decimal,
 
+    /// Fees paid (quote), from the execution ledger when present
+    pub fees_paid: Decimal,
+
+    /// Signed funding PnL, from the execution ledger when present
+    pub funding_pnl: Decimal,
+
     /// Total exposure (notional value of all positions)
     pub total_exposure: Decimal,
 
@@ -37,6 +43,8 @@ impl Default for RiskMetrics {
             realized_pnl: Decimal::ZERO,
             total_pnl: Decimal::ZERO,
             daily_pnl: Decimal::ZERO,
+            fees_paid: Decimal::ZERO,
+            funding_pnl: Decimal::ZERO,
             total_exposure: Decimal::ZERO,
             total_position: Decimal::ZERO,
             timestamp: chrono::Utc::now().timestamp() as u64,
@@ -130,36 +138,52 @@ impl RiskMetricsCalculator {
         }
     }
 
-    /// Calculate all risk metrics
+    /// Calculate all risk metrics.
+    ///
+    /// When an execution-ledger snapshot is supplied, realized, fees, funding,
+    /// unrealized and daily PnL come from that snapshot (Increment 9).
     pub fn calculate(
         &mut self,
         trading_state: &TradingState,
         current_prices: &HashMap<Pair, Decimal>,
     ) -> RiskMetrics {
-        // Calculate unrealized P&L
-        let unrealized_pnl =
-            self.calculate_unrealized_pnl(&trading_state.positions, current_prices);
+        self.calculate_with_ledger(trading_state, current_prices, None)
+    }
 
-        // Calculate total exposure
+    pub fn calculate_with_ledger(
+        &mut self,
+        trading_state: &TradingState,
+        current_prices: &HashMap<Pair, Decimal>,
+        ledger: Option<&LedgerSnapshot>,
+    ) -> RiskMetrics {
         let total_exposure = self.calculate_exposure(&trading_state.positions, current_prices);
-
-        // Calculate total position size
         let total_position = self.calculate_total_position(&trading_state.positions);
 
-        // Update daily P&L tracker
-        self.daily_pnl_tracker.update(Decimal::ZERO, unrealized_pnl); // TODO: Track realized separately
+        if let Some(snap) = ledger {
+            return RiskMetrics {
+                unrealized_pnl: snap.unrealized_pnl,
+                realized_pnl: snap.net_realized,
+                total_pnl: snap.equity,
+                daily_pnl: snap.daily_pnl,
+                fees_paid: snap.fees_paid,
+                funding_pnl: snap.funding_pnl,
+                total_exposure,
+                total_position,
+                timestamp: chrono::Utc::now().timestamp() as u64,
+            };
+        }
 
+        let unrealized_pnl =
+            self.calculate_unrealized_pnl(&trading_state.positions, current_prices);
+        self.daily_pnl_tracker.update(Decimal::ZERO, unrealized_pnl);
         let daily_pnl = self.daily_pnl_tracker.get_daily_pnl();
-
-        // For now, realized P&L is zero (we'll track this when positions are closed)
-        let realized_pnl = Decimal::ZERO;
-        let total_pnl = unrealized_pnl + realized_pnl;
-
         RiskMetrics {
             unrealized_pnl,
-            realized_pnl,
-            total_pnl,
+            realized_pnl: Decimal::ZERO,
+            total_pnl: unrealized_pnl,
             daily_pnl,
+            fees_paid: Decimal::ZERO,
+            funding_pnl: Decimal::ZERO,
             total_exposure,
             total_position,
             timestamp: chrono::Utc::now().timestamp() as u64,
@@ -233,6 +257,8 @@ mod tests {
         assert_eq!(metrics.realized_pnl, Decimal::ZERO);
         assert_eq!(metrics.total_pnl, Decimal::ZERO);
         assert_eq!(metrics.daily_pnl, Decimal::ZERO);
+        assert_eq!(metrics.fees_paid, Decimal::ZERO);
+        assert_eq!(metrics.funding_pnl, Decimal::ZERO);
         assert_eq!(metrics.total_exposure, Decimal::ZERO);
         assert_eq!(metrics.total_position, Decimal::ZERO);
     }

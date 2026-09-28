@@ -28,7 +28,7 @@ pub struct RiskLimits {
 
 impl RiskLimits {
     /// True when at least one production size/count limit is set.
-    /// Daily-loss is not production safety until Increment 9 PnL is correct.
+    /// Daily-loss is production safety only when the execution ledger supplies PnL.
     pub fn is_explicit(&self) -> bool {
         self.total_max_position.is_some()
             || self.max_total_orders.is_some()

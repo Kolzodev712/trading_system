@@ -59,6 +59,10 @@ pub struct BotConfig {
     /// Append-only unknown-submission journal. Runtime data; not committed.
     #[serde(default = "default_submission_journal_path")]
     pub submission_journal_path: String,
+
+    /// Append-only execution ledger for fills, fees, and funding. Runtime data.
+    #[serde(default = "default_execution_ledger_path")]
+    pub execution_ledger_path: String,
 }
 
 /// Venue selection for this process.
@@ -78,6 +82,10 @@ fn default_shadow_journal_path() -> String {
 
 fn default_submission_journal_path() -> String {
     "runtime-data/submission-journal.jsonl".to_string()
+}
+
+fn default_execution_ledger_path() -> String {
+    "runtime-data/execution-ledger.jsonl".to_string()
 }
 
 impl Default for VenueConfig {

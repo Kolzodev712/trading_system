@@ -573,12 +573,21 @@ pub async fn strategy_runner_with(
     .with_execution_mode(execution_mode)
     .with_strategy_manager(strategy_manager_arc.clone())
     .with_shared_strategy_caps(strategy_caps)
-    .with_risk_manager(Arc::new(RiskManager::new(
-        risk_limits,
-        Arc::new(trading_core::registry::symbol::SymbolRegistry::from_pairs(
-            all_symbols.clone(),
-        )),
-    )))
+    .with_risk_manager(Arc::new(
+        RiskManager::new(
+            risk_limits,
+            Arc::new(trading_core::registry::symbol::SymbolRegistry::from_pairs(
+                all_symbols.clone(),
+            )),
+        )
+        .with_execution_ledger(
+            services
+                .trading_state_manager
+                .as_ref()
+                .and_then(|tsm| tsm.execution_ledger())
+                .ok_or("execution ledger is required")?,
+        ),
+    ))
     .with_max_active_orders(first_config.max_active_orders)
     .with_leverage(
         bot_config

@@ -261,6 +261,25 @@ impl StrategyManager {
         Ok(())
     }
 
+    /// Route a completed candle to every strategy assigned to that pair.
+    /// Data path: not gated by strategy enable or global trading control.
+    pub async fn on_completed_candle(
+        &self,
+        candle: &trading_core::types::CompletedCandle,
+    ) -> Result<(), EngineError> {
+        let indices = self
+            .pair_to_indices
+            .get(&candle.instrument.pair)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[]);
+        for &idx in indices {
+            let strategy = &self.strategies[idx];
+            let mut strat = strategy.write().await;
+            strat.on_completed_candle(candle).await?;
+        }
+        Ok(())
+    }
+
     pub async fn on_execution_report(&self, order: &Order) -> Result<(), EngineError> {
         for strategy in &self.strategies {
             let mut strat_guard = strategy.write().await;
@@ -470,5 +489,92 @@ impl PositionSizer {
         let size = self.base_size * confidence * clamped_vol;
         size.max(self.base_size * self.min_size_multiplier)
             .min(self.base_size * self.max_size_multiplier)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cex::intent::StrategyContext;
+    use async_trait::async_trait;
+    use rust_decimal::Decimal;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use trading_core::types::{
+        common::{Instrument, InstrumentType, Pair},
+        exchange::Order,
+        CompletedCandle, DAILY_PERIOD_MS,
+    };
+
+    struct CountingStrategy {
+        hits: Arc<AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl Strategy for CountingStrategy {
+        async fn evaluate(
+            &mut self,
+            _ctx: &StrategyContext<'_>,
+        ) -> Result<StrategyIntent, EngineError> {
+            Ok(StrategyIntent::hold("count"))
+        }
+
+        async fn on_execution_report(&mut self, _order: &Order) -> Result<(), EngineError> {
+            Ok(())
+        }
+
+        async fn on_completed_candle(
+            &mut self,
+            _candle: &CompletedCandle,
+        ) -> Result<(), EngineError> {
+            self.hits.fetch_add(1, Ordering::Relaxed);
+            Ok(())
+        }
+    }
+
+    fn candle_for(pair: Pair) -> CompletedCandle {
+        CompletedCandle {
+            venue: "bybit".into(),
+            product: "linear".into(),
+            instrument: Instrument::new(InstrumentType::Futures, pair),
+            interval: "D".into(),
+            start_time_ms: 0,
+            end_time_exclusive_ms: DAILY_PERIOD_MS,
+            open: Decimal::ONE,
+            high: Decimal::ONE,
+            low: Decimal::ONE,
+            close: Decimal::ONE,
+            volume: Decimal::ONE,
+        }
+    }
+
+    #[tokio::test]
+    async fn completed_candle_routes_only_to_assigned_pair() {
+        let btc = Pair::new("BTC", "USDT");
+        let eth = Pair::new("ETH", "USDT");
+        let btc_hits = Arc::new(AtomicUsize::new(0));
+        let eth_hits = Arc::new(AtomicUsize::new(0));
+        let mut manager = StrategyManager::new();
+        manager
+            .add_strategy(
+                Arc::new(RwLock::new(CountingStrategy {
+                    hits: btc_hits.clone(),
+                })),
+                "btc".into(),
+                btc.clone(),
+            )
+            .await;
+        manager
+            .add_strategy(
+                Arc::new(RwLock::new(CountingStrategy {
+                    hits: eth_hits.clone(),
+                })),
+                "eth".into(),
+                eth,
+            )
+            .await;
+
+        manager.on_completed_candle(&candle_for(btc)).await.unwrap();
+        assert_eq!(btc_hits.load(Ordering::Relaxed), 1);
+        assert_eq!(eth_hits.load(Ordering::Relaxed), 0);
     }
 }

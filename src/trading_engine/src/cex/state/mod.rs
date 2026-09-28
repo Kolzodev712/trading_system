@@ -294,6 +294,15 @@ pub trait Strategy: Send + Sync {
         let _ = bars;
         Ok(())
     }
+
+    /// A runner-owned completed candle. Default ignores so orderbook strategies stay unchanged.
+    async fn on_completed_candle(
+        &mut self,
+        candle: &trading_core::types::CompletedCandle,
+    ) -> Result<(), EngineError> {
+        let _ = candle;
+        Ok(())
+    }
 }
 
 #[cfg(test)]

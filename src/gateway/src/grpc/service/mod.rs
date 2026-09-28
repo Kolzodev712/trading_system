@@ -287,7 +287,8 @@ impl TradingCliServiceImpl {
     }
 
     fn require_mutating<T>(&self, request: &Request<T>) -> Result<(), Status> {
-        crate::grpc::access::check_mutating_access(request.metadata())
+        crate::grpc::access::check_mutating_access(&self.venue_label, request.metadata())
+            .map(|_| ())
     }
 }
 
@@ -316,6 +317,7 @@ impl TradingCliService for TradingCliServiceImpl {
             entries_paused: self.trading_control.entries_paused().await,
             flatten_latched: self.trading_control.flatten_latched().await,
             global_toggle_semantics: GLOBAL_TOGGLE_SEMANTICS.to_string(),
+            operator_id: crate::grpc::access::displayed_operator_id(&self.venue_label),
         }))
     }
 

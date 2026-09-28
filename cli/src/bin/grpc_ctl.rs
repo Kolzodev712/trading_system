@@ -1,6 +1,9 @@
 //! One-shot gRPC control for demo/test runs (not the TUI).
 use std::time::Duration;
+use tonic::metadata::{Ascii, MetadataValue};
+use tonic::service::Interceptor;
 use tonic::transport::Channel;
+use tonic::{Request, Status};
 
 #[allow(clippy::all)]
 mod trading_cli {
@@ -31,9 +34,34 @@ fn usage() -> ! {
 env: TRADING_GRPC (default http://127.0.0.1:50051)
      TRADING_STRATEGY (default PropHold)
      TRADING_SYMBOL (default BTC/USDT)
-     TRADING_OPERATOR_TOKEN (optional; sent as x-operator-token)"
+     TRADING_OPERATOR_TOKEN (sent as x-operator-token; required off Paper)"
     );
     std::process::exit(2);
+}
+
+#[derive(Clone)]
+struct OperatorAuth {
+    token: Option<MetadataValue<Ascii>>,
+}
+
+impl Interceptor for OperatorAuth {
+    fn call(&mut self, mut request: Request<()>) -> Result<Request<()>, Status> {
+        if let Some(ref token) = self.token {
+            request
+                .metadata_mut()
+                .insert("x-operator-token", token.clone());
+        }
+        Ok(request)
+    }
+}
+
+fn operator_auth() -> OperatorAuth {
+    let token = std::env::var("TRADING_OPERATOR_TOKEN")
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .and_then(|s| MetadataValue::try_from(s).ok());
+    OperatorAuth { token }
 }
 
 #[tokio::main]
@@ -48,7 +76,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .connect_timeout(Duration::from_secs(5))
         .connect()
         .await?;
-    let mut client = TradingCliServiceClient::new(channel);
+    let mut client = TradingCliServiceClient::with_interceptor(channel, operator_auth());
 
     let default_name = std::env::var("TRADING_STRATEGY").unwrap_or_else(|_| "PropHold".into());
     let default_symbol = std::env::var("TRADING_SYMBOL").unwrap_or_else(|_| "BTC/USDT".into());
@@ -106,6 +134,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "entries_paused={} flatten_latched={}",
                 status.entries_paused, status.flatten_latched
             );
+            println!("operator_id={}", status.operator_id);
             println!("global_toggle_semantics={}", status.global_toggle_semantics);
             println!(
                 "runner_mode={} venue={} environment={} execution_mode={} snapshot_unix_ms={}",

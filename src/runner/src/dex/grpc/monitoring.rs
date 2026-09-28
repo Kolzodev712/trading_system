@@ -119,9 +119,9 @@ pub fn build_dex_monitoring_grpc(
         exchange_state_manager.clone(),
     ));
     let level_manager = Arc::new(RwLock::new(LevelManager::new()));
-    let trading_control = Arc::new(trading_core::grpc::TradingControl::new(
-        trading_client.clone(),
-    ));
+    let trading_control = Arc::new(
+        trading_core::grpc::TradingControl::new(trading_client.clone()).with_entries_paused(true),
+    );
 
     let (mode, venue, environment) = crate::config::execution_status_from_bot(bot_config);
     let mut service = TradingCliServiceImpl::new(

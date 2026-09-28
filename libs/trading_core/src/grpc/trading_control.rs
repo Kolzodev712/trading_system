@@ -29,6 +29,15 @@ impl TradingControl {
         }
     }
 
+    /// Start PauseEntries without an RPC. Non-Paper venues use this so demo
+    /// cannot enter until an authenticated Resume.
+    pub fn with_entries_paused(self, paused: bool) -> Self {
+        Self {
+            entries_paused: Arc::new(RwLock::new(paused)),
+            ..self
+        }
+    }
+
     /// Check if trading is enabled
     pub async fn is_enabled(&self) -> bool {
         *self.enabled.read().await

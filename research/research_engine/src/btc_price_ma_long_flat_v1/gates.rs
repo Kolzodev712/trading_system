@@ -3,7 +3,7 @@
 use rust_decimal::Decimal;
 use serde::Serialize;
 
-use crate::cex::strategies::rust_strategies::donchian_daily_v1::backtest::Simulation;
+use crate::donchian_daily_v1::backtest::Simulation;
 
 pub const BENCHMARK_COST_A_NET: &str = "48.360542973936";
 pub const BENCHMARK_COST_A_DRAWDOWN: &str = "44.3887151092231";
@@ -122,8 +122,6 @@ pub fn evaluate_primary_screen(
     let all_pass = gates.iter().all(|g| g.passed);
     let disposition = if all_pass {
         "eligible_for_holdout_review".to_string()
-    } else if gates[0].passed {
-        "reject".to_string()
     } else {
         "reject".to_string()
     };

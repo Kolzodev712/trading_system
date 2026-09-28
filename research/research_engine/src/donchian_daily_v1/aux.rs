@@ -8,10 +8,8 @@ use super::backtest::{
     MINUTE_MS,
 };
 use super::offline::{DecisionRow, MarketDataEnvironment};
-use crate::cex::bybit_public_klines::parse_bybit_public_kline_page;
-use crate::cex::bybit_public_market::{
-    parse_bybit_funding_history, parse_bybit_mark_price_kline_page,
-};
+use crate::bybit_public_klines::parse_bybit_public_kline_page;
+use crate::bybit_public_market::{parse_bybit_funding_history, parse_bybit_mark_price_kline_page};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};

@@ -480,7 +480,7 @@ fn kline_url(request: &DownloadRequest, end_inclusive: u64, limit: u32) -> Strin
 }
 
 fn parse_bybit_kline_page(body: &str) -> Result<Vec<RawKline>, OfflineError> {
-    let page = crate::cex::bybit_public_klines::parse_bybit_public_kline_page(body)
+    let page = crate::bybit_public_klines::parse_bybit_public_kline_page(body)
         .map_err(|err| OfflineError::new(err.to_string()))?;
     if let Some(category) = &page.category {
         if category != PRODUCT {

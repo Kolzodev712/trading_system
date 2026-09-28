@@ -3741,6 +3741,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "research_engine"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "hex",
+ "reqwest",
+ "rust_decimal",
+ "rust_decimal_macros",
+ "serde",
+ "serde_json",
+ "sha2",
+ "strategy_core",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-test",
+]
+
+[[package]]
 name = "resolv-conf"
 version = "0.7.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5557,6 +5575,7 @@ dependencies = [
  "parking_lot",
  "pem",
  "reqwest",
+ "research_engine",
  "ring 0.17.14",
  "rust_decimal",
  "rust_decimal_macros",
@@ -5565,7 +5584,6 @@ dependencies = [
  "serde_with",
  "sha2",
  "smol_str",
- "strategy_core",
  "thiserror 1.0.69",
  "tokio",
  "tokio-stream",

@@ -12,6 +12,7 @@ members = [
     "libs/trading_trace",
     "libs/strategy_core",
     "research/research_engine",
+    "research/research_cli",
     "src/exchange_engine",
     "src/dex_engine",
     "src/gateway",

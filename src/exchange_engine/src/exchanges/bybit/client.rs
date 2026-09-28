@@ -5,6 +5,10 @@
 
 use super::{
     config::BybitConfig,
+    pagination::{
+        collect_open_order_pages, linear_list_selector, OpenOrderPageItem, OrderPage,
+        BYBIT_OPEN_ORDER_MAX_PAGES, BYBIT_OPEN_ORDER_PAGE_LIMIT,
+    },
     rest::{
         client::BybitHttpClient,
         types::{
@@ -45,8 +49,8 @@ use trading_core::{
         common::{InstrumentType, OrderId, OrderStatus, OrderType, Pair},
         exchange::{
             Balance, BulkAmendItem, BulkAmendRequest, BulkAmendResponse, BulkCancelRequest,
-            BulkCancelResponse, BulkOperationResult, BulkOrderRequest, BulkOrderResponse, Order,
-            OrderRequest, Position, Trade,
+            BulkCancelResponse, BulkOperationResult, BulkOrderRequest, BulkOrderResponse,
+            ClientOrderLookup, Order, OrderRequest, Position, Trade,
         },
         futures::{FuturesBalance, LeverageInfo, PositionMode},
     },
@@ -62,6 +66,17 @@ pub struct BybitClient {
     pub(crate) rest_client: BybitHttpClient,
     pub(crate) symbol_registry: Arc<SymbolRegistry>,
     state_manager: Arc<tokio::sync::Mutex<Option<Arc<ExchangeStateManager>>>>,
+}
+
+struct PagedOpenOrder {
+    id: String,
+    order: Order,
+}
+
+impl OpenOrderPageItem for PagedOpenOrder {
+    fn page_item_id(&self) -> &str {
+        &self.id
+    }
 }
 
 impl BybitClient {
@@ -161,6 +176,162 @@ impl BybitClient {
             .first()
             .map(|pair| pair.quote.as_str().into())
             .unwrap_or_else(|| "USDT".into())
+    }
+
+    fn open_order_query_params(&self) -> Result<Vec<BybitOpenOrderParams>, EngineError> {
+        let category = self.get_category_from_instrument_type(self.config.instrument_type.clone());
+        match category {
+            BybitCategory::Linear | BybitCategory::Inverse => {
+                if self.config.pairs.is_empty() {
+                    Ok(vec![self.open_order_params(
+                        category.clone(),
+                        linear_list_selector(category, None, self.linear_settle_coin())
+                            .map_err(|err| EngineError::CustomError(anyhow::anyhow!("{err}")))?,
+                    )])
+                } else {
+                    self.config
+                        .pairs
+                        .iter()
+                        .map(|pair| {
+                            let selector = linear_list_selector(
+                                category.clone(),
+                                Some(pair.convert_to_smolstr()),
+                                self.linear_settle_coin(),
+                            )
+                            .map_err(|err| EngineError::CustomError(anyhow::anyhow!("{err}")))?;
+                            Ok(self.open_order_params(category.clone(), selector))
+                        })
+                        .collect()
+                }
+            }
+            BybitCategory::Spot | BybitCategory::Option => Ok(vec![self.open_order_params(
+                category,
+                super::pagination::LinearListSelector {
+                    symbol: None,
+                    base_coin: None,
+                    settle_coin: None,
+                },
+            )]),
+        }
+    }
+
+    fn open_order_params(
+        &self,
+        category: BybitCategory,
+        selector: super::pagination::LinearListSelector,
+    ) -> BybitOpenOrderParams {
+        BybitOpenOrderParams {
+            category,
+            symbol: selector.symbol,
+            base_coin: selector.base_coin,
+            settle_coin: selector.settle_coin,
+            order_id: None,
+            order_link_id: None,
+            order_filter: None,
+            order_status: None,
+            start_time: None,
+            end_time: None,
+            limit: Some(BYBIT_OPEN_ORDER_PAGE_LIMIT),
+            cursor: None,
+        }
+    }
+
+    async fn fetch_open_order_page(
+        &self,
+        mut params: BybitOpenOrderParams,
+        cursor: Option<String>,
+    ) -> Result<OrderPage<PagedOpenOrder>, EngineError> {
+        params.cursor = cursor.map(Into::into);
+        params.limit = Some(BYBIT_OPEN_ORDER_PAGE_LIMIT);
+        let response: BybitOpenOrdersResponse = self
+            .rest_client
+            .call(
+                "order/open-order",
+                HttpMethod::GET,
+                Some(params),
+                None,
+                None,
+                true,
+            )
+            .await?
+            .ok_or_else(|| {
+                EngineError::CustomError(anyhow::anyhow!("No response from open-order"))
+            })?;
+
+        if response.ret_code != 0 {
+            return Err(EngineError::CustomError(anyhow::anyhow!(
+                "Failed to fetch open orders: {}",
+                response.ret_msg
+            )));
+        }
+
+        let next_page_cursor = if response.result.next_page_cursor.is_empty() {
+            None
+        } else {
+            Some(response.result.next_page_cursor.to_string())
+        };
+        let orders = response.to_orders(self.symbol_registry.clone());
+        Ok(OrderPage {
+            items: orders
+                .into_iter()
+                .map(|order| PagedOpenOrder {
+                    id: order.order_id.as_str().to_string(),
+                    order,
+                })
+                .collect(),
+            next_page_cursor,
+        })
+    }
+
+    async fn lookup_orders_by_link_id(
+        &self,
+        endpoint: &str,
+        order_link_id: &str,
+    ) -> Result<Option<Vec<Order>>, EngineError> {
+        let category = self.get_category_from_instrument_type(self.config.instrument_type.clone());
+        let selector = linear_list_selector(
+            category.clone(),
+            self.config
+                .pairs
+                .first()
+                .map(|pair| pair.convert_to_smolstr()),
+            self.linear_settle_coin(),
+        )
+        .map_err(|err| EngineError::CustomError(anyhow::anyhow!("{err}")))?;
+        let params = BybitOpenOrderParams {
+            category,
+            symbol: selector.symbol,
+            base_coin: selector.base_coin,
+            settle_coin: selector.settle_coin,
+            order_id: None,
+            order_link_id: Some(order_link_id.into()),
+            order_filter: None,
+            order_status: None,
+            start_time: None,
+            end_time: None,
+            limit: Some(1),
+            cursor: None,
+        };
+        let response: BybitOpenOrdersResponse = match self
+            .rest_client
+            .call(endpoint, HttpMethod::GET, Some(params), None, None, true)
+            .await
+        {
+            Ok(Some(response)) => response,
+            Ok(None) => return Ok(None),
+            Err(err) => {
+                warn!("Bybit {endpoint} lookup by orderLinkId failed: {err}");
+                return Ok(None);
+            }
+        };
+        if response.ret_code != 0 {
+            warn!(
+                "Bybit {endpoint} lookup by orderLinkId ret_code={}: {}",
+                response.ret_code, response.ret_msg
+            );
+            return Ok(None);
+        }
+        Ok(Some(response.to_orders(self.symbol_registry.clone())))
     }
 
     async fn fetch_position_list(
@@ -475,46 +646,47 @@ impl TradingClient<OrderRequest> for BybitClient {
     }
 
     async fn fetch_open_orders(&self) -> Result<Vec<Order>, EngineError> {
-        let category = self.get_category_from_instrument_type(self.config.instrument_type.clone());
-
-        let params = BybitOpenOrderParams {
-            category: category.clone(),
-            symbol: None,
-            base_coin: None,
-            settle_coin: None,
-            order_id: None,
-            order_link_id: None,
-            order_filter: None,
-            order_status: None,
-            start_time: None,
-            end_time: None,
-            limit: Some(50),
-            cursor: None,
-        };
-
-        let response: BybitOpenOrdersResponse = self
-            .rest_client
-            .call(
-                "order/open-order",
-                HttpMethod::GET,
-                Some(params),
-                None,
-                None,
-                true,
+        let mut all = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        for params in self.open_order_query_params()? {
+            let page_params = params.clone();
+            let paged = collect_open_order_pages(
+                |cursor| self.fetch_open_order_page(page_params.clone(), cursor),
+                BYBIT_OPEN_ORDER_PAGE_LIMIT,
+                BYBIT_OPEN_ORDER_MAX_PAGES,
             )
-            .await?
-            .ok_or_else(|| {
-                EngineError::CustomError(anyhow::anyhow!("No response from test order"))
-            })?;
-
-        if response.ret_code != 0 {
-            return Err(EngineError::CustomError(anyhow::anyhow!(
-                "Failed to fetch open orders: {}",
-                response.ret_msg
-            )));
+            .await
+            .map_err(|err| EngineError::CustomError(anyhow::anyhow!("{err}")))?;
+            for item in paged {
+                if seen.insert(item.id.clone()) {
+                    all.push(item.order);
+                }
+            }
         }
+        Ok(all)
+    }
 
-        Ok(response.to_orders(self.symbol_registry.clone()))
+    async fn fetch_order_by_client_id(
+        &self,
+        client_order_id: &str,
+    ) -> Result<ClientOrderLookup, EngineError> {
+        if let Some(orders) = self
+            .lookup_orders_by_link_id("order/open-order", client_order_id)
+            .await?
+        {
+            if let Some(order) = orders.into_iter().next() {
+                return Ok(ClientOrderLookup::from_order(order));
+            }
+        }
+        if let Some(orders) = self
+            .lookup_orders_by_link_id("order/history", client_order_id)
+            .await?
+        {
+            if let Some(order) = orders.into_iter().next() {
+                return Ok(ClientOrderLookup::from_order(order));
+            }
+        }
+        Ok(ClientOrderLookup::Inconclusive)
     }
 
     async fn fetch_trades(&self, pair: Option<&Pair>) -> Result<Vec<Trade>, EngineError> {

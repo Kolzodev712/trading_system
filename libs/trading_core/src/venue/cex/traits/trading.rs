@@ -43,6 +43,18 @@ where
     /// This method should be called at bootstrap and periodically for reconciliation.
     async fn fetch_open_orders(&self) -> Result<Vec<Order>, EngineError>;
 
+    /// Look up an order by client / `orderLinkId`, including terminal states.
+    ///
+    /// A missing or temporarily absent record is [`ClientOrderLookup::Inconclusive`],
+    /// never a rejection. Default is inconclusive so venues that cannot query by
+    /// client id fail closed (reservation stays).
+    async fn fetch_order_by_client_id(
+        &self,
+        _client_order_id: &str,
+    ) -> Result<crate::venue::cex::types::exchange::ClientOrderLookup, EngineError> {
+        Ok(crate::venue::cex::types::exchange::ClientOrderLookup::Inconclusive)
+    }
+
     /// Fetches private trade history for the account.
     /// This method should be called at bootstrap and periodically for reconciliation.
     /// Optionally filters by trading pair if provided.

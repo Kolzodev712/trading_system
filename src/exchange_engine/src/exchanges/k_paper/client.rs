@@ -17,8 +17,8 @@ use trading_core::types::common::{
     Exchange, Instrument, InstrumentType, OrderId, OrderStatus, Pair, Side,
 };
 use trading_core::types::exchange::{
-    Balance, BulkAmendRequest, BulkAmendResponse, BulkOrderRequest, BulkOrderResponse, Order,
-    OrderRequest, Trade,
+    Balance, BulkAmendRequest, BulkAmendResponse, BulkOrderRequest, BulkOrderResponse,
+    ClientOrderLookup, Order, OrderRequest, Trade,
 };
 use trading_core::venue::cex::traits::TradingClient;
 
@@ -152,7 +152,11 @@ impl TradingClient<OrderRequest> for KPaperClient {
             trading_core::types::common::OrderType::Market => None,
             _ => Some(req.price),
         };
-        let client_order_id = Some(vec![uuid::Uuid::new_v4().to_string()]);
+        let client_order_id = req
+            .exchange_params
+            .get("orderLinkId")
+            .map(|id| vec![id.to_string()])
+            .or_else(|| Some(vec![uuid::Uuid::new_v4().to_string()]));
 
         let cmd = KPaperCommand::PlaceOrder {
             request: KPaperPlaceOrderRequest {
@@ -278,6 +282,46 @@ impl TradingClient<OrderRequest> for KPaperClient {
             .iter()
             .filter_map(|o| rest_order_to_core(o, instrument_type.clone()))
             .collect())
+    }
+
+    async fn fetch_order_by_client_id(
+        &self,
+        client_order_id: &str,
+    ) -> Result<ClientOrderLookup, EngineError> {
+        let url = format!(
+            "{}/orders/by_client_id/{}",
+            self.rest_base,
+            urlencoding::encode(client_order_id)
+        );
+        let res = match self.http_client.get(&url).send().await {
+            Ok(res) => res,
+            Err(err) => {
+                warn!("k-paper GET /orders/by_client_id failed: {err}");
+                return Ok(ClientOrderLookup::Inconclusive);
+            }
+        };
+        if res.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(ClientOrderLookup::Inconclusive);
+        }
+        if !res.status().is_success() {
+            warn!(
+                "k-paper GET /orders/by_client_id: {} {}",
+                res.status(),
+                res.text().await.unwrap_or_default()
+            );
+            return Ok(ClientOrderLookup::Inconclusive);
+        }
+        let rest_order: RestOrder = match res.json().await {
+            Ok(order) => order,
+            Err(err) => {
+                warn!("k-paper order-by-client JSON: {err}");
+                return Ok(ClientOrderLookup::Inconclusive);
+            }
+        };
+        match rest_order_to_core(&rest_order, self.config.instrument_type.clone()) {
+            Some(order) => Ok(ClientOrderLookup::from_order(order)),
+            None => Ok(ClientOrderLookup::Inconclusive),
+        }
     }
 
     async fn fetch_trades(&self, pair: Option<&Pair>) -> Result<Vec<Trade>, EngineError> {

@@ -534,7 +534,12 @@ pub async fn strategy_runner_with(
             .get("leverage")
             .and_then(|value| value.as_u64())
             .map(|value| value as u32),
-    );
+    )
+    .with_submission_journal(std::sync::Arc::new(
+        trading_engine::state::SubmissionJournal::open(&bot_config.submission_journal_path)
+            .map_err(|err| format!("submission journal: {err}"))?,
+    ))
+    .with_exchange_state_manager(services.exchange_state_manager()?.clone());
 
     // Set up execution report handler (StrategyManager handles routing to all strategies)
     let strategy_manager_for_reports = strategy_manager_arc.clone();

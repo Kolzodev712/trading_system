@@ -55,6 +55,10 @@ pub struct BotConfig {
     /// Append-only shadow journal. Runtime data; not committed.
     #[serde(default = "default_shadow_journal_path")]
     pub shadow_journal_path: String,
+
+    /// Append-only unknown-submission journal. Runtime data; not committed.
+    #[serde(default = "default_submission_journal_path")]
+    pub submission_journal_path: String,
 }
 
 /// Venue selection for this process.
@@ -70,6 +74,10 @@ fn default_venue_mode_cex() -> VenueMode {
 
 fn default_shadow_journal_path() -> String {
     "runtime-data/shadow-journal.jsonl".to_string()
+}
+
+fn default_submission_journal_path() -> String {
+    "runtime-data/submission-journal.jsonl".to_string()
 }
 
 impl Default for VenueConfig {

@@ -24,9 +24,9 @@ use trading_core::venue::cex::traits::{ConnectionState, TradingClient};
 
 use super::config::PaperConfig;
 use super::map::{
-    balance_to_core, execution_ack_to_order, execution_to_order, execution_to_trade,
-    merge_fill_into_working_order, orderbook_to_structured, position_to_core,
-    public_trade_to_structured, to_instrument_id,
+    balance_to_core, cancel_all_after_rest, execution_ack_to_order, execution_to_order,
+    execution_to_trade, fill_trade_id_is_new, merge_fill_into_working_order,
+    orderbook_to_structured, position_to_core, public_trade_to_structured, to_instrument_id,
 };
 use super::messages::{KPaperCommand, KPaperMessage, KPaperPlaceOrderRequest};
 use super::rest::{
@@ -61,6 +61,8 @@ pub struct KPaperState {
     positions: Vec<trading_core::types::exchange::Position>,
     open_orders: HashMap<OrderId, Order>,
     trades: Vec<Trade>,
+    /// Fill trade ids already merged into `open_orders` filled_amount.
+    applied_fill_ids: HashMap<OrderId, HashSet<String>>,
     /// Single in-flight place_order: fulfilled when we get the next execution (ack has quantity=0).
     pending_place: Option<(oneshot::Sender<Result<Order, EngineError>>, OrderRequest)>,
     /// Single in-flight cancel: fulfilled when we get CancelAck.
@@ -242,29 +244,31 @@ impl TradingClient<OrderRequest> for KPaperClient {
                 }
             }
         }
-        match self.fetch_open_orders().await {
+        let rest_ok = match self.fetch_open_orders().await {
             Ok(rest) => {
                 for order in rest {
                     if order.instrument.pair == *pair {
                         order_ids.insert(order.order_id);
                     }
                 }
+                true
             }
             Err(e) => {
                 warn!("k-paper: REST open_orders for cancel_all failed: {e}");
+                false
             }
-        }
+        };
         let mut first_err = None;
         for id in order_ids {
             if let Err(e) = self.cancel_order_by_id(id).await {
                 if first_err.is_none() {
-                    first_err = Some(e);
+                    first_err = Some(e.to_string());
                 }
             }
         }
-        match first_err {
-            Some(e) => Err(e),
-            None => Ok(()),
+        match cancel_all_after_rest(rest_ok, first_err) {
+            Ok(()) => Ok(()),
+            Err(msg) => Err(EngineError::CustomError(anyhow::anyhow!(msg))),
         }
     }
 
@@ -804,15 +808,33 @@ async fn handle_message(
                 }
             } else {
                 let order_id = OrderId::new(exec.order_id.clone().into());
+                let duplicate_fill = if !is_reject {
+                    let applied = st.applied_fill_ids.entry(order_id.clone()).or_default();
+                    !fill_trade_id_is_new(applied, exec.trade_id.as_deref())
+                } else {
+                    false
+                };
+                if duplicate_fill {
+                    info!(
+                        "k-paper: ignoring duplicate fill order_id={} trade_id={:?}",
+                        exec.order_id, exec.trade_id
+                    );
+                }
                 let incoming = execution_to_order(&exec, instrument_type.clone());
-                let order = match incoming {
-                    Some(fill_order) if !is_reject && st.open_orders.contains_key(&order_id) => {
-                        Some(merge_fill_into_working_order(
-                            st.open_orders.get(&order_id).expect("contains_key"),
-                            fill_order.filled_amount,
-                        ))
+                let order = if duplicate_fill {
+                    None
+                } else {
+                    match incoming {
+                        Some(fill_order)
+                            if !is_reject && st.open_orders.contains_key(&order_id) =>
+                        {
+                            Some(merge_fill_into_working_order(
+                                st.open_orders.get(&order_id).expect("contains_key"),
+                                fill_order.filled_amount,
+                            ))
+                        }
+                        other => other,
                     }
-                    other => other,
                 };
                 let pending_tx = st.pending_place.take().map(|(tx, _)| tx);
                 (order, pending_tx)
@@ -825,6 +847,7 @@ async fn handle_message(
             if let Some(o) = order.clone() {
                 if is_reject || o.status == trading_core::types::common::OrderStatus::Filled {
                     st.open_orders.remove(&order_id);
+                    st.applied_fill_ids.remove(&order_id);
                 } else {
                     st.open_orders.insert(order_id.clone(), o);
                 }
@@ -833,7 +856,13 @@ async fn handle_message(
             if !is_ack {
                 if let Some(t) = execution_to_trade(&exec) {
                     let _ = exchange_state_manager.add_trade(t.clone()).await;
-                    st.trades.push(t);
+                    if !st
+                        .trades
+                        .iter()
+                        .any(|prev| prev.trade_id == t.trade_id && !t.trade_id.as_str().is_empty())
+                    {
+                        st.trades.push(t);
+                    }
                 }
             }
             if let Some(tx) = pending_tx {
@@ -886,6 +915,7 @@ async fn handle_message(
                 ord
             });
             st.open_orders.remove(&order_id);
+            st.applied_fill_ids.remove(&order_id);
             if let Some(pending) = st.pending_cancel.take() {
                 let _ = pending.send(Ok(()));
             }

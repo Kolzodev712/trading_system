@@ -384,6 +384,14 @@ impl TradingControlService {
                 {
                     pairs.insert(pair.clone());
                 }
+                pairs.insert(order.instrument.pair.clone());
+            }
+        }
+        {
+            let state = self.trading_state_manager.get_state();
+            let guard = state.read().await;
+            for position in guard.positions.values() {
+                pairs.insert(position.symbol.clone());
             }
         }
         {

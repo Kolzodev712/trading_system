@@ -1,5 +1,7 @@
 //! Map k-paper wire types to trading_core types.
 
+use std::collections::HashSet;
+
 use rust_decimal::Decimal;
 use smol_str::SmolStr;
 use trading_core::types::common::{
@@ -109,6 +111,30 @@ pub fn merge_fill_into_working_order(existing: &Order, fill_qty: Decimal) -> Ord
         filled_amount: filled,
         status,
         ..existing.clone()
+    }
+}
+
+/// Record a fill trade id. Returns false when this id was already applied.
+/// Empty trade ids cannot be deduplicated and always apply.
+pub fn fill_trade_id_is_new(applied: &mut HashSet<String>, trade_id: Option<&str>) -> bool {
+    match trade_id.map(str::trim).filter(|id| !id.is_empty()) {
+        Some(id) => applied.insert(id.to_string()),
+        None => true,
+    }
+}
+
+/// `cancel_all` may attempt local cancels after a REST failure, but the outcome
+/// stays unverified: an empty local set is exactly when REST was required.
+pub fn cancel_all_after_rest(
+    rest_ok: bool,
+    first_cancel_err: Option<String>,
+) -> Result<(), String> {
+    if !rest_ok {
+        return Err("CancelWorking unverified: REST GET /open_orders failed".into());
+    }
+    match first_cancel_err {
+        Some(err) => Err(err),
+        None => Ok(()),
     }
 }
 
@@ -303,6 +329,42 @@ mod tests {
         let filled = merge_fill_into_working_order(&partial, Decimal::new(1, 3));
         assert_eq!(filled.status, OrderStatus::Filled);
         assert_eq!(filled.filled_amount, Decimal::new(2, 3));
+    }
+
+    #[test]
+    fn duplicate_trade_id_does_not_consume_remainder() {
+        let existing = Order {
+            order_id: OrderId::new("ord-dup".into()),
+            client_order_id: Some(SmolStr::new("cid-dup")),
+            instrument: Instrument::new(InstrumentType::Futures, Pair::new("BTC", "USDT")),
+            side: Side::Buy,
+            price: Decimal::new(49000, 0),
+            amount: Decimal::new(2, 3),
+            internal_created_at: 1,
+            exchange_created_at: Some(1),
+            status: OrderStatus::New,
+            filled_amount: Decimal::ZERO,
+        };
+        let mut applied = HashSet::new();
+        assert!(fill_trade_id_is_new(&mut applied, Some("paper-exec-1")));
+        let partial = merge_fill_into_working_order(&existing, Decimal::new(1, 3));
+        assert!(!fill_trade_id_is_new(&mut applied, Some("paper-exec-1")));
+        assert_eq!(partial.status, OrderStatus::PartiallyFilled);
+        assert_eq!(partial.filled_amount, Decimal::new(1, 3));
+        assert_eq!(
+            (partial.amount - partial.filled_amount),
+            Decimal::new(1, 3),
+            "replaying the same trade id must leave the working remainder"
+        );
+        assert!(fill_trade_id_is_new(&mut applied, None));
+    }
+
+    #[test]
+    fn cancel_all_is_unverified_when_rest_fails() {
+        assert!(cancel_all_after_rest(false, None).is_err());
+        assert!(cancel_all_after_rest(false, Some("local cancel failed".into())).is_err());
+        assert!(cancel_all_after_rest(true, None).is_ok());
+        assert!(cancel_all_after_rest(true, Some("unknown order".into())).is_err());
     }
 
     #[test]

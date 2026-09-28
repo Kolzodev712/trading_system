@@ -786,10 +786,11 @@ impl<S: Strategy> StrategyExecutor<S> {
                         let live = trading_state.read().await;
                         if live.blocks_new_exposure(&orderbook_pair) {
                             warn!(
-                                "New exposure blocked for {} (halt={:?} unresolved={})",
+                                "New exposure blocked for {} (halt={:?} unresolved={} disagreement={})",
                                 orderbook_pair,
                                 live.exposure_halt_reason(),
-                                live.has_unresolved_submission(&orderbook_pair)
+                                live.has_unresolved_submission(&orderbook_pair),
+                                live.position_disagreement(&orderbook_pair)
                             );
                             continue;
                         }
@@ -1202,12 +1203,16 @@ fn market_data_is_stale(orderbook_ts: u64, max_age_ms: Option<u64>) -> bool {
     now_ms.saturating_sub(ts_ms) > max_age_ms
 }
 
-fn place_error_is_unknown(err: &EngineError) -> bool {
+fn place_error_is_known_reject(err: &EngineError) -> bool {
     let text = err.to_string();
-    text.contains("timeout")
-        || text.contains("disconnected")
-        || text.contains("dropped")
-        || text.contains("pending place")
+    let lower = text.to_lowercase();
+    lower.contains("lab_reject")
+        || lower.contains("duplicate client_order_id")
+        || lower.contains("order rejected")
+}
+
+fn place_error_is_unknown(err: &EngineError) -> bool {
+    !place_error_is_known_reject(err)
 }
 
 #[cfg(test)]
@@ -1236,5 +1241,9 @@ mod tests {
         assert!(!place_error_is_unknown(&reject));
         let dup = EngineError::CustomError(anyhow::anyhow!("duplicate client_order_id"));
         assert!(!place_error_is_unknown(&dup));
+        let missing = EngineError::CustomError(anyhow::anyhow!("Response missing order data"));
+        assert!(place_error_is_unknown(&missing));
+        let generic = EngineError::CustomError(anyhow::anyhow!("something went wrong"));
+        assert!(place_error_is_unknown(&generic));
     }
 }

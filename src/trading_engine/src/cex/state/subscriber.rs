@@ -161,7 +161,7 @@ impl ExchangeStateSubscriber {
             return;
         }
         let mut state = self.trading_state.write().await;
-        state.set_position(
+        state.apply_stream_position(
             position.instrument.pair.clone(),
             position.quantity,
             position.avg_price,

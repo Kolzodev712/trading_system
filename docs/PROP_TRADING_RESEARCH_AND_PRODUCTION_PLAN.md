@@ -2488,6 +2488,35 @@ Remaining Paper/Bybit differences (Stage D, not claimed here): Paper MD is snaps
 
 Candidate #2 remains an operational baseline, not validated alpha. Keep Increment 10 / Bybit demo on hold pending owner re-review of this report. Do not implement the operator-token/Vite control change until that 10 preflight.
 
+**Owner review hold (2026-09-28; pinned `trading_system` `10fee5b`, k-paper `2ffc1e1` / hooks `1feee38`, UI `10496e7`; review of pinned code and reported results, local lab not rerun):** Duplicate partial fills still merged by quantity without a trade-id check, so a replayed 0.001 fill on a 0.002 order marked the adapter Filled while Paper still had 0.001 working. `cancel_all_orders` logged a failed REST `/open_orders` query and could return `Ok(())` when the local set was empty. The matrix drove sequential partial-then-cancel, not a remaining fill or fill-vs-cancel, and REST/WS disagreement did not assert blocked new exposure during the lie. Generic place errors lacking a few timeout words were treated as known rejects (Bybit `Response missing order data` would release the reservation). Operator-token/Vite preflight still required and still not Increment 10.
+
+**Revised Increment 9A report (2026-09-28; this commit; pending owner re-review):** `trading_system` (this commit) + k-paper `590f3ad24cb3025a172619dfe321bcded408e083` + UI `10496e72094f8136cb51b237ae2787fbace3d764`. Candidate #2 `btc_price_ma_app --mode strategies` against Paper linear BTCUSDT. `scripts/inc9a_matrix.sh` exit 0 against k-paper `:19995` (`INC9A_WORKDIR=/tmp/inc9a-matrix`). Package fixtures: previous set plus `duplicate_trade_id_does_not_consume_remainder`, `cancel_all_is_unverified_when_rest_fails`, `cancel_working_fails_when_venue_rest_is_unverified`, `timeout_place_error_stays_unknown` now also covers `Response missing order data` and generic errors as unknown. k-paper `cargo test -p paper-exchange-core --lib` 24 passed.
+
+| Section 49 row | Result |
+| --- | --- |
+| Normal accept → ack → fill | Pass. Journal `prepared submitted acknowledged`; ledger unique fills ≥ 1; Paper REST trades nonempty |
+| Lost ACK + runner restart, Paper kept | Pass. `inc9a-lost-ack-1` limit 49000 New `f8f862c2-…`; SIGKILL; Paper same row; relaunch `imported_working=1`, grpc `orders=1` same id, no replacement `place_order` |
+| Explicit reject | Pass. `lab_reject` journal `rejected`; Paper orders stayed 0. Ambiguous errors (including `Response missing order data`) stay unknown and keep the reservation |
+| Duplicate fill | Pass. Market-path `duplicate_next_fill` unique ledger +1; combined with `lab_fill_open` on qty 0.002: adapter ignored replay `trade_id=de435a81-…`, Paper remaining `0.001000`, grpc `PartiallyFilled`, pos `0.001` not `0.002` |
+| Private/public disconnect | Pass. Disconnect logged; reconnect restored; Paper still `0.001` |
+| Stale book | Pass. Runner `Stale market data blocks exposure increase`; Paper `open_orders=[]` `positions=[]` |
+| Runner restart with position | Pass. Paper kept position+trade; relaunch no replacement place |
+| Operator pause/flatten/resume | Pass. PauseEntries, FlattenAndPause matching Paper flat, Resume clears latch |
+| Partial fill / remaining fill / cancel race | Pass. Combined duplicate+partial then CancelWorking of `4ce11a56-…` / this run `efe2a373-…` remainder, Paper working `[]`, pos stayed `0.001`. Remaining fill `Filled` qty 0.002. Fill competing with CancelWorking: working `[]`, no `0.003` overfill |
+| CancelWorking without venue check | Pass. `POST /test/fail_open_orders` → REST `/open_orders` 503; `cancel_all` `CancelWorking unverified`; grpc `accepted=false`. After reset, CancelWorking recovered |
+| Position-before-fill event order | Pass. Unique ledger +1; grpc `pos=0.001` |
+| Transient send failure (drop) | Pass. `open_order timeout`; journal `unknown` |
+| Duplicate client ID | Pass. Second `inc9a-dup-cid` `Known place rejection`; journal `rejected` |
+| REST/WS disagreement | Pass. Lying WS `pos=1` with entries enabled; Paper REST unchanged; no new `place_order` during the lie; runner `REST/WS position disagreement blocks new exposure`; reconnect/REST restored grpc `pos=0.001` |
+| Frozen N=28 decision comparison | Pass. `frozen_n28_runtime_transitions_match_offline` |
+| Sequence-gap book | Bounded fixture only. Paper MD snapshot-only |
+
+Browser CancelWorking evidence from the prior report is unchanged (`05dc0701-…`). This run did not repeat the UI click.
+
+Fixes in this commit: Paper merges fills only for unseen trade ids; `cancel_all_orders` is unverified when REST `/open_orders` fails and TradingControl no longer reports CancelWorking success; place errors default unknown except explicit rejects; WS position jumps block new exposure until REST confirms. Operator-token/Vite is still not implemented and is still not Increment 10.
+
+Keep Increment 10 / Bybit demo on hold pending owner re-review. Do not start demo entries.
+
 ---
 
 # 65. Increment 10 — Bybit demo

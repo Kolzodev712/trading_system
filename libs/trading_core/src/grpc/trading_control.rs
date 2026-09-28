@@ -131,25 +131,15 @@ impl TradingControl {
                             pair.base,
                             pair.quote
                         );
-                    } else if error_msg.contains("Timeout acquiring RPC channel")
-                        || error_msg.contains("RPC channel not ready")
-                        || error_msg.contains("RPC channel closed")
-                        || error_msg.contains("RPC request timeout")
-                    {
-                        tracing::error!(
-                            "[TradingControl] RPC channel unavailable when cancelling orders for {}/{}: {} - connection may be down",
-                            pair.base,
-                            pair.quote,
-                            e
-                        );
-                    } else {
-                        tracing::warn!(
-                            "[TradingControl] Failed to cancel all orders for {}/{}: {}",
-                            pair.base,
-                            pair.quote,
-                            e
-                        );
+                        continue;
                     }
+                    tracing::error!(
+                        "[TradingControl] CancelWorking unverified for {}/{}: {}",
+                        pair.base,
+                        pair.quote,
+                        e
+                    );
+                    return Err(format!("CancelWorking unverified: {e}").into());
                 }
             }
         }
@@ -293,6 +283,14 @@ pub const GLOBAL_TOGGLE_SEMANTICS: &str =
 #[cfg(test)]
 mod tests {
     use super::operator_allows_submit;
+    use super::TradingControl;
+    use crate::error::EngineError;
+    use crate::types::common::{Exchange, OrderId, Pair};
+    use crate::types::exchange::{Balance, Order, OrderRequest, Trade};
+    use crate::venue::cex::traits::TradingClient;
+    use async_trait::async_trait;
+    use std::sync::Arc;
+    use tokio::sync::RwLock;
 
     #[test]
     fn pause_blocks_increase_allows_reduce() {
@@ -311,5 +309,86 @@ mod tests {
     fn resume_requires_global_enable_for_increases() {
         assert!(!operator_allows_submit(true, false, false, false));
         assert!(operator_allows_submit(true, true, false, false));
+    }
+
+    #[derive(Debug)]
+    struct UnverifiedCancelClient;
+
+    #[async_trait]
+    impl TradingClient<OrderRequest> for UnverifiedCancelClient {
+        fn exchange_id(&self) -> Exchange {
+            Exchange::Paper
+        }
+
+        async fn test_open_order(&self, _req: OrderRequest) -> Result<(), EngineError> {
+            Ok(())
+        }
+
+        async fn open_order(&self, _req: OrderRequest) -> Result<Order, EngineError> {
+            Err(EngineError::NotSupported("test".into()))
+        }
+
+        async fn cancel_order_by_id(&self, _order_id: OrderId) -> Result<(), EngineError> {
+            Ok(())
+        }
+
+        async fn cancel_all_orders(&self, _pair: &Pair) -> Result<(), EngineError> {
+            Err(EngineError::CustomError(anyhow::anyhow!(
+                "CancelWorking unverified: REST GET /open_orders failed"
+            )))
+        }
+
+        async fn fetch_balance(&self) -> Result<Vec<Balance>, EngineError> {
+            Ok(vec![])
+        }
+
+        async fn fetch_open_orders(&self) -> Result<Vec<Order>, EngineError> {
+            Err(EngineError::CustomError(anyhow::anyhow!(
+                "REST GET /open_orders: 503"
+            )))
+        }
+
+        async fn fetch_trades(&self, _pair: Option<&Pair>) -> Result<Vec<Trade>, EngineError> {
+            Ok(vec![])
+        }
+
+        async fn fetch_market_data_snapshot(&self, _pair: &Pair) -> Result<(), EngineError> {
+            Ok(())
+        }
+
+        async fn amend_order(
+            &self,
+            _order_id: OrderId,
+            _new_request: OrderRequest,
+        ) -> Result<Order, EngineError> {
+            Err(EngineError::NotSupported("test".into()))
+        }
+
+        async fn bulk_open_orders(
+            &self,
+            _req: crate::venue::cex::types::exchange::BulkOrderRequest,
+        ) -> Result<crate::venue::cex::types::exchange::BulkOrderResponse, EngineError> {
+            Err(EngineError::NotSupported("test".into()))
+        }
+
+        async fn bulk_amend_orders(
+            &self,
+            _req: crate::venue::cex::types::exchange::BulkAmendRequest,
+        ) -> Result<crate::venue::cex::types::exchange::BulkAmendResponse, EngineError> {
+            Err(EngineError::NotSupported("test".into()))
+        }
+    }
+
+    #[tokio::test]
+    async fn cancel_working_fails_when_venue_rest_is_unverified() {
+        let control = TradingControl::new(Arc::new(RwLock::new(UnverifiedCancelClient)));
+        let err = control
+            .cancel_working(vec![], vec![Pair::new("BTC", "USDT")])
+            .await
+            .expect_err("CancelWorking must not report success without a venue check");
+        assert!(
+            err.to_string().contains("unverified"),
+            "unexpected error: {err}"
+        );
     }
 }

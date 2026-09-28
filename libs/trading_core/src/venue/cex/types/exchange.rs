@@ -54,6 +54,32 @@ pub struct Order {
     pub filled_amount: Decimal,
 }
 
+/// Lookup of an order by client / `orderLinkId`.
+///
+/// `Inconclusive` is not a rejection: the caller must keep any reservation.
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub enum ClientOrderLookup {
+    Working(Order),
+    Terminal(Order),
+    Inconclusive,
+}
+
+impl ClientOrderLookup {
+    /// Classify a found order. Working statuses keep reserved exposure until import.
+    pub fn from_order(order: Order) -> Self {
+        match order.status {
+            OrderStatus::New | OrderStatus::PartiallyFilled | OrderStatus::PendingCancel => {
+                Self::Working(order)
+            }
+            OrderStatus::Filled
+            | OrderStatus::Canceled
+            | OrderStatus::Rejected
+            | OrderStatus::Expired
+            | OrderStatus::Amended => Self::Terminal(order),
+        }
+    }
+}
+
 /// Amended Order - represents an order that was amended (canceled and replaced)
 #[derive(Debug, Clone, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]

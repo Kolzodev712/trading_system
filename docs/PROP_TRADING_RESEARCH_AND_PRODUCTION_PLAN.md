@@ -1,6 +1,6 @@
 # Prop Trading Productionization and Research Architecture Plan
 
-**Status:** Increments 0–5 and the local 5R/5A gates are complete. The bounded Increment 5B Spot/levels K-paper connectivity preflight is accepted locally at `trading_system` `043ca64` (evidence `1f00fdc`), UI `66632ed`, k-paper `e5d0a59`. Begin Increment 6 recovery hardening; stop for review before Increment 7. This does not qualify Candidate #2 futures, order execution, the fault matrix or Bybit demo. Placeholder Bybit sample credentials remain an environment limitation.  
+**Status:** Increments 0–5 and the local 5R/5A gates are complete. The bounded Increment 5B Spot/levels K-paper connectivity preflight is accepted locally. Increment 6 recovery hardening is implemented locally in `trading_system` and `k-paper` `ed9568b`; UI proto was unchanged (`028ea16`). Stop for review before Increment 7. This does not qualify Candidate #2 futures, order execution, the fault matrix or Bybit demo. Placeholder Bybit sample credentials remain an environment limitation.  
 **Date:** 2026-09-28  
 **Repository:** `trading_system`  
 **Audience:** Cursor / implementation agent / repository owner  
@@ -2029,7 +2029,7 @@ This document is the authority for **the Candidate #2 research/runtime separatio
 
 Check out the relevant repositories with write access before starting a cross-repo increment. Record starting and ending SHAs for each; pin matching revisions and run both producer/consumer checks before marking the increment complete. After 5R, use the Candidate #2 app binary for Shadow/Paper/demo rather than assuming the default runner binary can instantiate it. Implement backend state and the source proto first, then sync the UI proto and generated code. When a precise simulator accounting rule, API shape or security mechanism is not fixed here, document the bounded choice and its acceptance tests within that increment rather than silently guessing or postponing the safety gate.
 
-`trading_system` Increments 0–5, local 5R/5A, and the bounded 5B Spot/levels preflight are accepted for proceeding (see section 67). **Begin Increment 6; stop for review before Increment 7.** This plan does not authorize implementation of a future portfolio allocator, strategy registry/graveyard, broader instrument/venue expansion, a self-hosting operations program, Candidate #3's trading rule or mainnet deployment. Those need separate decisions/specifications when the evidence and need exist.
+`trading_system` Increments 0–6 and the local 5R/5A/5B gates are accepted for proceeding (see section 67). **Stop for review before Increment 7.** This plan does not authorize implementation of a future portfolio allocator, strategy registry/graveyard, broader instrument/venue expansion, a self-hosting operations program, Candidate #3's trading rule or mainnet deployment. Those need separate decisions/specifications when the evidence and need exist.
 
 ---
 
@@ -2308,27 +2308,30 @@ The 5B gate is closed for its stated connectivity scope. The process kills in th
 
 # 61. Increment 6 — CEX recovery hardening
 
-**Status:** Next increment. Record starting SHAs for `trading_system` and `k-paper` and keep the producer/consumer contract pinned. The 5B Exchange-mode levels run did not post orders, observe periodic reconciliation or qualify futures; do not count it as recovery evidence.
+**Status:** Implemented locally. Isolated producer/consumer tests passed; this is not the section 49 integration matrix, futures qualification, or Bybit demo. UI proto/status contract was unchanged, so `trading-system-ui` stayed at `028ea16cb53f83871df1ee4053b7caeb36fbb9a8`. Matching k-paper is `ed9568b11acab60149d7f57922e48765a809f5bf`.
 
-Implement:
+Shipped:
 
-- Bybit open-order pagination;
-- valid linear selector;
-- persistent submission state;
-- unknown outcome recovery by orderLinkId;
-- restart recovery;
-- immediate reconciliation triggers.
+- Bybit open-order pagination (`limit` 1..=50, `nextPageCursor`, max-page bound, dedupe by order id). Remaining cursor, repeated cursor, or page error fails the list; truncated pages are not returned as success.
+- Valid linear selector: symbol per configured pair, otherwise `settleCoin`.
+- JSONL submission journal (`runtime-data/submission-journal.jsonl`): persist Prepared/Submitted before send; Unknown/RecoveryRequired keep the reservation.
+- `TradingClient::fetch_order_by_client_id` (Bybit `orderLinkId` realtime then history; k-paper REST). Missing lookup is `Inconclusive`, not a rejection.
+- Restart recovery imports a found working order (reserved → working, effective qty unchanged) and does not send replacement exposure.
+- Immediate WS-vs-REST and trading-level reconciliation triggers after unknown outcomes.
+- k-paper: `GET /orders/by_client_id/:id` including terminal orders; `POST /test/suppress_place_ack` one-shot lost ACK.
 
-Add the Paper-side query/fault hooks needed to verify an accepted-but-lost ACK and recovery by stable client order ID, including terminal orders, while the Paper process retains state across a runner restart. A missing open order or temporarily absent lookup stays ambiguous and retains its reservation; importing a found working order transfers reserved exposure into working exposure without a gap or double count. Keep Bybit's `orderLinkId` pagination and error handling venue-specific. Test pagination boundaries (0/1/50/51/>100), repeated cursors, duplicates and page errors, plus the crash/restart and immediate-reconciliation paths. Use isolated tests now; the full integration matrix follows after futures/risk/ledger work.
+**Tests (local, not remote CI):**
 
-Acceptance:
+| Command | Result |
+| --- | --- |
+| `cargo test -p exchange_engine pagination` | 16 passed, 0 failed (0/1/50/51/>100, repeated cursor, duplicates, page error, truncation, linear selector) |
+| `cargo test -p trading_engine --lib` | 98 passed, 0 failed (includes persist-before-crash reload, import without duplicate exposure, missing lookup retains reservation, terminal reject clears reservation) |
+| `cargo test -p trading_core --lib` | 107 passed, 0 failed |
+| `cargo check -p runner` | ok |
+| `cargo test -p paper-exchange-core` | 6 passed, 0 failed (`client_order_id_lookup_includes_canceled`, `suppress_place_ack_keeps_working_order`) |
+| `cargo check -p paper-exchange-server` | ok |
 
-- unknown outcome cannot produce duplicate exposure;
-- unresolved reservation survives restart;
-- exchange order found by client ID is imported;
-- truncated open-order pages are impossible.
-
-Stop and report.
+Stop and report. Do not start Increment 7.
 
 ---
 
@@ -2479,10 +2482,10 @@ The accepted 5B record is `trading_system` `043ca64523f42212cd8a2616ba6201d61d7c
 | 5R | Accepted locally for 5B | Dependency boundary, focused packages, frozen parity and Paper+Shadow runtime/restart evidence reported; no remote CI claim |
 | 5A | Accepted locally for 5B | Matching browser/runner Paper+Shadow live/stale/reconnect, persisted disable and observed order state reported |
 | 5B | Accepted locally for Spot/levels connectivity | Market/trade WS, REST bootstrap and UI labels; no order posting, futures or fault qualification |
-| 6 | Ready to start | Bybit pagination and persistent unknown-submission recovery with focused K-paper hooks; stop before 7 |
+| 6 | Implemented locally; stop for review | Bybit pagination, persistent unknown-submission recovery, k-paper client-id lookup and lost-ACK hook; isolated tests only |
 | 7+ | Not started | Follow section 54 and each increment's gate |
 
-Cursor: begin Increment 6 from the accepted 5B record. Work in `trading_system` and `k-paper` first; touch UI only if the runner proto/status contract changes. Run focused producer/consumer checks, record exact SHAs and results, then stop for review before Increment 7.
+Cursor: Increment 6 is implemented in `trading_system` and k-paper `ed9568b11acab60149d7f57922e48765a809f5bf`. UI unchanged at `028ea16cb53f83871df1ee4053b7caeb36fbb9a8`. Record the trading_system SHA of this change, then stop for review before Increment 7.
 
 ---
 

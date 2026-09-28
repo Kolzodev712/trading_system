@@ -17,7 +17,13 @@ use trading_core::{
 
 pub mod manager;
 mod reconciler;
+pub mod submission;
 mod subscriber;
+
+pub use submission::{
+    recover_unknown_submissions, RecoveryReport, SubmissionJournal, SubmissionRecord,
+    SubmissionState,
+};
 
 /// Represents a position in a trading pair
 #[derive(Debug, Clone)]
@@ -35,6 +41,7 @@ pub struct PendingSubmission {
     pub side: Side,
     pub amount: Decimal,
     pub price: Decimal,
+    pub strategy_id: Option<String>,
 }
 
 /// Manages active orders and positions
@@ -253,6 +260,16 @@ impl TradingState {
         if let Some(client_order_id) = order.client_order_id.as_ref() {
             self.submissions.remove(client_order_id.as_str());
         }
+    }
+
+    /// Transfer reserved exposure into a found working order without a gap or double count.
+    pub fn import_working_order(&mut self, order: Order) {
+        self.clear_submission_for_order(&order);
+        self.add_order(order);
+    }
+
+    pub fn pending_submissions(&self) -> &HashMap<SmolStr, PendingSubmission> {
+        &self.submissions
     }
 
     /// True while any submission on this pair has not been reconciled.

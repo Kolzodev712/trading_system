@@ -84,7 +84,7 @@ pub fn execution_ack_to_order(
     let timestamp_ms = timestamp_secs.saturating_mul(1000);
     Some(Order {
         order_id: OrderId::new(exec.order_id.clone().into()),
-        client_order_id: None,
+        client_order_id: req.exchange_params.get("orderLinkId").cloned(),
         instrument: instrument.clone(),
         side: side_from_str(exec.side.as_str()),
         price,

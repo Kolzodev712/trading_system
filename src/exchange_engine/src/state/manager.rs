@@ -389,6 +389,11 @@ impl ExchangeStateManager {
         self.reconciler
             .start_periodic_reconciliation(configured_pairs, self.state.clone())
     }
+
+    /// Fetch REST now rather than waiting for the next periodic tick.
+    pub fn request_immediate_reconciliation(&self) {
+        self.reconciler.request_immediate();
+    }
 }
 
 // Note: Unit tests that require mock clients have been moved to integration tests

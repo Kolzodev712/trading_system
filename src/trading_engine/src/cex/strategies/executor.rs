@@ -64,6 +64,9 @@ pub struct StrategyExecutor<S: Strategy + 'static> {
     max_active_orders: usize,
     /// Futures leverage used only to scale quote margin checks. `None` requires full notional.
     leverage: Option<u32>,
+    submission_journal: Option<Arc<crate::cex::state::SubmissionJournal>>,
+    exchange_state_manager: Option<Arc<exchange_engine::state::manager::ExchangeStateManager>>,
+    immediate_recon: Arc<tokio::sync::Notify>,
 }
 
 impl<S: Strategy> StrategyExecutor<S> {
@@ -109,6 +112,9 @@ impl<S: Strategy> StrategyExecutor<S> {
             strategy_caps: Arc::new(RwLock::new(std::collections::HashMap::new())),
             max_active_orders: 5,
             leverage: None,
+            submission_journal: None,
+            exchange_state_manager: None,
+            immediate_recon: Arc::new(tokio::sync::Notify::new()),
         }
     }
 
@@ -152,6 +158,69 @@ impl<S: Strategy> StrategyExecutor<S> {
         self
     }
 
+    pub fn with_submission_journal(
+        mut self,
+        journal: Arc<crate::cex::state::SubmissionJournal>,
+    ) -> Self {
+        self.submission_journal = Some(journal);
+        self
+    }
+
+    pub fn with_exchange_state_manager(
+        mut self,
+        exchange_state_manager: Arc<exchange_engine::state::manager::ExchangeStateManager>,
+    ) -> Self {
+        self.exchange_state_manager = Some(exchange_state_manager);
+        self
+    }
+
+    async fn persist_submission(
+        &self,
+        pending: &crate::cex::state::PendingSubmission,
+        state: crate::cex::state::SubmissionState,
+    ) {
+        if let Some(journal) = &self.submission_journal {
+            let record = crate::cex::state::SubmissionRecord::from_pending(pending, state);
+            if let Err(err) = journal.append(&record) {
+                warn!("submission journal append failed: {err}");
+            }
+        }
+    }
+
+    async fn recover_submissions(&self) {
+        let Some(journal) = &self.submission_journal else {
+            return;
+        };
+        let client = self.trading_client.read().await;
+        let state_lock = self.trading_state_manager.get_state();
+        let mut state = state_lock.write().await;
+        match crate::cex::state::recover_unknown_submissions(journal.as_ref(), &*client, &mut state)
+            .await
+        {
+            Ok(report) => {
+                info!(
+                    imported_working = report.imported_working,
+                    resolved_terminal = report.resolved_terminal,
+                    still_ambiguous = report.still_ambiguous,
+                    "submission recovery finished"
+                );
+            }
+            Err(err) => {
+                error!("submission recovery failed (reservations retained): {err}");
+            }
+        }
+        drop(state);
+        drop(client);
+        self.request_immediate_reconciliation();
+    }
+
+    fn request_immediate_reconciliation(&self) {
+        if let Some(esm) = &self.exchange_state_manager {
+            esm.request_immediate_reconciliation();
+        }
+        self.immediate_recon.notify_waiters();
+    }
+
     /// Main execution loop - consumes orderbooks from channels and executes strategy
     pub async fn run(&self) -> Result<(), EngineError> {
         debug!(
@@ -159,6 +228,8 @@ impl<S: Strategy> StrategyExecutor<S> {
             self.pairs.len(),
             self.pairs
         );
+
+        self.recover_submissions().await;
 
         let strategy = Arc::clone(&self.strategy);
         let trading_client = Arc::clone(&self.trading_client);
@@ -171,6 +242,7 @@ impl<S: Strategy> StrategyExecutor<S> {
         let pairs_for_recon = self.pairs.clone();
         let strategy_for_price = Arc::clone(&strategy);
         let reconciliation_interval_secs = self.reconciliation_interval_secs;
+        let immediate_recon = Arc::clone(&self.immediate_recon);
         tokio::spawn(async move {
             info!(
                 "Starting periodic trading-level reconciliation (interval: {} seconds) for {} pair(s)",
@@ -179,7 +251,12 @@ impl<S: Strategy> StrategyExecutor<S> {
             );
             let mut interval = interval(Duration::from_secs(reconciliation_interval_secs));
             loop {
-                interval.tick().await;
+                tokio::select! {
+                    _ = interval.tick() => {}
+                    _ = immediate_recon.notified() => {
+                        info!("Immediate trading-level reconciliation requested");
+                    }
+                }
 
                 // Reconcile each pair
                 for pair in &pairs_for_recon {
@@ -607,15 +684,28 @@ impl<S: Strategy> StrategyExecutor<S> {
                             smol_str::SmolStr::new("orderLinkId"),
                             client_order_id.clone(),
                         );
-                        trading_state.write().await.begin_submission(
-                            crate::cex::state::PendingSubmission {
-                                client_order_id,
-                                symbol: orderbook_pair.clone(),
-                                side: req.side.clone(),
-                                amount: req.amount,
-                                price: req.price,
-                            },
-                        );
+                        let pending = crate::cex::state::PendingSubmission {
+                            client_order_id,
+                            symbol: orderbook_pair.clone(),
+                            side: req.side.clone(),
+                            amount: req.amount,
+                            price: req.price,
+                            strategy_id: None,
+                        };
+                        self.persist_submission(
+                            &pending,
+                            crate::cex::state::SubmissionState::Prepared,
+                        )
+                        .await;
+                        trading_state
+                            .write()
+                            .await
+                            .begin_submission(pending.clone());
+                        self.persist_submission(
+                            &pending,
+                            crate::cex::state::SubmissionState::Submitted,
+                        )
+                        .await;
                     }
 
                     let trading_client_guard = trading_client.write().await;
@@ -633,6 +723,7 @@ impl<S: Strategy> StrategyExecutor<S> {
                         let bulk_response =
                             trading_client_guard.bulk_open_orders(bulk_request).await;
 
+                        let mut need_recovery = false;
                         match bulk_response {
                             Ok(response) => {
                                 let results = response.results;
@@ -641,8 +732,26 @@ impl<S: Strategy> StrategyExecutor<S> {
                                         .exchange_params
                                         .get("orderLinkId")
                                         .map(|id| id.to_string());
+                                    let pending = client_id.as_ref().map(|id| {
+                                        crate::cex::state::PendingSubmission {
+                                            client_order_id: smol_str::SmolStr::new(id),
+                                            symbol: orderbook_pair.clone(),
+                                            side: req.side.clone(),
+                                            amount: req.amount,
+                                            price: req.price,
+                                            strategy_id: None,
+                                        }
+                                    });
                                     if idx >= results.len() {
                                         warn!("Bulk response missing result for index {}", idx);
+                                        if let Some(pending) = pending {
+                                            self.persist_submission(
+                                                &pending,
+                                                crate::cex::state::SubmissionState::Unknown,
+                                            )
+                                            .await;
+                                        }
+                                        need_recovery = true;
                                         continue;
                                     }
                                     let result = &results[idx];
@@ -667,8 +776,12 @@ impl<S: Strategy> StrategyExecutor<S> {
                                                     .as_deref()
                                                     .map(smol_str::SmolStr::new);
                                             }
-                                            if let Some(id) = client_id.as_deref() {
-                                                trading_state.write().await.clear_submission(id);
+                                            if let Some(pending) = pending {
+                                                self.persist_submission(
+                                                    &pending,
+                                                    crate::cex::state::SubmissionState::Acknowledged,
+                                                )
+                                                .await;
                                             }
                                             order.status =
                                                 trading_core::types::common::OrderStatus::New;
@@ -679,22 +792,54 @@ impl<S: Strategy> StrategyExecutor<S> {
                                                 orderbook_pair
                                             );
                                             circuit_breaker.lock().await.record_success();
-                                            self.trading_state_manager.add_order(order).await;
+                                            trading_state.write().await.import_working_order(order);
                                         }
                                         Err(e) => {
-                                            if let Some(id) = client_id.as_deref() {
-                                                trading_state.write().await.clear_submission(id);
+                                            if let Some(pending) = pending {
+                                                self.persist_submission(
+                                                    &pending,
+                                                    crate::cex::state::SubmissionState::Unknown,
+                                                )
+                                                .await;
                                             }
-                                            warn!("Failed to place order in batch: {}", e);
+                                            warn!(
+                                                "Failed to place order in batch (reservation retained): {}",
+                                                e
+                                            );
                                             circuit_breaker.lock().await.record_failure();
+                                            need_recovery = true;
                                         }
                                     }
                                 }
                             }
                             Err(e) => {
-                                warn!("Bulk open orders failed: {}", e);
+                                warn!("Bulk open orders failed (reservation retained): {}", e);
+                                for req in &to_post {
+                                    if let Some(id) = req.exchange_params.get("orderLinkId") {
+                                        let pending = crate::cex::state::PendingSubmission {
+                                            client_order_id: id.clone(),
+                                            symbol: orderbook_pair.clone(),
+                                            side: req.side.clone(),
+                                            amount: req.amount,
+                                            price: req.price,
+                                            strategy_id: None,
+                                        };
+                                        self.persist_submission(
+                                            &pending,
+                                            crate::cex::state::SubmissionState::Unknown,
+                                        )
+                                        .await;
+                                    }
+                                }
+                                need_recovery = true;
                             }
                         }
+                        drop(trading_client_guard);
+                        if need_recovery {
+                            self.recover_submissions().await;
+                        }
+                    } else {
+                        drop(trading_client_guard);
                     }
 
                     // Batch process amendments
@@ -704,6 +849,7 @@ impl<S: Strategy> StrategyExecutor<S> {
                             to_amend.len(),
                             orderbook_pair
                         );
+                        let trading_client_guard = trading_client.write().await;
                         let amendments: Vec<BulkAmendItem> = to_amend
                             .iter()
                             .map(|(order_id, req)| BulkAmendItem {

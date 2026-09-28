@@ -1,6 +1,6 @@
 # Prop Trading Productionization and Research Architecture Plan
 
-**Status:** Increments 0–5 are implemented. This commit (parent `286ad4c`) skips Shadow `cancel_all` on shutdown, keeps persisted `enabled=false` over `initially_enabled=true`, and aborts gRPC so a live Monitor cannot force the 30s timeout. Local `just gate-5r` passed and a Paper+Shadow ordinary-shutdown / `RequestRestart` / persist-disable session was recorded. UI guide is `2636d5e`. 5B is **not started**; stop for review of this record. Placeholder Bybit sample credentials remain an environment limitation, not a local-gate defect.  
+**Status:** Increments 0–5 are implemented. `master` `5a0c8c4` skips Shadow `cancel_all` on shutdown, keeps persisted `enabled=false` over `initially_enabled=true`, and aborts gRPC so a live Monitor cannot force the 30s timeout. Local `just gate-5r` passed and a Paper+Shadow ordinary-shutdown / `RequestRestart` / persist-disable session was recorded. UI guide is `2636d5e`. 5B is **not started**; stop for review of this record. Placeholder Bybit sample credentials remain an environment limitation, not a local-gate defect.  
 **Date:** 2026-09-28  
 **Repository:** `trading_system`  
 **Audience:** Cursor / implementation agent / repository owner  
@@ -2019,7 +2019,7 @@ This document is the authority for **the Candidate #2 research/runtime separatio
 | Increment | Repositories and guide |
 | --- | --- |
 | 0–5 | `trading_system`: functionally implemented on current master; check the status table in section 67 |
-| 5R (shutdown/restart fixes recorded locally; review before 5B) | `trading_system` this commit (parent `286ad4c`); `just gate-5r` rerun; Paper+Shadow instrumented shutdown/restart |
+| 5R (shutdown/restart fixes recorded locally; review before 5B) | `trading_system` `5a0c8c4`; `just gate-5r` rerun; Paper+Shadow instrumented shutdown/restart |
 | 5A (affected browser rechecked) | UI `2636d5e` against that Paper+Shadow runner; Envoy first-update / stale / reconnect / disabled Enable Strategy / orders 0 |
 | 5B | [`k-paper` integration guide](https://github.com/Kolzodev712/k-paper/blob/master/docs/PROP_TRADING_INTEGRATION_GUIDE.md) for existing Spot connectivity only, with the UI on the same runner |
 | 6–7 | `trading_system` recovery/futures logic and K-paper protocol/futures support; change producer and adapter together |
@@ -2236,7 +2236,7 @@ Runtime Shadow evidence at this SHA (not the unit tests): `sample_config/bybit-s
 
 **Review of documentation-only `f9d1a405` (2026-09-28):** Source inspection confirms the runtime violation: `strategy_runner_with` wraps the CEX client for Shadow, but shutdown obtains `services.trading_client()` and calls `cancel_all_orders` on the raw client. The Paper venue returned no open orders in the reported run, yet the unguarded cancellation itself violates the zero-mutation invariant. Put shutdown order mutations through the same guard or explicitly skip them in Shadow; cover `RequestRestart` and ordinary shutdown with a backing client that records every mutation. The new dummy-client empty-list assertion only proves read forwarding. Also, `RuntimeSnapshot::load` restores a saved `enabled=false`, then the `initially_enabled` loop sets it back to true. Test the disabled case and give saved operator state precedence. The observed 30-second forced exit must be explained or fixed before calling restart graceful. The Bybit sample contains literal `xxxxxxxxxxxxxxxxxxxx` API credentials, so `10003` cannot diagnose a code fault. The Paper+Shadow session is useful generic runtime evidence; authenticated Bybit behavior belongs at its later venue gate. The commit only edits this plan; it does not implement these corrections.
 
-**Verification in this commit, parent `286ad4c` (2026-09-28):** Starting SHA `286ad4cf545f065a4f65c9a27c4dc55ac9ee1da1`. Shadow shutdown no longer uses `services.trading_client()`; `cancel_working_orders_on_stop` returns immediately in Shadow. Production wrap uses `wrap_counted` and logs `Shadow guard forbidden mutation attempts`. Snapshot restore overlays `initially_enabled` (saved `enabled=false` wins). gRPC uses `serve_with_shutdown`; after the runner shutdown signal the gRPC task is aborted so a live Monitor stream cannot pin the process.
+**Verification on `5a0c8c4` (2026-09-28):** Starting SHA `286ad4cf545f065a4f65c9a27c4dc55ac9ee1da1`. Shadow shutdown no longer uses `services.trading_client()`; `cancel_working_orders_on_stop` returns immediately in Shadow. Production wrap uses `wrap_counted` and logs `Shadow guard forbidden mutation attempts`. Snapshot restore overlays `initially_enabled` (saved `enabled=false` wins). gRPC uses `serve_with_shutdown`; after the runner shutdown signal the gRPC task is aborted so a live Monitor stream cannot pin the process.
 
 `just gate-5r` exit 0 twice after the edits. Counts: `btc_price_ma_app` 14, `research_cli` frozen_parity 2, `research_engine` 50, `runner` 29 (was 25), `strategy_core` 3+3 frozen, `trading_engine` 93. Frozen N=14/28/70 hashes unchanged (`a543c2ae…`, `658d506b…`, `1fd63eff…`). Trees: engine/runner 0 forbidden crates; app has `strategy_core` and `runner`.
 
@@ -2445,7 +2445,7 @@ Do not implement Candidate #3's trading rule until a separate strategy research 
 
 # 67. Current Cursor instruction
 
-The latest recorded SHAs are `trading_system` this commit (parent `286ad4cf545f065a4f65c9a27c4dc55ac9ee1da1`), `trading-system-ui` `2636d5e7d56fc4aa6adecbe5dd303fc5499b3800`, and `k-paper` `70874973f0f9e38b7f3f5853ca51f604445ef3d1`. Local `just gate-5r` was rerun after the edits. This is **not** a remotely enforced CI result.
+The latest recorded SHAs are `trading_system` `5a0c8c49f6f5221e8369b064ca2f42cb36120fc1`, `trading-system-ui` `2636d5e7d56fc4aa6adecbe5dd303fc5499b3800`, and `k-paper` `70874973f0f9e38b7f3f5853ca51f604445ef3d1`. Local `just gate-5r` was rerun after the edits. This is **not** a remotely enforced CI result.
 
 | Increment | Status | Gate |
 | --- | --- | --- |

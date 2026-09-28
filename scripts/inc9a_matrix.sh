@@ -9,7 +9,6 @@ PORT="${PAPER_EXCHANGE_PORT:-19995}"
 HTTP="http://127.0.0.1:${PORT}"
 WORKDIR="${INC9A_WORKDIR:-/tmp/inc9a-matrix}"
 LOG="${WORKDIR}/runner.log"
-LOG2="${WORKDIR}/runner-2.log"
 PAPER_LOG="${WORKDIR}/k-paper.log"
 CANDLES="${ROOT}/scripts/inc9a_long_candles.json"
 JOURNAL="${WORKDIR}/submission-journal.jsonl"
@@ -20,7 +19,7 @@ export TRADING_SYMBOL="${TRADING_SYMBOL:-BTC/USDT}"
 export TRADING_GRPC="${TRADING_GRPC:-http://127.0.0.1:50051}"
 
 mkdir -p "${WORKDIR}"
-rm -f "${LOG}" "${LOG2}" "${PAPER_LOG}" "${JOURNAL}" "${LEDGER}"
+rm -f "${WORKDIR}"/runner*.log "${PAPER_LOG}" "${JOURNAL}" "${LEDGER}"
 rm -f "${ROOT}/config/cex/runtime-snapshot.json"
 
 cat > "${WORKDIR}/bot.json" <<EOF
@@ -40,8 +39,8 @@ cat > "${WORKDIR}/bot.json" <<EOF
   "redis": { "url": "", "enabled": false },
   "features": { "enable_reconciliation": true },
   "reconciliation": {
-    "exchange_level_interval_ms": 180000,
-    "trading_level_interval_ms": 180000,
+    "exchange_level_interval_ms": 1000,
+    "trading_level_interval_ms": 1000,
     "enabled": true
   },
   "mongo": { "connection_string": "mongodb://localhost:27017", "database": "trading_system", "bot_id": "inc9a", "enabled": true },
@@ -69,7 +68,7 @@ cat > "${WORKDIR}/strategies.json" <<'EOF'
       "min_notional": "10.0",
       "lookback": 2,
       "max_entry_age_secs": 86400000,
-      "max_market_data_age_ms": 60000,
+      "max_market_data_age_ms": 5000,
       "initially_enabled": true
     }
   ],
@@ -83,6 +82,10 @@ cat > "${WORKDIR}/strategies.json" <<'EOF'
 EOF
 
 cleanup() {
+  if [[ "${INC9A_KEEP:-}" == "1" ]]; then
+    echo "INC9A_KEEP=1: leaving Paper pid=${PAPER_PID:-} runner pid=${RUNNER_PID:-}"
+    return 0
+  fi
   if [[ -n "${RUNNER_PID:-}" ]] && kill -0 "${RUNNER_PID}" 2>/dev/null; then
     kill -KILL "${RUNNER_PID}" 2>/dev/null || true
   fi
@@ -92,12 +95,99 @@ cleanup() {
 }
 trap cleanup EXIT
 
-paper_json() {
-  curl -sf "${HTTP}/$1" || echo "[]"
+paper_get() {
+  local path="$1"
+  local out
+  if ! out="$(curl -sfS "${HTTP}/${path}")"; then
+    echo "FAILED: Paper GET /${path}" >&2
+    exit 1
+  fi
+  printf '%s' "${out}"
+}
+
+paper_post() {
+  local path="$1"
+  local body="${2:-}"
+  if [[ -n "${body}" ]]; then
+    curl -sfS -X POST "${HTTP}/${path}" -H 'content-type: application/json' -d "${body}" >/dev/null \
+      || { echo "FAILED: Paper POST /${path}" >&2; exit 1; }
+  else
+    curl -sfS -X POST "${HTTP}/${path}" >/dev/null \
+      || { echo "FAILED: Paper POST /${path}" >&2; exit 1; }
+  fi
 }
 
 count_json_array() {
   python3 -c 'import json,sys; d=json.load(sys.stdin); print(len(d) if isinstance(d,list) else 0)'
+}
+
+journal_states() {
+  python3 - <<'PY' "${JOURNAL}"
+import json,sys
+path=sys.argv[1]
+states=[]
+try:
+    with open(path) as f:
+        for line in f:
+            line=line.strip()
+            if not line:
+                continue
+            states.append(json.loads(line).get("state",""))
+except FileNotFoundError:
+    pass
+print(" ".join(states))
+PY
+}
+
+require_journal_state() {
+  local want="$1"
+  local states
+  states="$(journal_states)"
+  echo "journal states: ${states}"
+  if ! echo " ${states} " | grep -q " ${want} "; then
+    echo "FAILED: journal missing state ${want}" >&2
+    cat "${JOURNAL}" >&2 || true
+    exit 1
+  fi
+}
+
+ledger_fill_ids() {
+  python3 - <<'PY' "${LEDGER}"
+import json,sys
+path=sys.argv[1]
+ids=[]
+try:
+    with open(path) as f:
+        for line in f:
+            line=line.strip()
+            if not line:
+                continue
+            rec=json.loads(line)
+            if rec.get("kind")=="fill" and rec.get("execution_id"):
+                ids.append(rec["execution_id"])
+except FileNotFoundError:
+    pass
+print(len(ids), len(set(ids)))
+print(" ".join(ids))
+PY
+}
+
+require_ledger_fills() {
+  local min_unique="$1"
+  local summary
+  summary="$(ledger_fill_ids)"
+  echo "ledger fills: ${summary}"
+  local unique
+  unique="$(echo "${summary}" | awk 'NR==1{print $2}')"
+  if [[ -z "${unique}" || "${unique}" -lt "${min_unique}" ]]; then
+    echo "FAILED: expected at least ${min_unique} unique ledger fills" >&2
+    cat "${LEDGER}" >&2 || true
+    exit 1
+  fi
+}
+
+current_log() {
+  echo "${CURRENT_LOG:-${LOG}}"
 }
 
 start_paper() {
@@ -120,8 +210,43 @@ start_paper() {
   exit 1
 }
 
+kill_runner() {
+  if [[ -n "${RUNNER_PID:-}" ]] && kill -0 "${RUNNER_PID}" 2>/dev/null; then
+    kill -KILL "${RUNNER_PID}" 2>/dev/null || true
+    wait "${RUNNER_PID}" 2>/dev/null || true
+  fi
+  RUNNER_PID=""
+  if command -v fuser >/dev/null 2>&1; then
+    fuser -k 50051/tcp 2>/dev/null || true
+    sleep 1
+  fi
+}
+
+compact_resolved_journal() {
+  python3 - <<'PY' "${JOURNAL}"
+import json,sys
+path=sys.argv[1]
+keep=[]
+try:
+    with open(path) as f:
+        for line in f:
+            line=line.strip()
+            if not line:
+                continue
+            rec=json.loads(line)
+            if rec.get("state") in ("acknowledged","rejected","terminal"):
+                keep.append(line)
+except FileNotFoundError:
+    pass
+with open(path,"w") as f:
+    for line in keep:
+        f.write(line+"\n")
+PY
+}
+
 start_runner() {
   local log="$1"
+  CURRENT_LOG="${log}"
   TRADING_TEST_CANDLES_PATH="${CANDLES}" \
     TRADING_TEST_NOW_MS=259200000 \
     cargo run -p btc_price_ma_app --quiet -- \
@@ -139,7 +264,7 @@ start_runner() {
     sleep 0.5
   done
   if [[ "${ready}" -ne 1 ]]; then
-    echo "FAILED: runner did not start gRPC" >&2
+    echo "FAILED: runner did not start gRPC (${log})" >&2
     tail -n 80 "${log}" >&2
     exit 1
   fi
@@ -150,8 +275,8 @@ wait_for_paper_activity() {
   local orders="[]"
   local pos="[]"
   for _ in $(seq 1 40); do
-    orders="$(paper_json open_orders)"
-    pos="$(paper_json positions)"
+    orders="$(paper_get open_orders)"
+    pos="$(paper_get positions)"
     if [[ "${orders}" != "[]" || "${pos}" != "[]" ]]; then
       placed=1
       break
@@ -163,26 +288,53 @@ wait_for_paper_activity() {
   echo "paper open_orders=${orders}"
   echo "paper positions=${pos}"
   if [[ "${placed}" -ne 1 ]]; then
-    echo "FAILED: Candidate #2 did not produce a Paper order/position after enable+resume" >&2
-    tail -n 80 "${LOG}" >&2
+    echo "FAILED: Candidate #2 did not produce a Paper order/position" >&2
+    tail -n 80 "$(current_log)" >&2
     exit 1
   fi
 }
 
 wait_for_paper_fill() {
+  local prev_trades prev_pos
+  prev_trades="$(paper_get trades | count_json_array)"
+  prev_pos="$(paper_get positions | count_json_array)"
   local trades="[]"
-  for _ in $(seq 1 40); do
-    trades="$(paper_json trades)"
-    if [[ "${trades}" != "[]" ]]; then
+  local pos="[]"
+  local i
+  local forced=0
+  for i in $(seq 1 60); do
+    trades="$(paper_get trades)"
+    pos="$(paper_get positions)"
+    local n tpos
+    n="$(echo "${trades}" | count_json_array)"
+    tpos="$(echo "${pos}" | count_json_array)"
+    if [[ "${n}" -gt "${prev_trades}" || "${tpos}" -gt "${prev_pos}" ]]; then
       echo "${trades}" > "${WORKDIR}/trades.json"
       echo "paper trades=${trades}"
+      echo "paper positions=${pos}"
       return 0
+    fi
+    if [[ "${i}" -ge 8 && "${forced}" -eq 0 && "$(paper_get open_orders)" != "[]" ]]; then
+      forced=1
+      echo "resting Paper order still unfilled; forcing one lab_fill_open"
+      curl -sfS -X POST "${HTTP}/test/lab_fill_open" \
+        -H "content-type: application/json" \
+        -d '{"qty":"0.001"}' >/dev/null || true
     fi
     sleep 0.5
   done
-  echo "FAILED: expected a Paper fill" >&2
-  tail -n 80 "${LOG}" >&2
+  echo "FAILED: expected a new Paper fill (trades=${prev_trades} pos=${prev_pos})" >&2
+  echo "paper orders=$(paper_get open_orders)" >&2
+  echo "paper positions=$(paper_get positions)" >&2
+  echo "paper trades=$(paper_get trades)" >&2
+  tail -n 80 "$(current_log)" >&2
   exit 1
+}
+
+freeze_entries() {
+  local tag="$1"
+  "${CTL[@]}" pause "inc9a-pause-freeze-${tag}" || true
+  "${CTL[@]}" disable "${TRADING_STRATEGY}" || true
 }
 
 wait_for_grpc_flat() {
@@ -197,9 +349,43 @@ wait_for_grpc_flat() {
   done
   echo "FAILED: runner TSM did not go flat after Paper flatten" >&2
   "${CTL[@]}" status >&2
-  echo "paper positions=$(paper_json positions)" >&2
+  echo "paper positions=$(paper_get positions)" >&2
   exit 1
 }
+
+enable_entries() {
+  local tag="$1"
+  "${CTL[@]}" pause "inc9a-pause-${tag}"
+  "${CTL[@]}" enable "${TRADING_STRATEGY}"
+  "${CTL[@]}" resume "inc9a-resume-${tag}"
+}
+
+flatten_to_flat() {
+  local tag="$1"
+  "${CTL[@]}" pause "inc9a-pause-flat-${tag}" || true
+  "${CTL[@]}" flatten "inc9a-flatten-${tag}" || true
+  wait_for_grpc_flat
+  paper_post test/reset_lab_faults
+}
+
+require_log() {
+  local pattern="$1"
+  local file
+  file="$(current_log)"
+  if ! grep -qE "${pattern}" "${file}"; then
+    echo "FAILED: log ${file} missing /${pattern}/" >&2
+    tail -n 80 "${file}" >&2
+    exit 1
+  fi
+}
+
+echo "== package / bounded fixtures =="
+(cd "${ROOT}" && cargo test -q -p btc_price_ma_app --lib frozen_n28_runtime_transitions_match_offline -- --nocapture)
+(cd "${ROOT}" && cargo test -q -p market_data_engine --lib delta_merges_only_when_sequence_continues)
+(cd "${ROOT}" && cargo test -q -p trading_engine --lib aged_timestamp_is_stale)
+(cd "${ROOT}" && cargo test -q -p trading_engine --lib timeout_place_error_stays_unknown)
+(cd "${ROOT}" && cargo test -q -p trading_engine --lib rest_position_overwrites_lying_ws_update)
+(cd "${ROOT}" && cargo test -q -p trading_engine --lib record_trade_uses_trade_id)
 
 if command -v fuser >/dev/null 2>&1; then
   fuser -k 50051/tcp 2>/dev/null || true
@@ -209,12 +395,13 @@ fi
 
 echo "building composition app + grpc_ctl + k-paper..."
 (cd "${ROOT}" && cargo build -q -p btc_price_ma_app -p cli --bin grpc_ctl)
+(cd "${KPAPER}" && cargo test -q -p paper-exchange-core --lib)
 (cd "${KPAPER}" && cargo build -q -p paper-exchange-server)
 
 start_paper
-curl -sf -X POST "${HTTP}/test/reset_lab_faults" >/dev/null || true
+paper_post test/reset_lab_faults
 
-orders_before="$(paper_json open_orders | count_json_array)"
+orders_before="$(paper_get open_orders | count_json_array)"
 echo "paper independent order count before runner: ${orders_before}"
 
 echo "== start C2 composition on Paper Exchange futures (trading off) =="
@@ -222,62 +409,52 @@ start_runner "${LOG}"
 
 CTL=(cargo run -q -p cli --bin grpc_ctl --)
 echo "== pause then enable then resume =="
-"${CTL[@]}" pause inc9a-pause-1
-"${CTL[@]}" enable "${TRADING_STRATEGY}"
-"${CTL[@]}" resume inc9a-resume-1
+enable_entries 1
 "${CTL[@]}" status | tee "${WORKDIR}/grpc_status.txt"
 
 echo "== wait for Paper order then fill =="
-wait_for_paper_activity
 wait_for_paper_fill
 
-echo "== runner journal/ledger =="
 if [[ ! -f "${JOURNAL}" ]]; then
   echo "FAILED: submission journal missing after place" >&2
   exit 1
 fi
-ls -l "${JOURNAL}" "${LEDGER}" || true
-wc -l "${JOURNAL}" "${LEDGER}" 2>/dev/null || true
+require_journal_state acknowledged
+require_ledger_fills 1
 cp "${JOURNAL}" "${WORKDIR}/journal-after-place.jsonl"
-head -n 8 "${JOURNAL}" | tee "${WORKDIR}/journal-head.txt"
-if [[ -f "${LEDGER}" ]]; then
-  head -n 8 "${LEDGER}" | tee "${WORKDIR}/ledger-head.txt"
-fi
-
-paper_count="$(paper_json open_orders | count_json_array)"
-trade_count="$(paper_json trades | count_json_array)"
+cp "${LEDGER}" "${WORKDIR}/ledger-after-place.jsonl"
+paper_count="$(paper_get open_orders | count_json_array)"
+trade_count="$(paper_get trades | count_json_array)"
 echo "paper independent open_orders=${paper_count} trades=${trade_count}"
+if [[ "${trade_count}" -lt 1 ]]; then
+  echo "FAILED: Paper REST trades empty after fill" >&2
+  exit 1
+fi
 
 echo "== runner restart while Paper keeps state =="
 "${CTL[@]}" disable "${TRADING_STRATEGY}"
 sleep 1
-kill -KILL "${RUNNER_PID}" 2>/dev/null || true
-wait "${RUNNER_PID}" 2>/dev/null || true
-RUNNER_PID=""
-sleep 1
-after_kill_orders="$(paper_json open_orders)"
-after_kill_pos="$(paper_json positions)"
-after_kill_trades="$(paper_json trades)"
+kill_runner
+after_kill_orders="$(paper_get open_orders)"
+after_kill_pos="$(paper_get positions)"
+after_kill_trades="$(paper_get trades)"
 echo "paper after runner kill: orders=${after_kill_orders} positions=${after_kill_pos} trades=${after_kill_trades}"
 if [[ "${after_kill_orders}" == "[]" && "${after_kill_pos}" == "[]" && "${after_kill_trades}" == "[]" ]]; then
   echo "FAILED: Paper lost account state when the runner died" >&2
   exit 1
 fi
 
-if command -v fuser >/dev/null 2>&1; then
-  fuser -k 50051/tcp 2>/dev/null || true
-  sleep 1
-fi
-
 echo "== relaunch runner (no enable; recover existing state) =="
-start_runner "${LOG2}"
+start_runner "${WORKDIR}/runner-2.log"
 sleep 3
-grep -E "imported_working|recovery|Acknowledged|acknowledged" "${LOG2}" | tail -n 20 || true
+grep -E "imported_working|recovery|Acknowledged|acknowledged" "${WORKDIR}/runner-2.log" | tail -n 20 || true
 "${CTL[@]}" status | tee "${WORKDIR}/grpc_status_restart.txt"
-paper_after_restart="$(paper_json open_orders)"
-echo "paper after runner-2: ${paper_after_restart}"
-if grep -q "k-paper: sent place_order" "${LOG2}"; then
+if grep -q "k-paper: sent place_order" "${WORKDIR}/runner-2.log"; then
   echo "FAILED: relaunched runner posted a replacement order" >&2
+  exit 1
+fi
+if ! echo "$(paper_get positions)" | grep -q "0.001"; then
+  echo "FAILED: Paper position missing after runner restart" >&2
   exit 1
 fi
 
@@ -296,70 +473,357 @@ if ! echo "${flatten_status}" | grep -q "flatten_latched=true"; then
   echo "FAILED: FlattenAndPause did not set flatten_latched" >&2
   exit 1
 fi
-echo "paper open_orders after flatten RPC: $(paper_json open_orders)"
-echo "paper positions after flatten RPC: $(paper_json positions)"
-echo "== wait for runner TSM to match Paper flat =="
+echo "paper open_orders after flatten RPC: $(paper_get open_orders)"
+echo "paper positions after flatten RPC: $(paper_get positions)"
 wait_for_grpc_flat
 "${CTL[@]}" resume inc9a-resume-2
 resume_status="$("${CTL[@]}" status)"
 echo "${resume_status}"
 
-echo "== lab reject does not book =="
-curl -sf -X POST "${HTTP}/test/reset_lab_faults" >/dev/null
-before_reject="$(paper_json open_orders | count_json_array)"
-curl -sf -X POST "${HTTP}/test/reject_next_place" -H 'content-type: application/json' -d '{"reason":"lab_reject"}' >/dev/null
-echo "reject hook armed"
-
-echo "== lab duplicate-next-fill + stale book + disconnect =="
-curl -sf -X POST "${HTTP}/test/reset_lab_faults" >/dev/null
-curl -sf -X POST "${HTTP}/test/duplicate_next_fill" >/dev/null
-curl -sf -X POST "${HTTP}/test/stale_orderbook" -H 'content-type: application/json' -d '{"age_secs":3600}' >/dev/null
-sleep 1
-curl -sf -X POST "${HTTP}/test/disconnect_clients" >/dev/null
-sleep 3
-if ! grep -qE "server closed connection|reconnecting trade WS|k-paper market data: server closed" "${LOG2}"; then
-  echo "WARN: disconnect log not observed in runner-2; checking runner health anyway"
-fi
-curl -sf -X POST "${HTTP}/test/reset_lab_faults" >/dev/null
-
-echo "== lost-ACK phase: rest a far limit after flatten =="
-kill -KILL "${RUNNER_PID}" 2>/dev/null || true
-wait "${RUNNER_PID}" 2>/dev/null || true
-RUNNER_PID=""
-if command -v fuser >/dev/null 2>&1; then
-  fuser -k 50051/tcp 2>/dev/null || true
-  sleep 1
-fi
-
-curl -sf -X POST "${HTTP}/test/reset_lab_faults" >/dev/null
-curl -sf -X POST "${HTTP}/test/suppress_place_ack" -H 'content-type: application/json' -d '{}' >/dev/null
-LOG3="${WORKDIR}/runner-3.log"
-TRADING_TEST_CANDLES_PATH="${CANDLES}" \
-  TRADING_TEST_NOW_MS=259200000 \
-  TRADING_TEST_CLIENT_ORDER_ID=inc9a-lost-ack-1 \
-  TRADING_TEST_LIMIT_PRICE=49000 \
-  cargo run -p btc_price_ma_app --quiet -- \
-    --mode strategies \
-    --config "${WORKDIR}/bot.json" \
-    --strategies-config "${WORKDIR}/strategies.json" \
-  >"${LOG3}" 2>&1 &
-RUNNER_PID=$!
-ready=0
-for _ in $(seq 1 90); do
-  if grep -q "gRPC server started" "${LOG3}"; then
-    ready=1
+echo "== explicit reject releases reservation =="
+flatten_to_flat reject
+paper_post test/reset_lab_faults
+before_reject_orders="$(paper_get open_orders | count_json_array)"
+before_reject_pos="$(paper_get positions | count_json_array)"
+paper_post test/reject_next_place '{"reason":"lab_reject"}'
+enable_entries reject
+reject_seen=0
+for _ in $(seq 1 30); do
+  if grep -qE "Known place rejection|lab_reject" "$(current_log)"; then
+    reject_seen=1
     break
   fi
   sleep 0.5
 done
-if [[ "${ready}" -ne 1 ]]; then
-  echo "FAILED: runner-3 did not start" >&2
-  tail -n 80 "${LOG3}" >&2
+if [[ "${reject_seen}" -ne 1 ]]; then
+  echo "FAILED: known reject was not observed on the runner" >&2
+  tail -n 80 "$(current_log)" >&2
   exit 1
 fi
-"${CTL[@]}" pause inc9a-pause-3
-"${CTL[@]}" enable "${TRADING_STRATEGY}"
-"${CTL[@]}" resume inc9a-resume-3
+require_journal_state rejected
+after_reject_orders="$(paper_get open_orders | count_json_array)"
+if [[ "${after_reject_orders}" -lt "${before_reject_orders}" ]]; then
+  echo "FAILED: reject unexpectedly removed existing Paper orders" >&2
+  exit 1
+fi
+echo "reject: paper orders ${before_reject_orders} -> ${after_reject_orders} positions_before=${before_reject_pos}"
+
+echo "== stale book blocks exposure increase =="
+flatten_to_flat stale
+paper_post test/reset_lab_faults
+paper_post test/stale_orderbook '{"age_secs":3600}'
+enable_entries stale
+stale_seen=0
+for _ in $(seq 1 20); do
+  if grep -q "Stale market data blocks exposure increase" "$(current_log)"; then
+    stale_seen=1
+    break
+  fi
+  sleep 0.5
+done
+if [[ "${stale_seen}" -ne 1 ]]; then
+  echo "FAILED: stale MD did not block a new increase" >&2
+  tail -n 80 "$(current_log)" >&2
+  exit 1
+fi
+if [[ "$(paper_get open_orders)" != "[]" || "$(paper_get positions)" != "[]" ]]; then
+  echo "FAILED: stale book allowed a Paper order or position" >&2
+  echo "orders=$(paper_get open_orders) pos=$(paper_get positions)" >&2
+  exit 1
+fi
+paper_post test/reset_lab_faults
+
+echo "== duplicate fill is ledger-idempotent =="
+flatten_to_flat dupfill
+sleep 1
+fills_before="$(ledger_fill_ids | awk 'NR==1{print $2}')"
+paper_post test/reset_lab_faults
+paper_post test/duplicate_next_fill
+enable_entries dupfill
+wait_for_paper_fill
+freeze_entries dupfill
+sleep 1
+fills_after="$(ledger_fill_ids | awk 'NR==1{print $2}')"
+echo "unique ledger fills before=${fills_before} after=${fills_after}"
+if [[ "${fills_after}" -ne $((fills_before + 1)) ]]; then
+  echo "FAILED: duplicate WS fill changed unique ledger count by $((fills_after - fills_before))" >&2
+  ledger_fill_ids >&2
+  exit 1
+fi
+if ! echo "$(paper_get positions)" | grep -q "0.001"; then
+  echo "FAILED: duplicate fill changed Paper position" >&2
+  echo "positions=$(paper_get positions)" >&2
+  exit 1
+fi
+dup_status="$("${CTL[@]}" status)"
+echo "${dup_status}"
+if ! echo "${dup_status}" | grep -q "pos=0.001"; then
+  echo "FAILED: grpc position after duplicate fill is not 0.001" >&2
+  exit 1
+fi
+if echo "${dup_status}" | grep -q "pos=0.002"; then
+  echo "FAILED: duplicate fill double-counted grpc position" >&2
+  exit 1
+fi
+
+echo "== position-before-fill event order =="
+flatten_to_flat pbf
+sleep 1
+fills_before="$(ledger_fill_ids | awk 'NR==1{print $2}')"
+paper_post test/reset_lab_faults
+paper_post test/position_before_fill
+enable_entries pbf
+wait_for_paper_fill
+freeze_entries pbf
+sleep 1
+fills_after="$(ledger_fill_ids | awk 'NR==1{print $2}')"
+echo "unique ledger fills before=${fills_before} after=${fills_after}"
+if [[ "${fills_after}" -lt $((fills_before + 1)) ]]; then
+  echo "FAILED: position-before-fill did not record a new ledger fill" >&2
+  exit 1
+fi
+if [[ "${fills_after}" -gt $((fills_before + 1)) ]]; then
+  echo "FAILED: position-before-fill double-counted ledger fills" >&2
+  ledger_fill_ids >&2
+  exit 1
+fi
+pbf_status="$("${CTL[@]}" status)"
+if ! echo "${pbf_status}" | grep -q "pos=0.001"; then
+  echo "FAILED: position-before-fill grpc qty" >&2
+  echo "${pbf_status}" >&2
+  exit 1
+fi
+
+echo "== private/public disconnect then reconnect =="
+paper_post test/reset_lab_faults
+paper_post test/disconnect_clients
+disc_seen=0
+for _ in $(seq 1 20); do
+  if grep -qE "server closed connection|reconnecting trade WS|k-paper market data: server closed" "$(current_log)"; then
+    disc_seen=1
+    break
+  fi
+  sleep 0.5
+done
+if [[ "${disc_seen}" -ne 1 ]]; then
+  echo "FAILED: disconnect/reconnect was not logged" >&2
+  tail -n 80 "$(current_log)" >&2
+  exit 1
+fi
+sleep 3
+require_log "reconnecting trade WS"
+if ! echo "$(paper_get positions)" | grep -q "0.001"; then
+  echo "FAILED: Paper position lost across disconnect" >&2
+  exit 1
+fi
+re_status="$("${CTL[@]}" status)"
+echo "${re_status}"
+if ! echo "${re_status}" | grep -q "pos=0.001"; then
+  echo "FAILED: grpc position not reconciled after reconnect" >&2
+  exit 1
+fi
+
+echo "== REST/WS disagreement: lying WS, REST unchanged, reconnect restores =="
+paper_rest_before="$(paper_get positions)"
+paper_post test/emit_ws_position '{"quantity":"1","entry_price":"50000"}'
+lie_seen=0
+for _ in $(seq 1 20); do
+  st="$("${CTL[@]}" status)"
+  if echo "${st}" | grep -q "pos=1"; then
+    lie_seen=1
+    echo "${st}"
+    break
+  fi
+  sleep 0.3
+done
+if [[ "${lie_seen}" -ne 1 ]]; then
+  echo "FAILED: lying WS position did not reach grpc/TSM" >&2
+  "${CTL[@]}" status >&2
+  exit 1
+fi
+paper_rest_after="$(paper_get positions)"
+if [[ "${paper_rest_after}" != "${paper_rest_before}" ]]; then
+  echo "FAILED: emit_ws_position mutated Paper REST truth" >&2
+  echo "before=${paper_rest_before} after=${paper_rest_after}" >&2
+  exit 1
+fi
+paper_post test/disconnect_clients
+restored=0
+for _ in $(seq 1 30); do
+  st="$("${CTL[@]}" status)"
+  if echo "${st}" | grep -q "pos=0.001" && ! echo "${st}" | grep -q "pos=1"; then
+    restored=1
+    echo "${st}"
+    break
+  fi
+  sleep 0.5
+done
+if [[ "${restored}" -ne 1 ]]; then
+  echo "FAILED: reconnect snapshot did not restore REST qty on grpc" >&2
+  "${CTL[@]}" status >&2
+  echo "paper REST=$(paper_get positions)" >&2
+  exit 1
+fi
+
+echo "== partial fill then CancelWorking =="
+flatten_to_flat partial
+"${CTL[@]}" disable "${TRADING_STRATEGY}" || true
+kill_runner
+paper_post test/reset_lab_faults
+export TRADING_TEST_CLIENT_ORDER_ID=inc9a-partial-1
+export TRADING_TEST_LIMIT_PRICE=49000
+export TRADING_TEST_ORDER_QTY=0.002
+start_runner "${WORKDIR}/runner-partial.log"
+enable_entries partial
+resting=0
+for _ in $(seq 1 30); do
+  if curl -sf "${HTTP}/orders/by_client_id/inc9a-partial-1" >/dev/null; then
+    resting=1
+    break
+  fi
+  sleep 0.5
+done
+unset TRADING_TEST_CLIENT_ORDER_ID TRADING_TEST_LIMIT_PRICE TRADING_TEST_ORDER_QTY
+if [[ "${resting}" -ne 1 ]]; then
+  echo "FAILED: partial-fill resting order was not booked" >&2
+  tail -n 40 "${WORKDIR}/runner-partial.log" >&2
+  exit 1
+fi
+fills_before="$(ledger_fill_ids | awk 'NR==1{print $2}')"
+fill_res=$(curl -sfS -X POST "${HTTP}/test/lab_fill_open" \
+  -H "content-type: application/json" \
+  -d '{"qty":"0.001"}') \
+  || { echo "FAILED: lab_fill_open" >&2; exit 1; }
+echo "lab_fill_open=${fill_res}"
+if ! echo "${fill_res}" | grep -q "PartiallyFilled"; then
+  echo "FAILED: expected PartiallyFilled after lab fill" >&2
+  exit 1
+fi
+sleep 1
+require_journal_state acknowledged
+fills_after="$(ledger_fill_ids | awk 'NR==1{print $2}')"
+echo "unique ledger fills after partial=${fills_after} (before=${fills_before})"
+if [[ "${fills_after}" -lt $((fills_before + 1)) ]]; then
+  echo "FAILED: partial fill did not record a new ledger execution" >&2
+  ledger_fill_ids >&2
+  exit 1
+fi
+if ! echo "$(paper_get positions)" | grep -q "0.001"; then
+  echo "FAILED: partial fill did not open 0.001 position" >&2
+  echo "pos=$(paper_get positions)" >&2
+  exit 1
+fi
+cancel_out="$("${CTL[@]}" cancel inc9a-cancel-1)"
+echo "${cancel_out}"
+if ! echo "${cancel_out}" | grep -q "CancelWorking"; then
+  echo "FAILED: CancelWorking RPC was not accepted" >&2
+  exit 1
+fi
+cancelled=0
+for _ in $(seq 1 20); do
+  if [[ "$(paper_get open_orders)" == "[]" ]]; then
+    cancelled=1
+    break
+  fi
+  sleep 0.5
+done
+if [[ "${cancelled}" -ne 1 ]]; then
+  echo "FAILED: Paper still has working orders after CancelWorking" >&2
+  echo "orders=$(paper_get open_orders)" >&2
+  exit 1
+fi
+if ! echo "$(paper_get positions)" | grep -q "0.001"; then
+  echo "FAILED: CancelWorking changed the filled position" >&2
+  exit 1
+fi
+cw_status="$("${CTL[@]}" status)"
+echo "${cw_status}"
+if ! echo "${cw_status}" | grep -q "orders=0"; then
+  echo "FAILED: grpc still shows working orders after CancelWorking" >&2
+  exit 1
+fi
+if echo "${cw_status}" | grep -q "pos=0.002"; then
+  echo "FAILED: partial+cancel double-counted exposure" >&2
+  exit 1
+fi
+
+echo "== transient send failure keeps Unknown reservation =="
+flatten_to_flat drop
+"${CTL[@]}" disable "${TRADING_STRATEGY}" || true
+kill_runner
+compact_resolved_journal
+paper_post test/reset_lab_faults
+paper_post test/drop_next_place
+export TRADING_TEST_CLIENT_ORDER_ID=inc9a-drop-1
+start_runner "${WORKDIR}/runner-drop.log"
+enable_entries drop
+drop_seen=0
+for _ in $(seq 1 40); do
+  if grep -q "open_order timeout" "${WORKDIR}/runner-drop.log"; then
+    drop_seen=1
+    break
+  fi
+  sleep 0.5
+done
+unset TRADING_TEST_CLIENT_ORDER_ID
+if [[ "${drop_seen}" -ne 1 ]]; then
+  echo "FAILED: drop_next_place did not produce a place timeout" >&2
+  tail -n 80 "${WORKDIR}/runner-drop.log" >&2
+  exit 1
+fi
+require_journal_state unknown
+if curl -sf "${HTTP}/orders/by_client_id/inc9a-drop-1" >/dev/null; then
+  echo "FAILED: dropped place was booked on Paper" >&2
+  exit 1
+fi
+if [[ "$(paper_get open_orders)" != "[]" ]]; then
+  echo "FAILED: drop_next_place booked an open order" >&2
+  exit 1
+fi
+
+echo "== duplicate client id rejects the second place =="
+kill_runner
+compact_resolved_journal
+paper_post test/reset_lab_faults
+export TRADING_TEST_CLIENT_ORDER_ID=inc9a-dup-cid
+start_runner "${WORKDIR}/runner-dupcid.log"
+enable_entries dupcid
+wait_for_paper_fill
+echo "first duplicate-cid row: $(curl -sfS "${HTTP}/orders/by_client_id/inc9a-dup-cid")"
+flatten_to_flat dupcid
+"${CTL[@]}" resume inc9a-resume-dupcid-2
+dup_rej=0
+for _ in $(seq 1 30); do
+  if grep -qE "duplicate client_order_id|Known place rejection" "${WORKDIR}/runner-dupcid.log"; then
+    dup_rej=1
+    break
+  fi
+  sleep 0.5
+done
+unset TRADING_TEST_CLIENT_ORDER_ID
+if [[ "${dup_rej}" -ne 1 ]]; then
+  echo "FAILED: second place with the same client id was not rejected" >&2
+  tail -n 80 "${WORKDIR}/runner-dupcid.log" >&2
+  exit 1
+fi
+require_journal_state rejected
+if [[ "$(paper_get open_orders | count_json_array)" -ne 0 ]]; then
+  echo "FAILED: duplicate client id created extra Paper working orders" >&2
+  echo "orders=$(paper_get open_orders)" >&2
+  exit 1
+fi
+
+echo "== lost-ACK phase: rest a far limit after flatten =="
+flatten_to_flat lostack
+"${CTL[@]}" disable "${TRADING_STRATEGY}" || true
+kill_runner
+compact_resolved_journal
+paper_post test/reset_lab_faults
+paper_post test/suppress_place_ack "{}"
+export TRADING_TEST_CLIENT_ORDER_ID=inc9a-lost-ack-1
+export TRADING_TEST_LIMIT_PRICE=49000
+start_runner "${WORKDIR}/runner-3.log"
+enable_entries 3
 lost_seen=0
 for _ in $(seq 1 30); do
   if curl -sf "${HTTP}/orders/by_client_id/inc9a-lost-ack-1" >/dev/null; then
@@ -368,63 +832,34 @@ for _ in $(seq 1 30); do
   fi
   sleep 0.5
 done
+unset TRADING_TEST_CLIENT_ORDER_ID TRADING_TEST_LIMIT_PRICE
 if [[ "${lost_seen}" -ne 1 ]]; then
   echo "FAILED: lost-ACK client id was not booked on Paper" >&2
-  echo "paper orders=$(paper_json open_orders)" >&2
-  tail -n 40 "${LOG3}" >&2
+  echo "paper orders=$(paper_get open_orders)" >&2
+  tail -n 40 "${WORKDIR}/runner-3.log" >&2
   cat "${JOURNAL}" >&2
   exit 1
 fi
-echo "lost-ACK Paper row: $(curl -sf "${HTTP}/orders/by_client_id/inc9a-lost-ack-1")"
-orders_during="$(paper_json open_orders | count_json_array)"
+echo "lost-ACK Paper row: $(curl -sfS "${HTTP}/orders/by_client_id/inc9a-lost-ack-1")"
+orders_during="$(paper_get open_orders | count_json_array)"
 "${CTL[@]}" disable "${TRADING_STRATEGY}" || true
-kill -KILL "${RUNNER_PID}" 2>/dev/null || true
-wait "${RUNNER_PID}" 2>/dev/null || true
-RUNNER_PID=""
-same_after="$(curl -sf "${HTTP}/orders/by_client_id/inc9a-lost-ack-1" || true)"
+kill_runner
+same_after="$(curl -sfS "${HTTP}/orders/by_client_id/inc9a-lost-ack-1")"
 echo "Paper kept lost-ACK order after runner-3 kill: ${same_after}"
-if [[ -z "${same_after}" ]]; then
-  echo "FAILED: Paper lost the suppressed-ACK order" >&2
-  exit 1
-fi
-if command -v fuser >/dev/null 2>&1; then
-  fuser -k 50051/tcp 2>/dev/null || true
-  sleep 1
-fi
-LOG4="${WORKDIR}/runner-4.log"
-TRADING_TEST_CANDLES_PATH="${CANDLES}" \
-  TRADING_TEST_NOW_MS=259200000 \
-  cargo run -p btc_price_ma_app --quiet -- \
-    --mode strategies \
-    --config "${WORKDIR}/bot.json" \
-    --strategies-config "${WORKDIR}/strategies.json" \
-  >"${LOG4}" 2>&1 &
-RUNNER_PID=$!
-ready=0
-for _ in $(seq 1 90); do
-  if grep -q "gRPC server started" "${LOG4}"; then
-    ready=1
-    break
-  fi
-  sleep 0.5
-done
-if [[ "${ready}" -ne 1 ]]; then
-  echo "FAILED: runner-4 did not start" >&2
-  tail -n 80 "${LOG4}" >&2
-  exit 1
-fi
+start_runner "${WORKDIR}/runner-4.log"
 sleep 3
-if grep -q "k-paper: sent place_order" "${LOG4}"; then
+if grep -q "k-paper: sent place_order" "${WORKDIR}/runner-4.log"; then
   echo "FAILED: recovered runner posted a replacement after lost-ACK" >&2
   exit 1
 fi
-grep -E "imported_working|inc9a-lost-ack-1" "${LOG4}" | tail -n 20 || true
+grep -E "imported_working|inc9a-lost-ack-1" "${WORKDIR}/runner-4.log" | tail -n 20 || true
 "${CTL[@]}" status | tee "${WORKDIR}/grpc_status_lostack.txt"
-echo "paper after recover: $(paper_json open_orders)"
-if [[ "$(paper_json open_orders | count_json_array)" -gt "${orders_during}" ]]; then
+if [[ "$(paper_get open_orders | count_json_array)" -gt "${orders_during}" ]]; then
   echo "FAILED: Paper order count increased after lost-ACK recovery" >&2
   exit 1
 fi
 
-echo "inc9a Stage C + section-49 lab path observed."
+"${CTL[@]}" pause inc9a-pause-browser || true
+echo "inc9a Stage C + section-49 lab path asserted."
 echo "workdir=${WORKDIR}"
+echo "grpc CancelWorking asserted in the partial-fill race; INC9A_KEEP=1 leaves Paper+runner paused with the recovered lost-ACK order for browser CancelWorking."

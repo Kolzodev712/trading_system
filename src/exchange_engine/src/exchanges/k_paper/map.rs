@@ -96,8 +96,25 @@ pub fn execution_ack_to_order(
     })
 }
 
+/// Apply an incremental fill to a working order. Paper fill events carry only the
+/// last fill quantity; they are not themselves a terminal `Filled` status.
+pub fn merge_fill_into_working_order(existing: &Order, fill_qty: Decimal) -> Order {
+    let filled = existing.filled_amount + fill_qty;
+    let status = if filled >= existing.amount {
+        OrderStatus::Filled
+    } else {
+        OrderStatus::PartiallyFilled
+    };
+    Order {
+        filled_amount: filled,
+        status,
+        ..existing.clone()
+    }
+}
+
 /// Convert k-paper execution to Order (for CexVenueUpdate::Order).
-/// Filled or rejected; we use Filled when reject_reason is null.
+/// Rejects stay rejected. A lone fill event is not enough to mark the full order
+/// terminal; merge it with the working order via [`merge_fill_into_working_order`].
 pub fn execution_to_order(
     exec: &KPaperExecution,
     instrument_type: InstrumentType,
@@ -263,6 +280,29 @@ mod tests {
         assert_eq!(order.instrument.pair, Pair::new("BTC", "USDT"));
         assert_eq!(order.status, OrderStatus::New);
         assert_eq!(order.amount, Decimal::new(2, 3));
+    }
+
+    #[test]
+    fn merge_fill_keeps_partial_remainder() {
+        let existing = Order {
+            order_id: OrderId::new("ord-p".into()),
+            client_order_id: Some(SmolStr::new("cid-p")),
+            instrument: Instrument::new(InstrumentType::Futures, Pair::new("BTC", "USDT")),
+            side: Side::Buy,
+            price: Decimal::new(49000, 0),
+            amount: Decimal::new(2, 3),
+            internal_created_at: 1,
+            exchange_created_at: Some(1),
+            status: OrderStatus::New,
+            filled_amount: Decimal::ZERO,
+        };
+        let partial = merge_fill_into_working_order(&existing, Decimal::new(1, 3));
+        assert_eq!(partial.status, OrderStatus::PartiallyFilled);
+        assert_eq!(partial.filled_amount, Decimal::new(1, 3));
+        assert_eq!(partial.amount, Decimal::new(2, 3));
+        let filled = merge_fill_into_working_order(&partial, Decimal::new(1, 3));
+        assert_eq!(filled.status, OrderStatus::Filled);
+        assert_eq!(filled.filled_amount, Decimal::new(2, 3));
     }
 
     #[test]

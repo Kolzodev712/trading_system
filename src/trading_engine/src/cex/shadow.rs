@@ -407,7 +407,11 @@ mod tests {
             "guard counts forbidden attempts; DummyClient panics if the inner exchange is reached"
         );
         assert!(guard.fetch_balance().await.is_ok());
-        assert!(guard.fetch_open_orders().await.is_ok());
+        let open = guard.fetch_open_orders().await.expect("exchange-side read");
+        assert!(
+            open.is_empty(),
+            "guarded fetch_open_orders is the venue read; it must not invent orders: {open:?}"
+        );
     }
 
     #[test]

@@ -190,16 +190,48 @@ impl RiskManager {
             return balance_check;
         }
 
-        // Check total position limits
-        let total_position_check = self.check_total_position_limits(trading_state);
-        if !total_position_check.allowed {
-            return total_position_check;
+        let increasing = order_increases_exposure(order_request.side.clone(), position_qty);
+        if increasing {
+            let total_position_check = self.check_total_position_limits(trading_state);
+            if !total_position_check.allowed {
+                return total_position_check;
+            }
+            let order_count_check = self.check_order_count(trading_state);
+            if !order_count_check.allowed {
+                return order_count_check;
+            }
         }
 
-        // Check total order count
-        let order_count_check = self.check_order_count(trading_state);
-        if !order_count_check.allowed {
-            return order_count_check;
+        if let Some(max_qty) = self.limits.max_order_qty {
+            if order_request.amount > max_qty {
+                return RiskCheckResult::blocked(SmolStr::new(format!(
+                    "Order qty {} exceeds max_order_qty {}",
+                    order_request.amount, max_qty
+                )));
+            }
+        }
+        if let Some(max_notional) = self.limits.max_notional {
+            let notional = order_request.price * order_request.amount;
+            if notional > max_notional {
+                return RiskCheckResult::blocked(SmolStr::new(format!(
+                    "Order notional {} exceeds max_notional {}",
+                    notional, max_notional
+                )));
+            }
+        }
+        if let Some(max_total_position) = self.limits.total_max_position {
+            let signed = match order_request.side {
+                Side::Buy => order_request.amount,
+                Side::Sell => -order_request.amount,
+            };
+            let pair = &order_request.instrument.pair;
+            let prospective = trading_state.effective_position_qty(pair) + signed;
+            if prospective.abs() > max_total_position {
+                return RiskCheckResult::blocked(SmolStr::new(format!(
+                    "Prospective effective exposure {} exceeds max_position {}",
+                    prospective, max_total_position
+                )));
+            }
         }
 
         // All checks passed
@@ -533,6 +565,15 @@ mod balance_tests {
         }
     }
 
+    fn btc(free: Decimal) -> Balance {
+        Balance {
+            symbol: "BTC".into(),
+            free,
+            used: Decimal::ZERO,
+            total: free,
+        }
+    }
+
     #[test]
     fn futures_sell_to_close_does_not_require_base_inventory() {
         let result = check_order_balance(
@@ -560,5 +601,43 @@ mod balance_tests {
             Some(5),
         );
         assert!(allowed.allowed);
+    }
+
+    #[tokio::test]
+    async fn prospective_effective_exposure_blocks_increase() {
+        let limits = RiskLimits {
+            total_max_position: Some(dec!(1)),
+            ..RiskLimits::default()
+        };
+        let risk = RiskManager::new(
+            limits,
+            Arc::new(trading_core::registry::symbol::SymbolRegistry::from_pairs(
+                vec![Pair::new("BTC", "USDT")],
+            )),
+        );
+        let mut state = TradingState::new();
+        state.set_position(Pair::new("BTC", "USDT"), dec!(1), dec!(100));
+        let blocked = risk
+            .check_pre_trade(
+                &req(InstrumentType::Spot, Side::Buy),
+                &state,
+                &[usdt(dec!(1000))],
+                None,
+                dec!(1),
+                None,
+            )
+            .await;
+        assert!(!blocked.allowed);
+        let reduce = risk
+            .check_pre_trade(
+                &req(InstrumentType::Spot, Side::Sell),
+                &state,
+                &[usdt(dec!(1000)), btc(dec!(1))],
+                None,
+                dec!(1),
+                None,
+            )
+            .await;
+        assert!(reduce.allowed);
     }
 }

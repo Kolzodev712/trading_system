@@ -453,6 +453,8 @@ impl LevelManager {
                 let risk_limits = crate::risk::RiskLimits {
                     total_max_position: bot_config.risk_limits.total_max_position,
                     max_total_orders: bot_config.risk_limits.max_total_orders,
+                    max_notional: bot_config.risk_limits.max_notional,
+                    max_order_qty: bot_config.risk_limits.max_order_qty,
                     daily_loss_limit_all_pairs: bot_config.risk_limits.daily_loss_limit_all_pairs,
                     daily_loss_limit_per_pair: bot_config
                         .risk_limits

@@ -53,6 +53,7 @@ pub async fn level_runner(
         .load_from_config_with_risk_limits(Path::new(&levels_config_path), &configured_pairs)
         .await
         .map_err(|e| format!("Failed to load levels config: {e}"))?;
+    risk_limits.require_explicit_for_exchange(bot_config.execution_mode)?;
 
     // Update MongoDB with file-based config (file is source of truth)
     if level_persistence.is_some() {
@@ -104,7 +105,11 @@ pub async fn level_runner(
             config_tick_size,
             config_min_notional,
         )
-        .with_trading_control(trading_control.enabled_flag()),
+        .with_trading_control(trading_control.enabled_flag())
+        .with_operator_flags(
+            trading_control.entries_paused_flag(),
+            trading_control.flatten_latched_flag(),
+        ),
     );
 
     // Create risk manager with symbol registry

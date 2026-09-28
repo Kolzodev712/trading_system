@@ -54,6 +54,8 @@ pub struct StrategyExecutor<S: Strategy + 'static> {
     config_min_notional: Decimal,
     /// Trading control - checks if trading is enabled (optional, for TUI control)
     trading_enabled: Option<Arc<tokio::sync::RwLock<bool>>>,
+    entries_paused: Option<Arc<tokio::sync::RwLock<bool>>>,
+    flatten_latched: Option<Arc<tokio::sync::RwLock<bool>>>,
     execution_mode: ExecutionMode,
     /// Optional StrategyManager for batching (only set when using StrategyManagerWrapper)
     strategy_manager:
@@ -108,6 +110,8 @@ impl<S: Strategy> StrategyExecutor<S> {
             config_tick_size,
             config_min_notional,
             trading_enabled: None,
+            entries_paused: None,
+            flatten_latched: None,
             execution_mode: ExecutionMode::Exchange,
             strategy_manager: None,
             risk_manager: None,
@@ -152,6 +156,16 @@ impl<S: Strategy> StrategyExecutor<S> {
     /// Set trading enabled flag (for TUI control)
     pub fn with_trading_control(mut self, trading_enabled: Arc<tokio::sync::RwLock<bool>>) -> Self {
         self.trading_enabled = Some(trading_enabled);
+        self
+    }
+
+    pub fn with_operator_flags(
+        mut self,
+        entries_paused: Arc<tokio::sync::RwLock<bool>>,
+        flatten_latched: Arc<tokio::sync::RwLock<bool>>,
+    ) -> Self {
+        self.entries_paused = Some(entries_paused);
+        self.flatten_latched = Some(flatten_latched);
         self
     }
 
@@ -409,7 +423,17 @@ impl<S: Strategy> StrategyExecutor<S> {
                     } else {
                         true
                     };
-                    let may_submit = self.execution_mode.permits_exchange_orders(trading_enabled);
+                    let entries_paused = if let Some(ref flag) = self.entries_paused {
+                        *flag.read().await
+                    } else {
+                        false
+                    };
+                    let flatten_latched = if let Some(ref flag) = self.flatten_latched {
+                        *flag.read().await
+                    } else {
+                        false
+                    };
+                    let exchange_orders_allowed = self.execution_mode.permits_exchange_orders(true);
 
                     // Log that we're processing orderbooks (periodically)
                     static OB_COUNT: std::sync::atomic::AtomicU64 =
@@ -457,6 +481,26 @@ impl<S: Strategy> StrategyExecutor<S> {
                         }
                     };
 
+                    let intents = if flatten_latched {
+                        intents
+                            .into_iter()
+                            .map(|intent| match intent {
+                                StrategyIntent::TargetPosition {
+                                    strategy_id,
+                                    instrument,
+                                    ..
+                                } => StrategyIntent::TargetPosition {
+                                    strategy_id,
+                                    instrument,
+                                    qty: Decimal::ZERO,
+                                },
+                                other => other,
+                            })
+                            .collect()
+                    } else {
+                        intents
+                    };
+
                     let current_qty = state.effective_position_qty(&orderbook_pair);
                     let max_abs = self
                         .risk_manager
@@ -493,7 +537,7 @@ impl<S: Strategy> StrategyExecutor<S> {
                         .collect();
                     drop(caps);
 
-                    if !may_submit {
+                    if !exchange_orders_allowed {
                         if self.execution_mode == ExecutionMode::Shadow && !all_requests.is_empty()
                         {
                             info!(
@@ -505,7 +549,21 @@ impl<S: Strategy> StrategyExecutor<S> {
                         continue;
                     }
 
+                    all_requests.retain(|req| {
+                        let increasing =
+                            crate::risk::order_increases_exposure(req.side.clone(), current_qty);
+                        trading_core::grpc::operator_allows_submit(
+                            increasing,
+                            trading_enabled,
+                            entries_paused,
+                            flatten_latched,
+                        )
+                    });
+
                     if all_requests.is_empty() {
+                        if flatten_latched || entries_paused {
+                            continue;
+                        }
                         if let Some(req) =
                             lab_force_place_request(&orderbook, self.instrument_type.clone())
                         {
@@ -526,16 +584,6 @@ impl<S: Strategy> StrategyExecutor<S> {
                         continue;
                     }
                     drop(cb);
-
-                    // Check if trading is enabled
-                    if let Some(ref trading_enabled) = self.trading_enabled {
-                        if !*trading_enabled.read().await {
-                            tracing::warn!(
-                                "Trading is disabled - blocking order placement from strategy"
-                            );
-                            continue;
-                        }
-                    }
 
                     // Get trading rules once for all requests
                     use crate::order_validation::{

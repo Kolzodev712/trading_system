@@ -290,6 +290,9 @@ impl MonitoringService {
             snapshot_unix_ms,
             trading_enabled: self.trading_control.is_enabled().await,
             runner_mode: runner_mode.to_string(),
+            entries_paused: self.trading_control.entries_paused().await,
+            flatten_latched: self.trading_control.flatten_latched().await,
+            global_toggle_semantics: trading_core::grpc::GLOBAL_TOGGLE_SEMANTICS.to_string(),
         };
 
         tracing::debug!("[gRPC] collect_monitoring_data: Returning data successfully");

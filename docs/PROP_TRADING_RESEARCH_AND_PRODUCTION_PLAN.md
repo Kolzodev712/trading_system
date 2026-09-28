@@ -1,6 +1,6 @@
 # Prop Trading Productionization and Research Architecture Plan
 
-**Status:** Increments 0–7 are accepted locally. Increment 6 section-61 findings are closed. Increment 7 futures/Paper linear is recorded in section 62. UI proto was unchanged (`028ea16`). Increment 8 is next. This does not qualify the section 49 fault matrix or Bybit demo. Placeholder Bybit sample credentials remain an environment limitation. Candidate #2 remains an operational baseline, not validated alpha.  
+**Status:** Increments 0–8 are accepted locally. Increment 6 section-61 findings are closed. Increment 7 futures/Paper linear is recorded in section 62. Increment 8 risk/controls and UI operator workflows are recorded in section 63. Candidate #2 remains an operational baseline, not validated alpha. This does not qualify the section 49 fault matrix or Bybit demo.  
 **Date:** 2026-09-28  
 **Repository:** `trading_system`  
 **Audience:** Cursor / implementation agent / repository owner  
@@ -2398,6 +2398,8 @@ Acceptance:
 - cancel/fill race reconciles safely;
 - UI reflects server-confirmed progress/failure and cannot represent a timed-out flatten as complete; Shadow/Paper/Demo labels are unambiguous.
 
+**Local Increment 8 record (2026-09-28):** `trading_system` (this commit) + `trading-system-ui` matching proto/client. Package tests: `cargo test -p trading_core --lib grpc::trading_control` 3 passed; `cargo test -p trading_engine --lib` 108 passed; `cargo test -p runner --lib` 31 passed; `cargo test -p gateway --lib grpc::access` 3 passed. UI `npm test` 52 passed; `npm run build` exit 0. Paper live `scripts/inc8_operator_paper.sh` against k-paper `:19996`: PauseEntries `entries_paused=true`; FlattenAndPause `state=in_progress` with Paper sell `2946feab-…` still open (`filledAmount` 0.577 of 100) so RPC success was not treated as flat; Resume cleared latch. Daily-loss remains unlabeled as safety until Increment 9 PnL. `TRADING_OPERATOR_TOKEN` unset is local-lab only.
+
 Stop and report.
 
 ---
@@ -2486,7 +2488,7 @@ Do not implement Candidate #3's trading rule until a separate strategy research 
 
 # 67. Current Cursor instruction
 
-The Increment 6 local-acceptance record includes `trading_system` `ac6fdb38365ad73f799ee9a94ad690e3a673ab01` plus the restart-journal halt test in this commit, `trading-system-ui` `028ea16cb53f83871df1ee4053b7caeb36fbb9a8` (unchanged proto), and `k-paper` `ebf4c903b7e393ce9843467f91d378697d022250`. These are **reported local checks**, not a remotely enforced CI result. The accepted 5B connectivity record remains `trading_system` `043ca64523f42212cd8a2616ba6201d61d7c878a` (evidence `1f00fdc80f7bbbb39b836da9445e041eb18e6c77`).
+The Increment 8 local-acceptance record includes `trading_system` (this commit), `trading-system-ui` matching proto/client, and `k-paper` `c2466dc64a274a5b164fb7bcf2005bacb71b7c18` (unchanged). These are **reported local checks**, not a remotely enforced CI result. The accepted 5B connectivity record remains `trading_system` `043ca64523f42212cd8a2616ba6201d61d7c878a` (evidence `1f00fdc80f7bbbb39b836da9445e041eb18e6c77`).
 
 | Increment | Status | Gate |
 | --- | --- | --- |
@@ -2496,9 +2498,10 @@ The Increment 6 local-acceptance record includes `trading_system` `ac6fdb38365ad
 | 5B | Accepted locally for Spot/levels connectivity | Market/trade WS, REST bootstrap and UI labels; no order posting, futures or fault qualification |
 | 6 | Accepted locally | Fail-closed journal including restart of a damaged record, partial-fill recovery with missed/repeated events, pending immediate recon, and one focused Paper lost-ACK/restart check |
 | 7 | Accepted locally | Futures PositionSyncPending, no fill+position double count, MD freshness required for Exchange futures, one strategy per pair, fail-closed leverage/mode, Paper one-way USDT-linear BTCUSDT |
-| 8+ | In progress | Follow section 54 and each increment's gate |
+| 8 | Accepted locally | Explicit Exchange risk, prospective effective exposure, PauseEntries/CancelWorking/FlattenAndPause/Resume, operator token on mutating RPCs, UI confirmation does not treat flatten RPC as flat |
+| 9+ | Next | Follow section 54 and each increment's gate |
 
-Cursor: Increment 7 is accepted locally. Continue Increment 8. UI remains at `028ea16cb53f83871df1ee4053b7caeb36fbb9a8` unless the runner proto/status contract changes.
+Cursor: Increment 8 is accepted locally. Continue Increment 9. After 9A, stop for a Paper readiness report before Increment 10.
 
 ---
 

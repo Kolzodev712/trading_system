@@ -81,6 +81,10 @@ pub struct LifecycleConfigDocument {
 pub struct RiskLimitsDocument {
     pub total_max_position: Option<Decimal>,
     pub max_total_orders: Option<usize>,
+    #[serde(default)]
+    pub max_notional: Option<Decimal>,
+    #[serde(default)]
+    pub max_order_qty: Option<Decimal>,
     pub daily_loss_limit_all_pairs: Option<Decimal>,
     pub daily_loss_limit_per_pair: std::collections::HashMap<String, Decimal>,
 }

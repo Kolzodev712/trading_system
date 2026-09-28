@@ -716,4 +716,30 @@ mod tests {
         assert!(err.to_string().contains("parse submission journal"));
         let _ = std::fs::remove_file(&path);
     }
+
+    #[tokio::test]
+    async fn restart_with_damaged_journal_halts_new_exposure() {
+        let path = journal_path("restart-torn");
+        let journal = SubmissionJournal::open(&path).expect("open");
+        journal
+            .append(&SubmissionRecord::from_pending(
+                &pending("cid-rst"),
+                SubmissionState::Submitted,
+            ))
+            .expect("append");
+        drop(journal);
+
+        std::fs::write(&path, "not-json\n").expect("damage after crash");
+        let reopened = SubmissionJournal::open(&path).expect("reopen");
+        let mut state = TradingState::new();
+        let client = ScriptedClient::new(HashMap::new());
+        let err = recover_unknown_submissions(&reopened, &client, &mut state)
+            .await
+            .expect_err("restart recovery must fail on torn journal");
+        assert!(err.to_string().contains("parse submission journal"));
+        state.halt_new_exposure(format!("submission recovery failed: {err}"));
+        assert!(state.blocks_new_exposure(&pair()));
+        assert_eq!(client.placed.load(Ordering::SeqCst), 0);
+        let _ = std::fs::remove_file(&path);
+    }
 }

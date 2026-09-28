@@ -1,6 +1,6 @@
 # Prop Trading Productionization and Research Architecture Plan
 
-**Status:** Increments 0–5 are implemented. `master` `f9d1299` applies strategy enablement on cold start with no snapshot; `just gate-5r` passed and a clean Paper+Shadow start was enabled with no snapshot; persisted `enabled=false` still wins after `RequestRestart`. UI guide is `2636d5e`. 5B is **not started**; stop for review of this record. Placeholder Bybit sample credentials remain an environment limitation, not a local-gate defect.  
+**Status:** Increments 0–5 and the local 5R/5A acceptance gates are complete for the limited 5B preflight. Backend `f9d1299` and UI `d8c7b271` have reported package/graph checks, Paper+Shadow runtime and browser evidence; source review supports the fixes. 5B may start as an existing Spot/levels K-paper connectivity smoke test. It does not qualify Candidate #2 futures execution or Bybit demo; GitHub Actions remains disabled and Bybit sample credentials are placeholders.  
 **Date:** 2026-09-28  
 **Repository:** `trading_system`  
 **Audience:** Cursor / implementation agent / repository owner  
@@ -2019,8 +2019,8 @@ This document is the authority for **the Candidate #2 research/runtime separatio
 | Increment | Repositories and guide |
 | --- | --- |
 | 0–5 | `trading_system`: functionally implemented on current master; check the status table in section 67 |
-| 5R (cold-start enablement recorded locally; review before 5B) | `trading_system` `f9d1299`; `just gate-5r` rerun; clean Paper+Shadow start enabled, persist-disable still wins |
-| 5A (affected browser rechecked) | UI `2636d5e` against that Paper+Shadow runner; Envoy first-update / stale / reconnect / disabled Enable Strategy / orders 0 |
+| 5R (accepted locally for 5B) | `trading_system` `f9d1299`; focused gate, graph, Shadow shutdown/restart, clean start and frozen parity reported |
+| 5A (accepted locally for 5B) | UI `d8c7b271` / guide `2636d5e`; Envoy first-update, stale, reconnect, disabled controls and Shadow order display reported |
 | 5B | [`k-paper` integration guide](https://github.com/Kolzodev712/k-paper/blob/master/docs/PROP_TRADING_INTEGRATION_GUIDE.md) for existing Spot connectivity only, with the UI on the same runner |
 | 6–7 | `trading_system` recovery/futures logic and K-paper protocol/futures support; change producer and adapter together |
 | 8–9 | `trading_system` risk/ledger and UI controls/economic display; sync the proto and generated UI client |
@@ -2029,7 +2029,7 @@ This document is the authority for **the Candidate #2 research/runtime separatio
 
 Check out the relevant repositories with write access before starting a cross-repo increment. Record starting and ending SHAs for each; pin matching revisions and run both producer/consumer checks before marking the increment complete. After 5R, use the Candidate #2 app binary for Shadow/Paper/demo rather than assuming the default runner binary can instantiate it. Implement backend state and the source proto first, then sync the UI proto and generated code. When a precise simulator accounting rule, API shape or security mechanism is not fixed here, document the bounded choice and its acceptance tests within that increment rather than silently guessing or postponing the safety gate.
 
-`trading_system` Increments 0–5, 5R code and 5A backend/UI corrections are implemented (see section 67). **Stop for review before 5B.** This plan does not authorize implementation of a future portfolio allocator, strategy registry/graveyard, broader instrument/venue expansion, a self-hosting operations program, Candidate #3's trading rule or mainnet deployment. Those need separate decisions/specifications when the evidence and need exist.
+`trading_system` Increments 0–5 and local 5R/5A gates are complete for the bounded 5B preflight (see section 67). **Run 5B next and stop for review before Increment 6.** This plan does not authorize implementation of a future portfolio allocator, strategy registry/graveyard, broader instrument/venue expansion, a self-hosting operations program, Candidate #3's trading rule or mainnet deployment. Those need separate decisions/specifications when the evidence and need exist.
 
 ---
 
@@ -2056,7 +2056,7 @@ Acceptance:
 
 # 56. Increment 1 — extract strategy_core
 
-**Status:** Functional extraction done in `4b51b207662c888a35f5935712d15c63504727a3`; reverse live-crate dependency edges were removed in `a641304`, pending 5R verification.
+**Status:** Functional extraction done in `4b51b207662c888a35f5935712d15c63504727a3`; reverse live-crate dependency edges were removed in `a641304` and locally verified for 5B in the 5R record at `f9d1299`.
 
 Create `strategy_core`.
 
@@ -2177,7 +2177,7 @@ Stop and report.
 
 # 60. Increment 5 — Shadow mode
 
-**Status:** Shadow behavior done in `fbf7bfad535474e907d11c767795fa8f686b0651`. Candidate #2 is registered by the composition app in Shadow only; `ShadowGuardClient` and the executor skip mechanically prevent exchange order calls; sample config is `sample_config/bybit-shadow/`. 5R moved this behavior behind the composition binary; runtime parity remains to be verified.
+**Status:** Shadow behavior done in `fbf7bfad535474e907d11c767795fa8f686b0651`. Candidate #2 is registered by the composition app in Shadow only; `ShadowGuardClient` and the executor skip mechanically prevent exchange order calls; sample config is `sample_config/bybit-shadow/`. 5R moved this behavior behind the composition binary; local Paper+Shadow runtime and restart evidence is recorded at `f9d1299`. Authenticated Bybit integration remains a later gate.
 
 Implement:
 
@@ -2201,9 +2201,9 @@ Acceptance:
 
 Stop and report.
 
-## Increment 5R — remove live/research coupling (verification gate still open)
+## Increment 5R — remove live/research coupling (local acceptance complete for 5B)
 
-**Code status:** Implemented in `a64130422f8aee3e25d6d9b1a089c7015c5964b6`; `62959135d13e43369229be1f8cc78d7198191f2c` added package test/graph recipes and adapter tests; `9a0dd97d7a67595a793002ac1d40f9645c759828` wires a local `just gate-5r` and strengthens the adapter/guard assertions. Source review supports the one-process app, removal of live/research Cargo edges and Exchange refusal. Acceptance still requires recorded command results and runtime behavioral evidence below.
+**Code status:** Implemented in `a64130422f8aee3e25d6d9b1a089c7015c5964b6`; `62959135d13e43369229be1f8cc78d7198191f2c` added package test/graph recipes and adapter tests; `9a0dd97d7a67595a793002ac1d40f9645c759828` wires a local `just gate-5r` and strengthens the adapter/guard assertions. Source review supports the one-process app, removal of live/research Cargo edges and Exchange refusal. Later recorded command, graph and Paper+Shadow runtime results below complete the local gate for 5B.
 
 **Starting point:** `master` `44f3b02a72f8a60ec41ed33e0ad8516651dec8af` recorded Increments 0–5. Record the actual starting SHA when work begins; do not overwrite a newer commit. Do not redo the frozen research or Shadow logic. This is a boundary correction with parity gates, not permission for Exchange execution.
 
@@ -2248,7 +2248,7 @@ The 30s forced-exit cause: `TradingGrpcServer` previously called `Server::serve`
 
 Dummy adapter/open-order unit tests are still not this evidence. Bybit sample placeholder keys are not a code defect. Stop for review before 5B.
 
-**Review of `5a0c8c4` after push (2026-09-28):** The shutdown, saved-disable and gRPC teardown changes are present in the pushed code. A new cold-start regression prevents 5R acceptance: `StrategyManager::add_strategy` initializes entries as disabled; `strategy_runner_with` calls `apply_strategy_enablement` only inside `if let Some(snap) = RuntimeSnapshot::load(SNAPSHOT_FILE)?`. When no snapshot exists, the helper never runs, so `initially_enabled=true` is ignored. The new `initially_enabled_applies_when_snapshot_absent` unit test calls the helper directly and cannot detect this wiring error. Invoke the helper once regardless of snapshot presence, then conditionally restore global control only for a matching snapshot. Verify the app starts Candidate #2 enabled from a clean data directory with no snapshot and that the persisted-disable restart still wins. Repeat the focused gate and clean Paper+Shadow runtime check. Do not mark 5R complete or begin 5B before that result.
+**Correction to the prior review of `5a0c8c4` (2026-09-28):** The claimed cold-start regression was incorrect. I missed a construction-time `if config.initially_enabled { set_strategy_enabled(true) }` immediately after `add_strategy`, before the snapshot-present branch. A clean start was enabled in that revision. The later `f9d1299` refactor removes that earlier call and centralizes both cold-start and snapshot enablement in `load_and_apply_strategy_enablement`; its clean-start and persisted-disable checks establish the intended behavior. Completed-candle reconstruction is independent of the strategy enabled flag, so moving the enablement call after the initial candle poll does not skip model reconstruction. This correction supersedes the preceding claim.
 
 **Verification of cold-start enablement on `f9d1299` (2026-09-28):** Starting SHA `1f1868909a519101bd521773b43462e9edded60a`. `strategy_runner_with` now always calls `load_and_apply_strategy_enablement` (load snapshot if present, then `apply_strategy_enablement`). Global trading restore remains gated on a `mode == "strategies"` snapshot. Construction-time `set_strategy_enabled(true)` was removed so this is the sole startup path. Regression `clean_start_load_path_honors_initially_enabled_without_snapshot` exercises that helper with a missing file; the persist-disable test restores through the same helper.
 
@@ -2256,9 +2256,11 @@ Dummy adapter/open-order unit tests are still not this evidence. Bybit sample pl
 
 Paper+Shadow runtime (`btc_price_ma_app --mode strategies` against k-paper `:19999`, Candidate #2 strategies `initially_enabled=true`, `execution_mode=shadow`): after deleting `config/cex/runtime-snapshot.json`, `grpc_ctl status` showed `BTCPriceMALongFlatV1:BTC/USDT enabled=true` with no snapshot file and no `Restored runtime snapshot` log. `GET :19999/open_orders` → `[]`. `k-paper: sent place_order` = 0. Executor `would-be` > 0 while enabled. After disable + `RequestRestart`, snapshot `enabled=false`; shutdown skipped cancel_all, forbidden 0, not the 30s timeout. Relaunch logged `Restored runtime snapshot (1 strategies, trading=false)` and `grpc_ctl status` `enabled=false`. Dummy adapter tests are still not this evidence. Stop for review before 5B.
 
+**5R acceptance review after `f9d1299` (2026-09-28):** The reported `just gate-5r` results and Cargo graphs, unchanged frozen decision hashes, an instrumented Shadow shutdown/restart path, an independent K-paper open-order read, a clean Candidate #2 start with `initially_enabled=true`, and a saved-disable restart satisfy the local 5R gate for moving to the bounded 5B Spot/levels preflight. The fixes are visible in source; the command and browser outcomes are Cursor's recorded local results, not an independently rerun or remotely enforced CI transcript. The Bybit sample's placeholder keys do not block local 5B. The prior adapter/dummy-client tests alone would not have sufficed; the reported runner and Paper session supply the runtime evidence. Keep Exchange execution and Bybit demo gated by later increments.
+
 ## Increment 5A — Trading System UI Shadow observability
 
-**Status:** The timestamp/UNKNOWN fail-open fix is in UI `d8c7b271` (guide `2636d5e`). Affected Envoy browser checks were rerun against the Paper+Shadow runner after the backend shutdown/restart fixes. 5B is not started.
+**Status:** Accepted locally for 5B. The timestamp/UNKNOWN fail-open fix is in UI `d8c7b271` (guide `2636d5e`); Envoy browser checks against the matching Paper+Shadow runner cover first update, stale/disconnected state, reconnect, persisted disable and observed orders. 5B is ready but not started.
 
 After the runner's authoritative status/proto fields exist, update the separate `trading-system-ui` repository and generated client. Show Candidate #2's **rejected-as-alpha / operational-baseline** distinction, last completed candle, signal/target, Shadow execution state, venue/environment, pair readiness and reason, freshness and errors. Keep model status visible when execution is paused. Connect to the actual runner; the old Rust TUI is not the deliverable.
 
@@ -2282,7 +2284,7 @@ Acceptance: proto copies and generated types match; UI unit/build checks pass; a
 
 ## Increment 5B — existing Paper connectivity preflight
 
-**Status:** Not started. Stop for review of the cold-start enablement record before beginning.
+**Status:** Ready to begin; not started. Run only the existing Spot/levels K-paper connectivity preflight and stop before Increment 6.
 
 Run the existing `k-paper` server and `trading_system` Paper adapters with the documented Spot/levels configuration: market WS, trading WS, REST balance/open-order/trade reconciliation and asset rules. Connect the browser UI to the same runner and verify venue labeling. Record exact working endpoints and identify missing Candidate #2 futures operations and scenario controls.
 
@@ -2458,12 +2460,12 @@ The latest recorded SHAs are `trading_system` `f9d1299e2ad804e482bc1ba928a535f39
 | Increment | Status | Gate |
 | --- | --- | --- |
 | 0–5 | Done | Prior SHAs and audit evidence above |
-| 5R | Cold-start enablement recorded locally | Review this record; dummy adapter tests are not this evidence; Bybit sample keys are not a local-gate defect |
-| 5A | Affected Envoy status rechecked after backend fixes | Paper+Shadow live/stale/reconnect, persisted disable, orders 0 |
-| 5B | Not started | Begin only after review acceptance |
+| 5R | Accepted locally for 5B | Dependency boundary, focused packages, frozen parity and Paper+Shadow runtime/restart evidence reported; no remote CI claim |
+| 5A | Accepted locally for 5B | Matching browser/runner Paper+Shadow live/stale/reconnect, persisted disable and observed order state reported |
+| 5B | Ready, not started | Existing Spot/levels K-paper and browser connectivity only; report and stop before 6 |
 | 6+ | Not started | Follow section 54 after prior gates |
 
-Cursor: stop here for review. Do not begin 5B.
+Cursor: begin Increment 5B only. Pin backend/UI/K-paper SHAs, run the existing Spot/levels Paper sample through market and trading WebSockets, REST snapshots/reconciliation and the browser's PAPER LOCAL + EXCHANGE label. Record commands, observed state and failures. This is a connectivity smoke test, not Candidate #2 futures qualification. Stop and report before Increment 6.
 
 ---
 

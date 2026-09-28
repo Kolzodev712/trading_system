@@ -21,7 +21,6 @@ use trading_core::{
     },
 };
 
-pub const RESEARCH_DISPOSITION_REJECTED_ALPHA: &str = "REJECTED AS VALIDATED ALPHA";
 pub const OPERATIONAL_ROLE_SHADOW: &str = "SHADOW";
 pub const OPERATIONAL_ROLE_BASELINE: &str = "BASELINE";
 

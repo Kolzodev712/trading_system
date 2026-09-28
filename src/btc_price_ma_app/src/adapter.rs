@@ -1,12 +1,8 @@
 //! Live adapter for BTCPriceMALongFlatV1.
 //!
 //! Owns runtime lifecycle only. Signal math stays in `strategy_core`.
-//! Not registered by the live strategy factory.
+//! Injected by `btc_price_ma_app`; `trading_engine` does not depend on this crate.
 
-use super::prop_hold::FLAT_EPS;
-use crate::cex::intent::{StrategyContext, StrategyIntent};
-use crate::cex::state::Strategy;
-use crate::cex::strategies::strategy_manager::StrategyManager;
 use async_trait::async_trait;
 use rust_decimal::Decimal;
 use std::collections::VecDeque;
@@ -22,6 +18,14 @@ use trading_core::{
         CompletedCandle,
     },
 };
+use trading_engine::cex::intent::{StrategyContext, StrategyIntent};
+use trading_engine::cex::shadow::StrategyRuntimeSnapshot;
+use trading_engine::cex::state::Strategy;
+use trading_engine::strategies::strategy_manager::StrategyManager;
+
+/// Qty at or below this is treated as flat (same epsilon as PropHold / TSM).
+const FLAT_EPS: Decimal = Decimal::from_parts(1, 0, 0, false, 6);
+pub const RESEARCH_DISPOSITION_REJECTED_ALPHA: &str = "REJECTED AS VALIDATED ALPHA";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Readiness {
@@ -178,8 +182,7 @@ impl BtcPriceMaLongFlatV1 {
         self.model_reconstructed = true;
     }
 
-    pub fn build_snapshot(&self, now_ms: u64) -> crate::cex::shadow::StrategyRuntimeSnapshot {
-        use crate::cex::shadow::{StrategyRuntimeSnapshot, RESEARCH_DISPOSITION_REJECTED_ALPHA};
+    pub fn build_snapshot(&self, now_ms: u64) -> StrategyRuntimeSnapshot {
         let decision = self.last_decision.as_ref();
         let last = self.last_processed.as_ref();
         let freshness = self.entry_freshness(now_ms);
@@ -454,7 +457,7 @@ impl Strategy for BtcPriceMaLongFlatV1 {
         self.mark_model_reconstructed();
     }
 
-    fn runtime_snapshot(&self, now_ms: u64) -> Option<crate::cex::shadow::StrategyRuntimeSnapshot> {
+    fn runtime_snapshot(&self, now_ms: u64) -> Option<StrategyRuntimeSnapshot> {
         Some(self.build_snapshot(now_ms))
     }
 }
@@ -462,11 +465,11 @@ impl Strategy for BtcPriceMaLongFlatV1 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cex::completed_candles::SequentialCandleIngest;
-    use crate::cex::state::TradingState;
     use serde::Deserialize;
     use strategy_core::btc_price_ma_long_flat_v1::position_qty;
     use trading_core::types::{common::InstrumentType, market_data::Orderbook, DAILY_PERIOD_MS};
+    use trading_engine::cex::completed_candles::SequentialCandleIngest;
+    use trading_engine::cex::state::TradingState;
 
     fn pair() -> Pair {
         Pair::new("BTC", "USDT")

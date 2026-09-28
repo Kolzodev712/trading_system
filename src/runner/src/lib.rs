@@ -1,6 +1,7 @@
 pub mod cex;
 pub mod config;
 pub mod dex;
+pub mod launch;
 pub mod platform;
 
 pub use gateway::grpc;
@@ -23,6 +24,7 @@ use trading_core::venue::cex::traits::TradingClient;
 use trading_core::venue::cex::types::exchange::OrderRequest;
 use trading_core::venue::VenueMode;
 use trading_engine::state::manager::TradingStateManager;
+use trading_engine::strategies::ExtraStrategyFactory;
 
 /// Shared services needed for both modes
 pub struct SharedServices {
@@ -53,6 +55,7 @@ pub async fn run(
     config_paths: ResolvedModeConfig,
     mongo_client: Option<Arc<MongoClient>>,
     tracing_handles: Option<trading_trace::ExporterHandles>,
+    extra_factory: Option<Arc<dyn ExtraStrategyFactory>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     bot_config.validate()?;
     bot_config.validate_for_runner(&mode)?;
@@ -275,16 +278,18 @@ pub async fn run(
 
     match mode.as_str() {
         "strategies" => {
-            cex::strategy_runner(
+            cex::strategy_runner_with(
                 bot_config,
                 config_paths
                     .strategies
                     .unwrap_or_else(|| "config/cex/strategies.json".to_string()),
                 services,
+                extra_factory,
             )
             .await?;
         }
         "levels" => {
+            let _ = extra_factory;
             let level_persistence =
                 platform::init::create_level_persistence(mongo_client.as_ref(), &bot_config);
             cex::level_runner(
@@ -298,6 +303,7 @@ pub async fn run(
             .await?;
         }
         "dex" => {
+            let _ = extra_factory;
             if !matches!(services.venue.mode(), VenueMode::Dex | VenueMode::Both) {
                 return Err("dex mode requires venue.mode \"dex\" or \"both\"".into());
             }
@@ -311,6 +317,7 @@ pub async fn run(
             .await?;
         }
         "dex-strategies" => {
+            let _ = extra_factory;
             if !matches!(services.venue.mode(), VenueMode::Dex | VenueMode::Both) {
                 return Err("dex-strategies mode requires venue.mode \"dex\" or \"both\"".into());
             }
@@ -324,6 +331,7 @@ pub async fn run(
             .await?;
         }
         _ => {
+            let _ = extra_factory;
             return Err(format!(
                 "Unknown mode: {mode}. Use 'levels', 'strategies', 'dex', or 'dex-strategies'"
             )
@@ -361,9 +369,10 @@ impl SharedServices {
 
 // --- Backward-compatible re-exports (prefer `cex::`, `dex::`, `platform::`, `config::`) ---
 
-pub use cex::{level_runner, strategy_runner};
+pub use cex::{level_runner, strategy_runner, strategy_runner_with};
 pub use config::mode_config;
 pub use dex::{run as dex_runner, run_levels, run_strategies, DexRunConfig};
+pub use launch::launch;
 pub use platform::build_metrics_provider;
 pub use platform::commands;
 pub use platform::event_bridge;

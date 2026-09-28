@@ -2,11 +2,12 @@
 //!
 //! The latest-N helper always uses the public mainnet host. Ranged downloads
 //! for DonchianDailyV1 choose the host explicitly. Both parse the response
-//! with [`trading_engine::cex::bybit_public_klines`].
+//! with the runner-local public kline parser.
 
 use trading_core::types::common::Pair;
-use trading_engine::cex::bybit_public_klines::parse_bybit_public_kline_page;
 use trading_engine::cex::strategies::replay::Candle;
+
+use super::bybit_public_klines::parse_bybit_public_kline_page;
 
 pub async fn fetch_bybit_klines(
     pair: &Pair,

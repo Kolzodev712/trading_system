@@ -7,12 +7,10 @@ pub mod strategy_manager;
 
 pub use crate::cex::intent::{StrategyContext, StrategyIntent};
 pub use executor::StrategyExecutor;
-pub use factory::{build_strategy, StrategyFactoryArgs};
-pub use manager_wrapper::StrategyManagerWrapper;
-pub use rust_strategies::{
-    btc_price_ma_experiment, btc_price_ma_gates, btc_price_ma_offline, donchian_daily_aux,
-    donchian_daily_backtest, donchian_daily_offline, position_qty, BtcPriceMaLongFlatV1,
-    BtcPriceMaLongFlatV1Config, BuyLowSellHigh, Donchian, EntryFreshness, PropHold, Readiness,
-    RecoveryState, RuntimeTarget, DIAGNOSTIC_LOOKBACKS, PRIMARY_LOOKBACK,
+pub use factory::{
+    build_strategy, build_strategy_composed, ExtraStrategyFactory, StrategyFactoryArgs,
+    UNSUPPORTED_CANDIDATE_2,
 };
+pub use manager_wrapper::StrategyManagerWrapper;
+pub use rust_strategies::{BuyLowSellHigh, Donchian, PropHold};
 pub use strategy_manager::StrategyManager;

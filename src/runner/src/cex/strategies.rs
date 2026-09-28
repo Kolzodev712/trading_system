@@ -19,7 +19,8 @@ use trading_engine::levels::LevelManager;
 use trading_engine::risk::RiskManager;
 use trading_engine::state::Strategy;
 use trading_engine::strategies::{
-    build_strategy, StrategyExecutor, StrategyFactoryArgs, StrategyManager, StrategyManagerWrapper,
+    build_strategy_composed, ExtraStrategyFactory, StrategyExecutor, StrategyFactoryArgs,
+    StrategyManager, StrategyManagerWrapper,
 };
 use trading_networking::commands::{CommandDispatcher, MpscCommandRouter};
 
@@ -162,6 +163,16 @@ pub async fn strategy_runner(
     strategies_config_path: String,
     services: SharedServices,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    strategy_runner_with(bot_config, strategies_config_path, services, None).await
+}
+
+/// Run strategies mode with an optional in-process extra factory.
+pub async fn strategy_runner_with(
+    bot_config: BotConfig,
+    strategies_config_path: String,
+    services: SharedServices,
+    extra_factory: Option<Arc<dyn ExtraStrategyFactory>>,
+) -> Result<(), Box<dyn std::error::Error>> {
     info!("=== Running in STRATEGIES mode ===");
 
     let strategies_config = StrategiesConfig::load_from_file(&strategies_config_path)?;
@@ -247,29 +258,32 @@ pub async fn strategy_runner(
             .min_notional
             .unwrap_or_else(|| rust_decimal::Decimal::new(5, 0));
 
-        let strategy = build_strategy(StrategyFactoryArgs {
-            strategy_type: config.strategy_type.to_string(),
-            symbol: pair.clone(),
-            base_position_size: config.position_size,
-            max_position: config.max_position,
-            base_buy_threshold: config.buy_threshold_percent,
-            base_sell_threshold: config.sell_threshold_percent,
-            stop_loss_percent: config.stop_loss_percent,
-            take_profit_percent: config.take_profit_percent,
-            max_active_orders: config.max_active_orders,
-            price_history_size: config.price_history_size,
-            min_price_history: config.min_price_history,
-            asset_service: services.asset_service.clone(),
-            exchange: bot_config.exchange_engine.exchange.clone(),
-            config_min_order_size: min_order_size,
-            config_step_size: step_size,
-            config_tick_size: tick_size,
-            config_min_notional: min_notional,
-            execution_mode,
-            instrument_type: instrument_type.clone(),
-            max_entry_age_secs: config.max_entry_age_secs,
-            lookback: config.lookback,
-        })?;
+        let strategy = build_strategy_composed(
+            StrategyFactoryArgs {
+                strategy_type: config.strategy_type.to_string(),
+                symbol: pair.clone(),
+                base_position_size: config.position_size,
+                max_position: config.max_position,
+                base_buy_threshold: config.buy_threshold_percent,
+                base_sell_threshold: config.sell_threshold_percent,
+                stop_loss_percent: config.stop_loss_percent,
+                take_profit_percent: config.take_profit_percent,
+                max_active_orders: config.max_active_orders,
+                price_history_size: config.price_history_size,
+                min_price_history: config.min_price_history,
+                asset_service: services.asset_service.clone(),
+                exchange: bot_config.exchange_engine.exchange.clone(),
+                config_min_order_size: min_order_size,
+                config_step_size: step_size,
+                config_tick_size: tick_size,
+                config_min_notional: min_notional,
+                execution_mode,
+                instrument_type: instrument_type.clone(),
+                max_entry_age_secs: config.max_entry_age_secs,
+                lookback: config.lookback,
+            },
+            extra_factory.as_deref(),
+        )?;
 
         if matches!(config.strategy_type.as_str(), "Donchian" | "donchian") {
             match crate::cex::fetch_bybit_klines(pair, "D", 60).await {
@@ -305,16 +319,11 @@ pub async fn strategy_runner(
         strategy_manager
             .add_strategy(strategy, strategy_id.clone(), pair.clone())
             .await;
-        if execution_mode == trading_core::types::ExecutionMode::Shadow
-            && matches!(
-                config.strategy_type.as_str(),
-                "BTCPriceMALongFlatV1" | "btc_price_ma_long_flat_v1"
-            )
-        {
+        if config.initially_enabled {
             strategy_manager
                 .set_strategy_enabled(&strategy_id, true)
                 .await;
-            info!("Shadow: enabled {strategy_id}");
+            info!("Enabled {strategy_id} from initially_enabled");
         }
         strategy_caps.insert(strategy_id, config.max_position);
         all_symbols.push(pair.clone());
@@ -724,16 +733,12 @@ pub async fn strategy_runner(
         }
     }
 
-    if execution_mode == trading_core::types::ExecutionMode::Shadow {
-        let manager = strategy_manager_arc.read().await;
-        for (name, pair, _) in &strategy_infos {
-            if matches!(
-                name.as_str(),
-                "BTCPriceMALongFlatV1" | "btc_price_ma_long_flat_v1"
-            ) {
-                let strategy_id = StrategyManager::make_strategy_id(name, pair);
-                manager.set_strategy_enabled(&strategy_id, true).await;
-            }
+    for config in &strategy_configs {
+        if config.initially_enabled {
+            let manager = strategy_manager_arc.read().await;
+            let strategy_id =
+                StrategyManager::make_strategy_id(config.strategy_type.as_str(), &config.symbol);
+            manager.set_strategy_enabled(&strategy_id, true).await;
         }
     }
 

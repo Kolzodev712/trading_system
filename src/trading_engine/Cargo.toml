@@ -7,8 +7,6 @@ edition = "2021"
 
 [dependencies]
 trading_core = { path = "../../libs/trading_core" }
-strategy_core = { path = "../../libs/strategy_core" }
-research_engine = { path = "../../research/research_engine" }
 indicator_engine = { path = "../indicator_engine" }
 exchange_engine = { path = "../exchange_engine" }
 dex_engine = { path = "../dex_engine" }

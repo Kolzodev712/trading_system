@@ -17,6 +17,7 @@ members = [
     "src/dex_engine",
     "src/gateway",
     "src/trading_engine",
+    "src/btc_price_ma_app",
     "src/market_data_engine",
     "src/indicator_engine",
     "src/strategy_engine",

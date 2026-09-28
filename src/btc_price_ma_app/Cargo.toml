@@ -1,0 +1,18 @@
+[package]
+name = "btc_price_ma_app"
+version = "0.1.0"
+edition = "2021"
+description = "Candidate #2 composition app: injects BTCPriceMALongFlatV1 into the generic runner in-process."
+default-run = "btc_price_ma_app"
+
+[dependencies]
+strategy_core = { path = "../../libs/strategy_core" }
+trading_core = { path = "../../libs/trading_core" }
+trading_engine = { path = "../trading_engine" }
+runner = { path = "../runner" }
+async-trait = { workspace = true }
+rust_decimal = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }

@@ -9,7 +9,6 @@ trading_core = { path = "../../libs/trading_core" }
 trading_trace = { path = "../../libs/trading_trace", features = ["full"] }
 trading_networking = { path = "../../libs/trading_networking", features = ["zenoh"] }
 trading_engine = { path = "../trading_engine" }
-research_cli = { path = "../../research/research_cli" }
 exchange_engine = { path = "../exchange_engine" }
 dex_engine = { path = "../dex_engine" }
 market_data_engine = { path = "../market_data_engine" }
@@ -78,14 +77,6 @@ path = "src/bin/test_runner.rs"
 [[bin]]
 name = "prop_replay"
 path = "src/bin/prop_replay.rs"
-
-[[bin]]
-name = "donchian_daily_replay"
-path = "src/bin/donchian_daily_replay.rs"
-
-[[bin]]
-name = "btc_price_ma_experiment"
-path = "src/bin/btc_price_ma_experiment.rs"
 
 [features]
 default = []

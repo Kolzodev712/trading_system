@@ -34,8 +34,6 @@ pub struct StrategyManager {
     strategy_pairs: Vec<Pair>,
     /// Index: Maps trading pair to strategy indices (for O(1) lookup)
     pair_to_indices: HashMap<Pair, Vec<usize>>,
-    /// Global trading control - if disabled, all strategies are disabled regardless of individual state
-    trading_control: Option<Arc<tokio::sync::RwLock<bool>>>,
     instrument_type: InstrumentType,
 }
 
@@ -47,15 +45,8 @@ impl StrategyManager {
             strategy_ids: Vec::new(),
             strategy_pairs: Vec::new(),
             pair_to_indices: HashMap::new(),
-            trading_control: None,
             instrument_type: InstrumentType::Spot,
         }
-    }
-
-    /// Set global trading control (hierarchical control)
-    pub fn with_trading_control(mut self, trading_control: Arc<tokio::sync::RwLock<bool>>) -> Self {
-        self.trading_control = Some(trading_control);
-        self
     }
 
     pub fn with_instrument_type(mut self, instrument_type: InstrumentType) -> Self {
@@ -120,25 +111,6 @@ impl StrategyManager {
                 "[StrategyManager] on_orderbook called for {}",
                 orderbook.pair
             );
-        }
-
-        // Check global trading control first - if disabled, all strategies are disabled
-        if let Some(ref trading_control) = self.trading_control {
-            let enabled = *trading_control.read().await;
-            if should_log_entry {
-                info!(
-                    "[StrategyManager] Global trading control check: enabled={}",
-                    enabled
-                );
-            }
-            if !enabled {
-                if should_log_entry {
-                    info!("[StrategyManager] Global trading disabled, returning empty");
-                }
-                return Ok(Vec::new()); // Global trading disabled, no orders
-            }
-        } else if should_log_entry {
-            info!("[StrategyManager] No trading control set, proceeding");
         }
 
         let mut requests = Vec::new();
@@ -278,6 +250,22 @@ impl StrategyManager {
             strat.on_completed_candle(candle).await?;
         }
         Ok(())
+    }
+
+    pub async fn finish_model_reconstruction(&self) {
+        for strategy in &self.strategies {
+            strategy.write().await.finish_model_reconstruction();
+        }
+    }
+
+    pub async fn runtime_snapshot(
+        &self,
+        strategy_id: &str,
+        now_ms: u64,
+    ) -> Option<crate::cex::shadow::StrategyRuntimeSnapshot> {
+        let idx = self.strategy_ids.iter().position(|id| id == strategy_id)?;
+        let strategy = self.strategies.get(idx)?;
+        strategy.read().await.runtime_snapshot(now_ms)
     }
 
     pub async fn on_execution_report(&self, order: &Order) -> Result<(), EngineError> {

@@ -2,10 +2,12 @@ pub mod asset;
 pub mod candle;
 pub mod common;
 pub mod exchange;
+pub mod execution;
 pub mod futures;
 pub mod market_data;
 
 pub use candle::{CompletedCandle, DAILY_PERIOD_MS};
+pub use execution::ExecutionMode;
 
 // Re-export commonly used types from common
 pub use common::*;

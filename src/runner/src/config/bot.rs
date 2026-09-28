@@ -47,6 +47,14 @@ pub struct BotConfig {
     /// Channel configuration (buffer sizes for internal communication)
     #[serde(default)]
     pub channels: ChannelConfig,
+
+    /// Shadow vs exchange order permission. Default exchange keeps existing bots unchanged.
+    #[serde(default)]
+    pub execution_mode: trading_core::types::ExecutionMode,
+
+    /// Append-only shadow journal. Runtime data; not committed.
+    #[serde(default = "default_shadow_journal_path")]
+    pub shadow_journal_path: String,
 }
 
 /// Venue selection for this process.
@@ -58,6 +66,10 @@ pub struct VenueConfig {
 
 fn default_venue_mode_cex() -> VenueMode {
     VenueMode::Cex
+}
+
+fn default_shadow_journal_path() -> String {
+    "runtime-data/shadow-journal.jsonl".to_string()
 }
 
 impl Default for VenueConfig {
@@ -301,6 +313,14 @@ pub struct StrategyConfig {
     /// Minimum notional value (price * quantity) in quote currency
     /// (e.g., "5.0" for BTC/USDC on Binance means minimum 5 USDC)
     pub min_notional: Option<Decimal>,
+
+    /// Candidate #2 lookback override. Default is the frozen primary N=28.
+    #[serde(default)]
+    pub lookback: Option<usize>,
+
+    /// Fresh-entry window in seconds. Required for a flat account to enter.
+    #[serde(default)]
+    pub max_entry_age_secs: Option<u64>,
 }
 
 impl StrategiesConfig {
@@ -600,5 +620,28 @@ mod config_smoke_tests {
         let cfg = BotConfig::load_from_file(path.to_str().unwrap()).unwrap();
         cfg.validate().unwrap();
         cfg.validate_for_runner("dex").unwrap();
+    }
+
+    #[test]
+    fn bot_bybit_shadow_sample_is_shadow_mode() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../sample_config/bybit-shadow/bot.json");
+        let cfg = BotConfig::load_from_file(path.to_str().unwrap()).unwrap();
+        cfg.validate().unwrap();
+        assert_eq!(
+            cfg.execution_mode,
+            trading_core::types::ExecutionMode::Shadow
+        );
+        let strategies = StrategiesConfig::load_from_file(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../sample_config/bybit-shadow/strategies.json")
+                .to_str()
+                .unwrap(),
+        )
+        .unwrap();
+        strategies.validate().unwrap();
+        let configs = strategies.as_vec();
+        assert_eq!(configs[0].strategy_type.as_str(), "BTCPriceMALongFlatV1");
+        assert_eq!(configs[0].lookback, Some(28));
     }
 }

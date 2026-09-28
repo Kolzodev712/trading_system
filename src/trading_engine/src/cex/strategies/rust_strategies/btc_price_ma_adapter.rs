@@ -11,7 +11,8 @@ use async_trait::async_trait;
 use rust_decimal::Decimal;
 use std::collections::VecDeque;
 use strategy_core::btc_price_ma_long_flat_v1::{
-    on_candle, Direction, ModelState, Step, PRIMARY_LOOKBACK, STRATEGY_NAME, STRATEGY_VERSION,
+    config_hash, on_candle, Direction, ModelState, Step, PRIMARY_LOOKBACK, STRATEGY_NAME,
+    STRATEGY_VERSION,
 };
 use trading_core::{
     error::EngineError,
@@ -175,6 +176,53 @@ impl BtcPriceMaLongFlatV1 {
     /// Marks model reconstruction complete. Does not grant exchange permission.
     pub fn mark_model_reconstructed(&mut self) {
         self.model_reconstructed = true;
+    }
+
+    pub fn build_snapshot(&self, now_ms: u64) -> crate::cex::shadow::StrategyRuntimeSnapshot {
+        use crate::cex::shadow::{StrategyRuntimeSnapshot, RESEARCH_DISPOSITION_REJECTED_ALPHA};
+        let decision = self.last_decision.as_ref();
+        let last = self.last_processed.as_ref();
+        let freshness = self.entry_freshness(now_ms);
+        let desired = match decision.map(|d| d.target) {
+            Some(RuntimeTarget::Quantity(qty)) => qty.to_string(),
+            Some(RuntimeTarget::NoChange) => self.model.requested_qty.to_string(),
+            Some(RuntimeTarget::NotReady) | None => "not_ready".to_string(),
+        };
+        StrategyRuntimeSnapshot {
+            strategy_id: self.strategy_id(),
+            strategy_version: STRATEGY_VERSION.to_string(),
+            config_hash: config_hash(self.lookback).unwrap_or_default(),
+            readiness: match self.readiness() {
+                Readiness::Ready => "ready".to_string(),
+                Readiness::NotReady => "not_ready".to_string(),
+            },
+            readiness_reason: decision
+                .map(|d| d.reason.clone())
+                .unwrap_or_else(|| "no completed candles".to_string()),
+            last_completed_start_ms: last.map(|c| c.start_time_ms),
+            last_completed_end_ms: last.map(|c| c.end_time_exclusive_ms),
+            last_close: last.map(|c| c.close),
+            geometric_mean: decision.and_then(|d| d.geometric_mean),
+            log_spread: decision.and_then(|d| d.log_spread),
+            model_direction: match self.model.direction {
+                Direction::Flat => "flat".to_string(),
+                Direction::Long => "long".to_string(),
+            },
+            previous_direction: decision
+                .map(|d| match d.previous_direction {
+                    Direction::Flat => "flat".to_string(),
+                    Direction::Long => "long".to_string(),
+                })
+                .unwrap_or_else(|| "flat".to_string()),
+            desired_target: desired,
+            fresh_entry_eligible: matches!(freshness, EntryFreshness::Fresh { .. }),
+            recovery: match self.last_recovery {
+                RecoveryState::Clear => "clear".to_string(),
+                RecoveryState::UnexpectedShort => "recovery_required".to_string(),
+            },
+            research_disposition: RESEARCH_DISPOSITION_REJECTED_ALPHA.to_string(),
+            model_reconstructed: self.model_reconstructed,
+        }
     }
 
     pub fn last_recovery(&self) -> RecoveryState {
@@ -400,6 +448,14 @@ impl Strategy for BtcPriceMaLongFlatV1 {
     async fn on_completed_candle(&mut self, candle: &CompletedCandle) -> Result<(), EngineError> {
         self.observe_completed_candle(candle)?;
         Ok(())
+    }
+
+    fn finish_model_reconstruction(&mut self) {
+        self.mark_model_reconstructed();
+    }
+
+    fn runtime_snapshot(&self, now_ms: u64) -> Option<crate::cex::shadow::StrategyRuntimeSnapshot> {
+        Some(self.build_snapshot(now_ms))
     }
 }
 

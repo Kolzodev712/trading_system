@@ -82,6 +82,7 @@ async fn test_strategy_monitoring_with_position() {
         dex_strategy_manager: None,
         dex_indicator_engine: None,
         strategy_caps: None,
+        execution_mode: trading_core::types::ExecutionMode::Exchange,
     };
 
     // Collect monitoring data
@@ -161,6 +162,7 @@ async fn test_strategy_monitoring_without_position() {
         dex_strategy_manager: None,
         dex_indicator_engine: None,
         strategy_caps: None,
+        execution_mode: trading_core::types::ExecutionMode::Exchange,
     };
 
     // Collect monitoring data
@@ -265,6 +267,7 @@ async fn test_strategy_monitoring_with_active_orders() {
         dex_strategy_manager: None,
         dex_indicator_engine: None,
         strategy_caps: None,
+        execution_mode: trading_core::types::ExecutionMode::Exchange,
     };
 
     // Collect monitoring data

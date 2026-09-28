@@ -112,14 +112,4 @@ impl TradingControlService {
             }
         }
     }
-
-    pub async fn get_trading_status(
-        &self,
-        _request: Request<trading_cli::GetTradingStatusRequest>,
-    ) -> Result<Response<trading_cli::GetTradingStatusResponse>, Status> {
-        let enabled = self.trading_control.is_enabled().await;
-        Ok(Response::new(trading_cli::GetTradingStatusResponse {
-            enabled,
-        }))
-    }
 }

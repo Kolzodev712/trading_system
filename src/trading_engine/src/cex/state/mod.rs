@@ -303,6 +303,15 @@ pub trait Strategy: Send + Sync {
         let _ = candle;
         Ok(())
     }
+
+    /// Bootstrap finished reconstructing model state. Default no-op.
+    fn finish_model_reconstruction(&mut self) {}
+
+    /// Operator-visible model snapshot. Default is none.
+    fn runtime_snapshot(&self, now_ms: u64) -> Option<crate::cex::shadow::StrategyRuntimeSnapshot> {
+        let _ = now_ms;
+        None
+    }
 }
 
 #[cfg(test)]

@@ -46,6 +46,9 @@ message GetTradingStatusRequest {}
 
 message GetTradingStatusResponse {
     bool enabled = 1;
+    string execution_mode = 2; // "shadow" | "exchange"
+    string venue = 3;          // e.g. BYBIT, PAPER
+    string environment = 4;    // e.g. MAINNET, DEMO, LOCAL
 }
 
 message ToggleStrategyRequest {
@@ -414,6 +417,26 @@ message StrategyStatus {
     string last_signal = 11;           // "Buy", "Sell", or "None"
     string signal_strength = 12;     // Signal strength percentage (if available)
     string max_position = 13;          // Live abs qty cap
+    string execution_mode = 14;
+    string readiness = 15;
+    string readiness_reason = 16;
+    int64 last_completed_candle_start_ms = 17;
+    int64 last_completed_candle_end_ms = 18;
+    string last_close = 19;
+    string geometric_mean = 20;
+    string log_spread = 21;
+    string model_direction = 22;
+    string desired_target = 23;
+    string filled_position = 24;
+    string working_qty = 25;
+    string reserved_qty = 26;
+    string effective_qty = 27;
+    bool fresh_entry_eligible = 28;
+    bool unresolved_submission = 29;
+    string research_disposition = 30;
+    string operational_role = 31;
+    string strategy_version = 32;
+    string config_hash = 33;
 }
 
 message Orderbook {

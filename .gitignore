@@ -5,6 +5,7 @@
 /src/exchange_engine/config/
 /src/market_data_engine/config/
 /config
+/runtime-data/
 /cli_debug.log
 __pycache__/
 *.pyc

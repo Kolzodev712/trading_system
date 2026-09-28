@@ -110,6 +110,52 @@ async fn flatten_open_positions(
     Ok(())
 }
 
+async fn append_shadow_decisions(
+    journal: &trading_engine::cex::shadow::ShadowJournal,
+    manager: &StrategyManager,
+    strategy_infos: &[(String, trading_core::types::common::Pair, usize)],
+    execution_mode: trading_core::types::ExecutionMode,
+    trading_state_manager: Option<&Arc<trading_engine::state::manager::TradingStateManager>>,
+    would_have_requested_orders: usize,
+) {
+    let now_ms = trading_engine::cex::shadow::now_ms();
+    let account = trading_state_manager.map(|tsm| tsm.get_state());
+    for (name, symbol, _) in strategy_infos {
+        let strategy_id = StrategyManager::make_strategy_id(name, symbol);
+        let Some(snapshot) = manager.runtime_snapshot(&strategy_id, now_ms).await else {
+            continue;
+        };
+        let (filled, working, reserved, effective) = if let Some(state) = &account {
+            let state = state.read().await;
+            (
+                state.position_qty(symbol),
+                state.working_qty(symbol),
+                state.reserved_submission_qty(symbol),
+                state.effective_position_qty(symbol),
+            )
+        } else {
+            (
+                rust_decimal::Decimal::ZERO,
+                rust_decimal::Decimal::ZERO,
+                rust_decimal::Decimal::ZERO,
+                rust_decimal::Decimal::ZERO,
+            )
+        };
+        let record = trading_engine::cex::shadow::record_from_snapshot(
+            &snapshot,
+            execution_mode,
+            filled,
+            working,
+            reserved,
+            effective,
+            would_have_requested_orders,
+        );
+        if let Err(err) = journal.append(&record) {
+            warn!("Shadow journal append failed: {err}");
+        }
+    }
+}
+
 /// Run strategies mode
 pub async fn strategy_runner(
     bot_config: BotConfig,
@@ -148,6 +194,19 @@ pub async fn strategy_runner(
 
     // Create StrategyManager and add all strategies
     // Validate that all strategy symbols match pairs from bot config
+    let execution_mode = bot_config.execution_mode;
+    let instrument_type = bot_config
+        .get_instrument_type()
+        .unwrap_or(trading_core::types::common::InstrumentType::Spot);
+    let trading_client = {
+        let raw = services.trading_client()?.clone();
+        if execution_mode == trading_core::types::ExecutionMode::Shadow {
+            trading_engine::cex::shadow::ShadowGuardClient::wrap(raw)
+        } else {
+            raw
+        }
+    };
+
     let mut strategy_manager = StrategyManager::new();
     let mut all_symbols = Vec::new();
     let mut strategy_infos = Vec::new(); // For gRPC monitoring
@@ -206,6 +265,10 @@ pub async fn strategy_runner(
             config_step_size: step_size,
             config_tick_size: tick_size,
             config_min_notional: min_notional,
+            execution_mode,
+            instrument_type: instrument_type.clone(),
+            max_entry_age_secs: config.max_entry_age_secs,
+            lookback: config.lookback,
         })?;
 
         if matches!(config.strategy_type.as_str(), "Donchian" | "donchian") {
@@ -242,6 +305,17 @@ pub async fn strategy_runner(
         strategy_manager
             .add_strategy(strategy, strategy_id.clone(), pair.clone())
             .await;
+        if execution_mode == trading_core::types::ExecutionMode::Shadow
+            && matches!(
+                config.strategy_type.as_str(),
+                "BTCPriceMALongFlatV1" | "btc_price_ma_long_flat_v1"
+            )
+        {
+            strategy_manager
+                .set_strategy_enabled(&strategy_id, true)
+                .await;
+            info!("Shadow: enabled {strategy_id}");
+        }
         strategy_caps.insert(strategy_id, config.max_position);
         all_symbols.push(pair.clone());
         strategy_infos.push((
@@ -267,16 +341,10 @@ pub async fn strategy_runner(
         .unwrap_or_else(|| rust_decimal::Decimal::new(5, 0));
 
     // Create TradingControl for enable/disable trading
-    let trading_control = Arc::new(TradingControl::new(services.trading_client()?.clone()));
-
-    let instrument_type = bot_config
-        .get_instrument_type()
-        .unwrap_or(trading_core::types::common::InstrumentType::Spot);
+    let trading_control = Arc::new(TradingControl::new(trading_client.clone()));
 
     // Wrap StrategyManager and set trading control for hierarchical control
-    let strategy_manager = strategy_manager
-        .with_trading_control(trading_control.enabled_flag().clone())
-        .with_instrument_type(instrument_type.clone());
+    let strategy_manager = strategy_manager.with_instrument_type(instrument_type.clone());
     let strategy_manager_arc = Arc::new(RwLock::new(strategy_manager));
     let strategy_wrapper = Arc::new(RwLock::new(StrategyManagerWrapper::new(
         strategy_manager_arc.clone(),
@@ -290,6 +358,13 @@ pub async fn strategy_runner(
         services.shutdown_manager.clone(),
     ));
 
+    let shadow_journal = if execution_mode == trading_core::types::ExecutionMode::Shadow {
+        Some(trading_engine::cex::shadow::ShadowJournal::new(
+            bot_config.shadow_journal_path.clone(),
+        ))
+    } else {
+        None
+    };
     {
         let mut daily_source = crate::cex::DailyCompletedCandleSource::new(
             bot_config.exchange_engine.exchange.clone(),
@@ -297,6 +372,18 @@ pub async fn strategy_runner(
         );
         let manager = strategy_manager_arc.read().await;
         daily_source.poll_pairs(&all_symbols, &manager).await;
+        manager.finish_model_reconstruction().await;
+        if let Some(journal) = &shadow_journal {
+            append_shadow_decisions(
+                journal,
+                &manager,
+                &strategy_infos,
+                execution_mode,
+                services.trading_state_manager.as_ref(),
+                0,
+            )
+            .await;
+        }
     }
 
     info!(
@@ -346,7 +433,7 @@ pub async fn strategy_runner(
             .trading_state_manager
             .clone()
             .ok_or("Trading state requires venue.mode \"cex\"")?,
-        services.trading_client()?.clone(),
+        trading_client.clone(),
         services.exchange_state_manager()?.clone(),
         services.market_data_state_manager.clone(),
         services.indicator_service.clone(),
@@ -357,6 +444,33 @@ pub async fn strategy_runner(
     .with_strategy_manager(strategy_manager_arc.clone())
     .with_instrument_type(instrument_type.clone())
     .with_exchange(format!("{:?}", bot_config.exchange_engine.exchange))
+    .with_execution_status(
+        execution_mode,
+        match bot_config.exchange_engine.exchange {
+            trading_core::types::common::Exchange::Bybit => "BYBIT",
+            trading_core::types::common::Exchange::Binance => "BINANCE",
+            trading_core::types::common::Exchange::Paper => "PAPER",
+            trading_core::types::common::Exchange::DeepBook => "DEEPBOOK",
+            trading_core::types::common::Exchange::Unsupported => "UNKNOWN",
+        }
+        .to_string(),
+        if matches!(
+            bot_config.exchange_engine.exchange,
+            trading_core::types::common::Exchange::Paper
+        ) {
+            "LOCAL".to_string()
+        } else if bot_config
+            .exchange_engine
+            .config
+            .get("testnet")
+            .and_then(|v| v.as_bool())
+            == Some(true)
+        {
+            "DEMO".to_string()
+        } else {
+            "MAINNET".to_string()
+        },
+    )
     .with_strategy_operator(operator)
     .with_strategy_caps(strategy_caps.clone());
 
@@ -396,7 +510,7 @@ pub async fn strategy_runner(
     // Pass all pairs to executor (no .first() - single source of truth)
     let executor = StrategyExecutor::new(
         strategy_wrapper.clone(),
-        services.trading_client()?.clone(),
+        trading_client.clone(),
         services.market_data_rx.resubscribe(),
         all_symbols.clone(),
         services
@@ -413,6 +527,7 @@ pub async fn strategy_runner(
         min_notional,
     )
     .with_trading_control(trading_control.enabled_flag())
+    .with_execution_mode(execution_mode)
     .with_strategy_manager(strategy_manager_arc.clone())
     .with_shared_strategy_caps(strategy_caps)
     .with_risk_manager(Arc::new(RiskManager::new(
@@ -457,6 +572,10 @@ pub async fn strategy_runner(
         bot_config.exchange_engine.exchange.clone(),
         instrument_type.clone(),
     );
+    let refresh_journal = shadow_journal.clone();
+    let refresh_infos = strategy_infos.clone();
+    let refresh_execution_mode = execution_mode;
+    let refresh_tsm = services.trading_state_manager.clone();
     let refresh_donchian = strategy_configs
         .iter()
         .any(|config| matches!(config.strategy_type.as_str(), "Donchian" | "donchian"));
@@ -471,7 +590,20 @@ pub async fn strategy_runner(
                         .unwrap_or(0);
                     {
                         let manager = refresh_manager.read().await;
-                        daily_source.poll_pairs(&refresh_pairs, &manager).await;
+                        let accepted = daily_source.poll_pairs(&refresh_pairs, &manager).await;
+                        if accepted > 0 {
+                            if let Some(journal) = &refresh_journal {
+                                append_shadow_decisions(
+                                    journal,
+                                    &manager,
+                                    &refresh_infos,
+                                    refresh_execution_mode,
+                                    refresh_tsm.as_ref(),
+                                    0,
+                                )
+                                .await;
+                            }
+                        }
                     }
                     if !refresh_donchian {
                         continue;
@@ -556,8 +688,12 @@ pub async fn strategy_runner(
     });
 
     if std::env::var("TRADING_FLATTEN").ok().as_deref() == Some("1") {
-        info!("TRADING_FLATTEN=1: closing open futures positions (reduce-only)");
-        flatten_open_positions(services.trading_client()?.clone()).await?;
+        if execution_mode == trading_core::types::ExecutionMode::Shadow {
+            warn!("TRADING_FLATTEN ignored in Shadow (no exchange order calls)");
+        } else {
+            info!("TRADING_FLATTEN=1: closing open futures positions (reduce-only)");
+            flatten_open_positions(trading_client.clone()).await?;
+        }
     }
 
     if let Some(snap) = RuntimeSnapshot::load(SNAPSHOT_FILE)? {
@@ -585,6 +721,19 @@ pub async fn strategy_runner(
                 snap.strategies.len(),
                 snap.global_trading
             );
+        }
+    }
+
+    if execution_mode == trading_core::types::ExecutionMode::Shadow {
+        let manager = strategy_manager_arc.read().await;
+        for (name, pair, _) in &strategy_infos {
+            if matches!(
+                name.as_str(),
+                "BTCPriceMALongFlatV1" | "btc_price_ma_long_flat_v1"
+            ) {
+                let strategy_id = StrategyManager::make_strategy_id(name, pair);
+                manager.set_strategy_enabled(&strategy_id, true).await;
+            }
         }
     }
 

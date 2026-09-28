@@ -4,6 +4,7 @@ pub use research_engine::{bybit_public_klines, bybit_public_market};
 pub mod completed_candles;
 pub mod intent;
 pub mod levels;
+pub mod shadow;
 pub mod state;
 pub mod strategies;
 

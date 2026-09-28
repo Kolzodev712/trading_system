@@ -17,6 +17,9 @@ pub struct PaperConfig {
     /// Instrument type (default Spot)
     #[serde(default)]
     pub instrument_type: InstrumentType,
+    /// Explicit linear leverage for Exchange futures. Required; no silent default.
+    #[serde(default)]
+    pub leverage: Option<u32>,
 }
 
 fn default_paper_url() -> String {

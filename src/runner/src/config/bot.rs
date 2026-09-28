@@ -334,6 +334,11 @@ pub struct StrategyConfig {
     /// A persisted snapshot `enabled` value overrides this on restore.
     #[serde(default)]
     pub initially_enabled: bool,
+
+    /// Max age of the last orderbook update before exposure increases are blocked.
+    /// Required for Exchange + futures. No mainnet default is invented.
+    #[serde(default)]
+    pub max_market_data_age_ms: Option<u64>,
 }
 
 impl StrategiesConfig {
@@ -565,6 +570,19 @@ impl StrategiesConfig {
                 .validate()
                 .map_err(|e| format!("Strategy {}: {}", idx, e))?;
         }
+        let mut seen = std::collections::HashSet::new();
+        for config in configs {
+            let key = (
+                config.symbol.base.to_string(),
+                config.symbol.quote.to_string(),
+            );
+            if !seen.insert(key) {
+                return Err(format!(
+                    "second executing strategy on {} rejected",
+                    config.symbol
+                ));
+            }
+        }
         Ok(())
     }
 }
@@ -673,6 +691,39 @@ mod config_smoke_tests {
         assert_eq!(mode, trading_core::types::ExecutionMode::Exchange);
         assert_eq!(venue, "PAPER");
         assert_eq!(environment, "LOCAL");
+    }
+
+    #[test]
+    fn second_executing_strategy_on_same_pair_is_rejected() {
+        let json = r#"{
+            "strategies": [
+                {
+                    "strategy_type": "A",
+                    "symbol": {"base": "BTC", "quote": "USDT"},
+                    "position_size": "0.001",
+                    "max_position": "0.001",
+                    "buy_threshold_percent": "0.01",
+                    "sell_threshold_percent": "0.01",
+                    "max_active_orders": 1,
+                    "price_history_size": 2,
+                    "min_price_history": 1
+                },
+                {
+                    "strategy_type": "B",
+                    "symbol": {"base": "BTC", "quote": "USDT"},
+                    "position_size": "0.001",
+                    "max_position": "0.001",
+                    "buy_threshold_percent": "0.01",
+                    "sell_threshold_percent": "0.01",
+                    "max_active_orders": 1,
+                    "price_history_size": 2,
+                    "min_price_history": 1
+                }
+            ]
+        }"#;
+        let cfg: StrategiesConfig = serde_json::from_str(json).unwrap();
+        let err = cfg.validate().expect_err("duplicate pair must fail");
+        assert!(err.contains("second executing strategy"));
     }
 
     #[test]

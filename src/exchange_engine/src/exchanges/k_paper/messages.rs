@@ -201,6 +201,8 @@ pub struct KPaperPlaceOrderRequest {
     /// One-element array for idempotency, or null
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client_order_id: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub reduce_only: bool,
 }
 
 #[cfg(test)]
@@ -255,6 +257,7 @@ mod tests {
                 quantity: rust_decimal::Decimal::new(2, 3),
                 limit_price: Some(rust_decimal::Decimal::new(50000, 0)),
                 client_order_id: None,
+                reduce_only: false,
             },
         };
         let json = serde_json::to_string(&cmd).unwrap();

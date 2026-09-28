@@ -38,6 +38,7 @@ async fn spawn_paper_client(
         paper_exchange_url: url.to_string(),
         pairs: pairs.clone(),
         instrument_type: InstrumentType::Spot,
+        leverage: None,
     };
     let kpaper_config = KPaperConfig::from(paper_config);
     let (client, command_rx) = KPaperClient::new(kpaper_config.clone());

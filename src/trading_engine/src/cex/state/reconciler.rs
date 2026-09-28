@@ -80,10 +80,14 @@ impl PositionReconciler {
         let exchange_state = exchange_state_arc.read().await;
 
         // Reconcile positions. Futures use signed ESM positions (design log 008).
+        // REST snapshot, when present, is the verification source; a WS-only jump
+        // must not clear disagreement.
         let base_currency = pair.base.as_str();
+        let esm_qty = exchange_state.get_position(pair).map(|p| p.quantity);
+        let rest_qty = exchange_state.rest_position_qty(pair);
         let exchange_qty = authoritative_position_qty(
             self.instrument_type.clone(),
-            exchange_state.get_position(pair).map(|p| p.quantity),
+            rest_qty.or(esm_qty),
             exchange_state.get_balance(base_currency).map(|b| b.total),
         );
         let exchange_avg = exchange_state
@@ -95,38 +99,58 @@ impl PositionReconciler {
             .get_position(pair)
             .map(|p| p.quantity)
             .unwrap_or(Decimal::ZERO);
-
         let discrepancy = exchange_qty - trading_position_qty;
 
         let mut reconciled = false;
 
-        tracing::debug!(
-            "Trading-level reconciliation for {}: TradingState={}, ExchangeStateManager={}, discrepancy={}",
-            pair, trading_position_qty, exchange_qty, discrepancy
-        );
-
-        if discrepancy.abs() > Decimal::new(1, 6) {
-            warn!(
-                "TradingState position discrepancy for {}: internal={}, exchange={}, diff={}",
-                pair, trading_position_qty, exchange_qty, discrepancy
-            );
-            let reconcile_price = if exchange_avg.is_zero() {
-                _current_price.unwrap_or(Decimal::ZERO)
+        if let Some(rest) = rest_qty {
+            let stream = esm_qty.unwrap_or(Decimal::ZERO);
+            if (rest - stream).abs() > Decimal::new(1, 6) {
+                warn!(
+                    "REST/WS position disagreement for {}: rest={}, ws={}",
+                    pair, rest, stream
+                );
+                trading_state.note_position_disagreement(pair.clone());
             } else {
-                exchange_avg
-            };
-            trading_state.set_position(pair.clone(), exchange_qty, reconcile_price);
-            reconciled = true;
-            tracing::debug!(
-                "TradingState position reconciled for {}: updated to {}",
-                pair,
-                exchange_qty
-            );
+                let reconcile_price = if exchange_avg.is_zero() {
+                    _current_price.unwrap_or(Decimal::ZERO)
+                } else {
+                    exchange_avg
+                };
+                trading_state.set_position(pair.clone(), rest, reconcile_price);
+                if (rest - trading_position_qty).abs() > Decimal::new(1, 6) {
+                    reconciled = true;
+                }
+            }
         } else {
             tracing::debug!(
-                "TradingState position for {} is consistent with ExchangeStateManager",
-                pair
+                "Trading-level reconciliation for {}: TradingState={}, ExchangeStateManager={}, discrepancy={}",
+                pair, trading_position_qty, exchange_qty, discrepancy
             );
+
+            if discrepancy.abs() > Decimal::new(1, 6) {
+                warn!(
+                    "TradingState position discrepancy for {}: internal={}, exchange={}, diff={}",
+                    pair, trading_position_qty, exchange_qty, discrepancy
+                );
+                let reconcile_price = if exchange_avg.is_zero() {
+                    _current_price.unwrap_or(Decimal::ZERO)
+                } else {
+                    exchange_avg
+                };
+                trading_state.set_position(pair.clone(), exchange_qty, reconcile_price);
+                reconciled = true;
+                tracing::debug!(
+                    "TradingState position reconciled for {}: updated to {}",
+                    pair,
+                    exchange_qty
+                );
+            } else {
+                tracing::debug!(
+                    "TradingState position for {} is consistent with ExchangeStateManager",
+                    pair
+                );
+            }
         }
 
         // Reconcile active orders (ensure all active orders in TradingState are known by ExchangeStateManager)

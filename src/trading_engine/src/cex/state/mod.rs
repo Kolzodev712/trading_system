@@ -64,6 +64,8 @@ pub struct TradingState {
     instrument_type: InstrumentType,
     /// Futures pairs whose REST/WS position snapshot has not been applied yet.
     position_sync_pending: HashSet<Pair>,
+    /// WS position disagrees with the last REST snapshot; block all new orders.
+    position_disagreement: HashSet<Pair>,
 }
 
 impl TradingState {
@@ -77,6 +79,7 @@ impl TradingState {
             exposure_halt: None,
             instrument_type: InstrumentType::Spot,
             position_sync_pending: HashSet::new(),
+            position_disagreement: HashSet::new(),
         }
     }
 
@@ -108,6 +111,15 @@ impl TradingState {
 
     pub fn position_sync_pending(&self, pair: &Pair) -> bool {
         self.position_sync_pending.contains(pair)
+    }
+
+    pub fn position_disagreement(&self, pair: &Pair) -> bool {
+        self.position_disagreement.contains(pair)
+    }
+
+    pub fn note_position_disagreement(&mut self, pair: Pair) {
+        self.position_disagreement.insert(pair.clone());
+        self.mark_position_sync_pending(pair);
     }
 
     pub fn add_order(&mut self, order: Order) {
@@ -202,22 +214,42 @@ impl TradingState {
     }
 
     /// Replace the position for a pair with an absolute quantity (exchange truth).
-    /// Zero (or near-zero) quantity removes the position.
+    /// Zero (or near-zero) quantity removes the position. REST/recon path.
     pub fn set_position(&mut self, symbol: Pair, quantity: Decimal, avg_price: Decimal) {
+        self.write_position(symbol.clone(), quantity, avg_price);
+        self.mark_position_synced(&symbol);
+        self.position_disagreement.remove(&symbol);
+    }
+
+    /// Apply a private-stream position. A jump vs the current qty is unverified
+    /// until REST recon confirms it; new exposure stays blocked in the meantime.
+    pub fn apply_stream_position(&mut self, symbol: Pair, quantity: Decimal, avg_price: Decimal) {
+        let previous = self.position_qty(&symbol);
+        self.write_position(symbol.clone(), quantity, avg_price);
+        if (quantity - previous).abs() > Decimal::new(1, 6) {
+            tracing::warn!(
+                pair = %symbol,
+                stream = %quantity,
+                previous = %previous,
+                "REST/WS position disagreement blocks new exposure"
+            );
+            self.note_position_disagreement(symbol);
+        }
+    }
+
+    fn write_position(&mut self, symbol: Pair, quantity: Decimal, avg_price: Decimal) {
         if quantity.abs() <= Decimal::new(1, 6) {
             self.positions.remove(&symbol);
-            self.mark_position_synced(&symbol);
             return;
         }
         self.positions.insert(
             symbol.clone(),
             Position {
-                symbol: symbol.clone(),
+                symbol,
                 quantity,
                 avg_price,
             },
         );
-        self.mark_position_synced(&symbol);
     }
 
     pub fn get_active_order_count(&self, symbol: &Pair) -> usize {
@@ -331,9 +363,12 @@ impl TradingState {
         self.exposure_halt.as_deref()
     }
 
-    /// True when the pair has an unresolved submission or the account is halted.
+    /// True when the pair has an unresolved submission, the account is halted,
+    /// or REST/WS position quantities disagree.
     pub fn blocks_new_exposure(&self, symbol: &Pair) -> bool {
-        self.exposure_halt.is_some() || self.has_unresolved_submission(symbol)
+        self.exposure_halt.is_some()
+            || self.has_unresolved_submission(symbol)
+            || self.position_disagreement(symbol)
     }
 
     /// Increases (opens/enlarges) are blocked until position sync and halt/unknown are clear.
@@ -732,14 +767,19 @@ mod tests {
         let mut state = TradingState::new().with_instrument_type(InstrumentType::Futures);
         let pair = Pair::new("BTC", "USDT");
         state.set_position(pair.clone(), Decimal::new(1, 3), Decimal::new(50000, 0));
-        state.set_position(pair.clone(), Decimal::new(1, 0), Decimal::new(50000, 0));
+        state.apply_stream_position(pair.clone(), Decimal::new(1, 0), Decimal::new(50000, 0));
         assert_eq!(state.position_qty(&pair), Decimal::new(1, 0));
+        assert!(state.position_disagreement(&pair));
+        assert!(state.blocks_new_exposure(&pair));
+        assert!(state.blocks_exposure_increase(&pair));
         state.set_position(pair.clone(), Decimal::new(1, 3), Decimal::new(50000, 0));
         assert_eq!(
             state.position_qty(&pair),
             Decimal::new(1, 3),
             "authoritative REST/snapshot qty must replace a bad WS update"
         );
+        assert!(!state.position_disagreement(&pair));
+        assert!(!state.blocks_new_exposure(&pair));
         let order = Order {
             order_id: OrderId::new("ord-1".into()),
             client_order_id: Some(smol_str::SmolStr::new("cid-1")),

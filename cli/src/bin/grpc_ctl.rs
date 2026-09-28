@@ -135,6 +135,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     s.max_active_orders,
                     s.last_signal
                 );
+                if !s.readiness.is_empty() {
+                    println!(
+                        "strategy {} readiness={} reason={}",
+                        s.strategy_id, s.readiness, s.readiness_reason
+                    );
+                }
             }
             for p in data.positions {
                 println!(

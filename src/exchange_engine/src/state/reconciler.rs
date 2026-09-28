@@ -204,6 +204,7 @@ impl StateReconciler {
                     .map(|p| p.instrument.pair.clone())
                     .collect();
                 let mut ws_state = exchange_state.write().await;
+                ws_state.record_rest_positions(&rest_positions, _configured_pairs);
                 for position in rest_positions {
                     ws_state.update_position(position);
                 }

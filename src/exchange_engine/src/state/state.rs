@@ -3,6 +3,7 @@
 //! This module defines `ExchangeState` which holds the authoritative state
 //! of what the exchange reports (balances, orders, trades from WebSocket).
 
+use rust_decimal::Decimal;
 use std::collections::HashMap;
 use std::sync::Arc;
 use trading_core::{
@@ -34,6 +35,9 @@ pub struct ExchangeState {
     /// Positions by pair (for futures trading)
     positions: HashMap<Pair, Position>,
 
+    /// Last REST-fetched position qty (authoritative). Missing keys are not yet fetched.
+    rest_positions: HashMap<Pair, Decimal>,
+
     /// Recent private trades (last N from exchange)
     private_trades: Vec<Trade>,
 
@@ -50,6 +54,7 @@ impl ExchangeState {
             symbol_registry: Arc::new(SymbolRegistry::new()),
             balances: HashMap::new(),
             positions: HashMap::new(),
+            rest_positions: HashMap::new(),
             private_trades: Vec::new(),
             last_update: 0,
         }
@@ -66,6 +71,7 @@ impl ExchangeState {
             symbol_registry,
             balances: HashMap::new(),
             positions: HashMap::new(),
+            rest_positions: HashMap::new(),
             private_trades: Vec::new(),
             last_update: 0,
         }
@@ -298,6 +304,25 @@ impl ExchangeState {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_millis() as u64;
+    }
+
+    /// Last REST snapshot qty for a pair, if REST positions have been fetched.
+    pub fn rest_position_qty(&self, pair: &Pair) -> Option<Decimal> {
+        self.rest_positions.get(pair).copied()
+    }
+
+    /// Record a REST positions snapshot. Unreported configured pairs are stored as zero.
+    pub fn record_rest_positions(&mut self, positions: &[Position], configured_pairs: &[Pair]) {
+        self.rest_positions.clear();
+        for position in positions {
+            self.rest_positions
+                .insert(position.instrument.pair.clone(), position.quantity);
+        }
+        for pair in configured_pairs {
+            self.rest_positions
+                .entry(pair.clone())
+                .or_insert(Decimal::ZERO);
+        }
     }
 
     /// Get last update timestamp

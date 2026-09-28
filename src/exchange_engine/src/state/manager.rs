@@ -332,12 +332,13 @@ impl ExchangeStateManager {
                     .iter()
                     .map(|p| p.instrument.pair.clone())
                     .collect();
-                for position in positions {
-                    if let Err(e) = self.update_position(position).await {
+                for position in &positions {
+                    if let Err(e) = self.update_position(position.clone()).await {
                         warn!("Bootstrap: Failed to apply position update: {}", e);
                     }
                 }
                 let mut state = self.state.write().await;
+                state.record_rest_positions(&positions, configured_pairs);
                 for pair in configured_pairs {
                     if !reported.contains(pair) {
                         state.remove_position(pair);

@@ -121,6 +121,17 @@ count_json_array() {
   python3 -c 'import json,sys; d=json.load(sys.stdin); print(len(d) if isinstance(d,list) else 0)'
 }
 
+paper_working_remaining() {
+  python3 -c 'import json,sys
+orders=json.load(sys.stdin)
+rem=0.0
+for o in orders:
+    amt=float(o.get("amount") or o.get("quantity") or 0)
+    filled=float(o.get("filledAmount") or o.get("filled_qty") or 0)
+    rem += max(amt-filled, 0.0)
+print(f"{rem:.6f}")'
+}
+
 journal_states() {
   python3 - <<'PY' "${JOURNAL}"
 import json,sys
@@ -386,6 +397,9 @@ echo "== package / bounded fixtures =="
 (cd "${ROOT}" && cargo test -q -p trading_engine --lib timeout_place_error_stays_unknown)
 (cd "${ROOT}" && cargo test -q -p trading_engine --lib rest_position_overwrites_lying_ws_update)
 (cd "${ROOT}" && cargo test -q -p trading_engine --lib record_trade_uses_trade_id)
+(cd "${ROOT}" && cargo test -q -p exchange_engine --lib duplicate_trade_id_does_not_consume_remainder)
+(cd "${ROOT}" && cargo test -q -p exchange_engine --lib cancel_all_is_unverified_when_rest_fails)
+(cd "${ROOT}" && cargo test -q -p trading_core --lib cancel_working_fails_when_venue_rest_is_unverified)
 
 if command -v fuser >/dev/null 2>&1; then
   fuser -k 50051/tcp 2>/dev/null || true
@@ -623,8 +637,12 @@ if ! echo "${re_status}" | grep -q "pos=0.001"; then
   exit 1
 fi
 
-echo "== REST/WS disagreement: lying WS, REST unchanged, reconnect restores =="
+echo "== REST/WS disagreement: lying WS, REST unchanged, blocked until restore =="
+enable_entries disagreement
 paper_rest_before="$(paper_get positions)"
+lie_orders_before="$(paper_get open_orders | count_json_array)"
+lie_trades_before="$(paper_get trades | count_json_array)"
+log_before="$(wc -l < "$(current_log)")"
 paper_post test/emit_ws_position '{"quantity":"1","entry_price":"50000"}'
 lie_seen=0
 for _ in $(seq 1 20); do
@@ -647,6 +665,24 @@ if [[ "${paper_rest_after}" != "${paper_rest_before}" ]]; then
   echo "before=${paper_rest_before} after=${paper_rest_after}" >&2
   exit 1
 fi
+sleep 2
+if [[ "$(paper_get open_orders | count_json_array)" -gt "${lie_orders_before}" ]]; then
+  echo "FAILED: new Paper orders during REST/WS disagreement" >&2
+  echo "orders=$(paper_get open_orders)" >&2
+  exit 1
+fi
+if [[ "$(paper_get trades | count_json_array)" -gt "${lie_trades_before}" ]]; then
+  echo "FAILED: new Paper trades during REST/WS disagreement" >&2
+  echo "trades=$(paper_get trades)" >&2
+  exit 1
+fi
+require_log "REST/WS position disagreement"
+if tail -n "+$((log_before + 1))" "$(current_log)" | grep -q "k-paper: sent place_order"; then
+  echo "FAILED: runner placed during REST/WS disagreement" >&2
+  tail -n "+$((log_before + 1))" "$(current_log)" >&2
+  exit 1
+fi
+echo "disagreement: Paper REST unchanged, no new exposure; runner not Ready to increase"
 paper_post test/disconnect_clients
 restored=0
 for _ in $(seq 1 30); do
@@ -665,7 +701,7 @@ if [[ "${restored}" -ne 1 ]]; then
   exit 1
 fi
 
-echo "== partial fill then CancelWorking =="
+echo "== partial fill + duplicate fill together, then CancelWorking =="
 flatten_to_flat partial
 "${CTL[@]}" disable "${TRADING_STRATEGY}" || true
 kill_runner
@@ -690,6 +726,7 @@ if [[ "${resting}" -ne 1 ]]; then
   exit 1
 fi
 fills_before="$(ledger_fill_ids | awk 'NR==1{print $2}')"
+paper_post test/duplicate_next_fill
 fill_res=$(curl -sfS -X POST "${HTTP}/test/lab_fill_open" \
   -H "content-type: application/json" \
   -d '{"qty":"0.001"}') \
@@ -702,9 +739,9 @@ fi
 sleep 1
 require_journal_state acknowledged
 fills_after="$(ledger_fill_ids | awk 'NR==1{print $2}')"
-echo "unique ledger fills after partial=${fills_after} (before=${fills_before})"
-if [[ "${fills_after}" -lt $((fills_before + 1)) ]]; then
-  echo "FAILED: partial fill did not record a new ledger execution" >&2
+echo "unique ledger fills after partial+dup=${fills_after} (before=${fills_before})"
+if [[ "${fills_after}" -ne $((fills_before + 1)) ]]; then
+  echo "FAILED: duplicate partial fill changed unique ledger count by $((fills_after - fills_before))" >&2
   ledger_fill_ids >&2
   exit 1
 fi
@@ -713,10 +750,28 @@ if ! echo "$(paper_get positions)" | grep -q "0.001"; then
   echo "pos=$(paper_get positions)" >&2
   exit 1
 fi
+remain="$(paper_get open_orders | paper_working_remaining)"
+echo "working remaining after duplicate partial=${remain}"
+if [[ "${remain}" != "0.001000" ]]; then
+  echo "FAILED: duplicate partial fill erased the working remainder" >&2
+  echo "orders=$(paper_get open_orders)" >&2
+  "${CTL[@]}" status >&2
+  exit 1
+fi
+dup_partial_status="$("${CTL[@]}" status)"
+echo "${dup_partial_status}"
+if echo "${dup_partial_status}" | grep -q "orders=0"; then
+  echo "FAILED: adapter dropped the working remainder after duplicate partial" >&2
+  exit 1
+fi
+if echo "${dup_partial_status}" | grep -q "pos=0.002"; then
+  echo "FAILED: duplicate partial fill double-counted grpc position" >&2
+  exit 1
+fi
 cancel_out="$("${CTL[@]}" cancel inc9a-cancel-1)"
 echo "${cancel_out}"
-if ! echo "${cancel_out}" | grep -q "CancelWorking"; then
-  echo "FAILED: CancelWorking RPC was not accepted" >&2
+if ! echo "${cancel_out}" | grep -q "accepted=true"; then
+  echo "FAILED: CancelWorking RPC was not accepted after duplicate partial" >&2
   exit 1
 fi
 cancelled=0
@@ -744,6 +799,174 @@ if ! echo "${cw_status}" | grep -q "orders=0"; then
 fi
 if echo "${cw_status}" | grep -q "pos=0.002"; then
   echo "FAILED: partial+cancel double-counted exposure" >&2
+  exit 1
+fi
+
+echo "== remaining fill after partial =="
+flatten_to_flat remaining
+"${CTL[@]}" disable "${TRADING_STRATEGY}" || true
+kill_runner
+paper_post test/reset_lab_faults
+export TRADING_TEST_CLIENT_ORDER_ID=inc9a-remain-1
+export TRADING_TEST_LIMIT_PRICE=49000
+export TRADING_TEST_ORDER_QTY=0.002
+start_runner "${WORKDIR}/runner-remain.log"
+enable_entries remaining
+resting=0
+for _ in $(seq 1 30); do
+  if curl -sf "${HTTP}/orders/by_client_id/inc9a-remain-1" >/dev/null; then
+    resting=1
+    break
+  fi
+  sleep 0.5
+done
+unset TRADING_TEST_CLIENT_ORDER_ID TRADING_TEST_LIMIT_PRICE TRADING_TEST_ORDER_QTY
+if [[ "${resting}" -ne 1 ]]; then
+  echo "FAILED: remaining-fill resting order was not booked" >&2
+  tail -n 40 "${WORKDIR}/runner-remain.log" >&2
+  exit 1
+fi
+"${CTL[@]}" pause "inc9a-pause-remain-fills"
+fills_before="$(ledger_fill_ids | awk 'NR==1{print $2}')"
+curl -sfS -X POST "${HTTP}/test/lab_fill_open" -H "content-type: application/json" -d '{"qty":"0.001"}' >/dev/null \
+  || { echo "FAILED: first remaining lab_fill_open" >&2; exit 1; }
+remain_res=$(curl -sfS -X POST "${HTTP}/test/lab_fill_open" \
+  -H "content-type: application/json" \
+  -d '{"qty":"0.001"}') \
+  || { echo "FAILED: remaining lab_fill_open" >&2; exit 1; }
+echo "remaining_fill=${remain_res}"
+if ! echo "${remain_res}" | grep -q "Filled"; then
+  echo "FAILED: expected Filled after remaining fill" >&2
+  exit 1
+fi
+"${CTL[@]}" disable "${TRADING_STRATEGY}" || true
+sleep 0.2
+fills_after="$(ledger_fill_ids | awk 'NR==1{print $2}')"
+if [[ "${fills_after}" -lt $((fills_before + 2)) ]]; then
+  echo "FAILED: remaining fill unique ledger ${fills_after} (before=${fills_before})" >&2
+  ledger_fill_ids >&2
+  exit 1
+fi
+if [[ "$(paper_get open_orders)" != "[]" ]]; then
+  echo "FAILED: remaining fill left a working order" >&2
+  echo "orders=$(paper_get open_orders)" >&2
+  exit 1
+fi
+if ! echo "$(paper_get positions)" | grep -q "0.002"; then
+  echo "FAILED: remaining fill did not reach Paper pos 0.002" >&2
+  echo "pos=$(paper_get positions)" >&2
+  exit 1
+fi
+
+echo "== partial fill competing with remaining fill and CancelWorking =="
+flatten_to_flat race
+"${CTL[@]}" disable "${TRADING_STRATEGY}" || true
+kill_runner
+paper_post test/reset_lab_faults
+export TRADING_TEST_CLIENT_ORDER_ID=inc9a-race-1
+export TRADING_TEST_LIMIT_PRICE=49000
+export TRADING_TEST_ORDER_QTY=0.002
+start_runner "${WORKDIR}/runner-race.log"
+enable_entries race
+resting=0
+for _ in $(seq 1 30); do
+  if curl -sf "${HTTP}/orders/by_client_id/inc9a-race-1" >/dev/null; then
+    resting=1
+    break
+  fi
+  sleep 0.5
+done
+unset TRADING_TEST_CLIENT_ORDER_ID TRADING_TEST_LIMIT_PRICE TRADING_TEST_ORDER_QTY
+if [[ "${resting}" -ne 1 ]]; then
+  echo "FAILED: race resting order was not booked" >&2
+  tail -n 40 "${WORKDIR}/runner-race.log" >&2
+  exit 1
+fi
+"${CTL[@]}" pause "inc9a-pause-race-fills"
+fills_before="$(ledger_fill_ids | awk 'NR==1{print $2}')"
+curl -sfS -X POST "${HTTP}/test/lab_fill_open" -H "content-type: application/json" -d '{"qty":"0.001"}' >/dev/null \
+  || { echo "FAILED: race partial lab_fill_open" >&2; exit 1; }
+curl -sfS -X POST "${HTTP}/test/lab_fill_open" -H "content-type: application/json" -d '{"qty":"0.001"}' >/dev/null &
+fill_pid=$!
+cancel_out="$("${CTL[@]}" cancel inc9a-cancel-race)"
+echo "${cancel_out}"
+wait "${fill_pid}" || true
+sleep 1
+fills_after="$(ledger_fill_ids | awk 'NR==1{print $2}')"
+echo "race unique ledger before=${fills_before} after=${fills_after}"
+added=$((fills_after - fills_before))
+if [[ "${added}" -lt 1 || "${added}" -gt 3 ]]; then
+  echo "FAILED: fill/cancel race unique ledger ${fills_after} (before=${fills_before})" >&2
+  ledger_fill_ids >&2
+  exit 1
+fi
+if [[ "$(paper_get open_orders)" != "[]" ]]; then
+  echo "FAILED: race left a working Paper order" >&2
+  echo "orders=$(paper_get open_orders)" >&2
+  exit 1
+fi
+race_pos="$(paper_get positions)"
+echo "race Paper positions=${race_pos}"
+if echo "${race_pos}" | grep -q "0.003"; then
+  echo "FAILED: fill/cancel race over-filled Paper" >&2
+  exit 1
+fi
+
+echo "== CancelWorking unverified when REST open_orders fails =="
+flatten_to_flat restfail
+"${CTL[@]}" disable "${TRADING_STRATEGY}" || true
+kill_runner
+paper_post test/reset_lab_faults
+export TRADING_TEST_CLIENT_ORDER_ID=inc9a-restfail-1
+export TRADING_TEST_LIMIT_PRICE=49000
+export TRADING_TEST_ORDER_QTY=0.002
+start_runner "${WORKDIR}/runner-restfail.log"
+enable_entries restfail
+resting=0
+for _ in $(seq 1 30); do
+  if curl -sf "${HTTP}/orders/by_client_id/inc9a-restfail-1" >/dev/null; then
+    resting=1
+    break
+  fi
+  sleep 0.5
+done
+unset TRADING_TEST_CLIENT_ORDER_ID TRADING_TEST_LIMIT_PRICE TRADING_TEST_ORDER_QTY
+if [[ "${resting}" -ne 1 ]]; then
+  echo "FAILED: rest-fail resting order was not booked" >&2
+  tail -n 40 "${WORKDIR}/runner-restfail.log" >&2
+  exit 1
+fi
+paper_post test/fail_open_orders
+cancel_out="$("${CTL[@]}" cancel inc9a-cancel-restfail)"
+echo "${cancel_out}"
+if echo "${cancel_out}" | grep -q "accepted=true"; then
+  echo "FAILED: CancelWorking reported success without a REST venue check" >&2
+  exit 1
+fi
+if ! echo "${cancel_out}" | grep -qiE "unverified|accepted=false|state=failed"; then
+  echo "FAILED: CancelWorking did not report unverified/failed on REST error" >&2
+  exit 1
+fi
+paper_post test/reset_lab_faults
+if curl -sf "${HTTP}/orders/by_client_id/inc9a-restfail-1" >/dev/null; then
+  cancel_out="$("${CTL[@]}" cancel inc9a-cancel-restfail-2)"
+  echo "${cancel_out}"
+  if ! echo "${cancel_out}" | grep -q "accepted=true"; then
+    echo "FAILED: CancelWorking did not succeed after REST recovered" >&2
+    exit 1
+  fi
+fi
+cancelled=0
+for _ in $(seq 1 20); do
+  if [[ "$(paper_get open_orders)" == "[]" ]]; then
+    cancelled=1
+    break
+  fi
+  sleep 0.5
+done
+if [[ "${cancelled}" -ne 1 ]]; then
+  echo "FAILED: Paper still has working orders after recovered CancelWorking" >&2
+  echo "orders=$(paper_get open_orders)" >&2
   exit 1
 fi
 

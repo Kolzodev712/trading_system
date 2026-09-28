@@ -1,6 +1,6 @@
 # Prop Trading Productionization and Research Architecture Plan
 
-**Status:** Implementation blueprint  
+**Status:** Increments 0–5 complete in `trading_system` (`fbf7bfa`). Waiting on a pending architecture update before Increment 5A and later work.  
 **Date:** 2026-09-28\
 **Repository:** `trading_system`  
 **Audience:** Cursor / implementation agent / repository owner  
@@ -2056,11 +2056,13 @@ This document is the authority for **the Candidate #2 research/runtime separatio
 
 Check out the relevant repositories with write access before starting a cross-repo increment. Record starting and ending SHAs for each; pin matching revisions and run both producer/consumer checks before marking the increment complete. Implement backend state and the source proto first, then sync the UI proto and generated code. When a precise simulator accounting rule, API shape or security mechanism is not fixed here, document the bounded choice and its acceptance tests within that increment rather than silently guessing or postponing the safety gate.
 
-The first instruction in section 67 still limits Cursor to **Increments 0 and 1**. This plan does not authorize implementation of a future portfolio allocator, strategy registry/graveyard, broader instrument/venue expansion, a self-hosting operations program, Candidate #3's trading rule or mainnet deployment. Those need separate decisions/specifications when the evidence and need exist; none blocks the first increment.
+`trading_system` Increments 0–5 are done (see the status table in section 67). **Do not start Increment 5A, 5B, or 6** until the pending architecture update is supplied. This plan does not authorize implementation of a future portfolio allocator, strategy registry/graveyard, broader instrument/venue expansion, a self-hosting operations program, Candidate #3's trading rule or mainnet deployment. Those need separate decisions/specifications when the evidence and need exist.
 
 ---
 
 # 55. Increment 0 — baseline lock
+
+**Status:** Done. Baseline SHA `6ea3ac77f8c7890e25627705f778cb4049eb2cdc` (master immediately before Increment 1). Frozen Candidate #1/#2 audits and research tests were recorded; no research outputs were changed.
 
 Before structural changes:
 
@@ -2080,6 +2082,8 @@ Acceptance:
 ---
 
 # 56. Increment 1 — extract strategy_core
+
+**Status:** Done in `4b51b207662c888a35f5935712d15c63504727a3`.
 
 Create `strategy_core`.
 
@@ -2111,6 +2115,8 @@ Stop and report.
 ---
 
 # 57. Increment 2 — extract research_engine
+
+**Status:** Done in `b462f8bda1a6516719e7221df07229ec9ae0feac`.
 
 Create `research_engine`.
 
@@ -2146,6 +2152,8 @@ Stop and report.
 
 # 58. Increment 3 — create research_cli
 
+**Status:** Done in `d488c31a140d2bb8f51ac2c16c44dfda032059a8`.
+
 Move offline research command entry points out of the live runner.
 
 Initially support the already-used workflows.
@@ -2163,6 +2171,8 @@ Stop and report.
 ---
 
 # 59. Increment 4 — Candidate #2 runtime model adapter + completed candles
+
+**Status:** Done in `01f284b059bc9bda1f0116394dd0c7acf6d10cbe`. Factory still rejects Candidate #2 in Exchange mode.
 
 Implement:
 
@@ -2194,6 +2204,8 @@ Stop and report.
 
 # 60. Increment 5 — Shadow mode
 
+**Status:** Done in `fbf7bfad535474e907d11c767795fa8f686b0651`. Candidate #2 is factory-registered in Shadow only; `ShadowGuardClient` and the executor skip mechanically prevent exchange order calls; sample config is `sample_config/bybit-shadow/`.
+
 Implement:
 
 - ExecutionMode;
@@ -2218,11 +2230,15 @@ Stop and report.
 
 ## Increment 5A — Trading System UI Shadow observability
 
+**Status:** Not started. Blocked on the pending architecture update. Do not begin this increment yet.
+
 After the runner's authoritative status/proto fields exist, update the separate `trading-system-ui` repository and generated client. Show Candidate #2's **rejected-as-alpha / operational-baseline** distinction, last completed candle, signal/target, Shadow execution state, venue/environment, pair readiness and reason, freshness and errors. Keep model status visible when execution is paused. Connect to the actual runner; the old Rust TUI is not the deliverable.
 
 Acceptance: proto copies and generated types match; UI unit/build checks pass; a disconnected/stale stream is visibly unready; Shadow displays zero exchange orders while still showing model decisions. Stop and report both repository revisions.
 
 ## Increment 5B — existing Paper connectivity preflight
+
+**Status:** Not started. Blocked on the pending architecture update. Do not begin this increment yet.
 
 Run the existing `k-paper` server and `trading_system` Paper adapters with the documented Spot/levels configuration: market WS, trading WS, REST balance/open-order/trade reconciliation and asset rules. Connect the browser UI to the same runner and verify venue labeling. Record exact working endpoints and identify missing Candidate #2 futures operations and scenario controls.
 
@@ -2391,43 +2407,21 @@ Do not implement Candidate #3's trading rule until a separate strategy research 
 
 ---
 
-# 67. First task Cursor should execute
+# 67. Current Cursor instruction
 
-Cursor should **start with Increment 0 and Increment 1 only**.
+`trading_system` Increments 0–5 are complete. **Stop.** Do not start Increment 5A, 5B, Increment 6, or any other follow-on work until the pending architecture update is supplied.
 
-Do not start runtime wiring yet.
-
-Immediate instruction:
-
-```text
-Read this entire file.
-
-Then inspect current master rather than relying on old line numbers.
-
-1. Record the current repository SHA.
-2. Run the frozen Candidate #1 and Candidate #2 audit/reference checks that are available locally.
-3. Run focused strategy/research tests.
-4. Create a new strategy_core workspace crate.
-5. Move/extract only the pure BTCPriceMALongFlatV1 model into strategy_core.
-6. Preserve exact frozen signal behavior.
-7. Update imports/re-exports as required without moving research/backtest logic yet.
-8. Add/retain parity tests proving the extracted model generates the same frozen Candidate #2 N=14/N=28/N=70 decision transitions.
-9. Do not change any research rules, datasets, PnL, gates, or audit expectations.
-10. Do not live-register Candidate #2.
-11. Do not implement Shadow mode yet.
-12. Do not change CEX execution in this increment.
-
-At completion report:
-- current starting SHA;
-- files added/changed;
-- dependency graph changes;
-- exact tests run;
-- exact results;
-- any unrelated existing failures;
-- evidence that Candidate #2 frozen decisions are unchanged.
-
-Then stop.
-```
+| Increment | Status | SHA |
+| --- | --- | --- |
+| 0 | Done (baseline lock; no code commit) | `6ea3ac77f8c7890e25627705f778cb4049eb2cdc` |
+| 1 | Done | `4b51b207662c888a35f5935712d15c63504727a3` |
+| 2 | Done | `b462f8bda1a6516719e7221df07229ec9ae0feac` |
+| 3 | Done | `d488c31a140d2bb8f51ac2c16c44dfda032059a8` |
+| 4 | Done | `01f284b059bc9bda1f0116394dd0c7acf6d10cbe` |
+| 5 | Done | `fbf7bfad535474e907d11c767795fa8f686b0651` |
+| 5A | Not started | blocked pending architecture update |
+| 5B | Not started | blocked pending architecture update |
+| 6+ | Not started | blocked pending architecture update |
 
 ---
 

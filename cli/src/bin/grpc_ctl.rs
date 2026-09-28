@@ -99,11 +99,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .unwrap_or_default();
             println!("global_trading={enabled}");
             println!(
-                "instrument={} exchange={} orders={} positions={}",
+                "runner_mode={} venue={} environment={} execution_mode={} snapshot_unix_ms={}",
+                data.runner_mode,
+                data.venue,
+                data.environment,
+                data.execution_mode,
+                data.snapshot_unix_ms
+            );
+            println!(
+                "instrument={} exchange={} orders={} positions={} orderbooks={} indicators={}",
                 data.instrument_type,
                 data.exchange,
                 data.orders.len(),
-                data.positions.len()
+                data.positions.len(),
+                data.orderbooks.len(),
+                data.indicators.len()
             );
             for s in data.strategies {
                 println!(

@@ -1,7 +1,7 @@
 # Prop Trading Productionization and Research Architecture Plan
 
 **Status:** Implementation blueprint  
-**Date:** 2026-09-27  
+**Date:** 2026-09-28\
 **Repository:** `trading_system`  
 **Audience:** Cursor / implementation agent / repository owner  
 **Primary objective:** turn the existing trading platform into an operational prop-trading system while keeping strategy research reproducible, independently verifiable, and architecturally separated from live execution.
@@ -27,11 +27,13 @@ The next stage is:
 2. move historical research/backtesting into its own crate(s);
 3. keep independent audit logic outside both production and research implementations;
 4. productionize Candidate #2 as the first operational strategy;
-5. finish the remaining CEX correctness/risk/recovery gaps;
-6. run Candidate #2 in shadow mode;
-7. then run it on Bybit demo;
-8. continue research for Candidate #3 in parallel;
-9. do not open the sealed 2026 holdout until a future candidate passes its frozen development screen.
+5. run Candidate #2 in Shadow and expose its state through the separate `trading-system-ui` repository;
+6. smoke-test the existing Paper adapters, then finish the remaining CEX correctness/risk/recovery gaps;
+7. exercise the actual runner, risk, executor, exchange and market-data adapters against `k-paper` as a controlled futures/fault laboratory;
+8. add the corresponding operator safety workflows to `trading-system-ui`;
+9. only after the local full-stack gates pass, run Candidate #2 on Bybit demo;
+10. continue research for Candidate #3 in parallel;
+11. do not open the sealed 2026 holdout until a future candidate passes its frozen development screen.
 
 This file is the implementation roadmap and the source of truth for the order in which that work should happen.
 
@@ -69,8 +71,10 @@ benchmarks                       execution
 gates                            reconciliation
         |                              |
         v                              v
-Independent audit                Shadow -> Demo -> Live
+Independent audit                Shadow -> K-paper -> Demo -> Live
 ```
+
+The execution path in the right branch is operated through the separate browser `trading-system-ui`. It receives authoritative runner state and issues runner commands through gRPC-Web; it does not evaluate research candidates or trade directly with either venue. `k-paper` is a separate local exchange server for full-stack testing, not the historical research engine.
 
 The system should eventually make it difficult to accidentally confuse:
 
@@ -420,6 +424,30 @@ trading_system/
 ```
 
 Exact directory naming may be adjusted to fit workspace conventions, but the dependency boundaries are mandatory.
+
+## 6.1 External repositories and responsibility
+
+| System | Owns | Does not prove |
+| --- | --- | --- |
+| `strategy_core` / `research_engine` in `trading_system` | Frozen model and fast historical economic evaluation | That the live execution stack works |
+| `k-paper` (separate repo) | Local exchange state, market/private streams, orders/fills and controllable test scenarios | Alpha, Bybit API parity or real futures economics without further implementation |
+| `trading_system` runner | Authoritative strategy, risk, order, reconciliation, readiness and control state; source proto/gRPC contract | That a browser's local view is authoritative |
+| `trading-system-ui` (separate repo) | Browser presentation, operator workflow, authentication UI and deliberate confirmations | Exchange state or recovery decisions of its own |
+| Bybit demo | Integration against Bybit's actual demo API and event behavior | Real-money economics |
+
+The existing paper path is real integration, not a stub: `market_data_engine` connects to `k-paper` `/ws/market`, `exchange_engine` uses `/ws/trade` and REST balance/open-order/trade snapshots, and `asset_engine` reads `/exchange_info`. These feed the normal runner and exchange-state manager. The current `sample_config/k-paper/bot.json` is a **Spot** example and the local development guide exercises levels mode. Do not treat that smoke path as an already working BTCUSDT linear-perpetual Candidate #2 path.
+
+The browser path is `trading-system-ui` -> gRPC-Web proxy (currently Envoy) -> runner `TradingCliService`. The UI's MongoDB-backed auth service is for its operator login. The UI does not read `bot.json` or connect to `k-paper` or Bybit directly. The old Rust `cli`/TUI remains a separate client; references to the Trading System UI in this plan mean the **browser repository**.
+
+## 6.2 Current capabilities versus required work
+
+- `k-paper` currently has a single in-memory account, market/trading WebSockets, REST balances/open orders/trades/exchange info, simple limit/market matching, fees, a seeded synthetic book and startup market scenarios. Its account reserves quote/base as a spot exchange; its fill path updates balances but does not construct authoritative futures positions. The server has no REST position snapshot or durable exchange state. A type's optional `instrument_type` field and the runner adapter's configured `InstrumentType` do not make it a faithful futures simulator.
+- The existing scenario presets move prices. They do not currently script accepted orders with lost acknowledgements, private-stream disconnects, duplicate/out-of-order events, REST/WS disagreement or restart recovery. `partial_fills` is present in config but is not a completed deterministic partial-fill scenario framework.
+- `trading-system-ui` already shows orders, balances, positions, strategies, indicators and market data and can invoke existing global/strategy toggles and strategy-configuration RPCs. The shared proto currently gives `GetTradingStatus` only a boolean, and `MonitoringData`/`StrategyStatus` lack the proposed execution mode, pair readiness, reservations and recovery detail. `PauseEntries`, `CancelWorking`, `FlattenAndPause` and `Resume` are not existing UI commands.
+- The existing `trading_system` Paper execution client allows one in-flight place, cancel and amend request of each kind. That is sufficient to smoke-test a single slow strategy only if requests are serialized; the future multi-strategy/concurrent-request lab needs correlation by request ID and an explicit concurrency test.
+- The UI has login/auth code, but a browser login by itself does not authorize direct calls to the runner gRPC endpoint. Before exposing any capital-bearing control path, enforce authentication/authorization and network access at the runner/proxy boundary too; never rely on hiding a UI button.
+
+These gaps are explicit prerequisites below. Do not claim a futures integration test, deterministic fault coverage or production control-plane readiness from the existing Spot example alone.
 
 ---
 
@@ -1147,11 +1175,12 @@ Valid combinations:
 
 ```text
 Shadow + Bybit mainnet public data
+Exchange + k-paper local simulation (after the required instrument semantics are implemented)
 Exchange + Bybit demo
 Exchange + Bybit mainnet
 ```
 
-The final combination requires additional live interlocks.
+Venue/environment, execution permission, strategy evaluation/enablement and entry pause are separate dimensions. A Paper venue label alone must never imply Shadow; `Exchange + Paper` really sends orders to `k-paper`. The final Bybit mainnet combination requires additional live interlocks.
 
 ---
 
@@ -1240,6 +1269,27 @@ At minimum expose:
 - unresolved submission yes/no;
 - last reconciliation error;
 - last execution error.
+
+## 30.1 Authoritative operator contract
+
+Extend the runner-owned proto with typed, per-account/per-instrument status rather than trying to infer production readiness from the existing `GetTradingStatus.enabled` boolean or a generic `StrategyStatus.last_signal` string. Include:
+
+- runner mode, venue and environment (`K-PAPER / LOCAL`, `BYBIT / DEMO`, `BYBIT / MAINNET`) separately from `ExecutionMode` (`Shadow` or `Exchange`), strategy enabled and entries paused; the UI should not infer runner mode from a nonempty strategies list;
+- strategy ID/version/config identity and the **independent** research disposition (`REJECTED AS VALIDATED ALPHA` for Candidate #2) versus operational role/status (`BASELINE`, `SHADOW`, `PAPER`, `DEMO`, etc.);
+- last completed and processed candle, close, geometric mean, log spread, model direction, previous transition, desired target and entry freshness;
+- risk-allowed target, authoritative filled position, compatible working remainder, unresolved-submission reservation, effective exposure, and the reason for a blocked action;
+- pair readiness and reason, order/position reconciliation status and timestamp, unresolved submission identifiers/status, last execution/reconciliation errors, public/private stream health and market-data age;
+- timestamps/sequence or freshness metadata for the status snapshot itself, including the specific account/instrument, so the UI can label a disconnected or stale view **unknown**, never `Ready`.
+
+The backend remains the only authority for state and control results. The browser renders backend status and never calculates readiness, risk permission or effective exposure as a competing state machine. Research metadata is read-only provenance; the UI is not a research dashboard or a substitute for `research_cli`.
+
+## 30.2 Browser UI delivery
+
+In the separate `trading-system-ui` repository, add a strategy view that answers four questions at a glance: what the model wants, what execution/risk permits, what is actually on the exchange, and what is unhealthy or unresolved. Display target/filled/working/reserved/effective quantities distinctly, along with the last signal candle and recovery reason. In Shadow, show the model decisions and an unambiguous **no exchange execution** state; do not display simulated fills that did not occur.
+
+Make venue/environment and `ExecutionMode` unmistakable in a persistent header on every control screen. For example, `BYBIT MAINNET + SHADOW` and `BYBIT DEMO + EXCHANGE` are different states. Do not collapse them into one green “Trading On” indicator. On gRPC stream loss, stale snapshots or partial data, show degraded/unknown rather than retaining a healthy appearance.
+
+`trading_system/libs/trading_core/proto/trading_cli.proto` owns the API. For each additive backend change, sync `trading-system-ui/proto/trading_cli.proto`, regenerate `src/gen/`, then update typed RPC wrappers, store/hooks, views and tests. Verify a UI build and an end-to-end connection to the matching runner version. Do not read exchange configuration in the browser to guess its venue.
 
 ---
 
@@ -1706,6 +1756,23 @@ The original strategy target must not immediately reopen.
 
 Only explicit Resume clears the flatten override.
 
+## 46.1 Operator workflow through Trading System UI
+
+Implement the four controls as explicit runner commands and report accepted/in-progress/completed/failed state from the runner. Add browser actions only after the backend semantics and proto exist:
+
+- `PauseEntries` displays that evaluation continues while exposure increases stop; it is separate from the old global enable/disable toggle.
+- `CancelWorking` shows which orders are pending cancellation and requires reconciliation before presenting a final result.
+- `FlattenAndPause` shows the exact account, instrument, venue, current position and working orders and requires deliberate confirmation; show progress until authoritative flat state is verified. The browser must not declare “flat” on a successful RPC alone.
+- `Resume` requires explicit action, current readiness/risk checks and server-side permission; clearing the UI dialog cannot clear the backend's flatten override.
+
+Commands must be idempotent or reject duplicate in-flight operator requests; log operator identity, request ID, scope and final outcome. Reject stale/ambiguous account or venue context and fail closed on disconnected status. Protect mutating RPCs at the runner/proxy boundary before mainnet; the UI auth service alone is not sufficient. Manual inspection and confirmation are required for mainnet enable/flatten. Show distinct restrictions in Shadow and Paper where a command has no external-exchange effect.
+
+Existing UI changes to `max_position` and other operator configuration must remain bounded by server-side production risk limits, with the effective limit and change result visible to the operator. UI state alone cannot grant higher execution permission.
+
+## 46.2 Future simulation lab
+
+Only after the core paper fault suite is automated, an optional development-only UI page may request specific `k-paper` scenarios through a **runner-owned simulation-control API**. It must be server-gated to `Paper` and a local/test environment, separate from the production control API; the browser must never connect directly to `k-paper` or expose “drop next ACK” for Bybit. This page is useful for manual observation, not a prerequisite for the first paper or demo gate.
+
 ---
 
 # 47. Shutdown semantics
@@ -1758,22 +1825,28 @@ Persist decisions.
 
 The system is now genuinely running continuously.
 
-## Stage C — Bybit demo
+## Stage C — k-paper full-stack rehearsal
 
-After CEX hardening requirements pass:
+Run the actual Candidate #2 runtime -> risk -> executor -> `TradingClient` -> `k-paper` -> exchange state/reconciliation path, with the Trading System UI connected to the same runner. `ExecutionMode = Exchange` and `venue = Paper / local simulation`; start entries paused and explicitly resume for a test. The simulator's market stream/orderbook is **not** a completed-daily-candle source by itself: supply controlled completed candles through the same runner-owned candle interface used in Shadow, while the Paper market-data adapter supplies executable orderbook/freshness state. Compare model decisions with the frozen offline expectations without turning `k-paper` into a research backtester.
+
+An initial **Spot/levels connectivity smoke test** can happen early. It does not pass this stage for Candidate #2. Before claiming a BTCUSDT linear-perpetual rehearsal, implement and verify the minimum one-way futures contract in `k-paper` and its `trading_system` adapter: signed/authoritative position snapshots and updates, reduce-only exits, account/margin and fee/funding behavior needed by this path, instrument rules, and the REST/WS recovery queries used by production. Where Paper intentionally differs from Bybit, document the difference and leave a demo-specific gate.
+
+Acceptance requires an entry, partial/complete fill, exit, restart of **the runner while the Paper server remains alive**, order/position reconciliation, ledger totals and operator pause/cancel/flatten/resume through the UI, plus the deterministic fault matrix in section 49. Compare runner state to the Paper server's independent order/account view. A restarted `k-paper` currently loses its in-memory account; persistence or a controlled restore fixture is needed before an exchange-server-restart test can claim continuity. Stop and record unresolved simulator limitations.
+
+## Stage D — Bybit demo
+
+Only after Stage C and CEX hardening pass:
 
 ```text
 strategy = enabled
 ExecutionMode = Exchange
 Bybit environment = demo
-global execution starts paused
+entries start paused
 ```
 
-Operator explicitly enables execution.
+Operator explicitly enables execution through the same Trading System UI. Repeat venue-specific API, account-mode, recovery, risk and control checks against Bybit demo; K-paper cannot prove Bybit's private event ordering, pagination, rate limits, or futures economics. Demo is an operational correctness test, not a profitability proof.
 
-Demo is an operational correctness test, not a profitability proof.
-
-## Stage D — tiny mainnet operational validation
+## Stage E — tiny mainnet operational validation
 
 Not part of automatic implementation completion.
 
@@ -1784,37 +1857,32 @@ Requires explicit owner approval after:
 - known fees;
 - measured execution;
 - verified kill/flatten controls;
+- UI environment clarity, stale-data behavior and protected operator commands;
 - explicit capital/position budget.
 
 Candidate #2 remains labelled rejected as superior alpha.
 
 ---
 
-# 49. Demo fault matrix
+# 49. K-paper deterministic fault matrix and Bybit demo validation
 
-Before mainnet, cover at least:
+Build the missing `k-paper` scenario/fault controls as **test-only**, scriptable, seedable and repeatable. Its existing market shock presets are useful for price-path tests but do not produce the transport/account failures below. Keep failure injection in `k-paper`, the expected recovery logic in `trading_system`, and the observation/controls in `trading-system-ui`.
 
-- order accepted but ack lost;
-- order rejected;
-- partial fill;
-- cancel/fill race;
-- restart with resting order;
-- restart with existing position;
-- private WS disconnect;
-- public WS disconnect;
-- sequence gap;
-- stale market data;
-- duplicate execution event;
-- duplicate terminal order;
-- position event before fill;
-- fill before position event;
-- unresolved submission at restart.
+For reproducible fixtures, control scenario scheduling and simulated timestamps/IDs as well as market price randomness; current wall-clock timestamps and generated UUIDs otherwise make an exact event trace vary between runs. Scope faults to a test session/account/connection and reset them after each fixture so one test cannot contaminate another.
 
-Invariant for every case:
+| Scenario to add/drive locally | Required runner outcome |
+| --- | --- |
+| Normal accept -> ack -> fill -> position/account update | Target converges; no excess working/reserved quantity |
+| Accept order, suppress/delay reply or return timeout | Submission remains Unknown and reserved; no retry creates a second order; REST lookup by client ID or equivalent authoritative query recovers it |
+| Explicit rejection, transient send failure and duplicate client ID | Rejection releases only a known-rejected reservation; unknown outcome remains reserved |
+| Partial fills, then remaining fill or cancel/fill race | Filled + working + reserved exposure never double-counted; cancel outcome reconciled |
+| Duplicate execution/terminal events and events delivered in both position-before-fill and fill-before-position orders | Idempotent ledger and authoritative position; `PositionSyncPending` until reconciled |
+| Private/public disconnect, stale or gapped book, delayed/out-of-order events, REST/WS disagreement | New exposure blocked; reconcile on reconnect; no stale “Ready” state |
+| Runner restart with resting order, position or unresolved submission while Paper state persists | Recover by identity and snapshot before resuming entries; no duplicate exposure |
 
-```text
-no unintended duplicate exposure
-```
+Provide the Paper server/adapter with the minimal query surface for recovery by client order ID, including filled/terminal orders when a lost acknowledgement could otherwise be ambiguous. Do not equate absence from `/open_orders` with rejection. Support exact scenario steps, fault trigger timing and expected event trace in integration fixtures; random dev books are unsuitable for the final gate. A small, versioned test matrix should run without browser clicks in CI; then manually observe representative cases and invoke safety actions through the UI.
+
+For each case assert the Paper account/order state, runner journal/ledger, gRPC status and browser view of mode/readiness/error. Record scenario seed/fixture, runner and `k-paper` revisions and result. The invariant is **no unintended duplicate exposure**, with reductions possible only under the explicitly designed degraded-state policy. Run realistic Bybit-demo smoke/recovery cases separately where the venue permits; do not claim the local simulator reproduces Bybit's actual protocol.
 
 ---
 
@@ -1942,6 +2010,15 @@ independent audit does not import strategy_core/research_engine logic under test
 
 If `CompletedCandle` is sufficiently generic, place it in `trading_core` rather than strategy_core to avoid dependency inversion.
 
+External integration is contract-driven:
+
+```text
+trading-system-ui -> runner gRPC-Web contract -> trading_system
+trading_system market/exchange/asset adapters -> k-paper WS/REST protocol
+```
+
+Neither separate repository is a `strategy_core` dependency. The runner owns proto semantics and Paper adapter mappings; `k-paper` owns simulator behavior; the UI owns rendering and operator interactions. Pin matching revisions/contract versions in cross-repo integration runs and document any compatibility break.
+
 ---
 
 # 54. Implementation order
@@ -1960,6 +2037,8 @@ Every increment:
 6. report exact commands/results;
 7. report unresolved blockers;
 8. stop before next increment.
+
+When an increment changes a cross-repo contract, report **separate changes and tests** for `trading_system`, `k-paper` and/or `trading-system-ui` as applicable. A green unit test in one repository cannot satisfy an end-to-end acceptance gate. Implement optional simulator features and the Simulation Lab only after the minimum pre-demo gates are met.
 
 ---
 
@@ -2119,6 +2198,18 @@ Acceptance:
 
 Stop and report.
 
+## Increment 5A — Trading System UI Shadow observability
+
+After the runner's authoritative status/proto fields exist, update the separate `trading-system-ui` repository and generated client. Show Candidate #2's **rejected-as-alpha / operational-baseline** distinction, last completed candle, signal/target, Shadow execution state, venue/environment, pair readiness and reason, freshness and errors. Keep model status visible when execution is paused. Connect to the actual runner; the old Rust TUI is not the deliverable.
+
+Acceptance: proto copies and generated types match; UI unit/build checks pass; a disconnected/stale stream is visibly unready; Shadow displays zero exchange orders while still showing model decisions. Stop and report both repository revisions.
+
+## Increment 5B — existing Paper connectivity preflight
+
+Run the existing `k-paper` server and `trading_system` Paper adapters with the documented Spot/levels configuration: market WS, trading WS, REST balance/open-order/trade reconciliation and asset rules. Connect the browser UI to the same runner and verify venue labeling. Record exact working endpoints and identify missing Candidate #2 futures operations and scenario controls.
+
+This is a wiring smoke test, **not** the Stage C futures or fault gate. Do not bypass account-mode, risk or readiness failures by merely setting the adapter's instrument type to Futures. Stop and report.
+
 ---
 
 # 61. Increment 6 — CEX recovery hardening
@@ -2131,6 +2222,8 @@ Implement:
 - unknown outcome recovery by orderLinkId;
 - restart recovery;
 - immediate reconciliation triggers.
+
+Add the Paper-side query/fault hooks needed to verify lost-ack recovery by client order ID without assuming a missing open order was rejected. Keep Bybit's `orderLinkId` pagination and error handling venue-specific. Use isolated tests now; the full integration matrix follows after futures/risk/ledger work.
 
 Acceptance:
 
@@ -2155,12 +2248,15 @@ Implement:
 - one executing strategy owner per account/instrument;
 - startup account-mode/leverage fail-closed behavior.
 
+In `k-paper` and the Paper adapter, implement the **minimum explicit linear-perpetual one-way BTCUSDT test contract** required for Candidate #2: order/fill -> position and account updates, REST position snapshot/recovery, signed quantity, reduce-only exit enforcement, required leverage/margin readiness, instrument sizing, fees and controlled funding where the ledger tests need it. Version/document Paper's intentional differences from Bybit. Do not reuse spot base/quote reservation as if it were futures margin. Feed controlled completed daily candles to the runner separately from Paper orderbook data.
+
 Acceptance:
 
 - all event-order tests pass;
 - stale/unready market data blocks exposure increases;
 - reductions still possible where designed;
-- second executing BTCUSDT strategy rejected.
+- second executing BTCUSDT strategy rejected;
+- Paper position and REST/WS account state agree with independently inspected fills; one-way/reduce-only and restart-with-existing-position tests pass for the simulated contract.
 
 Stop and report.
 
@@ -2179,6 +2275,8 @@ Implement:
 - Resume;
 - explicit shutdown policy.
 
+Expose authoritative command state/results over runner gRPC, then sync the proto/generated UI client and add `PauseEntries`, `CancelWorking`, `FlattenAndPause` and `Resume` workflows in `trading-system-ui`. Show venue/environment and exact action scope in confirmation, enforce access on the backend/proxy boundary, and verify the commands against the Paper server. Keep the old global toggle's semantics explicit during migration.
+
 Do not claim daily-loss safety until realized PnL is correct.
 
 Acceptance:
@@ -2186,7 +2284,8 @@ Acceptance:
 - risk-increasing actions are blocked correctly;
 - exits remain possible;
 - flatten override cannot be undone by strategy target without Resume;
-- cancel/fill race reconciles safely.
+- cancel/fill race reconciles safely;
+- UI reflects server-confirmed progress/failure and cannot represent a timed-out flatten as complete; Shadow/Paper/Demo labels are unambiguous.
 
 Stop and report.
 
@@ -2206,6 +2305,8 @@ Implement:
 
 Then make daily-loss risk real or explicitly keep it disabled.
 
+Use deterministic Paper fills, fees and funding fixtures to test the ledger, and expose backend-calculated economic status in the UI. Label these values as simulation in Paper mode; no Paper result changes the frozen Candidate #2 research disposition.
+
 Acceptance:
 
 - deterministic fill-ledger replay;
@@ -2215,11 +2316,17 @@ Acceptance:
 
 Stop and report.
 
+## Increment 9A — full-stack K-paper qualification
+
+Run Stage C and the section 49 matrix with Candidate #2's actual runtime model and futures Paper adapter, not a manually fabricated strategy order. Use deterministic completed-candle inputs and separate market-orderbook scenarios. Assert target, risk decision, placed order, unknown/working/filled/reserved state, position, reconciliation, ledger and UI state. Restart the runner while `k-paper` keeps its state. Exercise pause/cancel/flatten/resume through the browser and confirm results against the Paper server.
+
+Acceptance: no unintended duplicate exposure in any scripted case; failed/unknown outcomes fail closed; all required status and operator actions have recorded evidence; remaining Paper/Bybit semantic differences are listed for Stage D. Stop and issue a Paper readiness report. **Do not enter Bybit demo until this gate passes.**
+
 ---
 
 # 65. Increment 10 — Bybit demo
 
-Run Candidate #2 through:
+After Increment 9A passes, run Candidate #2 through:
 
 ```text
 Completed candle
@@ -2239,9 +2346,11 @@ order/execution/position
 reconciliation
 ```
 
-Exercise fault matrix.
+Exercise the demo-applicable parts of the section 49 fault matrix.
 
 Collect execution measurements.
+
+Operate and inspect the runner through `trading-system-ui` with an unmistakable `BYBIT DEMO + EXCHANGE` indicator. Verify Bybit-specific order/account-mode behavior and the relevant faults that demo can exercise; retain the Paper matrix for deterministic failures demo cannot induce. Start paused, then enable explicitly only after readiness and UI/control checks pass.
 
 Do not promote to mainnet automatically.
 
@@ -2379,6 +2488,23 @@ one executing strategy per account/instrument
 
 until a portfolio allocator exists.
 
+## Paper is execution testing
+
+```text
+k-paper scenario result != research alpha evidence
+```
+
+Paper prices, matching, fees and funding are test fixtures. The frozen 2023-2025 economic comparison and independent audit remain the research record.
+
+## Runner is the control authority
+
+```text
+UI presents runner state and requests commands
+runner decides readiness, risk, order/account state and command outcome
+```
+
+Unknown or stale control-plane state cannot be presented as healthy. Simulation fault controls are server-gated to Paper/local use. UI login alone cannot authorize a capital-bearing runner RPC.
+
 ## Holdout
 
 ```text
@@ -2391,7 +2517,7 @@ until a future candidate passes the frozen development process.
 
 # 69. What success looks like
 
-At the end of this program, the repository should have four clearly separated systems:
+At the end of this program, `trading_system` should have four clearly separated internal systems:
 
 ```text
 strategy_core
@@ -2407,6 +2533,16 @@ audit
     independent verification
 ```
 
+Two separate repositories complete the operational path:
+
+```text
+k-paper
+    deterministic exchange/futures/fault laboratory through the real adapters
+
+trading-system-ui
+    browser control plane over the runner's authoritative gRPC contract
+```
+
 Candidate #2 should be:
 
 ```text
@@ -2415,6 +2551,7 @@ Research status:
 
 Operational status:
     running in Shadow
+    then qualified through k-paper with visible operator controls
     then proven on Bybit demo
 ```
 

@@ -257,6 +257,9 @@ impl TradingCliServiceImpl {
             dex_indicator_engine: self.dex_indicator_engine.clone(),
             strategy_caps: self.strategy_caps.clone(),
             execution_mode: self.execution_mode,
+            venue_label: self.venue_label.clone(),
+            environment: self.environment.clone(),
+            trading_control: self.trading_control.clone(),
         }
     }
 

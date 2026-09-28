@@ -1,0 +1,21 @@
+[package]
+name = "research_engine"
+version = "0.1.0"
+edition = "2021"
+description = "Historical strategy research and economic evaluation. Does not depend on trading_engine."
+
+[dependencies]
+strategy_core = { path = "../../libs/strategy_core" }
+chrono = { workspace = true }
+hex = { workspace = true }
+reqwest = { workspace = true }
+rust_decimal = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+
+[dev-dependencies]
+rust_decimal_macros = { workspace = true }
+tokio-test = { workspace = true }

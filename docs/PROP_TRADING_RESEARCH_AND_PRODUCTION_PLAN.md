@@ -1,6 +1,6 @@
 # Prop Trading Productionization and Research Architecture Plan
 
-**Status:** Increments 0–9 are accepted locally. Increment 9A's remaining section 49 faults, N=28 decision comparison, grpc CancelWorking and browser CancelWorking are now reported locally and wait owner re-review. Increment 10 / Bybit demo stays blocked. Candidate #2 remains an operational baseline, not validated alpha.  
+**Status:** Increments 0–9A are accepted locally as a Paper qualification. Increment 10 preflight (mutating RPC authorization outside the browser bundle) is in progress. Demo entries stay paused until that authorization and Bybit readiness/recovery checks pass. Candidate #2 remains an operational baseline, not validated alpha.  
 **Date:** 2026-09-28  
 **Repository:** `trading_system`  
 **Audience:** Cursor / implementation agent / repository owner  
@@ -2517,6 +2517,8 @@ Fixes in this commit: Paper merges fills only for unseen trade ids; `cancel_all_
 
 Keep Increment 10 / Bybit demo on hold pending owner re-review. Do not start demo entries.
 
+**Owner acceptance of Increment 9A (2026-09-28; source review of `trading_system` `9dab54e`, k-paper `590f3ad` / record `6d03acc`, UI `10496e7`; local matrix exit reported, lab not rerun here):** Local Paper qualification accepted. Duplicate trade IDs are ignored before updating the working order; failed REST order lookup makes CancelWorking unverified; ambiguous place errors retain the reservation. Combined partial-fill fault and REST/WS disagreement are covered. Fill/cancel race assertion tightening is Increment 10 work and does not block the preflight. Candidate #2 remains an operational baseline, not validated alpha. Demo entries stay paused until mutating RPC authorization is enforced outside the browser bundle and Bybit-specific readiness and recovery checks pass.
+
 ---
 
 # 65. Increment 10 — Bybit demo
@@ -2549,6 +2551,8 @@ Operate and inspect the runner through `trading-system-ui` with an unmistakable 
 
 Do not promote to mainnet automatically.
 
+**Increment 10 preflight (in progress; demo entries remain paused):** Mutating RPCs require `TRADING_OPERATOR_TOKEN` and `TRADING_OPERATOR_ID` for every non-Paper venue. Unset token is Paper/lab only. Envoy injects the token from `/run/secrets/trading_operator_token` and strips client `x-operator-id` / `x-operator-token`; the UI no longer reads `VITE_OPERATOR_TOKEN`. `grpc_ctl` sends the env token. Audited identity is `TRADING_OPERATOR_ID`, not a browser username. `GetTradingStatus.operator_id` reports that identity. Unauthorized commands are denied. Non-Paper runners start `entries_paused`. Leave `ZENOH_ENABLED` unset until Zenoh has the same gate. Do not Resume or enable Bybit demo entries until Bybit-specific readiness and recovery checks pass. Tighten the Paper fill/cancel race to ledger +1 or +2 with matching Paper and gRPC qty.
+
 Stop and report a demo readiness report.
 
 ---
@@ -2570,7 +2574,7 @@ Do not implement Candidate #3's trading rule until a separate strategy research 
 
 # 67. Current Cursor instruction
 
-The Increment 9A record above is **reported local evidence pending owner re-review**, not a remotely enforced CI result. The first incomplete matrix at `b136111` remains on file; this revision drives and asserts the previously unasserted section 49 rows. The pinned implementation SHAs are listed in section 64; the sibling guides record their own revisions. The accepted 5B connectivity record remains `trading_system` `043ca64523f42212cd8a2616ba6201d61d7c878a` (evidence `1f00fdc80f7bbbb39b836da9445e041eb18e6c77`).
+The Increment 9A Paper qualification is **accepted locally** (`trading_system` `9dab54e`, k-paper `590f3ad` / `6d03acc`, UI `10496e7`) on source review plus the reported matrix exit; the lab was not rerun in that review. Increment 10 preflight is in progress. Demo entries stay paused. Candidate #2 remains an operational baseline, not validated alpha. The accepted 5B connectivity record remains `trading_system` `043ca64523f42212cd8a2616ba6201d61d7c878a` (evidence `1f00fdc80f7bbbb39b836da9445e041eb18e6c77`).
 
 | Increment | Status | Gate |
 | --- | --- | --- |
@@ -2582,10 +2586,10 @@ The Increment 9A record above is **reported local evidence pending owner re-revi
 | 7 | Accepted locally | Futures PositionSyncPending, no fill+position double count, MD freshness required for Exchange futures, one strategy per pair, fail-closed leverage/mode, Paper one-way USDT-linear BTCUSDT |
 | 8 | Accepted locally | Explicit Exchange risk, prospective effective exposure, PauseEntries/CancelWorking/FlattenAndPause/Resume, operator token on mutating RPCs, UI confirmation does not treat flatten RPC as flat |
 | 9 | Accepted locally | Durable execution ledger, fees/funding/weighted PnL, restart replay, daily-loss from ledger or fail-closed if configured without it, UI simulation label for Paper |
-| 9A | Reported complete locally; pending owner re-review | Section 49 rows driven through C2→Paper with journal/ledger/grpc asserts; frozen N=28 adapter comparison; grpc and browser CancelWorking recorded; stop before Bybit demo |
-| 10 | Blocked | Start demo only after 9A acceptance; protect mutating operator commands before enabling demo entries |
+| 9A | Accepted locally as Paper qualification | Section 49 rows through C2→Paper; frozen N=28 adapter comparison; grpc and browser CancelWorking; source review of `9dab54e` |
+| 10 | Preflight in progress; demo entries paused | Enforce mutating RPC auth outside the browser bundle; then Bybit readiness/recovery; do not enable demo entries until both pass |
 
-Cursor: Stop for owner review. Do not start Increment 10 / Bybit demo until 9A is accepted; the operator authorization preflight is a guarded first action of 10 before any demo entries.
+Cursor: Complete Increment 10 preflight. Keep demo entries paused until mutating RPC authorization is enforced outside the browser bundle and Bybit-specific readiness and recovery checks pass. Do not treat Candidate #2 as validated alpha.
 
 ---
 

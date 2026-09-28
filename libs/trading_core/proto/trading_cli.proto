@@ -58,6 +58,7 @@ message GetTradingStatusResponse {
     bool entries_paused = 5;
     bool flatten_latched = 6;
     string global_toggle_semantics = 7; // legacy SetTradingEnabled cancels working when disabling
+    string operator_id = 8; // TRADING_OPERATOR_ID; never a browser username
 }
 
 message OperatorCommandRequest {
@@ -293,6 +294,7 @@ message MonitoringData {
     string fees_paid = 25;
     string funding_pnl = 26;
     string ledger_equity = 27;
+    string operator_id = 28; // TRADING_OPERATOR_ID; never a browser username
 }
 
 message DexVenueSnapshot {

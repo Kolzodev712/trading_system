@@ -304,6 +304,7 @@ impl MonitoringService {
             fees_paid: String::new(),
             funding_pnl: String::new(),
             ledger_equity: String::new(),
+            operator_id: crate::grpc::access::displayed_operator_id(&self.venue_label),
         };
 
         if let Some(ledger) = self.trading_state_manager.execution_ledger() {

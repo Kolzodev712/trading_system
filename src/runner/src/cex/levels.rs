@@ -85,8 +85,14 @@ pub async fn level_runner(
     let config_tick_size = rust_decimal::Decimal::new(1, 2); // 0.01
     let config_min_notional = rust_decimal::Decimal::new(5, 0); // 5.0
 
-    // Create TradingControl for enable/disable trading
-    let trading_control = Arc::new(TradingControl::new(services.trading_client()?.clone()));
+    let start_paused =
+        bot_config.exchange_engine.exchange != trading_core::types::common::Exchange::Paper;
+    let trading_control = Arc::new(
+        TradingControl::new(services.trading_client()?.clone()).with_entries_paused(start_paused),
+    );
+    if start_paused {
+        info!("entries start paused until authenticated Resume (non-Paper venue)");
+    }
 
     // Get instrument type from config (defaults to Spot if not specified)
     let instrument_type = bot_config

@@ -366,8 +366,13 @@ pub async fn strategy_runner_with(
         .min_notional
         .unwrap_or_else(|| rust_decimal::Decimal::new(5, 0));
 
-    // Create TradingControl for enable/disable trading
-    let trading_control = Arc::new(TradingControl::new(trading_client.clone()));
+    let start_paused =
+        bot_config.exchange_engine.exchange != trading_core::types::common::Exchange::Paper;
+    let trading_control =
+        Arc::new(TradingControl::new(trading_client.clone()).with_entries_paused(start_paused));
+    if start_paused {
+        info!("entries start paused until authenticated Resume (non-Paper venue)");
+    }
 
     // Wrap StrategyManager and set trading control for hierarchical control
     let strategy_manager = strategy_manager.with_instrument_type(instrument_type.clone());

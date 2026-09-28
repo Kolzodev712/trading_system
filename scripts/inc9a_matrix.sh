@@ -895,8 +895,8 @@ sleep 1
 fills_after="$(ledger_fill_ids | awk 'NR==1{print $2}')"
 echo "race unique ledger before=${fills_before} after=${fills_after}"
 added=$((fills_after - fills_before))
-if [[ "${added}" -lt 1 || "${added}" -gt 3 ]]; then
-  echo "FAILED: fill/cancel race unique ledger ${fills_after} (before=${fills_before})" >&2
+if [[ "${added}" -ne 1 && "${added}" -ne 2 ]]; then
+  echo "FAILED: fill/cancel race unique ledger ${fills_after} (before=${fills_before}); want +1 or +2" >&2
   ledger_fill_ids >&2
   exit 1
 fi
@@ -910,6 +910,36 @@ echo "race Paper positions=${race_pos}"
 if echo "${race_pos}" | grep -q "0.003"; then
   echo "FAILED: fill/cancel race over-filled Paper" >&2
   exit 1
+fi
+race_status="$("${CTL[@]}" status)"
+echo "${race_status}"
+if [[ "${added}" -eq 1 ]]; then
+  if ! echo "${race_pos}" | grep -Eq '0\.001'; then
+    echo "FAILED: one-fill race Paper qty is not 0.001" >&2
+    echo "positions=${race_pos}" >&2
+    exit 1
+  fi
+  if echo "${race_pos}" | grep -Eq '0\.002'; then
+    echo "FAILED: one-fill race Paper qty looks like 0.002" >&2
+    echo "positions=${race_pos}" >&2
+    exit 1
+  fi
+  if ! echo "${race_status}" | grep -Eq 'qty=0\.001'; then
+    echo "FAILED: one-fill race grpc qty is not 0.001" >&2
+    echo "${race_status}" >&2
+    exit 1
+  fi
+else
+  if ! echo "${race_pos}" | grep -Eq '0\.002'; then
+    echo "FAILED: two-fill race Paper qty is not 0.002" >&2
+    echo "positions=${race_pos}" >&2
+    exit 1
+  fi
+  if ! echo "${race_status}" | grep -Eq 'qty=0\.002'; then
+    echo "FAILED: two-fill race grpc qty is not 0.002" >&2
+    echo "${race_status}" >&2
+    exit 1
+  fi
 fi
 
 echo "== CancelWorking unverified when REST open_orders fails =="

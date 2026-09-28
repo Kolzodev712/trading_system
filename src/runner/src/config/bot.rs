@@ -648,5 +648,31 @@ mod config_smoke_tests {
         assert_eq!(configs[0].strategy_type.as_str(), "BTCPriceMALongFlatV1");
         assert_eq!(configs[0].lookback, Some(28));
         assert!(configs[0].initially_enabled);
+        let (mode, venue, environment) = crate::config::execution_status_from_bot(&cfg);
+        assert_eq!(mode, trading_core::types::ExecutionMode::Shadow);
+        assert_eq!(venue, "BYBIT");
+        assert_eq!(environment, "MAINNET");
+    }
+
+    #[test]
+    fn kpaper_sample_is_paper_local_exchange() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../sample_config/k-paper/bot.json");
+        let cfg = BotConfig::load_from_file(path.to_str().unwrap()).unwrap();
+        cfg.validate().unwrap();
+        let (mode, venue, environment) = crate::config::execution_status_from_bot(&cfg);
+        assert_eq!(mode, trading_core::types::ExecutionMode::Exchange);
+        assert_eq!(venue, "PAPER");
+        assert_eq!(environment, "LOCAL");
+    }
+
+    #[test]
+    fn dex_example_labels_deepbook_testnet() {
+        let cfg = BotConfig::load_from_file(example_path("bot.dex.example.json").to_str().unwrap())
+            .unwrap();
+        let (mode, venue, environment) = crate::config::execution_status_from_bot(&cfg);
+        assert_eq!(mode, trading_core::types::ExecutionMode::Exchange);
+        assert_eq!(venue, "DEEPBOOK");
+        assert_eq!(environment, "TESTNET");
     }
 }

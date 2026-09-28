@@ -83,7 +83,7 @@ async fn test_strategy_monitoring_with_position() {
         dex_indicator_engine: None,
         strategy_caps: None,
         execution_mode: trading_core::types::ExecutionMode::Exchange,
-        venue_label: "TEST".to_string(),
+        venue_label: "PAPER".to_string(),
         environment: "LOCAL".to_string(),
         trading_control: Arc::new(trading_core::grpc::TradingControl::new(Arc::new(
             tokio::sync::RwLock::new(MockTradingClient::new()),
@@ -103,11 +103,13 @@ async fn test_strategy_monitoring_with_position() {
     assert_eq!(strategy_status.position_avg_price, "50000");
     assert_eq!(strategy_status.active_orders, 0);
     assert_eq!(strategy_status.max_active_orders, 2);
-    assert_eq!(monitoring_data.venue, "TEST");
+    assert_eq!(monitoring_data.venue, "PAPER");
     assert_eq!(monitoring_data.environment, "LOCAL");
     assert_eq!(monitoring_data.execution_mode, "exchange");
     assert_eq!(monitoring_data.runner_mode, "levels");
     assert!(!monitoring_data.trading_enabled);
+    assert!(monitoring_data.snapshot_unix_ms > 0);
+    assert!(strategy_status.operational_role.is_empty());
 }
 
 #[tokio::test]
@@ -173,7 +175,7 @@ async fn test_strategy_monitoring_without_position() {
         dex_indicator_engine: None,
         strategy_caps: None,
         execution_mode: trading_core::types::ExecutionMode::Exchange,
-        venue_label: "TEST".to_string(),
+        venue_label: "PAPER".to_string(),
         environment: "LOCAL".to_string(),
         trading_control: Arc::new(trading_core::grpc::TradingControl::new(Arc::new(
             tokio::sync::RwLock::new(MockTradingClient::new()),
@@ -283,7 +285,7 @@ async fn test_strategy_monitoring_with_active_orders() {
         dex_indicator_engine: None,
         strategy_caps: None,
         execution_mode: trading_core::types::ExecutionMode::Exchange,
-        venue_label: "TEST".to_string(),
+        venue_label: "PAPER".to_string(),
         environment: "LOCAL".to_string(),
         trading_control: Arc::new(trading_core::grpc::TradingControl::new(Arc::new(
             tokio::sync::RwLock::new(MockTradingClient::new()),

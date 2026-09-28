@@ -43,7 +43,16 @@ pub struct StrategyRuntimeSnapshot {
     pub fresh_entry_eligible: bool,
     pub recovery: String,
     pub research_disposition: String,
+    pub operational_role: String,
     pub model_reconstructed: bool,
+}
+
+/// Operator role comes from strategy metadata, never from `ExecutionMode`.
+pub fn operational_role_from_snapshot(snapshot: Option<&StrategyRuntimeSnapshot>) -> String {
+    snapshot
+        .map(|s| s.operational_role.clone())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_default()
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -354,6 +363,13 @@ mod tests {
         ) -> Result<BulkAmendResponse, EngineError> {
             panic!("inner bulk_amend");
         }
+
+        async fn bulk_cancel_orders(
+            &self,
+            _req: BulkCancelRequest,
+        ) -> Result<BulkCancelResponse, EngineError> {
+            panic!("inner bulk_cancel");
+        }
     }
 
     #[tokio::test]
@@ -379,7 +395,53 @@ mod tests {
             .unwrap_err();
         assert!(err.to_string().contains("shadow mode forbids"));
         assert_eq!(calls.load(Ordering::Relaxed), 1);
+        assert!(guard
+            .cancel_all_orders(&Pair::new("BTC", "USDT"))
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("shadow mode forbids"));
+        assert_eq!(
+            calls.load(Ordering::Relaxed),
+            2,
+            "guard counts forbidden attempts; DummyClient panics if the inner exchange is reached"
+        );
         assert!(guard.fetch_balance().await.is_ok());
+        assert!(guard.fetch_open_orders().await.is_ok());
+    }
+
+    #[test]
+    fn operational_role_is_not_inferred_from_execution_mode() {
+        assert_eq!(operational_role_from_snapshot(None), "");
+        let snap = StrategyRuntimeSnapshot {
+            strategy_id: "BTCPriceMALongFlatV1:BTC/USDT".into(),
+            strategy_version: "1".into(),
+            config_hash: "h".into(),
+            readiness: "ready".into(),
+            readiness_reason: "ok".into(),
+            last_completed_start_ms: None,
+            last_completed_end_ms: None,
+            last_close: None,
+            geometric_mean: None,
+            log_spread: None,
+            model_direction: "long".into(),
+            previous_direction: "flat".into(),
+            desired_target: "0".into(),
+            fresh_entry_eligible: false,
+            recovery: "clear".into(),
+            research_disposition: "REJECTED AS VALIDATED ALPHA".into(),
+            operational_role: OPERATIONAL_ROLE_BASELINE.to_string(),
+            model_reconstructed: true,
+        };
+        assert_eq!(
+            operational_role_from_snapshot(Some(&snap)),
+            OPERATIONAL_ROLE_BASELINE
+        );
+        assert_eq!(ExecutionMode::Shadow.as_str(), "shadow");
+        assert_ne!(
+            operational_role_from_snapshot(Some(&snap)),
+            ExecutionMode::Shadow.as_str()
+        );
     }
 
     #[test]

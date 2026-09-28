@@ -18,6 +18,7 @@ use trading_engine::levels::LevelManager;
 use trading_engine::state::manager::TradingStateManager;
 
 use super::control::DexGrpcControl;
+use crate::config::BotConfig;
 use crate::grpc::service::TradingCliServiceImpl;
 use crate::SharedServices;
 
@@ -100,6 +101,7 @@ pub struct DexMonitoringGrpc {
 pub fn build_dex_monitoring_grpc(
     services: &SharedServices,
     control: DexGrpcControl,
+    bot_config: &BotConfig,
 ) -> Result<DexMonitoringGrpc, String> {
     let (cex_tx, cex_rx) = cex_venue_update_channel(64);
     let symbol_registry = Arc::new(SymbolRegistry::from_pairs(vec![]));
@@ -121,6 +123,7 @@ pub fn build_dex_monitoring_grpc(
         trading_client.clone(),
     ));
 
+    let (mode, venue, environment) = crate::config::execution_status_from_bot(bot_config);
     let mut service = TradingCliServiceImpl::new(
         level_manager,
         trading_state_manager,
@@ -131,7 +134,8 @@ pub fn build_dex_monitoring_grpc(
         services.indicator_calculator.clone(),
         trading_control,
     )
-    .with_exchange("deepbook");
+    .with_exchange("deepbook")
+    .with_execution_status(mode, venue, environment);
 
     if let Some(dex_sm) = services.venue.dex_state_manager() {
         service = service.with_dex_state_manager(dex_sm, "dex".to_string());

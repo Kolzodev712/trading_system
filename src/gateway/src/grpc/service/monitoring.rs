@@ -535,10 +535,8 @@ impl MonitoringService {
             None
         };
 
-        let operational_role = match self.execution_mode {
-            trading_core::types::ExecutionMode::Shadow => "SHADOW".to_string(),
-            trading_core::types::ExecutionMode::Exchange => "BASELINE".to_string(),
-        };
+        let operational_role =
+            trading_engine::cex::shadow::operational_role_from_snapshot(snapshot.as_ref());
 
         Some(trading_cli::StrategyStatus {
             strategy_id: strategy_id.clone(),

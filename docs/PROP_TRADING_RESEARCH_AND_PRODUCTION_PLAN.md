@@ -1,6 +1,6 @@
 # Prop Trading Productionization and Research Architecture Plan
 
-**Status:** Increments 0–5 and the local 5R/5A gates are complete. The bounded Increment 5B Spot/levels K-paper connectivity preflight is accepted locally. Increment 6 recovery hardening is implemented locally in `trading_system` and `k-paper` `ed9568b`; UI proto was unchanged (`028ea16`). Stop for review before Increment 7. This does not qualify Candidate #2 futures, order execution, the fault matrix or Bybit demo. Placeholder Bybit sample credentials remain an environment limitation.  
+**Status:** Increments 0–5 and the local 5R/5A gates are complete. The bounded Increment 5B Spot/levels K-paper connectivity preflight is accepted locally. Increment 6 recovery hardening is implemented locally at `trading_system` `c16a7be`, k-paper `ed9568b`; UI proto was unchanged (`028ea16`). Stop for review before Increment 7. This does not qualify Candidate #2 futures, order execution, the fault matrix or Bybit demo. Placeholder Bybit sample credentials remain an environment limitation.  
 **Date:** 2026-09-28  
 **Repository:** `trading_system`  
 **Audience:** Cursor / implementation agent / repository owner  
@@ -2308,7 +2308,7 @@ The 5B gate is closed for its stated connectivity scope. The process kills in th
 
 # 61. Increment 6 — CEX recovery hardening
 
-**Status:** Implemented locally. Isolated producer/consumer tests passed; this is not the section 49 integration matrix, futures qualification, or Bybit demo. UI proto/status contract was unchanged, so `trading-system-ui` stayed at `028ea16cb53f83871df1ee4053b7caeb36fbb9a8`. Matching k-paper is `ed9568b11acab60149d7f57922e48765a809f5bf`.
+**Status:** Implemented locally at `trading_system` `c16a7bec236dbf26bae6e1df13bbbd1f9bd97756`. Isolated producer/consumer tests passed; this is not the section 49 integration matrix, futures qualification, or Bybit demo. UI proto/status contract was unchanged, so `trading-system-ui` stayed at `028ea16cb53f83871df1ee4053b7caeb36fbb9a8`. Matching k-paper is `ed9568b11acab60149d7f57922e48765a809f5bf`.
 
 Shipped:
 
@@ -2474,7 +2474,7 @@ Do not implement Candidate #3's trading rule until a separate strategy research 
 
 # 67. Current Cursor instruction
 
-The accepted 5B record is `trading_system` `043ca64523f42212cd8a2616ba6201d61d7c878a` (evidence `1f00fdc80f7bbbb39b836da9445e041eb18e6c77`), `trading-system-ui` `66632edc810c22686db146061574b0a854d4bf6c`, and `k-paper` `e5d0a590b95c0f266edd9faab15c365a12c15ccc`. These are **reported local checks**, not a remotely enforced CI result.
+The Increment 6 local record is `trading_system` `c16a7bec236dbf26bae6e1df13bbbd1f9bd97756`, `trading-system-ui` `028ea16cb53f83871df1ee4053b7caeb36fbb9a8` (unchanged proto), and `k-paper` `ed9568b11acab60149d7f57922e48765a809f5bf`. These are **reported local checks**, not a remotely enforced CI result. The accepted 5B connectivity record remains `trading_system` `043ca64523f42212cd8a2616ba6201d61d7c878a` (evidence `1f00fdc80f7bbbb39b836da9445e041eb18e6c77`).
 
 | Increment | Status | Gate |
 | --- | --- | --- |
@@ -2485,7 +2485,7 @@ The accepted 5B record is `trading_system` `043ca64523f42212cd8a2616ba6201d61d7c
 | 6 | Implemented locally; stop for review | Bybit pagination, persistent unknown-submission recovery, k-paper client-id lookup and lost-ACK hook; isolated tests only |
 | 7+ | Not started | Follow section 54 and each increment's gate |
 
-Cursor: Increment 6 is implemented in `trading_system` and k-paper `ed9568b11acab60149d7f57922e48765a809f5bf`. UI unchanged at `028ea16cb53f83871df1ee4053b7caeb36fbb9a8`. Record the trading_system SHA of this change, then stop for review before Increment 7.
+Cursor: Increment 6 is implemented at `trading_system` `c16a7bec236dbf26bae6e1df13bbbd1f9bd97756` and k-paper `ed9568b11acab60149d7f57922e48765a809f5bf`. UI unchanged at `028ea16cb53f83871df1ee4053b7caeb36fbb9a8`. Stop for review before Increment 7.
 
 ---
 

@@ -160,6 +160,8 @@ impl SubmissionJournal {
         })?;
         file.flush()
             .map_err(|err| EngineError::CustomError(anyhow::anyhow!("flush journal: {err}")))?;
+        file.sync_all()
+            .map_err(|err| EngineError::CustomError(anyhow::anyhow!("fsync journal: {err}")))?;
         Ok(())
     }
 
@@ -268,6 +270,7 @@ fn apply_lookup(
                     journal.append(&record.clone().with_state(SubmissionState::Terminal))?;
                 }
                 OrderStatus::Canceled | OrderStatus::Rejected | OrderStatus::Expired => {
+                    trading_state.apply_fill(&order);
                     trading_state.clear_submission(&record.client_order_id);
                     let state = if order.status == OrderStatus::Rejected {
                         SubmissionState::Rejected
@@ -277,6 +280,7 @@ fn apply_lookup(
                     journal.append(&record.clone().with_state(state))?;
                 }
                 _ => {
+                    trading_state.apply_fill(&order);
                     trading_state.clear_submission(&record.client_order_id);
                     journal.append(&record.clone().with_state(SubmissionState::Terminal))?;
                 }
@@ -573,5 +577,143 @@ mod tests {
         assert_eq!(state.working_qty(&pair()), Decimal::new(1, 3));
         assert_eq!(state.reserved_submission_qty(&pair()), Decimal::ZERO);
         assert_eq!(state.active_orders.len(), 1);
+    }
+
+    fn partial_working_order(cid: &str, id: &str) -> Order {
+        let mut order = working_order(cid, id);
+        order.status = OrderStatus::PartiallyFilled;
+        order.filled_amount = Decimal::new(4, 4);
+        order
+    }
+
+    #[tokio::test]
+    async fn recover_partial_working_fill_is_counted() {
+        let path = journal_path("partial-work");
+        let journal = SubmissionJournal::open(&path).expect("open");
+        let pending = pending("cid-pf");
+        journal
+            .append(&SubmissionRecord::from_pending(
+                &pending,
+                SubmissionState::Unknown,
+            ))
+            .expect("append");
+        let mut state = TradingState::new();
+        state.begin_submission(pending);
+        let reserved = state.reserved_submission_qty(&pair());
+        assert_eq!(reserved, Decimal::new(1, 3));
+
+        let order = partial_working_order("cid-pf", "ex-pf");
+        let client = ScriptedClient::new(HashMap::from([(
+            "cid-pf".into(),
+            ClientOrderLookup::Working(order.clone()),
+        )]));
+
+        let report = recover_unknown_submissions(&journal, &client, &mut state)
+            .await
+            .expect("recover");
+        assert_eq!(report.imported_working, 1);
+        assert_eq!(state.position_qty(&pair()), Decimal::new(4, 4));
+        assert_eq!(state.working_qty(&pair()), Decimal::new(6, 4));
+        assert_eq!(state.reserved_submission_qty(&pair()), Decimal::ZERO);
+        assert_eq!(state.effective_position_qty(&pair()), Decimal::new(1, 3));
+        assert!(!state.has_unresolved_submission(&pair()));
+
+        let report2 = recover_unknown_submissions(&journal, &client, &mut state)
+            .await
+            .expect("repeat");
+        assert_eq!(report2.imported_working, 0);
+        state.import_working_order(order);
+        assert_eq!(state.position_qty(&pair()), Decimal::new(4, 4));
+        assert_eq!(state.effective_position_qty(&pair()), Decimal::new(1, 3));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn recover_partial_canceled_fill_is_counted() {
+        let path = journal_path("partial-cxl");
+        let journal = SubmissionJournal::open(&path).expect("open");
+        let pending = pending("cid-pc");
+        journal
+            .append(&SubmissionRecord::from_pending(
+                &pending,
+                SubmissionState::Unknown,
+            ))
+            .expect("append");
+        let mut state = TradingState::new();
+        state.begin_submission(pending);
+        let mut order = working_order("cid-pc", "ex-pc");
+        order.status = OrderStatus::Canceled;
+        order.filled_amount = Decimal::new(4, 4);
+        let client = ScriptedClient::new(HashMap::from([(
+            "cid-pc".into(),
+            ClientOrderLookup::Terminal(order.clone()),
+        )]));
+
+        let report = recover_unknown_submissions(&journal, &client, &mut state)
+            .await
+            .expect("recover");
+        assert_eq!(report.resolved_terminal, 1);
+        assert_eq!(state.position_qty(&pair()), Decimal::new(4, 4));
+        assert_eq!(state.working_qty(&pair()), Decimal::ZERO);
+        assert_eq!(state.reserved_submission_qty(&pair()), Decimal::ZERO);
+        assert_eq!(state.effective_position_qty(&pair()), Decimal::new(4, 4));
+        assert!(!state.has_unresolved_submission(&pair()));
+
+        recover_unknown_submissions(&journal, &client, &mut state)
+            .await
+            .expect("repeat journal");
+        state.apply_fill(&order);
+        assert_eq!(state.position_qty(&pair()), Decimal::new(4, 4));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn unwritable_journal_append_fails() {
+        let mut path = std::env::temp_dir();
+        path.push(format!("inc6-unwritable-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&path);
+        std::fs::create_dir_all(&path).expect("dir");
+        let journal = SubmissionJournal::open(&path).expect("open records a path");
+        let err = journal
+            .append(&SubmissionRecord::from_pending(
+                &pending("cid-uw"),
+                SubmissionState::Prepared,
+            ))
+            .expect_err("append to a directory must fail");
+        assert!(
+            err.to_string().contains("submission journal")
+                || err.to_string().contains("Is a directory")
+                || err.to_string().contains("open"),
+            "unexpected error: {err}"
+        );
+        let _ = std::fs::remove_dir_all(&path);
+    }
+
+    #[test]
+    fn malformed_journal_load_fails() {
+        let path = journal_path("torn");
+        std::fs::write(&path, "{\"client_order_id\":\"cid-torn\"\nnot-json\n")
+            .expect("write torn journal");
+        let journal = SubmissionJournal::open(&path).expect("open");
+        let err = journal.load_latest().expect_err("parse must fail");
+        assert!(
+            err.to_string().contains("parse submission journal"),
+            "unexpected error: {err}"
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn malformed_journal_blocks_recovery() {
+        let path = journal_path("torn-recover");
+        std::fs::write(&path, "not-json\n").expect("write");
+        let journal = SubmissionJournal::open(&path).expect("open");
+        let client = ScriptedClient::new(HashMap::new());
+        let mut state = TradingState::new();
+        let err = recover_unknown_submissions(&journal, &client, &mut state)
+            .await
+            .expect_err("damaged journal must fail recovery");
+        assert!(err.to_string().contains("parse submission journal"));
+        let _ = std::fs::remove_file(&path);
     }
 }

@@ -815,7 +815,9 @@ export MONGODB_URI=mongodb://localhost:27017
 
 ## Running the System
 
-For **Paper mode** with **k-paper**, the **runner**, and the **TUI CLI** (three terminals, ports, dummy orderbooks), see **[Local dev guide](docs/LOCAL_DEV_GUIDE.md)**.
+For the existing **Spot/levels Paper smoke test** with K-paper, the runner and legacy TUI, see the [local dev guide](docs/LOCAL_DEV_GUIDE.md).
+
+For the prop-trading architecture and Cursor's incremental work, start with [Prop Trading Productionization and Research Architecture Plan](docs/PROP_TRADING_RESEARCH_AND_PRODUCTION_PLAN.md). Its cross-repository handoff links to the separate K-paper and browser Trading System UI guides; the old TUI is not the planned operator control layer.
 
 ### Pre-Flight Checks
 

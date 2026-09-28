@@ -70,6 +70,7 @@ async fn spawn_paper_client(
             state_manager,
             shutdown_rx,
             balance_ready,
+            None,
         )
         .await
     });

@@ -1,0 +1,5 @@
+[
+  {"timestamp_ms": 0, "open": "100", "high": "100", "low": "100", "close": "100", "volume": "1"},
+  {"timestamp_ms": 86400000, "open": "100", "high": "100", "low": "100", "close": "100", "volume": "1"},
+  {"timestamp_ms": 172800000, "open": "110", "high": "110", "low": "110", "close": "110", "volume": "1"}
+]

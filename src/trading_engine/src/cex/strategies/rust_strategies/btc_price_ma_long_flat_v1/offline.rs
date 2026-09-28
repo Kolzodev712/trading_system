@@ -1,16 +1,14 @@
 //! Offline replay for BTCPriceMALongFlatV1 from merged daily datasets.
 
 use super::{
-    on_candle, position_qty, Direction, ModelState, Step, PERFORMANCE_END_EXCLUSIVE_MS,
-    PERFORMANCE_START_MS, STRATEGY_NAME, STRATEGY_VERSION,
+    model_config_hash, on_candle, position_qty, Direction, ModelState, Step,
+    PERFORMANCE_END_EXCLUSIVE_MS, PERFORMANCE_START_MS, STRATEGY_NAME, STRATEGY_VERSION,
 };
 use crate::cex::strategies::rust_strategies::donchian_daily_v1::offline::{
     completed_series, window_series, DatasetCandle, DatasetMetadata, DecisionLog, DecisionRow,
     EmittedTarget, HistoricalDataset, OfflineError, RunMetadata,
 };
 use rust_decimal::Decimal;
-use serde::Serialize;
-use sha2::{Digest, Sha256};
 use std::path::Path;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -183,28 +181,8 @@ fn initial_state_policy(lookback: usize) -> String {
     )
 }
 
-#[derive(Serialize)]
-struct ConfigHashPayload {
-    strategy_id: &'static str,
-    strategy_version: &'static str,
-    lookback: usize,
-    position_qty: Decimal,
-    allow_short: bool,
-    signal: &'static str,
-}
-
 pub fn config_hash(lookback: usize) -> Result<String, OfflineError> {
-    let payload = ConfigHashPayload {
-        strategy_id: STRATEGY_NAME,
-        strategy_version: STRATEGY_VERSION,
-        lookback,
-        position_qty: position_qty(),
-        allow_short: false,
-        signal: "log_close_minus_geometric_mean_of_N_including_current",
-    };
-    let bytes = serde_json::to_vec(&payload)
-        .map_err(|err| OfflineError::new(format!("config hash: {err}")))?;
-    Ok(format!("sha256:{}", hex::encode(Sha256::digest(bytes))))
+    model_config_hash(lookback).map_err(OfflineError::new)
 }
 
 fn direction_name(direction: Direction) -> String {

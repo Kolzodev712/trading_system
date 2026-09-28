@@ -10,6 +10,7 @@ members = [
     "libs/trading_core",
     "libs/trading_networking",
     "libs/trading_trace",
+    "libs/strategy_core",
     "src/exchange_engine",
     "src/dex_engine",
     "src/gateway",

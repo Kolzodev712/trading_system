@@ -1,0 +1,18 @@
+[package]
+name = "strategy_core"
+version = "0.1.0"
+edition = "2021"
+description = "Pure strategy models. No exchange, runtime, or research accounting."
+
+[dependencies]
+hex = { workspace = true }
+rust_decimal = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+
+[dev-dependencies]
+rust_decimal = { workspace = true }
+rust_decimal_macros = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }

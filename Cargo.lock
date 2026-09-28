@@ -4685,6 +4685,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
+name = "strategy_core"
+version = "0.1.0"
+dependencies = [
+ "hex",
+ "rust_decimal",
+ "rust_decimal_macros",
+ "serde",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
 name = "strategy_engine"
 version = "0.1.0"
 dependencies = [
@@ -5553,6 +5565,7 @@ dependencies = [
  "serde_with",
  "sha2",
  "smol_str",
+ "strategy_core",
  "thiserror 1.0.69",
  "tokio",
  "tokio-stream",

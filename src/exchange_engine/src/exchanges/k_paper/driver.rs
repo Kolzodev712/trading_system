@@ -69,6 +69,7 @@ impl ExchangeDriver for PaperDriver {
         let state_manager = self.state_manager.clone();
         let balance_ready = self.balance_ready.clone();
 
+        let connection_state = self.connection_state.clone();
         let loop_handle = tokio::spawn(async move {
             run_websocket_loop(
                 config,
@@ -78,15 +79,10 @@ impl ExchangeDriver for PaperDriver {
                 state_manager,
                 shutdown_for_loop,
                 balance_ready,
+                Some(connection_state),
             )
             .await
         });
-
-        // Mark connected once the loop has started (connection happens inside the loop)
-        {
-            let mut guard = self.connection_state.write().await;
-            *guard = ConnectionState::Connected;
-        }
 
         tokio::select! {
             _ = shutdown_rx.recv() => {

@@ -203,17 +203,19 @@ impl ExchangeStateManager {
     /// # Errors
     /// Returns an error if publishing fails
     pub async fn update_position(&self, position: Position) -> Result<(), EngineError> {
-        // Clone before lock to minimize lock time
         let position_for_state = position.clone();
         let pair = position.instrument.pair.clone();
+        let flat = position.quantity.abs() <= rust_decimal::Decimal::new(1, 6);
 
-        // 1. Update in-memory state
         {
             let mut state = self.state.write().await;
-            state.update_position(position_for_state);
+            if flat {
+                state.remove_position(&pair);
+            } else {
+                state.update_position(position_for_state);
+            }
         }
 
-        // 2. Publish via broadcast channel (use original position)
         if let Err(e) = self.publisher.publish_position(&position).await {
             error!("Failed to publish position update: {}", e);
             return Err(e);

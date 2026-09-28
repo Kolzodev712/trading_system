@@ -89,6 +89,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             state_manager,
             shutdown_rx,
             balance_ready,
+            None,
         )
         .await
     });

@@ -1,10 +1,14 @@
-//! Candidate #2 construction. Exchange mode is always rejected.
+//! Candidate #2 construction. Bybit Exchange stays rejected until Increment 10.
+//! Paper Exchange is the Increment 9A laboratory only.
 
 use crate::adapter::{BtcPriceMaLongFlatV1, BtcPriceMaLongFlatV1Config};
 use std::sync::Arc;
 use strategy_core::btc_price_ma_long_flat_v1::PRIMARY_LOOKBACK;
 use tokio::sync::RwLock;
-use trading_core::{error::EngineError, types::ExecutionMode};
+use trading_core::{
+    error::EngineError,
+    types::{common::Exchange, ExecutionMode},
+};
 use trading_engine::cex::state::Strategy;
 use trading_engine::strategies::{ExtraStrategyFactory, StrategyFactoryArgs};
 
@@ -21,9 +25,9 @@ impl ExtraStrategyFactory for BtcPriceMaFactory {
         ) {
             return None;
         }
-        if args.execution_mode != ExecutionMode::Shadow {
+        if args.execution_mode == ExecutionMode::Exchange && args.exchange != Exchange::Paper {
             return Some(Err(EngineError::new_custom_error(
-                "BTCPriceMALongFlatV1 is not a live strategy".into(),
+                "BTCPriceMALongFlatV1 Exchange is Paper-lab only until Increment 10".into(),
             )));
         }
         Some(
@@ -83,12 +87,15 @@ mod tests {
     }
 
     #[test]
-    fn app_factory_builds_in_shadow_and_rejects_exchange() {
+    fn app_factory_builds_shadow_and_paper_exchange_rejects_bybit_exchange() {
         let extra = BtcPriceMaFactory;
         assert!(build_strategy_composed(args(ExecutionMode::Shadow), Some(&extra)).is_ok());
+        let mut paper = args(ExecutionMode::Exchange);
+        paper.exchange = Exchange::Paper;
+        assert!(build_strategy_composed(paper, Some(&extra)).is_ok());
         match build_strategy_composed(args(ExecutionMode::Exchange), Some(&extra)) {
-            Err(err) => assert!(err.to_string().contains("not a live strategy")),
-            Ok(_) => panic!("Candidate #2 must stay unavailable in Exchange mode"),
+            Err(err) => assert!(err.to_string().contains("Paper-lab only")),
+            Ok(_) => panic!("Candidate #2 must stay unavailable on Bybit Exchange"),
         }
     }
 }

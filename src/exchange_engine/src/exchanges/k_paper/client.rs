@@ -20,7 +20,7 @@ use trading_core::types::exchange::{
     Balance, BulkAmendRequest, BulkAmendResponse, BulkOrderRequest, BulkOrderResponse,
     ClientOrderLookup, Order, OrderRequest, Trade,
 };
-use trading_core::venue::cex::traits::TradingClient;
+use trading_core::venue::cex::traits::{ConnectionState, TradingClient};
 
 use super::config::PaperConfig;
 use super::map::{
@@ -560,6 +560,29 @@ pub type BalanceReadySender =
 /// Run the k-paper WebSocket loop: connect, then process incoming messages and outgoing commands.
 /// Pass None for market_data_tx when this connection is exchange-only (MD comes from market_data_engine).
 /// If balance_ready is Some, it is signalled when the first balance message is processed.
+async fn fail_inflight(state: &Arc<RwLock<KPaperState>>, reason: &str) {
+    let mut st = state.write().await;
+    if let Some((tx, _)) = st.pending_place.take() {
+        let _ = tx.send(Err(EngineError::CustomError(anyhow::anyhow!("{reason}"))));
+    }
+    if let Some(tx) = st.pending_cancel.take() {
+        let _ = tx.send(Err(EngineError::CustomError(anyhow::anyhow!("{reason}"))));
+    }
+    if let Some(tx) = st.pending_amend.take() {
+        let _ = tx.send(Err(EngineError::CustomError(anyhow::anyhow!("{reason}"))));
+    }
+}
+
+async fn set_connection_state(
+    connection_state: &Option<Arc<RwLock<ConnectionState>>>,
+    next: ConnectionState,
+) {
+    if let Some(cs) = connection_state {
+        *cs.write().await = next;
+    }
+}
+
+/// Trading WS loop. Reconnects after a drop so a lab disconnect cannot leave a stale Connected state.
 pub async fn run_websocket_loop(
     config: KPaperConfig,
     mut command_rx: mpsc::UnboundedReceiver<KPaperCommand>,
@@ -568,86 +591,127 @@ pub async fn run_websocket_loop(
     exchange_state_manager: Arc<crate::state::manager::ExchangeStateManager>,
     mut shutdown_rx: tokio::sync::broadcast::Receiver<()>,
     balance_ready: BalanceReadySender,
+    connection_state: Option<Arc<RwLock<ConnectionState>>>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    info!("k-paper: connecting to {}", config.url);
-    let (ws_stream, _) = tokio_tungstenite::connect_async(&config.url).await?;
-    info!("k-paper: connected to {}", config.url);
-    let (mut write, mut read) = ws_stream.split();
-
     let snapshot_cmd = serde_json::to_string(&KPaperCommand::GetAccountSnapshot)
         .map_err(|e| format!("serialize get_account_snapshot: {}", e))?;
     let instrument_type = config.instrument_type.clone();
-    let mut recv_count: u64 = 0;
-    let mut snapshot_sent = false;
 
     loop {
-        tokio::select! {
+        set_connection_state(&connection_state, ConnectionState::Connecting).await;
+        info!("k-paper: connecting to {}", config.url);
+        let ws_stream = tokio::select! {
             _ = shutdown_rx.recv() => {
                 info!("k-paper: shutdown signal received");
-                break;
+                set_connection_state(&connection_state, ConnectionState::Disconnected).await;
+                return Ok(());
             }
-            msg = read.next() => {
-                let msg = match msg {
-                    Some(Ok(Message::Text(text))) => text,
-                    Some(Ok(Message::Close(_))) => {
-                        info!("k-paper: server closed connection");
-                        break;
+            result = tokio_tungstenite::connect_async(&config.url) => {
+                match result {
+                    Ok((stream, _)) => stream,
+                    Err(e) => {
+                        error!("k-paper: connect failed: {}", e);
+                        fail_inflight(&state, "k-paper: trade WS connect failed").await;
+                        set_connection_state(&connection_state, ConnectionState::Disconnected).await;
+                        tokio::select! {
+                            _ = shutdown_rx.recv() => {
+                                set_connection_state(&connection_state, ConnectionState::Disconnected).await;
+                                return Ok(());
+                            }
+                            _ = tokio::time::sleep(tokio::time::Duration::from_secs(2)) => continue,
+                        }
                     }
-                    Some(Err(e)) => {
-                        error!("k-paper: WebSocket error: {}", e);
-                        break;
-                    }
-                    Some(Ok(_)) => continue,
-                    None => break,
-                };
-                recv_count += 1;
-                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&msg) {
-                    let typ = v.get("type").and_then(|t| t.as_str()).unwrap_or("?");
-                    if recv_count == 1 {
-                        info!("k-paper exchange: first message received (type={}), read loop active", typ);
-                    }
-                    tracing::debug!("k-paper exchange: recv #{} type={}", recv_count, typ);
-                }
-                if let Err(e) = handle_message(
-                    &msg,
-                    &state,
-                    market_data_tx.as_ref(),
-                    &exchange_state_manager,
-                    &instrument_type,
-                    balance_ready.as_ref(),
-                ).await {
-                    warn!("k-paper: handle_message error: {} (raw type from JSON may not match)", e);
-                }
-                // Request snapshot after first message so we don't miss server-pushed connected/balance (read-before-send).
-                if !snapshot_sent {
-                    snapshot_sent = true;
-                    if let Err(e) = write.send(Message::Text(snapshot_cmd.clone())).await {
-                        error!("k-paper: send get_account_snapshot: {}", e);
-                        break;
-                    }
-                    info!("k-paper: sent get_account_snapshot (after first read)");
                 }
             }
-            cmd = command_rx.recv() => {
-                let cmd = match cmd {
-                    Some(c) => c,
-                    None => break,
-                };
-                if let KPaperCommand::PlaceOrder { request } = &cmd {
-                    info!(
-                        "k-paper: sent place_order instrument={} side={} qty={:?}",
-                        request.instrument_id, request.side, request.quantity
-                    );
+        };
+        info!("k-paper: connected to {}", config.url);
+        set_connection_state(&connection_state, ConnectionState::Connected).await;
+        let (mut write, mut read) = ws_stream.split();
+        let mut recv_count: u64 = 0;
+        let mut snapshot_sent = false;
+
+        loop {
+            tokio::select! {
+                _ = shutdown_rx.recv() => {
+                    info!("k-paper: shutdown signal received");
+                    set_connection_state(&connection_state, ConnectionState::Disconnected).await;
+                    return Ok(());
                 }
-                let json = serde_json::to_string(&cmd).map_err(|e| format!("serialize: {}", e))?;
-                write
-                    .send(Message::Text(json))
-                    .await
-                    .map_err(|e| format!("send: {}", e))?;
+                msg = read.next() => {
+                    let msg = match msg {
+                        Some(Ok(Message::Text(text))) => text,
+                        Some(Ok(Message::Close(_))) => {
+                            info!("k-paper: server closed connection");
+                            break;
+                        }
+                        Some(Err(e)) => {
+                            error!("k-paper: WebSocket error: {}", e);
+                            break;
+                        }
+                        Some(Ok(_)) => continue,
+                        None => break,
+                    };
+                    recv_count += 1;
+                    if let Ok(v) = serde_json::from_str::<serde_json::Value>(&msg) {
+                        let typ = v.get("type").and_then(|t| t.as_str()).unwrap_or("?");
+                        if recv_count == 1 {
+                            info!("k-paper exchange: first message received (type={}), read loop active", typ);
+                        }
+                        tracing::debug!("k-paper exchange: recv #{} type={}", recv_count, typ);
+                    }
+                    if let Err(e) = handle_message(
+                        &msg,
+                        &state,
+                        market_data_tx.as_ref(),
+                        &exchange_state_manager,
+                        &instrument_type,
+                        balance_ready.as_ref(),
+                    ).await {
+                        warn!("k-paper: handle_message error: {} (raw type from JSON may not match)", e);
+                    }
+                    if !snapshot_sent {
+                        snapshot_sent = true;
+                        if let Err(e) = write.send(Message::Text(snapshot_cmd.clone())).await {
+                            error!("k-paper: send get_account_snapshot: {}", e);
+                            break;
+                        }
+                        info!("k-paper: sent get_account_snapshot (after first read)");
+                    }
+                }
+                cmd = command_rx.recv() => {
+                    let cmd = match cmd {
+                        Some(c) => c,
+                        None => {
+                            set_connection_state(&connection_state, ConnectionState::Disconnected).await;
+                            return Ok(());
+                        }
+                    };
+                    if let KPaperCommand::PlaceOrder { request } = &cmd {
+                        info!(
+                            "k-paper: sent place_order instrument={} side={} qty={:?}",
+                            request.instrument_id, request.side, request.quantity
+                        );
+                    }
+                    let json = serde_json::to_string(&cmd).map_err(|e| format!("serialize: {}", e))?;
+                    if let Err(e) = write.send(Message::Text(json)).await {
+                        error!("k-paper: send: {}", e);
+                        break;
+                    }
+                }
             }
         }
+
+        fail_inflight(&state, "k-paper: trade WS disconnected").await;
+        set_connection_state(&connection_state, ConnectionState::Disconnected).await;
+        info!("k-paper: reconnecting trade WS in 2s");
+        tokio::select! {
+            _ = shutdown_rx.recv() => {
+                set_connection_state(&connection_state, ConnectionState::Disconnected).await;
+                return Ok(());
+            }
+            _ = tokio::time::sleep(tokio::time::Duration::from_secs(2)) => {}
+        }
     }
-    Ok(())
 }
 
 async fn handle_message(
@@ -776,9 +840,8 @@ async fn handle_message(
                 let _ = exchange_state_manager.update_position(p.clone()).await;
                 let mut st = state.write().await;
                 let key = p.instrument.pair.clone();
-                if let Some(idx) = st.positions.iter().position(|x| x.instrument.pair == key) {
-                    st.positions[idx] = p;
-                } else {
+                st.positions.retain(|x| x.instrument.pair != key);
+                if p.quantity.abs() > Decimal::new(1, 6) {
                     st.positions.push(p);
                 }
             }

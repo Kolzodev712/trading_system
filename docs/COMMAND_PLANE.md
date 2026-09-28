@@ -18,11 +18,12 @@ Remote control uses two paths. Pick the one that matches your client.
 | `ToggleStrategy` | Supported (requires strategy manager) |
 | `GetLevels`, `GetLevel`, `CreateLevel`, `UpdateLevel`, `DeleteLevel`, `ToggleLevel` | **Not implemented** — returns `"command not implemented"` |
 
-## gRPC (TUI / gateway)
+## gRPC (browser UI / TUI / gateway)
 
-- **Service:** `gateway` crate (separate binary from runner).
-- **Client:** TUI and ops tooling use gRPC, not Zenoh.
+- **Service:** `TradingCliService` is implemented in the `gateway` crate and is instantiated by the CEX runner at `:50051`. A separate `gateway` proxy binary can forward from `:50052` to the runner, but it is not required for the normal browser/TUI path.
+- **Clients:** the legacy TUI uses native gRPC; `trading-system-ui` uses gRPC-Web through Envoy to the runner. Neither client talks directly to the exchange.
 - **Overlap:** Command payloads mirror Zenoh for consistency; level CRUD may differ by gateway version — prefer gRPC for level management until Zenoh level commands are implemented.
+- **Prop-trading controls:** `PauseEntries`, `CancelWorking`, `FlattenAndPause` and `Resume` are planned separate commands, not aliases of the existing `SetTradingEnabled` boolean. Implement authoritative semantics and access checks in the runner before exposing them to the browser. See [the implementation roadmap](PROP_TRADING_RESEARCH_AND_PRODUCTION_PLAN.md).
 
 ## Invariants
 

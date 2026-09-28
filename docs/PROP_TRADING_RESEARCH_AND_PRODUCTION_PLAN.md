@@ -1,6 +1,6 @@
 # Prop Trading Productionization and Research Architecture Plan
 
-**Status:** Increments 0–5 and local 5R/5A gates are complete. Increment 5B Spot/levels K-paper connectivity was recorded against `trading_system` `1f00fdc`, UI `66632ed`, k-paper `e5d0a59`. The UI showed backend-sourced **PAPER LOCAL + EXCHANGE**. This does not qualify Candidate #2 futures or the fault matrix. Stop for review before Increment 6. Placeholder Bybit sample credentials remain an environment limitation.  
+**Status:** Increments 0–5 and the local 5R/5A gates are complete. The bounded Increment 5B Spot/levels K-paper connectivity preflight is accepted locally at `trading_system` `043ca64` (evidence `1f00fdc`), UI `66632ed`, k-paper `e5d0a59`. Begin Increment 6 recovery hardening; stop for review before Increment 7. This does not qualify Candidate #2 futures, order execution, the fault matrix or Bybit demo. Placeholder Bybit sample credentials remain an environment limitation.  
 **Date:** 2026-09-28  
 **Repository:** `trading_system`  
 **Audience:** Cursor / implementation agent / repository owner  
@@ -2021,7 +2021,7 @@ This document is the authority for **the Candidate #2 research/runtime separatio
 | 0–5 | `trading_system`: functionally implemented on current master; check the status table in section 67 |
 | 5R (accepted locally for 5B) | `trading_system` `f9d1299`; focused gate, graph, Shadow shutdown/restart, clean start and frozen parity reported |
 | 5A (accepted locally for 5B) | UI `d8c7b271` / guide `2636d5e`; Envoy first-update, stale, reconnect, disabled controls and Shadow order display reported |
-| 5B (Spot/levels connectivity recorded; review before 6) | `trading_system` `1f00fdc` + UI `66632ed` + k-paper `e5d0a59`; default runner `--mode levels` against sample K-paper config |
+| 5B (accepted locally; bounded connectivity only) | `trading_system` `043ca64` (evidence `1f00fdc`) + UI `66632ed` + k-paper `e5d0a59`; default runner `--mode levels` against sample K-paper config |
 | 6–7 | `trading_system` recovery/futures logic and K-paper protocol/futures support; change producer and adapter together |
 | 8–9 | `trading_system` risk/ledger and UI controls/economic display; sync the proto and generated UI client |
 | 9A | All three repositories: deterministic Paper qualification and browser operator checks |
@@ -2029,7 +2029,7 @@ This document is the authority for **the Candidate #2 research/runtime separatio
 
 Check out the relevant repositories with write access before starting a cross-repo increment. Record starting and ending SHAs for each; pin matching revisions and run both producer/consumer checks before marking the increment complete. After 5R, use the Candidate #2 app binary for Shadow/Paper/demo rather than assuming the default runner binary can instantiate it. Implement backend state and the source proto first, then sync the UI proto and generated code. When a precise simulator accounting rule, API shape or security mechanism is not fixed here, document the bounded choice and its acceptance tests within that increment rather than silently guessing or postponing the safety gate.
 
-`trading_system` Increments 0–5, local 5R/5A, and the bounded 5B Spot/levels preflight are recorded (see section 67). **Stop for review before Increment 6.** This plan does not authorize implementation of a future portfolio allocator, strategy registry/graveyard, broader instrument/venue expansion, a self-hosting operations program, Candidate #3's trading rule or mainnet deployment. Those need separate decisions/specifications when the evidence and need exist.
+`trading_system` Increments 0–5, local 5R/5A, and the bounded 5B Spot/levels preflight are accepted for proceeding (see section 67). **Begin Increment 6; stop for review before Increment 7.** This plan does not authorize implementation of a future portfolio allocator, strategy registry/graveyard, broader instrument/venue expansion, a self-hosting operations program, Candidate #3's trading rule or mainnet deployment. Those need separate decisions/specifications when the evidence and need exist.
 
 ---
 
@@ -2284,7 +2284,7 @@ Acceptance: proto copies and generated types match; UI unit/build checks pass; a
 
 ## Increment 5B — existing Paper connectivity preflight
 
-**Status:** Connectivity preflight recorded locally. Stop for review before Increment 6.
+**Status:** Accepted locally as a Spot/levels connectivity preflight. Increment 6 is next; this is not an order-execution or futures qualification.
 
 Run the existing `k-paper` server and `trading_system` Paper adapters with the documented Spot/levels configuration: market WS, trading WS, REST balance/open-order/trade reconciliation and asset rules. Connect the browser UI to the same runner and verify venue labeling. Record exact working endpoints and identify missing Candidate #2 futures operations and scenario controls.
 
@@ -2302,11 +2302,13 @@ Browser UI `66632ed` → Envoy `:8081` → runner `:50051`: Connect `/grpc`, Str
 
 Not in this preflight (documented limits, not 5B defects): no REST position snapshot; no terminal-order lookup by client ID; no Candidate #2 linear perpetual, reduce-only, leverage/margin, or fault-injection scenario controls; Paper fill accounting remains spot base/quote. Global trading stayed off, so levels did not post. MongoDB supplied indicator definitions (file skipped as source of truth). Periodic reconcilers are 180s; only bootstrap was observed. This is not Bybit demo.
 
-Stop before Increment 6.
+The 5B gate is closed for its stated connectivity scope. The process kills in the session were deliberate replacements of leftover servers before the recorded run, not preflight failures. Exercise populated order/trade and ambiguous-submission paths in Increment 6 and later qualification gates; the empty lists above prove only the read/reconciliation wiring exercised here.
 
 ---
 
 # 61. Increment 6 — CEX recovery hardening
+
+**Status:** Next increment. Record starting SHAs for `trading_system` and `k-paper` and keep the producer/consumer contract pinned. The 5B Exchange-mode levels run did not post orders, observe periodic reconciliation or qualify futures; do not count it as recovery evidence.
 
 Implement:
 
@@ -2317,7 +2319,7 @@ Implement:
 - restart recovery;
 - immediate reconciliation triggers.
 
-Add the Paper-side query/fault hooks needed to verify lost-ack recovery by client order ID without assuming a missing open order was rejected. Keep Bybit's `orderLinkId` pagination and error handling venue-specific. Use isolated tests now; the full integration matrix follows after futures/risk/ledger work.
+Add the Paper-side query/fault hooks needed to verify an accepted-but-lost ACK and recovery by stable client order ID, including terminal orders, while the Paper process retains state across a runner restart. A missing open order or temporarily absent lookup stays ambiguous and retains its reservation; importing a found working order transfers reserved exposure into working exposure without a gap or double count. Keep Bybit's `orderLinkId` pagination and error handling venue-specific. Test pagination boundaries (0/1/50/51/>100), repeated cursors, duplicates and page errors, plus the crash/restart and immediate-reconciliation paths. Use isolated tests now; the full integration matrix follows after futures/risk/ledger work.
 
 Acceptance:
 
@@ -2469,17 +2471,18 @@ Do not implement Candidate #3's trading rule until a separate strategy research 
 
 # 67. Current Cursor instruction
 
-The latest recorded SHAs are `trading_system` `1f00fdc80f7bbbb39b836da9445e041eb18e6c77`, `trading-system-ui` `66632edc810c22686db146061574b0a854d4bf6c`, and `k-paper` `e5d0a590b95c0f266edd9faab15c365a12c15ccc`. This is **not** a remotely enforced CI result.
+The accepted 5B record is `trading_system` `043ca64523f42212cd8a2616ba6201d61d7c878a` (evidence `1f00fdc80f7bbbb39b836da9445e041eb18e6c77`), `trading-system-ui` `66632edc810c22686db146061574b0a854d4bf6c`, and `k-paper` `e5d0a590b95c0f266edd9faab15c365a12c15ccc`. These are **reported local checks**, not a remotely enforced CI result.
 
 | Increment | Status | Gate |
 | --- | --- | --- |
 | 0–5 | Done | Prior SHAs and audit evidence above |
 | 5R | Accepted locally for 5B | Dependency boundary, focused packages, frozen parity and Paper+Shadow runtime/restart evidence reported; no remote CI claim |
 | 5A | Accepted locally for 5B | Matching browser/runner Paper+Shadow live/stale/reconnect, persisted disable and observed order state reported |
-| 5B | Spot/levels connectivity recorded locally | Review this record; not Candidate #2 futures or the fault matrix |
-| 6+ | Not started | Follow section 54 after prior gates |
+| 5B | Accepted locally for Spot/levels connectivity | Market/trade WS, REST bootstrap and UI labels; no order posting, futures or fault qualification |
+| 6 | Ready to start | Bybit pagination and persistent unknown-submission recovery with focused K-paper hooks; stop before 7 |
+| 7+ | Not started | Follow section 54 and each increment's gate |
 
-Cursor: stop here for review. Do not begin Increment 6.
+Cursor: begin Increment 6 from the accepted 5B record. Work in `trading_system` and `k-paper` first; touch UI only if the runner proto/status contract changes. Run focused producer/consumer checks, record exact SHAs and results, then stop for review before Increment 7.
 
 ---
 

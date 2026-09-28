@@ -1,6 +1,6 @@
 # Prop Trading Productionization and Research Architecture Plan
 
-**Status:** Increments 0–5 and local 5R/5A gates are complete. Increment 5B Spot/levels K-paper connectivity was recorded against `trading_system` this commit (parent `2b6ca60`), UI `66632ed`, k-paper `e5d0a59`. The UI showed backend-sourced **PAPER LOCAL + EXCHANGE**. This does not qualify Candidate #2 futures or the fault matrix. Stop for review before Increment 6. Placeholder Bybit sample credentials remain an environment limitation.  
+**Status:** Increments 0–5 and local 5R/5A gates are complete. Increment 5B Spot/levels K-paper connectivity was recorded against `trading_system` `1f00fdc`, UI `66632ed`, k-paper `e5d0a59`. The UI showed backend-sourced **PAPER LOCAL + EXCHANGE**. This does not qualify Candidate #2 futures or the fault matrix. Stop for review before Increment 6. Placeholder Bybit sample credentials remain an environment limitation.  
 **Date:** 2026-09-28  
 **Repository:** `trading_system`  
 **Audience:** Cursor / implementation agent / repository owner  
@@ -2021,7 +2021,7 @@ This document is the authority for **the Candidate #2 research/runtime separatio
 | 0–5 | `trading_system`: functionally implemented on current master; check the status table in section 67 |
 | 5R (accepted locally for 5B) | `trading_system` `f9d1299`; focused gate, graph, Shadow shutdown/restart, clean start and frozen parity reported |
 | 5A (accepted locally for 5B) | UI `d8c7b271` / guide `2636d5e`; Envoy first-update, stale, reconnect, disabled controls and Shadow order display reported |
-| 5B (Spot/levels connectivity recorded; review before 6) | `trading_system` this commit (parent `2b6ca60`) + UI `66632ed` + k-paper `e5d0a59`; default runner `--mode levels` against sample K-paper config |
+| 5B (Spot/levels connectivity recorded; review before 6) | `trading_system` `1f00fdc` + UI `66632ed` + k-paper `e5d0a59`; default runner `--mode levels` against sample K-paper config |
 | 6–7 | `trading_system` recovery/futures logic and K-paper protocol/futures support; change producer and adapter together |
 | 8–9 | `trading_system` risk/ledger and UI controls/economic display; sync the proto and generated UI client |
 | 9A | All three repositories: deterministic Paper qualification and browser operator checks |
@@ -2469,7 +2469,7 @@ Do not implement Candidate #3's trading rule until a separate strategy research 
 
 # 67. Current Cursor instruction
 
-The latest recorded SHAs are `trading_system` this commit (parent `2b6ca6027a8403c1aca29d208d8911fafef40334`), `trading-system-ui` `66632edc810c22686db146061574b0a854d4bf6c`, and `k-paper` `e5d0a590b95c0f266edd9faab15c365a12c15ccc`. This is **not** a remotely enforced CI result.
+The latest recorded SHAs are `trading_system` `1f00fdc80f7bbbb39b836da9445e041eb18e6c77`, `trading-system-ui` `66632edc810c22686db146061574b0a854d4bf6c`, and `k-paper` `e5d0a590b95c0f266edd9faab15c365a12c15ccc`. This is **not** a remotely enforced CI result.
 
 | Increment | Status | Gate |
 | --- | --- | --- |

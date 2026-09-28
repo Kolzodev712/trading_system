@@ -1,6 +1,6 @@
 # Prop Trading Productionization and Research Architecture Plan
 
-**Status:** Increments 0–5 are implemented. A local 5R package/graph result and a Paper+Shadow restart/browser session are reported at backend `e6fac236` and UI `d8c7b271`. 5R is **not closed**: Shadow shutdown bypasses its guard, persisted strategy disable is overwritten during restore, and the observed restart hit the 30-second forced-exit timeout. The Bybit sample contains placeholder credentials; its authentication failure is an environment limitation, not a code regression or a prerequisite for 5B. 5B remains blocked on the runtime correctness gate.  
+**Status:** Increments 0–5 are implemented. This commit (parent `286ad4c`) skips Shadow `cancel_all` on shutdown, keeps persisted `enabled=false` over `initially_enabled=true`, and aborts gRPC so a live Monitor cannot force the 30s timeout. Local `just gate-5r` passed and a Paper+Shadow ordinary-shutdown / `RequestRestart` / persist-disable session was recorded. UI guide is `2636d5e`. 5B is **not started**; stop for review of this record. Placeholder Bybit sample credentials remain an environment limitation, not a local-gate defect.  
 **Date:** 2026-09-28  
 **Repository:** `trading_system`  
 **Audience:** Cursor / implementation agent / repository owner  
@@ -2019,8 +2019,8 @@ This document is the authority for **the Candidate #2 research/runtime separatio
 | Increment | Repositories and guide |
 | --- | --- |
 | 0–5 | `trading_system`: functionally implemented on current master; check the status table in section 67 |
-| 5R (local gate recorded; runtime gaps remain) | `trading_system` `e6fac236`: `just gate-5r` results are summarized; Shadow shutdown and restart-state corrections remain |
-| 5A (browser recorded; 5B still blocked on 5R gaps) | UI `d8c7b271` + backend `e6fac236`; generate/test/build and Envoy session recorded |
+| 5R (shutdown/restart fixes recorded locally; review before 5B) | `trading_system` this commit (parent `286ad4c`); `just gate-5r` rerun; Paper+Shadow instrumented shutdown/restart |
+| 5A (affected browser rechecked) | UI `2636d5e` against that Paper+Shadow runner; Envoy first-update / stale / reconnect / disabled Enable Strategy / orders 0 |
 | 5B | [`k-paper` integration guide](https://github.com/Kolzodev712/k-paper/blob/master/docs/PROP_TRADING_INTEGRATION_GUIDE.md) for existing Spot connectivity only, with the UI on the same runner |
 | 6–7 | `trading_system` recovery/futures logic and K-paper protocol/futures support; change producer and adapter together |
 | 8–9 | `trading_system` risk/ledger and UI controls/economic display; sync the proto and generated UI client |
@@ -2029,7 +2029,7 @@ This document is the authority for **the Candidate #2 research/runtime separatio
 
 Check out the relevant repositories with write access before starting a cross-repo increment. Record starting and ending SHAs for each; pin matching revisions and run both producer/consumer checks before marking the increment complete. After 5R, use the Candidate #2 app binary for Shadow/Paper/demo rather than assuming the default runner binary can instantiate it. Implement backend state and the source proto first, then sync the UI proto and generated code. When a precise simulator accounting rule, API shape or security mechanism is not fixed here, document the bounded choice and its acceptance tests within that increment rather than silently guessing or postponing the safety gate.
 
-`trading_system` Increments 0–5, 5R code and 5A backend/UI corrections are implemented (see section 67). **Do not start 5B while the Shadow shutdown and restart-state gaps remain.** This plan does not authorize implementation of a future portfolio allocator, strategy registry/graveyard, broader instrument/venue expansion, a self-hosting operations program, Candidate #3's trading rule or mainnet deployment. Those need separate decisions/specifications when the evidence and need exist.
+`trading_system` Increments 0–5, 5R code and 5A backend/UI corrections are implemented (see section 67). **Stop for review before 5B.** This plan does not authorize implementation of a future portfolio allocator, strategy registry/graveyard, broader instrument/venue expansion, a self-hosting operations program, Candidate #3's trading rule or mainnet deployment. Those need separate decisions/specifications when the evidence and need exist.
 
 ---
 
@@ -2236,9 +2236,21 @@ Runtime Shadow evidence at this SHA (not the unit tests): `sample_config/bybit-s
 
 **Review of documentation-only `f9d1a405` (2026-09-28):** Source inspection confirms the runtime violation: `strategy_runner_with` wraps the CEX client for Shadow, but shutdown obtains `services.trading_client()` and calls `cancel_all_orders` on the raw client. The Paper venue returned no open orders in the reported run, yet the unguarded cancellation itself violates the zero-mutation invariant. Put shutdown order mutations through the same guard or explicitly skip them in Shadow; cover `RequestRestart` and ordinary shutdown with a backing client that records every mutation. The new dummy-client empty-list assertion only proves read forwarding. Also, `RuntimeSnapshot::load` restores a saved `enabled=false`, then the `initially_enabled` loop sets it back to true. Test the disabled case and give saved operator state precedence. The observed 30-second forced exit must be explained or fixed before calling restart graceful. The Bybit sample contains literal `xxxxxxxxxxxxxxxxxxxx` API credentials, so `10003` cannot diagnose a code fault. The Paper+Shadow session is useful generic runtime evidence; authenticated Bybit behavior belongs at its later venue gate. The commit only edits this plan; it does not implement these corrections.
 
+**Verification in this commit, parent `286ad4c` (2026-09-28):** Starting SHA `286ad4cf545f065a4f65c9a27c4dc55ac9ee1da1`. Shadow shutdown no longer uses `services.trading_client()`; `cancel_working_orders_on_stop` returns immediately in Shadow. Production wrap uses `wrap_counted` and logs `Shadow guard forbidden mutation attempts`. Snapshot restore overlays `initially_enabled` (saved `enabled=false` wins). gRPC uses `serve_with_shutdown`; after the runner shutdown signal the gRPC task is aborted so a live Monitor stream cannot pin the process.
+
+`just gate-5r` exit 0 twice after the edits. Counts: `btc_price_ma_app` 14, `research_cli` frozen_parity 2, `research_engine` 50, `runner` 29 (was 25), `strategy_core` 3+3 frozen, `trading_engine` 93. Frozen N=14/28/70 hashes unchanged (`a543c2ae…`, `658d506b…`, `1fd63eff…`). Trees: engine/runner 0 forbidden crates; app has `strategy_core` and `runner`.
+
+Instrumented tests (recording backing client): `shadow_ordinary_shutdown_records_zero_inner_mutations`, `shadow_request_restart_save_load_keeps_disabled_and_zero_mutations`, `exchange_shutdown_records_cancel_all_on_backing_client`, `initially_enabled_applies_when_snapshot_absent`.
+
+Paper+Shadow runtime (`btc_price_ma_app --mode strategies` against k-paper `:19999`, Candidate #2 strategies, `execution_mode=shadow`): ordinary SIGINT and `grpc_ctl restart` both logged `skipping cancel_all_orders`, `forbidden mutation attempts: 0`, `All components shut down successfully` (not the 30s timeout). Independent `GET :19999/open_orders` → `[]`. `k-paper: sent place_order` = 0. Executor `would-be` > 0 while enabled. After disable + RequestRestart, snapshot `enabled=false`; relaunch restored that over `initially_enabled=true` (`grpc_ctl status` `enabled=false`). SIGINT with the browser Monitor stream connected also returned immediately after aborting the gRPC task.
+
+The 30s forced-exit cause: `TradingGrpcServer` previously called `Server::serve` with no shutdown, so `wait` always timed out. `serve_with_shutdown` is not enough while a long-lived Monitor RPC is open; aborting the gRPC task after the runner shutdown signal is what makes UI-connected stop finish without the 30s wait.
+
+Dummy adapter/open-order unit tests are still not this evidence. Bybit sample placeholder keys are not a code defect. Stop for review before 5B.
+
 ## Increment 5A — Trading System UI Shadow observability
 
-**Status:** Timestamp/UNKNOWN fail-open is in UI `d8c7b271`. `npm run generate` / `npm test` (49) / `npm run build` and an Envoy browser session were recorded against backend `e6fac236`. 5B stays blocked until 5R runtime gaps above are accepted.
+**Status:** Timestamp/UNKNOWN fail-open remains in UI `d8c7b271` (guide `2636d5e`). Affected Envoy browser checks were rerun against the Paper+Shadow runner after the backend shutdown/restart fixes. 5B is not started.
 
 After the runner's authoritative status/proto fields exist, update the separate `trading-system-ui` repository and generated client. Show Candidate #2's **rejected-as-alpha / operational-baseline** distinction, last completed candle, signal/target, Shadow execution state, venue/environment, pair readiness and reason, freshness and errors. Keep model status visible when execution is paused. Connect to the actual runner; the old Rust TUI is not the deliverable.
 
@@ -2252,15 +2264,17 @@ Acceptance: proto copies and generated types match; UI unit/build checks pass; a
 4. `with_execution_status` is wired only in the CEX strategies runner. Spot/levels and DEX monitoring still emit default `UNKNOWN` venue/environment, so 5B's K-paper levels/browser label cannot pass. Populate authoritative venue/environment/mode for every runner path and test a Paper Spot/levels snapshot. Derive Bybit DEMO/TESTNET labels from the actual selected environment; a `testnet` boolean alone must not assert DEMO.
 5. The proto copies match at `6295913`/`66025f4`. Add backend field assertions, run `npm run generate`, `npm test`, `npm run build`, and exercise the actual browser -> Envoy -> runner path with pinned revisions. Record exact results and remaining gaps. Stop and report the correction before 5B.
 
-**Restart control follow-up:** `initially_enabled` is reapplied after runtime snapshot restore in `runner` and can overwrite a persisted per-strategy disable. This preserves the previous Candidate #2 Shadow startup behavior, but before adding a UI strategy-disable control or enabling Exchange execution, define and test precedence so an operator disable survives restart while Shadow model evaluation and global entry pause remain distinct.
+**Restart control follow-up:** A persisted snapshot `enabled` value now overrides `initially_enabled` on restore. Cold start without a snapshot still uses `initially_enabled`. Verified with RequestRestart save/load of `enabled=false` while config `initially_enabled=true`.
 
 **Review of backend `9a0dd97` and UI `0476c58` (2026-09-28):** The CEX strategy, CEX levels and DEX gRPC paths now publish independently derived venue/environment/mode. Candidate #2 publishes `BASELINE` from its model snapshot, separate from Shadow execution. Bybit testnet is `TESTNET`; `DEMO` follows the actual `demo` host setting. The UI starts the stream on the main screen, waits for its first update, expires silent/old data, marks stream end/failure stale, disables several control paths when not live, and displays the actual strategy `active_orders` count with a Shadow-violation marker. Unit/component tests cover these cases in source. One actionable bug remains: `computeStatusFreshness` treats a missing, zero or invalid `snapshotUnixMs` as live once other fields are set, because it only checks snapshot age when conversion succeeds. It also accepts a truthy `executionMode` value of `UNKNOWN`. Reject incomplete/invalid timestamp and unknown mode as `unknown` (controls disabled); add tests for those fields and a real stream payload. The strategy order count comes from runner trading state; corroborate the Shadow zero-order claim against an exchange-side read and guard evidence, not the UI text alone. No recorded `npm run generate`, `npm test`, `npm run build`, or browser -> Envoy -> matching runner session accompanies these commits. Capture that evidence with exact SHAs; keep 5B blocked until it passes.
 
 **Verification of UI `d8c7b271` / backend `e6fac236` (2026-09-28):** `d8c7b271` treats missing, zero, or invalid `snapshotUnixMs` and execution mode `UNKNOWN` as `unknown` and not actionable; tests include generated `MonitoringData()` defaults. At that UI SHA: `npm run generate` exit 0; `npm test` 7 files / 49 passed (stderr `ECONNREFUSED 127.0.0.1:3000` on one happy-dom fetch); `npm run build` exit 0 (`DexMonitor-BjbWxYF8.js`). Browser `http://127.0.0.1:5173/` → Envoy `:8081` → `btc_price_ma_app` `:50051`: first update **PAPER LOCAL + SHADOW**, Stream live, Candidate #2 **BASELINE** / **REJECTED AS VALIDATED ALPHA**, observed orders **0**; injected `snapshotUnixMs=0` → **STATUS UNKNOWN** and Global Trading disabled; `RequestRestart` then process exit → **STATUS STALE · last PAPER LOCAL + SHADOW** and Disable Strategy disabled; silence (paused apply, 8s+) same stale/disabled; relaunch reconnects live with the same hash/labels/order count 0. This is a Paper+Shadow composition session, not Bybit sample Shadow. 5B is still blocked on the Shadow shutdown and restart-state corrections. Valid Bybit credentials are not required for the local 5B preflight.
 
+**Affected browser recheck after backend shutdown/restart fixes (2026-09-28, UI `2636d5e`):** First update **PAPER LOCAL + SHADOW**, Stream live, C2 **BASELINE** / **REJECTED AS VALIDATED ALPHA**, orders **0**, persisted disable shown as Enable Strategy / ⏸. Process SIGINT with the Monitor stream open finished without the 30s timeout → **STATUS STALE · last PAPER LOCAL + SHADOW**, Enable Strategy disabled. Relaunch reconnects Stream live with the same labels, persisted disable, orders 0, `GET :19999/open_orders` `[]`.
+
 ## Increment 5B — existing Paper connectivity preflight
 
-**Status:** Not started. Blocked until Shadow shutdown is fully guarded and restart-state/timeout behavior is resolved and reverified. Placeholder Bybit keys are tracked for later Bybit integration, not a 5B local preflight requirement.
+**Status:** Not started. Stop for review of the Shadow shutdown/restart record before beginning.
 
 Run the existing `k-paper` server and `trading_system` Paper adapters with the documented Spot/levels configuration: market WS, trading WS, REST balance/open-order/trade reconciliation and asset rules. Connect the browser UI to the same runner and verify venue labeling. Record exact working endpoints and identify missing Candidate #2 futures operations and scenario controls.
 
@@ -2431,17 +2445,17 @@ Do not implement Candidate #3's trading rule until a separate strategy research 
 
 # 67. Current Cursor instruction
 
-The latest verification SHAs are `trading_system` `e6fac236caee7312f9c971000f2d1a478cc76f30`, `trading-system-ui` `d8c7b27106b6e6672391daeb4b9ce64eab88fb9a`, and `k-paper` `70874973f0f9e38b7f3f5853ca51f604445ef3d1`. Local `just gate-5r` and UI generate/test/build were executed at these SHAs. They are **not** a remotely enforced CI result.
+The latest recorded SHAs are `trading_system` this commit (parent `286ad4cf545f065a4f65c9a27c4dc55ac9ee1da1`), `trading-system-ui` `2636d5e7d56fc4aa6adecbe5dd303fc5499b3800`, and `k-paper` `70874973f0f9e38b7f3f5853ca51f604445ef3d1`. Local `just gate-5r` was rerun after the edits. This is **not** a remotely enforced CI result.
 
 | Increment | Status | Gate |
 | --- | --- | --- |
 | 0–5 | Done | Prior SHAs and audit evidence above |
-| 5R | Local package/graph results summarized; runtime not closed | Shutdown `cancel_all` bypasses Shadow wrap; persisted disable is overwritten; restart hit timeout. Reverify actual Paper+Shadow runtime after fixes. |
-| 5A | Timestamp/UNKNOWN fix plus reported Envoy session | Paper+Shadow browser cases recorded; rerun affected status/browser checks after backend corrections |
-| 5B | Not started | Begin only after 5R and 5A acceptance |
+| 5R | Shutdown skip + persist-disable + timeout abort recorded locally | Review this record; dummy adapter tests are not this evidence; Bybit sample keys are not a local-gate defect |
+| 5A | Affected Envoy status rechecked after backend fixes | Paper+Shadow live/stale/reconnect, persisted disable, orders 0 |
+| 5B | Not started | Begin only after review acceptance |
 | 6+ | Not started | Follow section 54 after prior gates |
 
-Cursor: correct the unwrapped Shadow shutdown path and restored-disable precedence, investigate the 30-second forced-exit, then rerun focused local checks and an actual Paper+Shadow restart/shutdown with an instrumented venue client and an independent open-order read. Record the results and stop for review before 5B. The Bybit sample requires valid credentials and is deferred as authenticated venue integration, not a reason to request production keys for the local gate.
+Cursor: stop here for review. Do not begin 5B.
 
 ---
 

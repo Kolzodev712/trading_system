@@ -322,7 +322,8 @@ pub struct StrategyConfig {
     #[serde(default)]
     pub max_entry_age_secs: Option<u64>,
 
-    /// Enable after construction (and again after snapshot restore).
+    /// Enable after construction when no runtime snapshot entry exists for this strategy.
+    /// A persisted snapshot `enabled` value overrides this on restore.
     #[serde(default)]
     pub initially_enabled: bool,
 }

@@ -27,7 +27,12 @@ pub(crate) async fn start_platform(
         .map_err(|e| format!("Failed to parse gRPC address: {e}"))?;
     let monitoring = build_dex_monitoring_grpc(services, grpc_control, bot_config)?;
     let grpc_server = TradingGrpcServer::from_service(monitoring.service);
-    let _grpc_handle = grpc_server.start(grpc_addr).await?;
+    let mut shutdown_rx_grpc = services.shutdown_manager.subscribe();
+    let _grpc_handle = grpc_server
+        .start_with_shutdown(grpc_addr, async move {
+            let _ = shutdown_rx_grpc.recv().await;
+        })
+        .await?;
     info!("gRPC server started on {grpc_addr} (DEX monitoring)");
 
     let dex_pairs = dex_pairs_from_config(bot_config);

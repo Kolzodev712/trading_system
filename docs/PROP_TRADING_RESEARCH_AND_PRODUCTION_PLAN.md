@@ -1,6 +1,6 @@
 # Prop Trading Productionization and Research Architecture Plan
 
-**Status:** Increments 0–9A are accepted locally. Increment 6 section-61 findings are closed. Increment 7 futures/Paper linear is recorded in section 62. Increment 8 risk/controls and UI operator workflows are recorded in section 63. Increment 9 execution ledger and daily-loss from economic PnL are recorded in section 64. Increment 9A Stage C and the section 49 Paper lab are recorded below. Candidate #2 remains an operational baseline, not validated alpha. This does not qualify Bybit demo.  
+**Status:** Increments 0–9 are accepted locally. Increment 9A has useful Candidate #2 Paper linear evidence but is on owner-review hold: the full Stage C / section 49 matrix has not yet been demonstrated. Increment 10 / Bybit demo is blocked until the 9A gaps below are closed and reviewed. Candidate #2 remains an operational baseline, not validated alpha.  
 **Date:** 2026-09-28  
 **Repository:** `trading_system`  
 **Audience:** Cursor / implementation agent / repository owner  
@@ -2437,16 +2437,16 @@ Run Stage C and the section 49 matrix with Candidate #2's actual runtime model a
 
 Acceptance: no unintended duplicate exposure in any scripted case; failed/unknown outcomes fail closed; all required status and operator actions have recorded evidence; remaining Paper/Bybit semantic differences are listed for Stage D. Stop and issue a Paper readiness report. **Do not enter Bybit demo until this gate passes.**
 
-**Local Increment 9A record (2026-09-28):** `trading_system` (this commit) + k-paper `09266a313fc244259b39e421f4d0126053a219ee` + `trading-system-ui` matching guide (SHA in that repo). Candidate #2 `btc_price_ma_app --mode strategies` against Paper linear BTCUSDT (`PAPER_EXCHANGE_CONFIG=config/linear-btcusdt.yaml`, dummy book separate from runner-owned fixture candles `scripts/inc9a_long_candles.json`, lookback=2 lab window not frozen N=28). Commands: `cargo test -p btc_price_ma_app --lib` 14 passed (Paper Exchange allowed, Bybit Exchange rejected); `cargo test -p runner --lib` 32 passed (`fixture_file_loads_completed_bars`); `cargo test -p trading_engine --lib` 118 passed; `cargo test -p trading_core --lib grpc::trading_control` 3 passed; `cargo test -p gateway --lib` 3 passed; `cargo check -p exchange_engine` ok. `cargo tree -p runner --edges normal -i strategy_core` and the same for `trading_engine` match no packages. Live `bash scripts/inc9a_matrix.sh` exit 0 against k-paper `:19995`:
+**Reported local Increment 9A evidence (2026-09-28; subject to review hold below):** `trading_system` (this commit) + k-paper `09266a313fc244259b39e421f4d0126053a219ee` + `trading-system-ui` matching guide (SHA in that repo). Candidate #2 `btc_price_ma_app --mode strategies` against Paper linear BTCUSDT (`PAPER_EXCHANGE_CONFIG=config/linear-btcusdt.yaml`, dummy book separate from runner-owned fixture candles `scripts/inc9a_long_candles.json`, lookback=2 lab window not frozen N=28). Commands: `cargo test -p btc_price_ma_app --lib` 14 passed (Paper Exchange allowed, Bybit Exchange rejected); `cargo test -p runner --lib` 32 passed (`fixture_file_loads_completed_bars`); `cargo test -p trading_engine --lib` 118 passed; `cargo test -p trading_core --lib grpc::trading_control` 3 passed; `cargo test -p gateway --lib` 3 passed; `cargo check -p exchange_engine` ok. `cargo tree -p runner --edges normal -i strategy_core` and the same for `trading_engine` match no packages. Live `bash scripts/inc9a_matrix.sh` exit 0 against k-paper `:19995`:
 
 | Section 49 row | Result |
 | --- | --- |
 | Normal accept → ack → fill | C2 TargetPosition 0.001; Paper buy `b8e56d2e-…` then fill `199ee277-…` qty 0.001 fee 0.03016774 USDT; journal prepared/submitted/acknowledged; ledger one fill |
 | Lost ACK + runner restart, Paper kept | `POST /test/suppress_place_ack {}`; client `inc9a-lost-ack-1` limit 49000 New `d0241998-…`; SIGKILL; Paper same row; relaunch `imported_working=1`, journal acknowledged, grpc `orders=1` same id, no replacement `place_order` |
-| Explicit reject | `POST /test/reject_next_place` one-shot; unit `reject_next_place_does_not_book` |
-| Duplicate fill | `POST /test/duplicate_next_fill`; ledger `record_trade` idempotent by execution id (Inc 9 tests) |
-| Private/public disconnect | `POST /test/disconnect_clients`: market `server closed`, trade `server closed connection`, `reconnecting trade WS in 2s`; pending places fail closed |
-| Stale book | `POST /test/stale_orderbook` ages injected snapshots (`stale_book_ages_injected_snapshot`); executor already blocks increases when `max_market_data_age_ms` is exceeded. Dummy OB later overwrites unless the hook stays armed |
+| Explicit reject | One-shot hook and isolated Paper core test exist; the script resets this hook before a Candidate #2 placement, so the runner outcome is unproven |
+| Duplicate fill | Hook and ledger unit-level idempotency exist; no duplicate fill is driven through the Candidate #2 → Paper → runner path in the script |
+| Private/public disconnect | Both sockets close and reconnect logs were reported; the script treats absence of a disconnect log as a warning and does not assert readiness, exposure block or post-reconnect reconciliation |
+| Stale book | Injection has an isolated test, but the script does not assert the runner becomes stale or blocks a new increase; dummy OB can overwrite the aged snapshot |
 | Runner restart with position | After fill, disable, SIGKILL; Paper still `positions=[{qty:0.001}]` + trade; relaunch bootstrap REST position `pos=0.001`, `imported_working=0`, no replacement |
 | Operator pause/flatten/resume | grpc PauseEntries `entries_paused=true`; FlattenAndPause `state=in_progress` then TSM `positions=0` matching Paper `[]` after qty=0 position emit; Resume clears latch, global unchanged |
 
@@ -2454,7 +2454,13 @@ Browser UI `http://127.0.0.1:5173/` → Envoy `:8081` → composition `:50051`: 
 
 Remaining Paper/Bybit differences (Stage D, not claimed here): Paper MD is snapshot-only (`sequence: None`), so Bybit sequence-gap drops are not reproduced; dummy book is not the frozen N=28 research series; REST futures positions are still applied as recon truth (a false REST override is not armed because it would poison TSM); Paper process restart still loses the in-memory account; funding is `apply_funding` fixture not an 8h clock; isolated one-way, no liquidation engine.
 
-Candidate #2 remains an operational baseline, not validated alpha. Stop for the Paper readiness report. Do not start Increment 10 / Bybit demo.
+**Owner review of Increment 9A (2026-09-28; `trading_system` `b1361112d32e34f03b48dd6c77ab769bbf8b90a3`, `k-paper` `1c603c332817c08597897597fcc4127b46315d83`, UI `dea5d720712b9f3466f696212f0793db06fbd146`):** The normal fill, restart-with-position, lost-ACK recovery and manual pause/flatten/resume observations are valuable and retain their stated scope. An exit-0 run of `scripts/inc9a_matrix.sh` does **not** establish the full section 49 matrix: it arms reject and then resets before a place, arms duplicate-next-fill and stale-book without triggering/asserting their runner outcomes, and only warns if disconnect evidence is missing. Its `paper_json` helper substitutes `[]` for an HTTP failure; ledger output is optional rather than an assertion of totals. The script does not drive a partial-fill/cancel race, transient send failure or duplicate client ID, duplicate/out-of-order private events, or REST/WS disagreement. UI evidence includes PauseEntries, FlattenAndPause and Resume, but not CancelWorking. The short lookback=2 fixture does not itself compare C2 decisions with the frozen N=28 offline expectation required by Stage C.
+
+**Finish Increment 9A before the 10 gate:** For each missing section 49 case, drive the fault through the actual Candidate #2 composition and assert the independent Paper order/position view, target and risk result, journal/ledger state, gRPC readiness, and no unintended extra exposure. Reset faults between fixtures; fail on Paper HTTP errors and absent required records. Add an explicit partial-fill/cancel race and browser CancelWorking check, plus one N=28 decision-equivalence run through the completed-candle interface. Where Paper cannot model a Bybit sequence gap, use a bounded adapter/runtime fixture and leave the actual venue semantics for Demo. Exercise REST/WS disagreement against authoritative REST (for example, a bad WS update) or in a bounded adapter fixture; do not poison the Paper REST truth. Record those coverage boundaries explicitly. Re-run the matrix and report pass/fail per row with revisions and evidence. No separate new increment is needed.
+
+**Increment 10 control preflight:** Before enabling demo mutations, ensure operator authorization is enforced at a trusted server or proxy boundary. The current runner allows mutation when `TRADING_OPERATOR_TOKEN` is unset; the UI reads `VITE_OPERATOR_TOKEN` into browser code, and `x-operator-id` comes from client storage. A browser-distributed token and client-supplied identity do not establish protected per-operator demo controls. Verify unauthorized commands are denied and the displayed/audited operator identity is authenticated. This can be completed as the first guarded work inside Increment 10 after the 9A gate; do not enable demo entries until it passes.
+
+Candidate #2 remains an operational baseline, not validated alpha. Keep Increment 10 / Bybit demo on hold pending the completed 9A report and owner review.
 
 ---
 
@@ -2509,7 +2515,7 @@ Do not implement Candidate #3's trading rule until a separate strategy research 
 
 # 67. Current Cursor instruction
 
-The Increment 9A local-acceptance record includes `trading_system` (this commit) and matching `k-paper` / `trading-system-ui` revisions in the sibling guides. These are **reported local checks**, not a remotely enforced CI result. The accepted 5B connectivity record remains `trading_system` `043ca64523f42212cd8a2616ba6201d61d7c878a` (evidence `1f00fdc80f7bbbb39b836da9445e041eb18e6c77`).
+The Increment 9A record above is **reported local evidence under review**, not a remotely enforced CI result or a completed Stage C / section 49 qualification. The pinned implementation SHAs are listed in section 64; the sibling guides record their own revisions. The accepted 5B connectivity record remains `trading_system` `043ca64523f42212cd8a2616ba6201d61d7c878a` (evidence `1f00fdc80f7bbbb39b836da9445e041eb18e6c77`).
 
 | Increment | Status | Gate |
 | --- | --- | --- |
@@ -2521,10 +2527,10 @@ The Increment 9A local-acceptance record includes `trading_system` (this commit)
 | 7 | Accepted locally | Futures PositionSyncPending, no fill+position double count, MD freshness required for Exchange futures, one strategy per pair, fail-closed leverage/mode, Paper one-way USDT-linear BTCUSDT |
 | 8 | Accepted locally | Explicit Exchange risk, prospective effective exposure, PauseEntries/CancelWorking/FlattenAndPause/Resume, operator token on mutating RPCs, UI confirmation does not treat flatten RPC as flat |
 | 9 | Accepted locally | Durable execution ledger, fees/funding/weighted PnL, restart replay, daily-loss from ledger or fail-closed if configured without it, UI simulation label for Paper |
-| 9A | Accepted locally | Stage C C2 composition → Paper linear; section 49 lab (normal fill, lost-ACK restart, reject, duplicate fill, disconnect reconnect, stale-book hook, restart-with-position); browser pause/flatten/resume vs Paper; remaining Paper/Bybit diffs listed |
-| 10 | Next | Bybit demo after Paper readiness review |
+| 9A | Review hold | Normal fill, position and lost-ACK runner restarts, and manual pause/flatten/resume observed; complete the unasserted section 49 faults, partial fill/cancel race, N=28 decision-equivalence and UI CancelWorking before re-review |
+| 10 | Blocked | Start demo only after 9A acceptance; protect mutating operator commands before enabling demo entries |
 
-Cursor: Increment 9A is accepted locally. Stop for a Paper readiness report. Do not start Increment 10 / Bybit demo until the owner reviews that report.
+Cursor: Finish the listed 9A qualification gaps and submit a revised Paper readiness report with row-level evidence. Stop for owner review. Do not start Increment 10 / Bybit demo until 9A is accepted; the operator authorization preflight is a guarded first action of 10 before any demo entries.
 
 ---
 

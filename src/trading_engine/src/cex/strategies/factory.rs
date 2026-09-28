@@ -1,10 +1,7 @@
 //! Build CEX strategies from config `strategy_type`. See design log 008.
 
 use crate::cex::state::Strategy;
-use crate::cex::strategies::{
-    BtcPriceMaLongFlatV1, BtcPriceMaLongFlatV1Config, BuyLowSellHigh, Donchian, PropHold,
-    PRIMARY_LOOKBACK,
-};
+use crate::cex::strategies::{BuyLowSellHigh, Donchian, PropHold};
 use asset_engine::AssetService;
 use rust_decimal::Decimal;
 use std::sync::Arc;
@@ -16,6 +13,17 @@ use trading_core::{
         ExecutionMode,
     },
 };
+
+pub const UNSUPPORTED_CANDIDATE_2: &str =
+    "BTCPriceMALongFlatV1 is not supported by the default runner; use cargo run -p btc_price_ma_app";
+
+/// Optional factory supplied by a composition binary in the same process.
+pub trait ExtraStrategyFactory: Send + Sync + 'static {
+    fn try_build(
+        &self,
+        args: &StrategyFactoryArgs,
+    ) -> Option<Result<Arc<RwLock<dyn Strategy>>, EngineError>>;
+}
 
 pub struct StrategyFactoryArgs {
     pub strategy_type: String,
@@ -68,20 +76,9 @@ pub fn build_strategy(args: StrategyFactoryArgs) -> Result<Arc<RwLock<dyn Strate
             args.config_tick_size,
             args.config_min_notional,
         )))),
-        "BTCPriceMALongFlatV1" | "btc_price_ma_long_flat_v1" => {
-            if args.execution_mode != ExecutionMode::Shadow {
-                return Err(EngineError::CustomError(anyhow::anyhow!(
-                    "BTCPriceMALongFlatV1 is not a live strategy"
-                )));
-            }
-            let adapter = BtcPriceMaLongFlatV1::new(BtcPriceMaLongFlatV1Config {
-                symbol: args.symbol,
-                lookback: args.lookback.unwrap_or(PRIMARY_LOOKBACK),
-                instrument_type: args.instrument_type,
-                max_entry_age_secs: args.max_entry_age_secs,
-            })?;
-            Ok(Arc::new(RwLock::new(adapter)))
-        }
+        "BTCPriceMALongFlatV1" | "btc_price_ma_long_flat_v1" => Err(EngineError::CustomError(
+            anyhow::anyhow!("{UNSUPPORTED_CANDIDATE_2}"),
+        )),
         rejected @ ("DonchianDailyV1" | "donchian_daily_v1") => Err(EngineError::CustomError(
             anyhow::anyhow!("{rejected} is not a live strategy"),
         )),
@@ -89,6 +86,18 @@ pub fn build_strategy(args: StrategyFactoryArgs) -> Result<Arc<RwLock<dyn Strate
             "Unknown strategy type: {other}"
         ))),
     }
+}
+
+pub fn build_strategy_composed(
+    args: StrategyFactoryArgs,
+    extra: Option<&dyn ExtraStrategyFactory>,
+) -> Result<Arc<RwLock<dyn Strategy>>, EngineError> {
+    if let Some(extra) = extra {
+        if let Some(result) = extra.try_build(&args) {
+            return result;
+        }
+    }
+    build_strategy(args)
 }
 
 #[cfg(test)]
@@ -122,6 +131,50 @@ mod tests {
         }
     }
 
+    struct StubFactory;
+
+    impl ExtraStrategyFactory for StubFactory {
+        fn try_build(
+            &self,
+            args: &StrategyFactoryArgs,
+        ) -> Option<Result<Arc<RwLock<dyn Strategy>>, EngineError>> {
+            if args.strategy_type == "StubHold" {
+                Some(build_strategy(StrategyFactoryArgs {
+                    strategy_type: "PropHold".into(),
+                    ..args_copy(args)
+                }))
+            } else {
+                None
+            }
+        }
+    }
+
+    fn args_copy(args: &StrategyFactoryArgs) -> StrategyFactoryArgs {
+        StrategyFactoryArgs {
+            strategy_type: args.strategy_type.clone(),
+            symbol: args.symbol.clone(),
+            base_position_size: args.base_position_size,
+            max_position: args.max_position,
+            base_buy_threshold: args.base_buy_threshold,
+            base_sell_threshold: args.base_sell_threshold,
+            stop_loss_percent: args.stop_loss_percent,
+            take_profit_percent: args.take_profit_percent,
+            max_active_orders: args.max_active_orders,
+            price_history_size: args.price_history_size,
+            min_price_history: args.min_price_history,
+            asset_service: args.asset_service.clone(),
+            exchange: args.exchange.clone(),
+            config_min_order_size: args.config_min_order_size,
+            config_step_size: args.config_step_size,
+            config_tick_size: args.config_tick_size,
+            config_min_notional: args.config_min_notional,
+            execution_mode: args.execution_mode,
+            instrument_type: args.instrument_type.clone(),
+            max_entry_age_secs: args.max_entry_age_secs,
+            lookback: args.lookback,
+        }
+    }
+
     #[test]
     fn builds_prop_hold() {
         assert!(build_strategy(args("PropHold")).is_ok());
@@ -146,17 +199,21 @@ mod tests {
     }
 
     #[test]
-    fn btc_price_ma_long_flat_v1_is_not_a_live_strategy() {
-        match build_strategy(args("BTCPriceMALongFlatV1")) {
-            Err(err) => assert!(err.to_string().contains("not a live strategy")),
-            Ok(_) => panic!("BTCPriceMALongFlatV1 must not be a live factory strategy"),
+    fn btc_price_ma_long_flat_v1_requires_composition_binary() {
+        for mode in [ExecutionMode::Exchange, ExecutionMode::Shadow] {
+            let mut request = args("BTCPriceMALongFlatV1");
+            request.execution_mode = mode;
+            match build_strategy(request) {
+                Err(err) => assert!(err.to_string().contains("btc_price_ma_app")),
+                Ok(_) => panic!("default factory must not construct Candidate #2"),
+            }
         }
     }
 
     #[test]
-    fn btc_price_ma_long_flat_v1_builds_in_shadow() {
-        let mut shadow = args("BTCPriceMALongFlatV1");
-        shadow.execution_mode = ExecutionMode::Shadow;
-        assert!(build_strategy(shadow).is_ok());
+    fn extra_factory_is_consulted_before_builtin() {
+        let mut request = args("StubHold");
+        request.strategy_type = "StubHold".into();
+        assert!(build_strategy_composed(request, Some(&StubFactory)).is_ok());
     }
 }

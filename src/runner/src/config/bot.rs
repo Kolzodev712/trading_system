@@ -314,13 +314,17 @@ pub struct StrategyConfig {
     /// (e.g., "5.0" for BTC/USDC on Binance means minimum 5 USDC)
     pub min_notional: Option<Decimal>,
 
-    /// Candidate #2 lookback override. Default is the frozen primary N=28.
+    /// Optional lookback override for strategies that use a window.
     #[serde(default)]
     pub lookback: Option<usize>,
 
     /// Fresh-entry window in seconds. Required for a flat account to enter.
     #[serde(default)]
     pub max_entry_age_secs: Option<u64>,
+
+    /// Enable after construction (and again after snapshot restore).
+    #[serde(default)]
+    pub initially_enabled: bool,
 }
 
 impl StrategiesConfig {
@@ -643,5 +647,6 @@ mod config_smoke_tests {
         let configs = strategies.as_vec();
         assert_eq!(configs[0].strategy_type.as_str(), "BTCPriceMALongFlatV1");
         assert_eq!(configs[0].lookback, Some(28));
+        assert!(configs[0].initially_enabled);
     }
 }

@@ -18,7 +18,8 @@
       "tick_size": "0.1",
       "min_notional": "5.0",
       "lookback": 28,
-      "max_entry_age_secs": 86400
+      "max_entry_age_secs": 86400,
+      "initially_enabled": true
     }
   ]
 }

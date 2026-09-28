@@ -1,10 +1,10 @@
 //! Score BTCPriceMALongFlatV1 through the existing offline simulator.
 
-use crate::cex::strategies::rust_strategies::donchian_daily_v1::offline::DecisionLog;
 use super::position_qty;
 use crate::cex::strategies::rust_strategies::donchian_daily_v1::backtest::{
     FROZEN_EVALUATION_END_MS, FROZEN_EVALUATION_START_MS,
 };
+use crate::cex::strategies::rust_strategies::donchian_daily_v1::offline::DecisionLog;
 use rust_decimal::Decimal;
 
 use crate::cex::strategies::rust_strategies::donchian_daily_v1::backtest::{

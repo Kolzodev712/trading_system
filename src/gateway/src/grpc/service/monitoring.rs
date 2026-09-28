@@ -6,6 +6,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tonic::Status;
 use tracing::debug;
+use trading_core::grpc::TradingControl;
 use trading_core::utils::hours_ago;
 use trading_engine::dex::{DexIndicatorEngine, DexQuoteManager, DexStrategyManager};
 use trading_engine::levels::LevelManager;
@@ -31,6 +32,9 @@ pub struct MonitoringService {
     pub dex_venue_label: Option<String>,
     pub strategy_caps: Option<Arc<RwLock<HashMap<String, rust_decimal::Decimal>>>>,
     pub execution_mode: trading_core::types::ExecutionMode,
+    pub venue_label: String,
+    pub environment: String,
+    pub trading_control: Arc<TradingControl>,
 }
 
 #[derive(Clone)]
@@ -256,6 +260,18 @@ impl MonitoringService {
 
         let dex = self.collect_dex_snapshot().await;
 
+        let snapshot_unix_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0);
+        let runner_mode = if self.dex_state_manager.is_some() {
+            "dex"
+        } else if self.strategy_manager.is_some() {
+            "strategies"
+        } else {
+            "levels"
+        };
+
         let data = trading_cli::MonitoringData {
             orders,
             balances,
@@ -268,6 +284,12 @@ impl MonitoringService {
             instrument_type: instrument_type_str.to_string(),
             exchange: self.exchange.clone(),
             dex,
+            execution_mode: self.execution_mode.as_str().to_string(),
+            venue: self.venue_label.clone(),
+            environment: self.environment.clone(),
+            snapshot_unix_ms,
+            trading_enabled: self.trading_control.is_enabled().await,
+            runner_mode: runner_mode.to_string(),
         };
 
         tracing::debug!("[gRPC] collect_monitoring_data: Returning data successfully");
@@ -615,6 +637,18 @@ impl MonitoringService {
                 .as_ref()
                 .map(|s| s.config_hash.clone())
                 .unwrap_or_default(),
+            previous_direction: snapshot
+                .as_ref()
+                .map(|s| s.previous_direction.clone())
+                .unwrap_or_default(),
+            recovery: snapshot
+                .as_ref()
+                .map(|s| s.recovery.clone())
+                .unwrap_or_default(),
+            model_reconstructed: snapshot
+                .as_ref()
+                .map(|s| s.model_reconstructed)
+                .unwrap_or(false),
         })
     }
 

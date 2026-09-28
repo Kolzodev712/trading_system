@@ -34,8 +34,29 @@ audit:
 
 # Testing
 test:
-    # Run all unit tests
-    cargo test --lib --all-features
+    # Workspace lib tests (root `cargo test --lib` is the empty trading_system package)
+    cargo test --workspace --lib --all-features
+    # 5R packages include integration/bin tests (frozen parity lives under tests/)
+    cargo test -p strategy_core -p research_engine -p research_cli -p trading_engine -p runner -p btc_price_ma_app --all-targets
+
+# Fail if live crates depend on research/model crates or the Candidate #2 app.
+test-5r-graph:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    forbidden='(strategy_core|research_engine|research_cli|btc_price_ma_app) v'
+    for pkg in trading_engine runner; do
+      extra=()
+      if [ "$pkg" = runner ]; then extra=(--features redis); fi
+      tree=$(cargo tree -p "$pkg" -e normal,build,dev --all-features "${extra[@]}")
+      if echo "$tree" | grep -E "$forbidden" >/dev/null; then
+        echo "forbidden crate in $pkg tree"
+        echo "$tree" | grep -E "$forbidden" || true
+        exit 1
+      fi
+    done
+    app=$(cargo tree -p btc_price_ma_app -e normal,build,dev --all-features)
+    echo "$app" | grep -E 'strategy_core v' >/dev/null
+    echo "$app" | grep -E 'runner v' >/dev/null
 
 test-integration:
     # Run integration tests (excluding ignored)
@@ -51,8 +72,8 @@ test-bin:
 
 # Compilation checks
 check:
-    # Check that all packages compile without building
-    cargo check --all-targets --all-features
+    # Check every workspace member, including btc_price_ma_app
+    cargo check --workspace --all-targets --all-features
 
 build:
     # Build all packages in debug mode

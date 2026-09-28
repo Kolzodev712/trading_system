@@ -714,14 +714,101 @@ mod tests {
         }
     }
 
-    #[test]
-    fn frozen_n28_runtime_transitions_match_offline() {
+    fn load_n28_log() -> DecisionLog {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../data/btc_price_ma_long_flat_v1/decisions-n28.json");
         let body = std::fs::read_to_string(&path).unwrap_or_else(|err| {
             panic!("read {}: {err}", path.display());
         });
-        let log: DecisionLog = serde_json::from_str(&body).expect("frozen decision log");
+        serde_json::from_str(&body).expect("frozen decision log")
+    }
+
+    fn replay_n28(strat: &mut BtcPriceMaLongFlatV1, log: &DecisionLog) {
+        for row in &log.decisions {
+            let candle = CompletedCandle {
+                venue: "bybit".into(),
+                product: "linear".into(),
+                instrument: Instrument::new(InstrumentType::Futures, pair()),
+                interval: "D".into(),
+                start_time_ms: row.start_time_ms,
+                end_time_exclusive_ms: row.end_time_exclusive_ms,
+                open: row.close,
+                high: row.close,
+                low: row.close,
+                close: row.close,
+                volume: Decimal::ZERO,
+            };
+            strat.observe_completed_candle(&candle).unwrap();
+        }
+    }
+
+    #[test]
+    fn restart_replay_reconstructs_identical_frozen_snapshot() {
+        let log = load_n28_log();
+        let mut live = adapter(PRIMARY_LOOKBACK, None);
+        let mut restarted = adapter(PRIMARY_LOOKBACK, None);
+        replay_n28(&mut live, &log);
+        replay_n28(&mut restarted, &log);
+        live.mark_model_reconstructed();
+        restarted.mark_model_reconstructed();
+        let now = log
+            .decisions
+            .last()
+            .expect("frozen log")
+            .end_time_exclusive_ms;
+        let live_snap = live.build_snapshot(now);
+        let restarted_snap = restarted.build_snapshot(now);
+        assert_eq!(live_snap, restarted_snap);
+        assert_eq!(live_snap.strategy_id, "BTCPriceMALongFlatV1:BTC/USDT");
+        assert!(!live_snap.config_hash.is_empty());
+        assert_eq!(live_snap.model_direction, log.run.final_direction);
+        assert!(live_snap.model_reconstructed);
+    }
+
+    #[test]
+    fn shadow_journal_keeps_identity_and_zero_exchange_orders() {
+        let log = load_n28_log();
+        let mut strat = adapter(PRIMARY_LOOKBACK, None);
+        replay_n28(&mut strat, &log);
+        strat.mark_model_reconstructed();
+        let now = log
+            .decisions
+            .last()
+            .expect("frozen log")
+            .end_time_exclusive_ms;
+        let snap = strat.build_snapshot(now);
+        let record = trading_engine::cex::shadow::record_from_snapshot(
+            &snap,
+            trading_core::types::ExecutionMode::Shadow,
+            Decimal::ZERO,
+            Decimal::ZERO,
+            Decimal::ZERO,
+            Decimal::ZERO,
+            0,
+        );
+        assert_eq!(record.would_have_requested_orders, 0);
+        assert_eq!(record.strategy_id, snap.strategy_id);
+        assert_eq!(record.config_hash, snap.config_hash);
+        assert_eq!(record.direction, snap.model_direction);
+        assert_eq!(record.execution_mode, "shadow");
+        let dir =
+            std::env::temp_dir().join(format!("c2-shadow-journal-{}-{}", std::process::id(), now));
+        let path = dir.join("journal.jsonl");
+        let journal = trading_engine::cex::shadow::ShadowJournal::new(&path);
+        journal.append(&record).unwrap();
+        let body = std::fs::read_to_string(&path).unwrap();
+        let parsed: serde_json::Value =
+            serde_json::from_str(body.lines().next().expect("journal line")).unwrap();
+        assert_eq!(parsed["would_have_requested_orders"], 0);
+        assert_eq!(parsed["strategy_id"], snap.strategy_id);
+        assert_eq!(parsed["config_hash"], snap.config_hash);
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_dir(&dir);
+    }
+
+    #[test]
+    fn frozen_n28_runtime_transitions_match_offline() {
+        let log = load_n28_log();
         let mut strat = adapter(PRIMARY_LOOKBACK, None);
         let mut entries = 0usize;
         let mut exits = 0usize;

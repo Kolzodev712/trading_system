@@ -253,6 +253,12 @@ message MonitoringData {
     string instrument_type = 9; // "Spot" or "Futures" - determines which view to show in TUI
     string exchange = 10;       // "Binance" or "Bybit" - for display in CLI
     DexVenueSnapshot dex = 11;  // Present when DEX engine is active
+    string execution_mode = 12; // "shadow" | "exchange" — independent of venue
+    string venue = 13;          // e.g. BYBIT, PAPER
+    string environment = 14;    // e.g. MAINNET, DEMO, LOCAL
+    int64 snapshot_unix_ms = 15;
+    bool trading_enabled = 16;  // global entries/execution switch; not inferred from strategies
+    string runner_mode = 17;    // "levels" | "strategies" | "dex"
 }
 
 message DexVenueSnapshot {
@@ -437,6 +443,9 @@ message StrategyStatus {
     string operational_role = 31;
     string strategy_version = 32;
     string config_hash = 33;
+    string previous_direction = 34;
+    string recovery = 35;
+    bool model_reconstructed = 36;
 }
 
 message Orderbook {

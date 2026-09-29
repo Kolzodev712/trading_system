@@ -408,7 +408,9 @@ pub async fn strategy_runner_with(
             instrument_type.clone(),
         );
         let manager = strategy_manager_arc.read().await;
-        daily_source.poll_pairs(&all_symbols, &manager).await;
+        daily_source
+            .poll_pairs(&all_symbols, &manager, execution_mode, &venue, &environment)
+            .await;
         manager.finish_model_reconstruction().await;
         if let Some(journal) = &shadow_journal {
             append_shadow_decisions(
@@ -482,7 +484,7 @@ pub async fn strategy_runner_with(
     .with_instrument_type(instrument_type.clone())
     .with_exchange(format!("{:?}", bot_config.exchange_engine.exchange));
     let grpc_service = grpc_service
-        .with_execution_status(execution_mode, venue, environment)
+        .with_execution_status(execution_mode, venue.clone(), environment.clone())
         .with_strategy_operator(operator)
         .with_strategy_caps(strategy_caps.clone());
 
@@ -643,6 +645,8 @@ pub async fn strategy_runner_with(
     let refresh_journal = shadow_journal.clone();
     let refresh_infos = strategy_infos.clone();
     let refresh_execution_mode = execution_mode;
+    let refresh_venue = venue.clone();
+    let refresh_environment = environment.clone();
     let refresh_tsm = services.trading_state_manager.clone();
     let refresh_donchian = strategy_configs
         .iter()
@@ -658,7 +662,15 @@ pub async fn strategy_runner_with(
                         .unwrap_or(0);
                     {
                         let manager = refresh_manager.read().await;
-                        let accepted = daily_source.poll_pairs(&refresh_pairs, &manager).await;
+                        let accepted = daily_source
+                            .poll_pairs(
+                                &refresh_pairs,
+                                &manager,
+                                refresh_execution_mode,
+                                &refresh_venue,
+                                &refresh_environment,
+                            )
+                            .await;
                         if accepted > 0 {
                             if let Some(journal) = &refresh_journal {
                                 append_shadow_decisions(

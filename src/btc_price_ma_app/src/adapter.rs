@@ -1011,4 +1011,105 @@ mod tests {
         eprintln!("{}", serde_json::to_string_pretty(&report).unwrap());
         assert!(snap.model_reconstructed);
     }
+
+    fn utc_day_start_ms(now_ms: u64) -> u64 {
+        now_ms - (now_ms % DAILY_PERIOD_MS)
+    }
+
+    fn fresh_entry_completed_dailies(
+        now_ms: u64,
+    ) -> Vec<trading_engine::cex::strategies::replay::Candle> {
+        let last_completed_start = utc_day_start_ms(now_ms).saturating_sub(DAILY_PERIOD_MS);
+        // N preceding completed closes plus one ready step (plan / adapter).
+        (0..29)
+            .map(|i| {
+                let start = last_completed_start - (28 - i) * DAILY_PERIOD_MS;
+                let px = if i == 28 {
+                    Decimal::new(110, 0)
+                } else {
+                    Decimal::new(100, 0)
+                };
+                trading_engine::cex::strategies::replay::Candle {
+                    timestamp_ms: start,
+                    open: px,
+                    high: px,
+                    low: px,
+                    close: px,
+                    volume: Decimal::ONE,
+                }
+            })
+            .collect()
+    }
+
+    async fn assert_fresh_flat_to_long_on_wall_clock(
+        candles: Vec<trading_engine::cex::strategies::replay::Candle>,
+        now_ms: u64,
+    ) {
+        let last_start = candles.last().unwrap().timestamp_ms;
+        let mut source = runner::cex::DailyCompletedCandleSource::new(
+            trading_core::types::common::Exchange::Bybit,
+            InstrumentType::Futures,
+        );
+        let accepted = source.ingest_fetched(&pair(), candles, now_ms);
+        assert_eq!(accepted.last().map(|c| c.start_time_ms), Some(last_start));
+        let mut strat = adapter(28, Some(86_400));
+        for candle in &accepted {
+            strat.observe_completed_candle(candle).unwrap();
+        }
+        strat.mark_model_reconstructed();
+        let transition = strat.last_transition().expect("flat-to-long");
+        assert_eq!(transition.from, Direction::Flat);
+        assert_eq!(transition.to, Direction::Long);
+        assert_eq!(transition.start_time_ms, last_start);
+        assert_eq!(
+            transition.candle_end_exclusive_ms,
+            last_start + DAILY_PERIOD_MS
+        );
+        let snap = strat.build_snapshot(now_ms);
+        assert!(snap.model_reconstructed);
+        assert!(snap.fresh_entry_eligible);
+        assert_eq!(snap.entry_freshness, "fresh");
+        assert!(snap.last_flat_to_long_age_secs.unwrap() <= 86_400);
+        let account = TradingState::new();
+        match evaluate_qty(&mut strat, &account, now_ms).await {
+            StrategyIntent::TargetPosition { qty, .. } => {
+                assert_eq!(qty, position_qty());
+            }
+            other => panic!("expected TargetPosition(0.001) on a flat account, got {other:?}"),
+        }
+    }
+
+    fn wall_clock_now_ms() -> u64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn fresh_entry_fixture_last_completed_transitions_on_real_clock() {
+        let now_ms = wall_clock_now_ms();
+        let candles = fresh_entry_completed_dailies(now_ms);
+        assert_fresh_flat_to_long_on_wall_clock(candles, now_ms).await;
+    }
+
+    #[tokio::test]
+    async fn fresh_entry_script_fixture_last_completed_transitions_on_real_clock() {
+        let now_ms = wall_clock_now_ms();
+        let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../scripts/inc10_demo_fresh_entry_candles.json");
+        let raw = std::fs::read_to_string(&path)
+            .unwrap_or_else(|err| panic!("read {}: {err}", path.display()));
+        let candles: Vec<trading_engine::cex::strategies::replay::Candle> =
+            serde_json::from_str(&raw).expect("fresh-entry candles json");
+        assert_eq!(candles.len(), 29);
+        assert_eq!(candles.last().unwrap().close, Decimal::new(110, 0));
+        let last_completed_start = utc_day_start_ms(now_ms).saturating_sub(DAILY_PERIOD_MS);
+        assert_eq!(
+            candles.last().unwrap().timestamp_ms,
+            last_completed_start,
+            "script fixture last completed bar must be yesterday UTC on the real clock"
+        );
+        assert_fresh_flat_to_long_on_wall_clock(candles, now_ms).await;
+    }
 }

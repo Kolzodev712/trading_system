@@ -1,0 +1,32 @@
+{
+  "purpose": "Fresh-entry Demo fixture for review. Synthetic closes on real UTC daily timestamps; the latest fully completed bar is the first ready flat-to-long. Do not set TRADING_TEST_NOW_MS. Do not increase max_entry_age_secs. Not authorized to Resume until reviewed.",
+  "kind": "fresh_entry",
+  "synthetic_signal": true,
+  "clock": "real_wall_clock",
+  "book": "live_orderbook_at_run",
+  "candles_path": "scripts/inc10_demo_fresh_entry_candles.json",
+  "runner_env": {
+    "TRADING_TEST_CANDLES_PATH": "scripts/inc10_demo_fresh_entry_candles.json"
+  },
+  "forbidden_env": [
+    "TRADING_TEST_NOW_MS"
+  ],
+  "as_of": {
+    "generated_utc": "2026-09-29T11:45:32.900131+00:00",
+    "now_ms": 1790682332900,
+    "last_completed_start_utc": "2026-09-28T00:00:00+00:00",
+    "last_completed_end_utc": "2026-09-29T00:00:00+00:00",
+    "max_entry_age_secs": 86400,
+    "age_secs_at_generation": 42332,
+    "fresh_until_utc": "2026-09-30T00:00:00+00:00"
+  },
+  "expected_before_resume": {
+    "latest_completed_creates_flat_to_long": true,
+    "model_reconstructed": true,
+    "fresh_entry_eligible": true,
+    "entry_freshness": "fresh",
+    "intent": "TargetPosition(0.001) on a flat account",
+    "preceding_completed_closes": 28,
+    "ready_step_candles": 29
+  }
+}

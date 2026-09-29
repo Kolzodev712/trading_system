@@ -39,6 +39,36 @@ pub fn exchange_live_is_authorized(
     Ok(())
 }
 
+/// Synthetic candle fixtures may execute on Paper or Bybit Demo Exchange only.
+/// `TRADING_TEST_NOW_MS` is Paper-only on Exchange so Demo cannot fake entry freshness.
+pub fn exchange_fixture_is_authorized(
+    execution_mode: ExecutionMode,
+    venue: &str,
+    environment: &str,
+    candles_path: Option<&str>,
+    now_ms_override: bool,
+) -> Result<(), String> {
+    if candles_path.is_none() && !now_ms_override {
+        return Ok(());
+    }
+    if execution_mode != ExecutionMode::Exchange {
+        return Ok(());
+    }
+    if now_ms_override && !venue.eq_ignore_ascii_case("PAPER") {
+        return Err(
+            "TRADING_TEST_NOW_MS is Paper-only on Exchange; Bybit Demo must use the real clock"
+                .into(),
+        );
+    }
+    let paper = venue.eq_ignore_ascii_case("PAPER");
+    let bybit_demo =
+        venue.eq_ignore_ascii_case("BYBIT") && environment.eq_ignore_ascii_case("DEMO");
+    if paper || bybit_demo {
+        return Ok(());
+    }
+    Err("TRADING_TEST_CANDLES_PATH on Exchange is confined to Paper or Bybit Demo".into())
+}
+
 pub fn venue_label(exchange: &Exchange) -> String {
     match exchange {
         Exchange::Bybit => "BYBIT",
@@ -126,6 +156,67 @@ mod tests {
         assert!(exchange_live_is_authorized(ExecutionMode::Exchange, "PAPER", "LOCAL").is_ok());
         assert!(exchange_live_is_authorized(ExecutionMode::Exchange, "BYBIT", "MAINNET").is_err());
         assert!(exchange_live_is_authorized(ExecutionMode::Exchange, "BYBIT", "TESTNET").is_err());
+    }
+
+    #[test]
+    fn exchange_fixture_confined_to_paper_or_bybit_demo() {
+        use trading_core::types::ExecutionMode;
+        assert!(exchange_fixture_is_authorized(
+            ExecutionMode::Exchange,
+            "PAPER",
+            "LOCAL",
+            Some("scripts/c.json"),
+            true,
+        )
+        .is_ok());
+        assert!(exchange_fixture_is_authorized(
+            ExecutionMode::Exchange,
+            "BYBIT",
+            "DEMO",
+            Some("scripts/c.json"),
+            false,
+        )
+        .is_ok());
+        assert!(exchange_fixture_is_authorized(
+            ExecutionMode::Exchange,
+            "BYBIT",
+            "DEMO",
+            Some("scripts/c.json"),
+            true,
+        )
+        .is_err());
+        assert!(exchange_fixture_is_authorized(
+            ExecutionMode::Exchange,
+            "BYBIT",
+            "MAINNET",
+            Some("scripts/c.json"),
+            false,
+        )
+        .is_err());
+        assert!(exchange_fixture_is_authorized(
+            ExecutionMode::Shadow,
+            "BYBIT",
+            "MAINNET",
+            Some("scripts/c.json"),
+            true,
+        )
+        .is_ok());
+        assert!(exchange_fixture_is_authorized(
+            ExecutionMode::Exchange,
+            "BYBIT",
+            "DEMO",
+            None,
+            false,
+        )
+        .is_ok());
+        assert!(exchange_fixture_is_authorized(
+            ExecutionMode::Exchange,
+            "BYBIT",
+            "DEMO",
+            None,
+            true,
+        )
+        .is_err());
     }
 
     #[test]

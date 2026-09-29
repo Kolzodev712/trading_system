@@ -1,7 +1,8 @@
 {
-  "purpose": "Controlled Demo candle fixture for Increment 10 Hold review. Do not Resume a live measured run with this until the owner authorizes.",
+  "purpose": "Diagnostic Hold fixture for the 2026-09-29T10:18:23Z Resume. Expects fresh_entry_eligible=false and Hold. Not a Demo execution fixture. Do not Resume from this file.",
+  "kind": "diagnostic_hold",
   "candles_path": "scripts/inc10_demo_hold_candles.json",
-  "runner_env": {
+  "replay_only": {
     "TRADING_TEST_CANDLES_PATH": "scripts/inc10_demo_hold_candles.json",
     "TRADING_TEST_NOW_MS": "1790677103000"
   },

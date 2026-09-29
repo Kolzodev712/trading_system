@@ -6,7 +6,7 @@
 use std::collections::HashMap;
 use tracing::warn;
 use trading_core::types::common::{Exchange, InstrumentType, Pair};
-use trading_core::types::DAILY_PERIOD_MS;
+use trading_core::types::{ExecutionMode, DAILY_PERIOD_MS};
 use trading_engine::cex::completed_candles::{
     daily_from_replay_candle, product_label, venue_label, SequentialCandleIngest,
 };
@@ -70,28 +70,42 @@ impl DailyCompletedCandleSource {
         &mut self,
         pair: &Pair,
         manager: &StrategyManager,
+        execution_mode: ExecutionMode,
+        venue: &str,
+        environment: &str,
     ) -> Result<usize, String> {
         let now_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_millis() as u64)
             .unwrap_or(0);
-        let candles = if let Ok(path) = std::env::var("TRADING_TEST_CANDLES_PATH") {
-            load_fixture_candles(&path)?
+        let candles_path = std::env::var("TRADING_TEST_CANDLES_PATH").ok();
+        let now_override = std::env::var("TRADING_TEST_NOW_MS").ok();
+        crate::config::exchange_fixture_is_authorized(
+            execution_mode,
+            venue,
+            environment,
+            candles_path.as_deref(),
+            now_override.is_some(),
+        )?;
+        let candles = if let Some(path) = candles_path.as_deref() {
+            tracing::info!(
+                path,
+                venue,
+                environment,
+                execution_mode = execution_mode.as_str(),
+                synthetic_candle_fixture = true,
+                "loading synthetic completed-candle fixture; this is not live market data"
+            );
+            load_fixture_candles(path)?
         } else {
             fetch_bybit_klines(pair, "D", DAILY_BOOTSTRAP_LIMIT).await?
         };
-        let as_of = std::env::var("TRADING_TEST_NOW_MS")
-            .ok()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or_else(|| {
-                candles
-                    .iter()
-                    .map(|c| c.timestamp_ms)
-                    .max()
-                    .unwrap_or(0)
-                    .saturating_add(DAILY_PERIOD_MS)
-                    .max(now_ms)
-            });
+        let as_of = match now_override.as_deref() {
+            Some(raw) => raw
+                .parse()
+                .map_err(|err| format!("TRADING_TEST_NOW_MS: {err}"))?,
+            None => now_ms,
+        };
         let accepted = self.ingest_fetched(pair, candles, as_of);
         let n = accepted.len();
         for candle in &accepted {
@@ -103,10 +117,20 @@ impl DailyCompletedCandleSource {
         Ok(n)
     }
 
-    pub async fn poll_pairs(&mut self, pairs: &[Pair], manager: &StrategyManager) -> usize {
+    pub async fn poll_pairs(
+        &mut self,
+        pairs: &[Pair],
+        manager: &StrategyManager,
+        execution_mode: ExecutionMode,
+        venue: &str,
+        environment: &str,
+    ) -> usize {
         let mut accepted = 0;
         for pair in pairs {
-            match self.poll_pair(pair, manager).await {
+            match self
+                .poll_pair(pair, manager, execution_mode, venue, environment)
+                .await
+            {
                 Ok(n) => accepted += n,
                 Err(err) => warn!("Completed daily candle poll failed for {pair}: {err}"),
             }
@@ -169,5 +193,20 @@ mod tests {
         let loaded = load_fixture_candles(path.to_str().unwrap()).unwrap();
         assert_eq!(loaded.len(), 1);
         assert_eq!(loaded[0].close, Decimal::new(100, 0));
+    }
+
+    #[test]
+    fn wall_clock_as_of_drops_forming_last_bar() {
+        let mut source = DailyCompletedCandleSource::new(Exchange::Bybit, InstrumentType::Futures);
+        let pair = Pair::new("BTC", "USDT");
+        let now = DAILY_PERIOD_MS * 2 + 12 * 3_600_000;
+        let bars = vec![
+            candle(0, 100),
+            candle(DAILY_PERIOD_MS, 100),
+            candle(DAILY_PERIOD_MS * 2, 110),
+        ];
+        let accepted = source.ingest_fetched(&pair, bars, now);
+        assert_eq!(accepted.len(), 2);
+        assert_eq!(accepted[1].start_time_ms, DAILY_PERIOD_MS);
     }
 }

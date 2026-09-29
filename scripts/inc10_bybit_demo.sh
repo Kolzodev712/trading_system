@@ -28,6 +28,14 @@ if [[ "${INC10_RESET:-0}" == "1" ]]; then
   echo "FAILED: INC10_RESET=1 is not allowed for this bounded demo procedure (evidence must be preserved)" >&2
   exit 1
 fi
+if [[ -n "${TRADING_TEST_NOW_MS:-}" ]]; then
+  echo "FAILED: TRADING_TEST_NOW_MS is not authorized on Bybit Demo; use the real clock" >&2
+  exit 1
+fi
+if [[ -n "${TRADING_TEST_CANDLES_PATH:-}" ]]; then
+  echo "FAILED: TRADING_TEST_CANDLES_PATH is not authorized for this Demo procedure. scripts/inc10_demo_hold_fixture.json is diagnostic-only; the fresh-entry fixture is not approved to Resume." >&2
+  exit 1
+fi
 
 mkdir -p "${WORKDIR}/logs"
 # Archive prior runner logs; do not delete journal, ledger, snapshot, or evidence logs.
@@ -572,8 +580,12 @@ cleanup() {
 trap cleanup EXIT
 
 echo "== package fixtures =="
+echo "Hold fixture is diagnostic only; TRADING_TEST_CANDLES_PATH and TRADING_TEST_NOW_MS stay unset (live book + real clock)."
 (cd "${ROOT}" && cargo test -q -p btc_price_ma_app --lib app_factory_builds_shadow_paper_and_bybit_exchange)
+(cd "${ROOT}" && cargo test -q -p btc_price_ma_app --lib fresh_entry_fixture_last_completed_transitions_on_real_clock)
+(cd "${ROOT}" && cargo test -q -p btc_price_ma_app --lib fresh_entry_script_fixture_last_completed_transitions_on_real_clock)
 (cd "${ROOT}" && cargo test -q -p runner --lib bybit_exchange_allows_demo_rejects_mainnet)
+(cd "${ROOT}" && cargo test -q -p runner --lib exchange_fixture_confined_to_paper_or_bybit_demo)
 (cd "${ROOT}" && cargo test -q -p gateway --lib grpc::access)
 
 echo "== build composition + grpc_ctl =="

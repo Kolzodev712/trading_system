@@ -1,6 +1,6 @@
 # Prop Trading Productionization and Research Architecture Plan
 
-**Status:** Increments 0–9A are accepted locally as a Paper qualification. Increment 10 preflight (mutating RPC authorization outside the browser bundle) is in progress. Demo entries stay paused until that authorization and Bybit readiness/recovery checks pass. Candidate #2 remains an operational baseline, not validated alpha.  
+**Status:** Increments 0–9A are accepted locally as a Paper qualification. Increment 10 paused-demo qualification is recorded; demo entries stay paused. A measured Bybit demo run is not authorized. Candidate #2 remains an operational baseline, not validated alpha.  
 **Date:** 2026-09-28  
 **Repository:** `trading_system`  
 **Audience:** Cursor / implementation agent / repository owner  
@@ -2553,6 +2553,8 @@ Do not promote to mainnet automatically.
 
 **Increment 10 preflight (in progress; demo entries remain paused):** Mutating RPCs require `TRADING_OPERATOR_TOKEN` and `TRADING_OPERATOR_ID` for every non-Paper venue. Unset token is Paper/lab only. Envoy injects the token from `/run/secrets/trading_operator_token` and strips client `x-operator-id` / `x-operator-token`; the UI no longer reads `VITE_OPERATOR_TOKEN`. `grpc_ctl` sends the env token. Audited identity is `TRADING_OPERATOR_ID`, not a browser username. `GetTradingStatus.operator_id` reports that identity. Unauthorized commands are denied. Non-Paper runners start `entries_paused`. Leave `ZENOH_ENABLED` unset until Zenoh has the same gate. Do not Resume or enable Bybit demo entries until Bybit-specific readiness and recovery checks pass. Tighten the Paper fill/cancel race to ledger +1 or +2 with matching Paper and gRPC qty.
 
+**Paused-demo qualification (2026-09-29; Increment 10 still open):** Pinned `trading_system` `1380bcb` for demo Exchange/110025, plus `scripts/inc10_bybit_demo.sh` (preserve journal/ledger/snapshot unless `INC10_RESET=1`; independent demo REST vs runner before enable; measured-run end-state pauses, resolves working orders, records REST/runner, then stops the runner). k-paper `6d03acc`. UI `68b9948`. Local paused rerun `INC10_EXIT:0` with `INC10_ENABLE` unset: `venue=BYBIT environment=DEMO execution_mode=exchange`, `entries_paused=true`, `operator_id=inc10`, private WS `wss://stream-demo.bybit.com/v5/private`, one-way already-at-requested, no REST place while paused, restart still paused, independent demo REST open orders 0 / nonzero positions 0 matching grpc. Browser `:5173` → Vite `/grpc` → Envoy `:8081` → runner `:50051` showed **BYBIT DEMO + EXCHANGE** live; Pause confirmation showed that venue and `Runner operator: inc10 (not the UI login)` while the UI login remained `admin`. Empty Envoy secret: `PauseEntries` `grpc-status=16` (`mutating RPC requires x-operator-token matching TRADING_OPERATOR_TOKEN`). Envoy with `TRADING_OPERATOR_TOKEN_FILE` readable by the proxy: runner `operator mutating RPC authorized operator=inc10`. Token file must be world-readable enough for Envoy Lua (`chmod 644` on the demo token file); `0600` left the UI path unauthenticated. No runtime snapshot yet on this paused account. Exchange-level open-order recon still logs Bybit 404 path/category mismatch; independent `/v5/order/realtime` compared clean. Do not Resume and do not set `INC10_ENABLE=1` until the owner authorizes a specific measured run (exposure limit, duration, end-state). Increment 10 is complete only after that run’s orders, fills, journal, ledger, reconciliation, and latency evidence are reviewed. Candidate #2 remains an operational baseline, not validated alpha.
+
 Stop and report a demo readiness report.
 
 ---
@@ -2574,7 +2576,7 @@ Do not implement Candidate #3's trading rule until a separate strategy research 
 
 # 67. Current Cursor instruction
 
-The Increment 9A Paper qualification is **accepted locally** (`trading_system` `9dab54e`, k-paper `590f3ad` / `6d03acc`, UI `10496e7`) on source review plus the reported matrix exit; the lab was not rerun in that review. Increment 10 preflight is in progress. Demo entries stay paused. Candidate #2 remains an operational baseline, not validated alpha. The accepted 5B connectivity record remains `trading_system` `043ca64523f42212cd8a2616ba6201d61d7c878a` (evidence `1f00fdc80f7bbbb39b836da9445e041eb18e6c77`).
+The Increment 9A Paper qualification is **accepted locally** (`trading_system` `9dab54e`, k-paper `590f3ad` / `6d03acc`, UI `10496e7`) on source review plus the reported matrix exit; the lab was not rerun in that review. Increment 10 paused-demo qualification is recorded (`trading_system` `1380bcb` plus the preserve/compare/end-state inc10 script, k-paper `6d03acc`, UI `68b9948`); demo entries stay paused; `INC10_ENABLE=1` has not been run. Candidate #2 remains an operational baseline, not validated alpha. The accepted 5B connectivity record remains `trading_system` `043ca64523f42212cd8a2616ba6201d61d7c878a` (evidence `1f00fdc80f7bbbb39b836da9445e041eb18e6c77`).
 
 | Increment | Status | Gate |
 | --- | --- | --- |
@@ -2587,9 +2589,9 @@ The Increment 9A Paper qualification is **accepted locally** (`trading_system` `
 | 8 | Accepted locally | Explicit Exchange risk, prospective effective exposure, PauseEntries/CancelWorking/FlattenAndPause/Resume, operator token on mutating RPCs, UI confirmation does not treat flatten RPC as flat |
 | 9 | Accepted locally | Durable execution ledger, fees/funding/weighted PnL, restart replay, daily-loss from ledger or fail-closed if configured without it, UI simulation label for Paper |
 | 9A | Accepted locally as Paper qualification | Section 49 rows through C2→Paper; frozen N=28 adapter comparison; grpc and browser CancelWorking; source review of `9dab54e` |
-| 10 | Preflight in progress; demo entries paused | Enforce mutating RPC auth outside the browser bundle; then Bybit readiness/recovery; do not enable demo entries until both pass |
+| 10 | Paused-demo qualified; Increment 10 still open | Auth outside the browser bundle and paused Bybit demo connectivity/UI path recorded. Do not Resume / `INC10_ENABLE=1` until the owner authorizes a measured run. Complete only after that run’s orders, fills, journal, ledger, recon, and latency are reviewed |
 
-Cursor: Complete Increment 10 preflight. Keep demo entries paused until mutating RPC authorization is enforced outside the browser bundle and Bybit-specific readiness and recovery checks pass. Do not treat Candidate #2 as validated alpha.
+Cursor: Keep Candidate #2 paused on Bybit Demo. Do not Resume and do not set `INC10_ENABLE=1`. After an owner-authorized measured demo run (exposure limit, duration, end-state: pause, resolve working, record reconciled account), review that run’s evidence. Do not treat Candidate #2 as validated alpha.
 
 ---
 

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Increment 10: Candidate #2 → Bybit demo. Entries stay paused until paused-path
 # checks pass, then enable explicitly. Does not promote to mainnet.
+# Journal, ledger, and runtime snapshot survive reruns unless INC10_RESET=1.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -10,6 +11,7 @@ LOG="${WORKDIR}/runner.log"
 JOURNAL="${WORKDIR}/submission-journal.jsonl"
 LEDGER="${WORKDIR}/execution-ledger.jsonl"
 TOKEN_FILE="${WORKDIR}/operator.token"
+SNAPSHOT_SRC="${ROOT}/config/cex/runtime-snapshot.json"
 
 export TRADING_STRATEGY="${TRADING_STRATEGY:-BTCPriceMALongFlatV1}"
 export TRADING_SYMBOL="${TRADING_SYMBOL:-BTC/USDT}"
@@ -17,9 +19,15 @@ export TRADING_GRPC="${TRADING_GRPC:-http://127.0.0.1:50051}"
 export TRADING_OPERATOR_ID="${TRADING_OPERATOR_ID:-inc10}"
 export TRACE_JAEGER_DISABLED="${TRACE_JAEGER_DISABLED:-1}"
 
-mkdir -p "${WORKDIR}"
-rm -f "${WORKDIR}"/runner*.log "${JOURNAL}" "${LEDGER}"
-rm -f "${ROOT}/config/cex/runtime-snapshot.json"
+mkdir -p "${WORKDIR}" "${ROOT}/config/cex"
+
+if [[ "${INC10_RESET:-0}" == "1" ]]; then
+  echo "INC10_RESET=1: wiping journal, ledger, snapshot, and operator token"
+  rm -f "${JOURNAL}" "${LEDGER}" "${SNAPSHOT_SRC}" "${TOKEN_FILE}"
+fi
+
+rm -f "${WORKDIR}"/runner*.log
+# Do not delete journal, ledger, or SNAPSHOT_SRC on ordinary reruns.
 
 if [[ ! -f "${SOURCE_BOT}" ]]; then
   echo "FAILED: missing ${SOURCE_BOT} (gitignored demo bot with demo:true keys)" >&2
@@ -45,6 +53,7 @@ bot["reconciliation"]["trading_level_interval_ms"] = 5000
 bot["reconciliation"]["enabled"] = True
 open(dest, "w").write(json.dumps(bot, indent=2) + "\n")
 print("inc10 bot written (credentials not printed); demo=true futures BTC/USDT")
+print(f"journal={journal} ledger={ledger} (preserved unless INC10_RESET=1)")
 PY
 
 cat > "${WORKDIR}/strategies.json" <<'EOF'
@@ -79,12 +88,17 @@ cat > "${WORKDIR}/strategies.json" <<'EOF'
 }
 EOF
 
+if [[ -z "${TRADING_OPERATOR_TOKEN:-}" && -f "${TOKEN_FILE}" ]]; then
+  TRADING_OPERATOR_TOKEN="$(head -n1 "${TOKEN_FILE}")"
+fi
 if [[ -z "${TRADING_OPERATOR_TOKEN:-}" ]]; then
   TRADING_OPERATOR_TOKEN="$(python3 -c 'import secrets; print(secrets.token_urlsafe(24))')"
-  export TRADING_OPERATOR_TOKEN
 fi
+export TRADING_OPERATOR_TOKEN
 printf '%s\n' "${TRADING_OPERATOR_TOKEN}" > "${TOKEN_FILE}"
-chmod 600 "${TOKEN_FILE}"
+# Envoy Lua reads this via a bind mount; 0644 lets the proxy worker open it.
+chmod 644 "${TOKEN_FILE}"
+echo "operator token file=${TOKEN_FILE} (not printed); Envoy: TRADING_OPERATOR_TOKEN_FILE=${TOKEN_FILE}"
 
 CTL=(cargo run -q -p cli --bin grpc_ctl --)
 CTL_UNAUTH=(env -u TRADING_OPERATOR_TOKEN cargo run -q -p cli --bin grpc_ctl --)
@@ -160,7 +174,132 @@ require_status() {
   fi
 }
 
+preserve_snapshot_copy() {
+  if [[ -f "${SNAPSHOT_SRC}" ]]; then
+    cp -a "${SNAPSHOT_SRC}" "${WORKDIR}/runtime-snapshot.json"
+    echo "snapshot preserved at ${SNAPSHOT_SRC} (copy ${WORKDIR}/runtime-snapshot.json)"
+  else
+    echo "no runtime snapshot yet (${SNAPSHOT_SRC})"
+  fi
+}
+
+# Independent demo REST vs runner TSM. Credentials stay in the bot file; not printed.
+compare_demo_account() {
+  local tag="$1"
+  local status="$2"
+  python3 - "${WORKDIR}/bot.json" "${status}" "${WORKDIR}/venue_${tag}.json" <<'PY'
+import hashlib, hmac, json, re, sys, time, urllib.parse, urllib.request
+
+bot_path, status, out_path = sys.argv[1:4]
+bot = json.loads(open(bot_path).read())
+cfg = bot["exchange_engine"]["config"]
+cred = cfg["credentials"]
+key, secret = cred["apiKey"], cred["apiSecret"]
+base = "https://api-demo.bybit.com"
+recv = "5000"
+
+
+def signed_get(path, params):
+    qs = urllib.parse.urlencode(params)
+    ts = str(int(time.time() * 1000))
+    payload = ts + key + recv + qs
+    sig = hmac.new(secret.encode(), payload.encode(), hashlib.sha256).hexdigest()
+    req = urllib.request.Request(
+        f"{base}{path}?{qs}",
+        headers={
+            "X-BAPI-API-KEY": key,
+            "X-BAPI-TIMESTAMP": ts,
+            "X-BAPI-RECV-WINDOW": recv,
+            "X-BAPI-SIGN": sig,
+        },
+    )
+    with urllib.request.urlopen(req, timeout=20) as resp:
+        body = json.loads(resp.read().decode())
+    if body.get("retCode") != 0:
+        raise SystemExit(f"FAILED: Bybit demo {path} retCode={body.get('retCode')} retMsg={body.get('retMsg')}")
+    return body.get("result") or {}
+
+
+pos = signed_get("/v5/position/list", {"category": "linear", "symbol": "BTCUSDT"})
+orders = signed_get("/v5/order/realtime", {"category": "linear", "symbol": "BTCUSDT"})
+pos_rows = [
+    p
+    for p in pos.get("list") or []
+    if str(p.get("size", "0")) not in ("0", "0.0", "")
+]
+order_rows = orders.get("list") or []
+grpc_orders = 0
+m = re.search(r"orders=(\d+)", status)
+if m:
+    grpc_orders = int(m.group(1))
+grpc_pos_n = 0
+m = re.search(r"positions=(\d+)", status)
+if m:
+    grpc_pos_n = int(m.group(1))
+# strategy line pos=0 or pos=0.001
+strat_pos = "0"
+m = re.search(r"strategy .* pos=([0-9.]+)", status)
+if m:
+    strat_pos = m.group(1)
+venue = {
+    "demo_positions_nonzero": len(pos_rows),
+    "demo_open_orders": len(order_rows),
+    "grpc_orders": grpc_orders,
+    "grpc_positions": grpc_pos_n,
+    "grpc_strategy_pos": strat_pos,
+}
+open(out_path, "w").write(json.dumps(venue, indent=2) + "\n")
+print(
+    f"independent demo REST: open_orders={len(order_rows)} nonzero_positions={len(pos_rows)} "
+    f"grpc orders={grpc_orders} positions={grpc_pos_n} strategy_pos={strat_pos}"
+)
+if len(order_rows) != grpc_orders:
+    raise SystemExit(
+        f"FAILED: demo REST open orders {len(order_rows)} != grpc orders={grpc_orders}"
+    )
+venue_flat = len(pos_rows) == 0
+grpc_flat = grpc_pos_n == 0 and strat_pos in ("0", "0.0", "0.000")
+if venue_flat != grpc_flat:
+    raise SystemExit(
+        f"FAILED: demo REST nonzero positions {len(pos_rows)} vs grpc positions={grpc_pos_n} pos={strat_pos}"
+    )
+PY
+}
+
+end_measured_run() {
+  echo "== end measured run: pause, resolve working, record reconciled state =="
+  "${CTL[@]}" pause "inc10-end-pause" || true
+  "${CTL[@]}" cancel "inc10-end-cancel" || true
+  local i status
+  for i in $(seq 1 40); do
+    status="$("${CTL[@]}" status)"
+    if echo "${status}" | grep -q "orders=0"; then
+      break
+    fi
+    sleep 0.5
+  done
+  sleep 2
+  status="$("${CTL[@]}" status | tee "${WORKDIR}/grpc_status_end.txt")"
+  echo "${status}"
+  require_status 'entries_paused=true' "${status}"
+  require_status 'orders=0' "${status}"
+  compare_demo_account end "${status}"
+  preserve_snapshot_copy
+  if [[ -f "${JOURNAL}" ]]; then
+    echo "journal lines=$(wc -l < "${JOURNAL}") path=${JOURNAL}"
+  fi
+  if [[ -f "${LEDGER}" ]]; then
+    echo "ledger lines=$(wc -l < "${LEDGER}") path=${LEDGER}"
+  fi
+  echo "measured run ended: entries paused, working resolved, demo REST vs runner recorded"
+  kill_runner
+}
+
 cleanup() {
+  if [[ "${INC10_KEEP:-}" == "1" ]]; then
+    echo "INC10_KEEP=1: leaving runner pid=${RUNNER_PID:-}"
+    return 0
+  fi
   kill_runner || true
 }
 trap cleanup EXIT
@@ -195,6 +334,9 @@ if grep -qE 'Bybit demo mode: placing order via REST' "${LOG}"; then
 fi
 grep -E 'Bybit position mode|one-way|REST|private|gRPC server|entries start paused' "${LOG}" | tail -n 30 \
   | tee "${WORKDIR}/connectivity_snippets.txt" || true
+
+echo "== independent demo account vs runner (paused) =="
+compare_demo_account paused "${status}"
 
 echo "== unauthorized mutating RPC is denied =="
 set +e
@@ -234,17 +376,26 @@ if grep -qE 'Bybit demo mode: placing order via REST' "${WORKDIR}/runner-restart
   echo "FAILED: relaunched paused runner placed an order" >&2
   exit 1
 fi
+compare_demo_account restart "${status}"
+preserve_snapshot_copy
 
 echo "${status}"
-echo "inc10 paused-path checks passed (connectivity, auth, restart)."
+echo "inc10 paused-path checks passed (connectivity, auth, restart, independent REST)."
 echo "workdir=${WORKDIR}"
+echo "journal=${JOURNAL} ledger=${LEDGER} snapshot=${SNAPSHOT_SRC}"
 
 if [[ "${INC10_ENABLE:-0}" != "1" ]]; then
-  echo "INC10_ENABLE is not 1: leaving entries paused. Re-run with INC10_ENABLE=1 after UI review to start the controlled demo run."
+  echo "INC10_ENABLE is not 1: leaving entries paused. Do not Resume until an authorized measured run."
+  INC10_KEEP=1
   trap - EXIT
   echo "INC10_KEEP runner pid=${RUNNER_PID}"
+  echo "UI Envoy token mount: TRADING_OPERATOR_TOKEN_FILE=${TOKEN_FILE}"
   exit 0
 fi
+
+echo "== independent demo account vs runner (before enable) =="
+status="$("${CTL[@]}" status)"
+compare_demo_account before_enable "${status}"
 
 echo "== enable trading + Resume for controlled demo run =="
 enable_out="$("${CTL[@]}" enable "${TRADING_STRATEGY}")"
@@ -267,6 +418,6 @@ fi
 grep -E 'placing order|order.create|Known place|unknown|fill|execution' "${WORKDIR}/runner-restart.log" "${LOG}" \
   | tail -n 40 | tee "${WORKDIR}/execution_snippets.txt" || true
 
-echo "inc10 Stage D demo path asserted (controlled enable). Review evidence in ${WORKDIR}."
+end_measured_run
+echo "inc10 Stage D demo path asserted (controlled enable then paused end-state). Review evidence in ${WORKDIR}."
 trap - EXIT
-echo "INC10_KEEP runner pid=${RUNNER_PID}"

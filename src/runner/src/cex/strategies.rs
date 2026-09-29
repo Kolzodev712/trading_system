@@ -181,6 +181,13 @@ pub async fn strategy_runner_with(
     strategies_config.validate()?;
     let risk_limits = strategies_config.risk_limits();
     risk_limits.require_explicit_for_exchange(bot_config.execution_mode)?;
+    let (execution_mode, venue, environment) =
+        crate::config::execution_status_from_bot(&bot_config);
+    crate::config::operator_labels::exchange_live_is_authorized(
+        execution_mode,
+        &venue,
+        &environment,
+    )?;
 
     // Get pairs from exchange config
     let configured_pairs = bot_config.get_pairs()?;
@@ -208,7 +215,6 @@ pub async fn strategy_runner_with(
 
     // Create StrategyManager and add all strategies
     // Validate that all strategy symbols match pairs from bot config
-    let execution_mode = bot_config.execution_mode;
     let instrument_type = bot_config
         .get_instrument_type()
         .unwrap_or(trading_core::types::common::InstrumentType::Spot);
@@ -475,7 +481,6 @@ pub async fn strategy_runner_with(
     .with_strategy_manager(strategy_manager_arc.clone())
     .with_instrument_type(instrument_type.clone())
     .with_exchange(format!("{:?}", bot_config.exchange_engine.exchange));
-    let (_, venue, environment) = crate::config::execution_status_from_bot(&bot_config);
     let grpc_service = grpc_service
         .with_execution_status(execution_mode, venue, environment)
         .with_strategy_operator(operator)

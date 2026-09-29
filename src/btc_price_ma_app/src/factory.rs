@@ -1,5 +1,5 @@
-//! Candidate #2 construction. Bybit Exchange stays rejected until Increment 10.
-//! Paper Exchange is the Increment 9A laboratory only.
+//! Candidate #2 construction. Increment 10 allows Bybit Exchange on the demo host.
+//! Paper remains the deterministic lab. The runner rejects Bybit MAINNET Exchange.
 
 use crate::adapter::{BtcPriceMaLongFlatV1, BtcPriceMaLongFlatV1Config};
 use std::sync::Arc;
@@ -25,9 +25,11 @@ impl ExtraStrategyFactory for BtcPriceMaFactory {
         ) {
             return None;
         }
-        if args.execution_mode == ExecutionMode::Exchange && args.exchange != Exchange::Paper {
+        if args.execution_mode == ExecutionMode::Exchange
+            && !matches!(args.exchange, Exchange::Paper | Exchange::Bybit)
+        {
             return Some(Err(EngineError::new_custom_error(
-                "BTCPriceMALongFlatV1 Exchange is Paper-lab only until Increment 10".into(),
+                "BTCPriceMALongFlatV1 Exchange is Paper or Bybit demo only".into(),
             )));
         }
         Some(
@@ -87,15 +89,18 @@ mod tests {
     }
 
     #[test]
-    fn app_factory_builds_shadow_and_paper_exchange_rejects_bybit_exchange() {
+    fn app_factory_builds_shadow_paper_and_bybit_exchange() {
         let extra = BtcPriceMaFactory;
         assert!(build_strategy_composed(args(ExecutionMode::Shadow), Some(&extra)).is_ok());
         let mut paper = args(ExecutionMode::Exchange);
         paper.exchange = Exchange::Paper;
         assert!(build_strategy_composed(paper, Some(&extra)).is_ok());
-        match build_strategy_composed(args(ExecutionMode::Exchange), Some(&extra)) {
-            Err(err) => assert!(err.to_string().contains("Paper-lab only")),
-            Ok(_) => panic!("Candidate #2 must stay unavailable on Bybit Exchange"),
+        assert!(build_strategy_composed(args(ExecutionMode::Exchange), Some(&extra)).is_ok());
+        let mut binance = args(ExecutionMode::Exchange);
+        binance.exchange = Exchange::Binance;
+        match build_strategy_composed(binance, Some(&extra)) {
+            Err(err) => assert!(err.to_string().contains("Paper or Bybit demo")),
+            Ok(_) => panic!("Candidate #2 must stay unavailable on Binance Exchange"),
         }
     }
 }

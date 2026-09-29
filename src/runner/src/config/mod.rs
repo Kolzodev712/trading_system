@@ -4,4 +4,6 @@ pub mod operator_labels;
 pub mod runtime_snapshot;
 
 pub use bot::*;
-pub use operator_labels::{environment_label, execution_status_from_bot, venue_label};
+pub use operator_labels::{
+    environment_label, exchange_live_is_authorized, execution_status_from_bot, venue_label,
+};

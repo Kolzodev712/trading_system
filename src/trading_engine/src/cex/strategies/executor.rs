@@ -520,6 +520,18 @@ impl<S: Strategy> StrategyExecutor<S> {
                                 other => other,
                             })
                             .collect()
+                    } else if std::env::var("TRADING_TEST_HOLD_INTENTS").ok().as_deref()
+                        == Some("1")
+                    {
+                        intents
+                            .into_iter()
+                            .map(|intent| match intent {
+                                StrategyIntent::TargetPosition { strategy_id, .. } => {
+                                    StrategyIntent::Hold { strategy_id }
+                                }
+                                other => other,
+                            })
+                            .collect()
                     } else {
                         intents
                     };

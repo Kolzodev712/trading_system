@@ -1,7 +1,8 @@
 # Exchange Engine Architecture
 
 **Version**: 0.1  
-**Last Updated**: December 2024
+**Last Updated**: December 2024  
+**Status:** In-process CEX adapter (Binance, Bybit, k-paper). Current system status including Demo/Paper scope: [docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md).
 
 ## Overview
 

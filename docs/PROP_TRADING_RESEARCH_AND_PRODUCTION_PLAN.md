@@ -1,6 +1,6 @@
 # Prop Trading Productionization and Research Architecture Plan
 
-**Status:** Increments 0–9A are accepted locally as a Paper qualification. Increment 10 remains open pending owner review of `docs/inc10-evidence-measured-e923fa8/` (not only this plan’s summary). One 300s Bybit Demo Resume with the reviewed fresh-entry fixture placed and flattened 0.001 BTC; that is an operational Demo test with a synthetic signal, not validated alpha. No further Demo mutation for this review.  
+**Status:** Increments 0–9A are accepted locally as a Paper qualification. Increment 10 is accepted as a bounded Bybit Demo operational qualification (`docs/inc10-evidence-measured-e923fa8/`, runner `e923fa8` / pack `042eac9`, UI `923dd30`, k-paper `6d03acc`). Architectural decoupling and the three-repository split are implemented. That Demo run is execution with a synthetic signal, not validated alpha and not a mainnet approval. The system is not production complete. No further Demo run is needed for this gate. Open: FlattenAndPause journal/recovery, CancelWorking-from-flatten, Candidate #2 strategy validation, mainnet readiness. Current architecture write-up: `docs/ARCHITECTURE.md`.  
 **Date:** 2026-09-28  
 **Repository:** `trading_system`  
 **Audience:** Cursor / implementation agent / repository owner  
@@ -373,26 +373,22 @@ The frozen model/evaluator/CLI were extracted. Increment 5R then removed the dir
 
 ---
 
-# 6. Target architecture
+# 6. Implemented architecture
 
-Use the same repository and Cargo workspace for now.
+Use the same `trading_system` Cargo workspace for models, research, and the live runner.
 
-Do **not** create a second repository yet.
+`k-paper` and `trading-system-ui` are **separate git repositories**, not extra Cargo packages. Do **not** split historical research into a fourth repository unless that platform becomes independently large (notebooks, Parquet lakes, distributed jobs, ML tooling). That split is not necessary yet.
 
-Crate boundaries provide enough separation while preserving:
+Crate boundaries in `trading_system` provide:
 
 - atomic commits;
 - one CI graph;
 - exact model version parity;
 - simple refactors;
 - shared data types;
-- no cross-repository dependency/version coordination.
+- no extra cross-crate version coordination inside this repo.
 
-A future separate research repository may make sense if the research platform becomes independently large, e.g. notebooks, Parquet lakes, distributed jobs, ML tooling, feature stores, experiment databases, etc.
-
-That is not necessary yet.
-
-Target conceptual structure:
+Implemented conceptual structure:
 
 ```text
 trading_system/
@@ -410,7 +406,7 @@ trading_system/
 |   |-- indicator_engine/
 |   |-- asset_engine/
 |   |-- gateway/
-|   |-- btc_price_ma_app/              NEW; thin composition binary and adapter
+|   |-- btc_price_ma_app/              composition binary and adapter
 |   `-- runner/
 |
 |-- research/
@@ -424,9 +420,11 @@ trading_system/
 `-- data/
 ```
 
-Exact directory naming may be adjusted to fit workspace conventions, but the dependency boundaries are mandatory. The Candidate #2 composition binary links the existing generic `runner` library, `trading_engine`'s `Strategy` trait and `strategy_core` **in one process**. It supplies a Candidate #2 strategy adapter/factory to a generic runner injection point. The runner and `trading_engine` crates must not depend directly **or transitively** on `strategy_core`, `research_engine`, `research_cli` or the new app crate. Research binaries never link the live runner/engine. Shared low-level types such as `CompletedCandle` can stay in `trading_core`.
+Exact directory naming may follow workspace conventions; the dependency boundaries are mandatory and **implemented**. The Candidate #2 composition binary links the generic `runner` library, `trading_engine`'s `Strategy` trait and `strategy_core` **in one process**. It supplies a Candidate #2 strategy adapter/factory to a generic runner injection point. The runner and `trading_engine` crates must not depend directly **or transitively** on `strategy_core`, `research_engine`, `research_cli` or the app crate. Research binaries never link the live runner. Shared low-level types such as `CompletedCandle` stay in `trading_core`.
 
-The existing runner binary continues to serve existing modes/strategies. It must give a clear unsupported-strategy error if invoked with Candidate #2 without the composition binary. No second process, IPC protocol, dynamic plugin loader or separate control plane is required for this dependency boundary.
+The default runner binary continues to serve existing modes/strategies. It must give a clear unsupported-strategy error if invoked with Candidate #2 without the composition binary. No second process, IPC protocol, dynamic plugin loader or separate control plane is required for this dependency boundary.
+
+Current write-up: `docs/ARCHITECTURE.md` and `docs/Trading-System-Analysis.txt`. Older engine diagrams under `architecture/` and older Trading-System-Analysis drafts are not current status.
 
 ## 6.1 External repositories and responsibility
 
@@ -439,19 +437,22 @@ The existing runner binary continues to serve existing modes/strategies. It must
 | `trading-system-ui` (separate repo) | Browser presentation, operator workflow, authentication UI and deliberate confirmations | Exchange state or recovery decisions of its own |
 | Bybit demo | Integration against Bybit's actual demo API and event behavior | Real-money economics |
 
-The existing paper path is real integration, not a stub: `market_data_engine` connects to `k-paper` `/ws/market`, `exchange_engine` uses `/ws/trade` and REST balance/open-order/trade snapshots, and `asset_engine` reads `/exchange_info`. These feed the normal runner and exchange-state manager. The current `sample_config/k-paper/bot.json` is a **Spot** example and the local development guide exercises levels mode. Do not treat that smoke path as an already working BTCUSDT linear-perpetual Candidate #2 path.
+The existing paper path is real integration, not a stub: `market_data_engine` connects to `k-paper` `/ws/market`, `exchange_engine` uses `/ws/trade` and REST snapshots, and `asset_engine` reads `/exchange_info`. `sample_config/k-paper/bot.json` plus the local development guide remains a **Spot/levels smoke** path. Do not treat that smoke path as Increment 9A. Increment 9A is the accepted Paper qualification for Candidate #2 on k-paper (section 67). Increment 10 is the accepted bounded Bybit Demo execution qualification with a synthetic signal.
 
-The browser path is `trading-system-ui` -> gRPC-Web proxy (currently Envoy) -> runner `TradingCliService`. The UI's MongoDB-backed auth service is for its operator login. The UI does not read `bot.json` or connect to `k-paper` or Bybit directly. The old Rust `cli`/TUI remains a separate client; references to the Trading System UI in this plan mean the **browser repository**.
+The browser path is `trading-system-ui` -> gRPC-Web proxy (currently Envoy) -> runner `TradingCliService`. The UI's MongoDB-backed auth service is for its operator login. The UI does not read `bot.json` or connect to `k-paper` or Bybit directly. The old Rust `cli`/TUI remains a separate client; references to the Trading System UI in this plan mean the **browser repository**. Mutating non-Paper RPCs require `TRADING_OPERATOR_TOKEN` at Envoy/runner; UI login is not that authorization.
 
-## 6.2 Current capabilities versus required work
+## 6.2 Completed versus still open
 
-- `k-paper` currently has a single in-memory account, market/trading WebSockets, REST balances/open orders/trades/exchange info, simple limit/market matching, fees, a seeded synthetic book and startup market scenarios. Its account reserves quote/base as a spot exchange; its fill path updates balances but does not construct authoritative futures positions. The server has no REST position snapshot or durable exchange state. A type's optional `instrument_type` field and the runner adapter's configured `InstrumentType` do not make it a faithful futures simulator.
-- The existing scenario presets move prices. They do not currently script accepted orders with lost acknowledgements, private-stream disconnects, duplicate/out-of-order events, REST/WS disagreement or restart recovery. `partial_fills` is present in config but is not a completed deterministic partial-fill scenario framework.
-- `trading-system-ui` already shows orders, balances, positions, strategies, indicators and market data and can invoke existing global/strategy toggles and strategy-configuration RPCs. The shared proto currently gives `GetTradingStatus` only a boolean, and `MonitoringData`/`StrategyStatus` lack the proposed execution mode, pair readiness, reservations and recovery detail. `PauseEntries`, `CancelWorking`, `FlattenAndPause` and `Resume` are not existing UI commands.
-- The existing `trading_system` Paper execution client allows one in-flight place, cancel and amend request of each kind. That is sufficient to smoke-test a single slow strategy only if requests are serialized; the future multi-strategy/concurrent-request lab needs correlation by request ID and an explicit concurrency test.
-- The UI has login/auth code, but a browser login by itself does not authorize direct calls to the runner gRPC endpoint. Before exposing any capital-bearing control path, enforce authentication/authorization and network access at the runner/proxy boundary too; never rely on hiding a UI button.
+**Implemented and accepted at stated scope:** crate decoupling (section 6); three-repository roles (section 6.1); Increments 0–9A as a local Paper qualification; Increment 10 as bounded Bybit Demo operational qualification (synthetic signal; pack `docs/inc10-evidence-measured-e923fa8/`). Operator commands `PauseEntries`, `CancelWorking`, `FlattenAndPause`, and `Resume` exist in proto, runner, and UI. Flatten RPC success is not treated as flat.
 
-These gaps are explicit prerequisites below. Do not claim a futures integration test, deterministic fault coverage or production control-plane readiness from the existing Spot example alone.
+**Explicitly open (do not document as done):**
+
+1. Journal and recover FlattenAndPause’s reduce-only submission.
+2. Propagate a CancelWorking failure from FlattenAndPause.
+3. Validate Candidate #2 as a strategy; the Demo run tested execution using a synthetic signal.
+4. Any separate mainnet readiness and approval work.
+
+The system is **not** production complete and **not** mainnet ready. Increment 11 is not started until the owner asks. Python DSL / DEX / HFT proposals are separate tracks and are not this qualification.
 
 ---
 
@@ -2029,7 +2030,7 @@ This document is the authority for **the Candidate #2 research/runtime separatio
 
 Check out the relevant repositories with write access before starting a cross-repo increment. Record starting and ending SHAs for each; pin matching revisions and run both producer/consumer checks before marking the increment complete. After 5R, use the Candidate #2 app binary for Shadow/Paper/demo rather than assuming the default runner binary can instantiate it. Implement backend state and the source proto first, then sync the UI proto and generated code. When a precise simulator accounting rule, API shape or security mechanism is not fixed here, document the bounded choice and its acceptance tests within that increment rather than silently guessing or postponing the safety gate.
 
-`trading_system` Increments 0–6 are accepted locally for proceeding (see section 67). Increment 7 is next. This plan does not authorize implementation of a future portfolio allocator, strategy registry/graveyard, broader instrument/venue expansion, a self-hosting operations program, Candidate #3's trading rule or mainnet deployment. Those need separate decisions/specifications when the evidence and need exist.
+Increments 0–9A are accepted locally as a Paper qualification. Increment 10 is accepted as bounded Bybit Demo operational qualification (synthetic signal). This plan does not authorize Candidate #2 as validated alpha, a self-hosting operations program, Candidate #3's trading rule, or mainnet deployment. Those need separate decisions. Increment 11 is not started until the owner asks. Confirmed follow-ups that remain open: journal and recover FlattenAndPause’s reduce-only submission; propagate a CancelWorking failure from FlattenAndPause.
 
 ---
 
@@ -2565,13 +2566,13 @@ Do not promote to mainnet automatically.
 
 **Five-minute procedure fixture opt-in (script fix, not a new increment; Resume not approved):** `scripts/inc10_bybit_demo.sh` `INC10_FRESH_ENTRY_FIXTURE=1` loads only the reviewed candles on the real clock and keeps 0.001 BTC / one-order / verified-flat / five-minute measured checks. Without the opt-in, fixture env is still rejected. `INC10_ENABLE` remains the Resume gate. Paused test `INC10_FRESH_ENTRY_FIXTURE=1` `INC10_ENABLE` unset (workdir `/tmp/inc10-bybit-demo-fresh-optin`): `synthetic_candle_fixture=true`, `fresh_entry_eligible=true` `entry_freshness=fresh` age 44021s (restart 44040s), independently flat, no orders, no Resume.
 
-**Bounded measured Resume (2026-09-29T12:21:54Z UTC; Increment 10 still open pending evidence review):** Owner-authorized one-shot. Runner `e923fa8`, UI `923dd30`, k-paper `6d03acc`. `INC10_FRESH_ENTRY_FIXTURE=1` `INC10_ENABLE=1` `INC10_MEASURE_SECS=300`, workdir `/tmp/inc10-bybit-demo-measured-e923fa8`. Preflight: synthetic fixture on BYBIT DEMO exchange, Hold gate fresh (age 44513s), independently flat, then Resume `accepted=true`. Live book. Buy 0.001 BTCUSDT linear: journal `bd235f19-…` prepared→submitted (5ms)→acknowledged (403ms submit-to-ack) at px 84182.1; ledger fill `order_id=4fd15467-…` qty 0.001 px 84175.3 fee 0.04629642 USDT; exchange_ts 12:21:54.563Z receive_ts 12:21:54.653Z (**90ms**). REST place logged `Bybit demo mode: placing order via REST`. During measure: `pos=0.001` `orders=0/1` `filled_position=0.001`, bound held. End: PauseEntries → CancelWorking (0) → FlattenAndPause `in_progress` (RPC success not treated as flat; open `BTC/USDT` then sell fill). Flatten ledger fill `order_id=64eb5576-…` Sell 0.001 px 84167.4 fee 0.04629207 USDT; exchange_ts 12:27:06.813Z receive_ts 12:27:06.903Z (**90ms**). Independent Demo REST and runner flat. No open-order REST failures. Journal records the entry path only; both fills are in the ledger. Reviewable copies are in `docs/inc10-evidence-measured-e923fa8/` because `/tmp/inc10-bybit-demo-measured-e923fa8` is lab-host-only. Do not automatically rerun. Do not promote to mainnet. Candidate #2 remains an operational baseline, not validated alpha.
+**Bounded measured Resume (2026-09-29T12:21:54Z UTC; accepted Increment 10 evidence):** Owner-authorized one-shot. Runner `e923fa8`, UI `923dd30`, k-paper `6d03acc`. `INC10_FRESH_ENTRY_FIXTURE=1` `INC10_ENABLE=1` `INC10_MEASURE_SECS=300`, workdir `/tmp/inc10-bybit-demo-measured-e923fa8`. Preflight: synthetic fixture on BYBIT DEMO exchange, Hold gate fresh (age 44513s), independently flat, then Resume `accepted=true`. Live book. Buy 0.001 BTCUSDT linear: journal `bd235f19-…` prepared→submitted (5ms)→acknowledged (403ms submit-to-ack) at px 84182.1; ledger fill `order_id=4fd15467-…` qty 0.001 px 84175.3 fee 0.04629642 USDT; exchange_ts 12:21:54.563Z receive_ts 12:21:54.653Z (**90ms**). REST place logged `Bybit demo mode: placing order via REST`. During measure: `pos=0.001` `orders=0/1` `filled_position=0.001`, bound held. End: PauseEntries → CancelWorking (0) → FlattenAndPause `in_progress` (RPC success not treated as flat; open `BTC/USDT` then sell fill). Flatten ledger fill `order_id=64eb5576-…` Sell 0.001 px 84167.4 fee 0.04629207 USDT; exchange_ts 12:27:06.813Z receive_ts 12:27:06.903Z (**90ms**). Independent Demo REST and runner flat. No open-order REST failures. Journal records the entry path only; both fills are in the ledger. Reviewable copies are in `docs/inc10-evidence-measured-e923fa8/` because `/tmp/inc10-bybit-demo-measured-e923fa8` is lab-host-only.
 
-**Sanitized evidence pack for review (no further Demo mutation):** `docs/inc10-evidence-measured-e923fa8/` and `docs/inc10-evidence-measured-e923fa8.tar.gz` (SHA-256 `79ac0bc32ffa7a1ff0eb59d263f34fd08bdae8c33fad111bf0ff04a68ce6cbe5`). Includes both JSONL files, the four status files, the two venue snapshots, redacted `runner-restart.log`, and a read-only Demo `GET /v5/order/history` + `GET /v5/execution/list` export. Excludes `bot.json`, credentials, and the operator token. Distinct buy client ID vs exchange `orderId` is by design (`orderLinkId=bd235f19-…`). Demo history in the run window is two filled user creates (Buy limit 0.001, Sell market reduce-only 0.001); the Demo REST fallback log fires before create vs cancel-all, so those lines do not count extra sells.
+**Sanitized evidence pack (committed `042eac9`):** `docs/inc10-evidence-measured-e923fa8/` and `docs/inc10-evidence-measured-e923fa8.tar.gz` (lab SHA-256 `79ac0bc32ffa7a1ff0eb59d263f34fd08bdae8c33fad111bf0ff04a68ce6cbe5`; the accepting review used the committed files and did not independently hash the tarball). Includes both JSONL files, the four status files, the two venue snapshots, redacted `runner-restart.log`, and a read-only Demo `GET /v5/order/history` + `GET /v5/execution/list` export. Excludes `bot.json`, credentials, and the operator token.
 
-**Production follow-ups (record only; no Demo mutation for this review):** (1) FlattenAndPause reduce-only exit uses `trading_client().open_order` and is not appended to the submission journal; Demo history shows empty `orderLinkId` on the sell, so persisted client-ID recovery does not cover that exit. (2) `flatten_and_pause` ignores CancelWorking errors (`let _ = self.trading_control.cancel_working(...)`). Neither proves this run ended incorrectly.
+**Owner acceptance of Increment 10 (2026-09-29; committed pack reviewed directly; no further Demo run):** Bounded Bybit Demo operational qualification **accepted**. Independently flat before enablement. Demo history: exactly one 0.001 BTC buy and one 0.001 BTC reduce-only sell; execution IDs, quantities, prices, and fees match the two ledger rows. The buy’s client ID matches its prepared → submitted → acknowledged journal path. The four generic REST log lines correspond to those two creates and two cancel-all calls, with no extra sell in order history. Runner and Demo venue ended flat, entries paused, flatten latch held. Reported 403 ms submit-to-ack and 90 ms exchange-to-receive per fill match the recorded timestamps; 90 ms is **not** full order execution latency. Reconciliation logged brief 0.001 BTC disagreements after the entry and exit, then the final runner and venue states agreed. This verdict is Demo execution with a synthetic signal. It does **not** validate Candidate #2 as alpha and does **not** approve mainnet.
 
-Stop and report a demo readiness report.
+**Confirmed production follow-ups (do not block Increment 10; not a Demo rerun):** (1) Journal and recover operator FlattenAndPause submissions; the reduce-only exit uses `trading_client().open_order` and is not appended to the submission journal (empty `orderLinkId` on the sell). (2) Propagate a CancelWorking failure from FlattenAndPause (`let _ = self.trading_control.cancel_working(...)` today).
 
 ---
 
@@ -2592,7 +2593,7 @@ Do not implement Candidate #3's trading rule until a separate strategy research 
 
 # 67. Current Cursor instruction
 
-The Increment 9A Paper qualification is **accepted locally** (`trading_system` `9dab54e`, k-paper `590f3ad` / `6d03acc`, UI `10496e7`) on source review plus the reported matrix exit; the lab was not rerun in that review. Increment 10 paused-demo qualification is at `c6b24da`. A 300s Demo Resume at `1e0291f` (`2026-09-29T10:18:23Z`) produced no orders because Hold was stale. A later owner-authorized 300s Resume at `e923fa8` (`2026-09-29T12:21:54Z`, `INC10_FRESH_ENTRY_FIXTURE=1`) placed and flattened 0.001 BTC on Bybit Demo. Sanitized evidence for verdict is `docs/inc10-evidence-measured-e923fa8/` (not only the plan summary). That is an operational Demo test with a synthetic signal. Increment 10 remains open pending owner review of that pack. Do not rerun. Do not promote to mainnet. UI Hold-gate pin `923dd30`. Candidate #2 remains an operational baseline, not validated alpha. The accepted 5B connectivity record remains `trading_system` `043ca64523f42212cd8a2616ba6201d61d7c878a` (evidence `1f00fdc80f7bbbb39b836da9445e041eb18e6c77`).
+The Increment 9A Paper qualification is **accepted locally** (`trading_system` `9dab54e`, k-paper `590f3ad` / `6d03acc`, UI `10496e7`) on source review plus the reported matrix exit; the lab was not rerun in that review. Increment 10 is **accepted** as a bounded Bybit Demo operational qualification on committed evidence pack `docs/inc10-evidence-measured-e923fa8/` (runner `e923fa8` / pack commit `042eac9`, UI `923dd30`, k-paper `6d03acc`). That is Demo execution with a synthetic signal. Architecture docs (`docs/ARCHITECTURE.md`, `docs/Trading-System-Analysis.txt`, `architecture/README.md`) describe the implemented decoupling, three repo roles, Paper qualification, and Demo result; they must not claim production complete or mainnet ready. Do not Resume again. Do not rerun Demo for this gate. Do not promote to mainnet. Do not start Increment 11 until the owner asks. Explicitly open: (1) journal and recover FlattenAndPause’s reduce-only submission; (2) propagate a CancelWorking failure from FlattenAndPause; (3) validate Candidate #2 as a strategy; (4) separate mainnet readiness and approval. Candidate #2 remains an operational baseline, not validated alpha. The accepted 5B connectivity record remains `trading_system` `043ca64523f42212cd8a2616ba6201d61d7c878a` (evidence `1f00fdc80f7bbbb39b836da9445e041eb18e6c77`).
 
 | Increment | Status | Gate |
 | --- | --- | --- |
@@ -2605,9 +2606,10 @@ The Increment 9A Paper qualification is **accepted locally** (`trading_system` `
 | 8 | Accepted locally | Explicit Exchange risk, prospective effective exposure, PauseEntries/CancelWorking/FlattenAndPause/Resume, operator token on mutating RPCs, UI confirmation does not treat flatten RPC as flat |
 | 9 | Accepted locally | Durable execution ledger, fees/funding/weighted PnL, restart replay, daily-loss from ledger or fail-closed if configured without it, UI simulation label for Paper |
 | 9A | Accepted locally as Paper qualification | Section 49 rows through C2→Paper; frozen N=28 adapter comparison; grpc and browser CancelWorking; source review of `9dab54e` |
-| 10 | Measured Demo Resume recorded; Increment 10 still open | Owner-authorized 300s fixture Resume at `e923fa8` placed and flattened 0.001 BTC. Verdict against `docs/inc10-evidence-measured-e923fa8/`. Journal/flatten follow-ups recorded; no further Demo mutation. Not validated alpha. Do not rerun. Do not mainnet |
+| 10 | Accepted as bounded Bybit Demo operational qualification | Committed pack `docs/inc10-evidence-measured-e923fa8/` (`042eac9`). Synthetic signal. Not validated alpha. Not mainnet. Open: flatten journal/recovery, CancelWorking-from-flatten, C2 strategy validation, mainnet readiness |
+| 11 | Not started | Research-framework cleanup for Candidate #3; do not start until asked |
 
-Cursor: Do not Resume again. Do not rerun the measured Demo path. Do not promote to mainnet. Increment 10 remains open pending owner verdict against `docs/inc10-evidence-measured-e923fa8/`. Flatten journal gap and ignored CancelWorking-inside-FlattenAndPause are recorded follow-ups only. Candidate #2 remains an operational baseline, not validated alpha.
+Cursor: Increment 10 is accepted. Architecture docs may describe decoupling, three repos, Paper, and Demo at that stated scope. Do not Resume. Do not rerun Demo for this gate. Do not document production complete or mainnet ready. Do not start Increment 11 until asked. Explicitly open: journal and recover FlattenAndPause’s reduce-only submission; propagate a CancelWorking failure from FlattenAndPause; validate Candidate #2 as a strategy; separate mainnet readiness and approval. Candidate #2 remains an operational baseline, not validated alpha.
 
 ---
 

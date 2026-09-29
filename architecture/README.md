@@ -1,163 +1,78 @@
 # Architecture Documentation
 
-**Version**: 0.1  
-**Last Updated**: December 2024
+**Current reference (2026-09-29):** [docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md) and [docs/Trading-System-Analysis.txt](../docs/Trading-System-Analysis.txt). Increment record: [docs/PROP_TRADING_RESEARCH_AND_PRODUCTION_PLAN.md](../docs/PROP_TRADING_RESEARCH_AND_PRODUCTION_PLAN.md).
+
+The decoupling, three-repository split, Paper qualification (Increment 9A), and bounded Bybit Demo qualification (Increment 10, synthetic signal) are **complete at that stated scope**. The system is **not** documented as production complete or mainnet ready.
+
+**Explicitly open:** journal and recover FlattenAndPause’s reduce-only submission; propagate a CancelWorking failure from FlattenAndPause; validate Candidate #2 as a strategy; separate mainnet readiness and approval.
+
+The numbered files in this directory describe **in-process engines**. They can lag crate layout (extracted `strategy_core` / `research_engine`, `btc_price_ma_app`, gateway, operator RPCs). [architecture.dsl](architecture.dsl) is a pre-decoupling engine view. [10-strategy-engine.md](10-strategy-engine.md) is a proposed Python DSL/IR path, not Candidate #2.
 
 ## Overview
 
-This directory contains detailed architectural documentation for each service and component of the trading system. Each document provides comprehensive information about the service's architecture, components, data flow, and usage.
+Live CEX services still run in-process and communicate on broadcast channels. That monolith is one **container** inside `trading_system`. It is not the whole system: k-paper and trading-system-ui are separate git repositories.
 
 ## Documents
 
-### Core Services
+### Current system (start here)
 
-1. **[Exchange Engine](01-exchange-engine.md)**
-   - Single point of contact with exchange for account data
-   - WebSocket and REST API integration
-   - State management and reconciliation
-   - Position tracking for futures trading
-   - Multi-exchange support (Binance, Bybit)
-   - Rate limiting (REQUEST_WEIGHT, ORDERS) with automatic enforcement
-   - Order amendment API (amend instead of cancel+place)
+0. **[Current architecture](../docs/ARCHITECTURE.md)** — decoupling, three repos, Paper, Demo, open items
 
-2. **[Market Data Engine](02-market-data-engine.md)**
-   - Public market data management (orderbooks, trades)
-   - Real-time data streaming
-   - Channel-based publishing
+### Core services (in-process engines)
 
-3. **[Trading Engine](03-trading-engine.md)**
-   - Core trading logic and execution
-   - Level-based and strategy-based trading
-   - State management and risk integration
-   - Automatic order amendments (amend when price/quantity changes)
+1. **[Exchange Engine](01-exchange-engine.md)** — exchange account data, WS/REST, reconciliation, Binance/Bybit/Paper
+2. **[Market Data Engine](02-market-data-engine.md)** — public orderbooks/trades
+3. **[Trading Engine](03-trading-engine.md)** — execution state; generic `Strategy` trait; **does not** own Candidate #2 (see `strategy_core` + `btc_price_ma_app`)
+4. **[Indicator Engine](04-indicator-engine.md)** — SMA/EMA and related caches
+5. **[Risk Engine](05-risk-engine.md)** — independent checks / circuit breaker
+6. **[Asset Engine](06-asset-engine.md)** — instrument metadata
 
-4. **[Indicator Engine](04-indicator-engine.md)**
-   - Technical indicator calculation (SMA, EMA, composite)
-   - Real-time indicator values
-   - Caching and performance optimization
+### Supporting services
 
-5. **[Risk Engine](05-risk-engine.md)**
-   - Comprehensive risk management
-   - Circuit breaker pattern
-   - Independent verification capability
+7. **[Live Config Service](07-live-config-service.md)** — runtime config updates
+8. **[Runner](08-runner.md)** — orchestrator; gRPC via **gateway**; Zenoh **opt-in** (`ZENOH_ENABLED=1`); Candidate #2 via `btc_price_ma_app`
+9. **[TUI CLI](09-tui-cli.md)** — legacy terminal client; **not** the planned operator layer (`trading-system-ui` is)
 
-6. **[Asset Engine](06-asset-engine.md)**
-   - Static asset metadata caching
-   - Trading rules and exchange limits
-   - TTL-based refresh
+### Other
 
-### Supporting Services
+10. **[Strategy Engine (proposed DSL)](10-strategy-engine.md)** — Python IR proposal; not the Increment 0–10 Candidate #2 path
+11. **[Docker Guide](DOCKER.md)**
+12. **[Structurizr](STRUCTURIZR.md)** — historical engine diagrams; not current qualification status
 
-7. **[Live Config Service](07-live-config-service.md)**
-   - Runtime configuration updates
-   - Validation and audit logging
-   - Channel-based API
+## Architecture principles
 
-8. **[Runner](08-runner.md)**
-   - Application orchestrator
-   - Entry point: `runner::run()` in lib; thin `main.rs` binary
-   - gRPC via **gateway** crate (in-process or optional standalone proxy)
-   - Zenoh event gateway and command queryable (always on)
-   - Service initialization and coordination
+### Crate decoupling (implemented)
 
-9. **[TUI CLI](09-tui-cli.md)**
-   - Terminal user interface
-   - Real-time monitoring
-   - Separate views for Spot and Futures trading
-   - Position monitoring for futures (leverage, margin, P&L)
-   - Level management and trading control
+- **`strategy_core`**: pure model. No `TradingClient`, exchange, or research accounting.
+- **`research_engine` / `research_cli`**: historical evaluation only.
+- **`btc_price_ma_app`**: composition root; injects Candidate #2 into the generic runner.
+- **`runner` / `trading_engine`**: no dependency on `strategy_core`, research crates, or the app crate.
+- **`gateway`**: gRPC proto and `TradingCliService` (`PauseEntries`, `CancelWorking`, `FlattenAndPause`, `Resume`).
 
-### Deployment & Operations
+### Three repositories
 
-10. **[Docker Guide](DOCKER.md)**
-    - Docker containerization
-    - Docker Compose setup
-    - Running the system and CLI in containers
-    - Troubleshooting and common commands
-
-## Architecture Principles
-
-### State Management
-
-- **State Managers**: Exchange, Market Data, Trading - manage full state and publish
-- **Caching Services**: Indicator, Risk, Asset - fast lookup, no state management
+| Repo | Authority |
+| --- | --- |
+| `trading_system` | Models, research, live state, proto |
+| `k-paper` | Paper exchange behavior |
+| `trading-system-ui` | Browser UX only |
 
 ### Communication
 
-- **Channels**: Ultra-low latency (< 1μs) in-process communication
-- **gRPC**: External communication (TUI CLI); implementation in **gateway** crate; runner spawns server or uses standalone gateway proxy
-- **Zenoh**: External events (hot/cold) and commands (queryable); always on when runner is active
-- **REST API**: Exchange communication (account data, market data)
+- **Channels**: in-process broadcast (source of truth inside the runner)
+- **gRPC**: UI/TUI via gateway; mutating non-Paper RPCs require `TRADING_OPERATOR_TOKEN` at Envoy/runner
+- **Zenoh**: opt-in (`ZENOH_ENABLED=1`); not the Paper/Demo qualification path
+- **REST/WS**: exchange and k-paper adapters
 
-### Gateways and external interfaces
+### Key engine principles (still true)
 
-- **Gateway crate** (`src/gateway`): Owns all gRPC (proto, server, service handlers). Runner uses it to expose the TUI CLI API; optional standalone binary for gRPC proxy.
-- **Trading networking** (`libs/trading_networking`): Event gateway and Zenoh transport (events + commands). Runner wires it and starts Zenoh on every run.
+1. Exchange Engine is the single point of contact with the exchange for account data
+2. Trading Engine relies on ExchangeStateManager — it does not call the exchange directly
+3. Risk Engine is an independent checker
+4. Flatten RPC success is not flat; independent venue+runner verification is required
 
-### Key Principles
+## Related
 
-1. **Exchange Engine is the single point of contact** with exchange for account data
-2. **Trading Engine relies on ExchangeStateManager** - does NOT call exchange directly
-3. **Risk Engine is an independent checker** - can verify state correctness
-4. **State Managers** manage full state and publish
-5. **Caching Services** provide fast lookup, no state management
-
-## Data Flow
-
-### Exchange Data Flow
-
-```
-Exchange WebSocket → ExchangeStateManager
-    ├──→ Trading Engine (via channels)
-    ├──→ Risk Engine (via channels)
-    └──→ TUI (via gRPC aggregation)
-```
-
-### Market Data Flow
-
-```
-Exchange WebSocket → MarketDataStateManager
-    ├──→ Indicator Engine (via channels)
-    ├──→ Trading Engine (via channels)
-    └──→ TUI (via gRPC aggregation)
-```
-
-### Indicator Data Flow
-
-```
-MarketDataStateManager → Indicator Engine
-    ├── Calculate indicators
-    └──→ Trading Engine (via channels)
-        └──→ TUI (via gRPC aggregation)
-```
-
-## Performance Characteristics
-
-- **Channel Latency**: < 1μs (in-process)
-- **gRPC Latency**: < 10ms (external)
-- **Risk Checks**: < 1ms (cached)
-- **Indicator Lookup**: < 0.1ms (cached)
-
-## Testing
-
-Each service has:
-- Unit tests for core functionality
-- Integration tests for service interactions
-- Test helpers for common setup
-
-## Configuration
-
-All services are configured via:
-- `config/bot.json`: Main configuration
-- `config/strategies.json`: Strategy configuration
-- `config/levels.json`: Levels configuration
-
-## Version History
-
-- **0.1** (December 2024): Initial architecture documentation
-
-## Related Documentation
-
-- [README](../README.md): User guide and usage instructions
-- [Docker Guide](DOCKER.md): Docker deployment guide
-
+- [Venue modes](../docs/VENUE_MODES.md)
+- [Command plane](../docs/COMMAND_PLANE.md)
+- [Platform data plane](../docs/PLATFORM_DATA_PLANE.md)

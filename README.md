@@ -1,11 +1,15 @@
 # Trading System
 
 **Version**: 0.1  
-**Last Updated**: December 2024  
+**Last Updated**: 2026-09-29  
 **License**: MIT License  
 **Copyright**: © 2024 Trading System Contributors
 
 A modular, exchange-agnostic trading system built in Rust with support for real-time market data, order execution, level-based trading, and strategy-based trading.
+
+**Current architecture:** [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) (narrative: [docs/Trading-System-Analysis.txt](docs/Trading-System-Analysis.txt)). Increment record: [docs/PROP_TRADING_RESEARCH_AND_PRODUCTION_PLAN.md](docs/PROP_TRADING_RESEARCH_AND_PRODUCTION_PLAN.md).
+
+Decoupling, the three-repository split, Paper qualification (Increment 9A), and bounded Bybit Demo qualification (Increment 10, synthetic signal) are complete at that stated scope. The system is **not** production complete and **not** mainnet ready. Candidate #2 is an operational baseline, not validated alpha.
 
 ## Table of Contents
 
@@ -23,7 +27,7 @@ A modular, exchange-agnostic trading system built in Rust with support for real-
 
 ## Overview
 
-The Trading System is a comprehensive, production-ready trading platform that supports:
+The Trading System is a modular trading platform that supports:
 
 - **Level-Based Trading**: Predefined trading levels with indicator-based price/quantity resolution
 - **Strategy-Based Trading**: Algorithmic trading strategies (e.g., BuyLowSellHigh)
@@ -48,7 +52,7 @@ The Trading System is a comprehensive, production-ready trading platform that su
 
 ## System Architecture
 
-The system follows a **monolithic architecture** with clear service boundaries. All services run in-process and communicate via ultra-low latency broadcast channels.
+Live CEX services in this repository run **in-process** and communicate on broadcast channels. That is one container, not the whole system: `k-paper` (Paper exchange) and `trading-system-ui` (browser operator UI) are separate repositories. Candidate #2 is composed by `btc_price_ma_app`; `strategy_core` and `research_engine` are decoupled from the generic runner. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ### High-Level Architecture
 
@@ -817,7 +821,7 @@ export MONGODB_URI=mongodb://localhost:27017
 
 For the existing **Spot/levels Paper smoke test** with K-paper, the runner and legacy TUI, see the [local dev guide](docs/LOCAL_DEV_GUIDE.md).
 
-For the prop-trading architecture and Cursor's incremental work, start with [Prop Trading Productionization and Research Architecture Plan](docs/PROP_TRADING_RESEARCH_AND_PRODUCTION_PLAN.md). Its cross-repository handoff links to the separate K-paper and browser Trading System UI guides; the old TUI is not the planned operator control layer.
+For the current architecture (decoupling, three repos, Paper, Demo, open items), start with [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). The increment record is [Prop Trading Productionization and Research Architecture Plan](docs/PROP_TRADING_RESEARCH_AND_PRODUCTION_PLAN.md). The old TUI is not the planned operator control layer.
 
 ### Pre-Flight Checks
 
@@ -1390,6 +1394,10 @@ RUST_LOG=debug cargo run --package runner
 
 ## Architecture Documentation
 
+**Current:** [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) · [docs/Trading-System-Analysis.txt](docs/Trading-System-Analysis.txt) · [architecture/README.md](architecture/README.md)
+
+Older Structurizr/engine diagrams below are in-process views and are not a production or mainnet status.
+
 ### Visual Architecture Diagrams
 
 - **[Structurizr Architecture Diagram](architecture/STRUCTURIZR.md)**: Interactive architecture diagrams using Structurizr DSL
@@ -1419,10 +1427,8 @@ For detailed architecture information, see the [architecture/](architecture/) di
   - See [Trading Trace Library README](libs/trading_trace/README.md) for complete documentation
 - **[Live Config Service](architecture/07-live-config-service.md)**: Runtime configuration updates
 - **[Runner](architecture/08-runner.md)**: Application orchestrator
-- **[TUI CLI](architecture/09-tui-cli.md)**: Terminal user interface
-- **[Architecture README](architecture/README.md)**: Architecture overview and principles
-
-- **[Architecture README](architecture/README.md)**: Architecture overview and principles
+- **[TUI CLI](architecture/09-tui-cli.md)**: Legacy terminal client (not the planned operator layer)
+- **[Architecture README](architecture/README.md)**: Engine-level docs; current status is [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 
 ## Authors
 

@@ -1,8 +1,8 @@
 # Strategy Engine Architecture
 
 **Version**: 0.1 (Placeholder)  
-**Last Updated**: December 2024  
-**Status**: 🚧 Under Design
+**Last Updated**: 2026-09-29  
+**Status**: Proposed Python DSL → IR path. **Not** the implemented Candidate #2 architecture (`strategy_core` + `btc_price_ma_app`). See [docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md).
 
 ## Overview
 

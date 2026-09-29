@@ -1,5 +1,7 @@
 # Structurizr Architecture Diagrams
 
+**Status (2026-09-29):** `architecture.dsl` is a **pre-decoupling in-process engine view** (TUI-centric, Binance-centric, no `strategy_core` / three-repo split, no Paper/Demo qualification). It is not current system status and not a production or mainnet diagram. Use [docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md).
+
 This document explains how to use the Structurizr architecture diagram for the Trading System.
 
 ## Overview

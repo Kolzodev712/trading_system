@@ -3,8 +3,11 @@
 //! Subscribes to ExchangeStateManager updates and updates TradingState accordingly.
 //! This is how TradingState stays in sync with ExchangeStateManager.
 
+use super::operator_flatten::{
+    settle_operator_flatten_on_order, settle_operator_flatten_when_local_flat,
+};
+use super::{SubmissionJournal, TradingState};
 use crate::cex::state::ledger::ExecutionLedger;
-use crate::cex::state::TradingState;
 use std::sync::{Arc, Mutex};
 use tokio::sync::RwLock;
 use tracing::{debug, warn};
@@ -24,6 +27,7 @@ pub struct ExchangeStateSubscriber {
     trading_state: Arc<RwLock<TradingState>>,
     instrument_type: InstrumentType,
     execution_ledger: Arc<Mutex<Option<Arc<ExecutionLedger>>>>,
+    submission_journal: Arc<Mutex<Option<Arc<SubmissionJournal>>>>,
 }
 
 impl ExchangeStateSubscriber {
@@ -41,6 +45,7 @@ impl ExchangeStateSubscriber {
             trading_state,
             instrument_type: InstrumentType::Spot,
             execution_ledger: Arc::new(Mutex::new(None)),
+            submission_journal: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -54,6 +59,14 @@ impl ExchangeStateSubscriber {
         slot: Arc<Mutex<Option<Arc<ExecutionLedger>>>>,
     ) -> Self {
         self.execution_ledger = slot;
+        self
+    }
+
+    pub fn with_submission_journal_slot(
+        mut self,
+        slot: Arc<Mutex<Option<Arc<SubmissionJournal>>>>,
+    ) -> Self {
+        self.submission_journal = slot;
         self
     }
 
@@ -96,6 +109,11 @@ impl ExchangeStateSubscriber {
     /// Only updates TradingState if this is an order we placed (tracked in active_orders).
     /// Terminal statuses (Filled, Canceled, Rejected, Expired) remove the order from active_orders.
     async fn handle_order_update(&self, order: Order) {
+        let journal = self
+            .submission_journal
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
         let mut state = self.trading_state.write().await;
         let tracked = state.active_orders.contains_key(&order.order_id);
 
@@ -130,6 +148,16 @@ impl ExchangeStateSubscriber {
                 order.order_id.as_str()
             );
         }
+        if let Some(journal) = journal {
+            if let Err(err) = settle_operator_flatten_on_order(&journal, &mut state, &order) {
+                warn!("operator flatten settle on order failed: {err}");
+                state.halt_new_exposure(format!("operator flatten settle on order failed: {err}"));
+            }
+            if let Err(err) = settle_operator_flatten_when_local_flat(&journal, &mut state) {
+                warn!("operator flatten settle on flat failed: {err}");
+                state.halt_new_exposure(format!("operator flatten settle on flat failed: {err}"));
+            }
+        }
     }
 
     /// Handle balance update from ExchangeStateManager
@@ -160,6 +188,11 @@ impl ExchangeStateSubscriber {
             debug!("Ignoring position update in spot mode");
             return;
         }
+        let journal = self
+            .submission_journal
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
         let mut state = self.trading_state.write().await;
         state.apply_stream_position(
             position.instrument.pair.clone(),
@@ -170,6 +203,14 @@ impl ExchangeStateSubscriber {
             "Updated trading state from exchange position: {} qty={}",
             position.instrument.pair, position.quantity
         );
+        if let Some(journal) = journal {
+            if let Err(err) = settle_operator_flatten_when_local_flat(&journal, &mut state) {
+                warn!("operator flatten settle on position update failed: {err}");
+                state.halt_new_exposure(format!(
+                    "operator flatten settle on position update failed: {err}"
+                ));
+            }
+        }
     }
 
     /// Handle trade update from ExchangeStateManager

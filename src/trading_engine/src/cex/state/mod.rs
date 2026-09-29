@@ -27,8 +27,9 @@ pub use ledger::{
 };
 pub use operator_flatten::{
     flatten_cancel_working_failed, is_operator_flatten, merge_rest_working_orders,
-    submit_operator_reduce_only_exits, verify_rest_working_orders_cleared, OperatorFlattenReport,
-    OPERATOR_FLATTEN_INTENT,
+    settle_operator_flatten_exits, settle_operator_flatten_on_order,
+    settle_operator_flatten_when_local_flat, submit_operator_reduce_only_exits,
+    verify_rest_working_orders_cleared, OperatorFlattenReport, OPERATOR_FLATTEN_INTENT,
 };
 pub use submission::{
     recover_unknown_submissions, RecoveryReport, SubmissionJournal, SubmissionRecord,

@@ -71,7 +71,6 @@ impl FileStrategyOperator {
         self
     }
 
-    #[cfg(test)]
     pub fn with_persist_paths(mut self, snapshot_path: String, restart_flag_path: String) -> Self {
         self.snapshot_path = snapshot_path;
         self.restart_flag_path = restart_flag_path;

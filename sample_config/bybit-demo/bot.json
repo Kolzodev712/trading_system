@@ -1,0 +1,51 @@
+{
+  "system": {
+    "log_level": "info",
+    "shutdown_timeout_secs": 30
+  },
+  "execution_mode": "exchange",
+  "submission_journal_path": "runtime-data/bybit-demo/submission-journal.jsonl",
+  "execution_ledger_path": "runtime-data/bybit-demo/execution-ledger.jsonl",
+  "runtime_snapshot_path": "runtime-data/bybit-demo/runtime-snapshot.json",
+  "restart_flag_path": "runtime-data/bybit-demo/restart.requested",
+  "exchange_engine": {
+    "exchange": "Bybit",
+    "config": {
+      "pairs": [
+        {
+          "base": "BTC",
+          "quote": "USDT"
+        }
+      ],
+      "instrumentType": "Futures",
+      "credentials": {
+        "apiKey": "REPLACE_WITH_BYBIT_DEMO_API_KEY",
+        "apiSecret": "REPLACE_WITH_BYBIT_DEMO_API_SECRET"
+      },
+      "demo": true,
+      "testnet": false
+    }
+  },
+  "server": {
+    "bind_address": "0.0.0.0",
+    "port": 8080
+  },
+  "redis": {
+    "url": "",
+    "enabled": false
+  },
+  "features": {
+    "enable_reconciliation": true
+  },
+  "reconciliation": {
+    "exchange_level_interval_ms": 30000,
+    "trading_level_interval_ms": 30000,
+    "enabled": true
+  },
+  "mongo": {
+    "connection_string": "mongodb://localhost:27017",
+    "database": "trading_system",
+    "bot_id": "bybit_demo_c2",
+    "enabled": true
+  }
+}

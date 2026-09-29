@@ -3,6 +3,7 @@
 //! Manages trading-specific state (positions, active orders) derived from ExchangeStateManager.
 //! Does NOT call exchange directly - relies on ExchangeStateManager via channel subscriptions.
 
+use super::SubmissionJournal;
 use crate::cex::state::ledger::ExecutionLedger;
 use crate::cex::state::reconciler::{PositionReconciler, ReconciliationResult};
 use crate::cex::state::subscriber::ExchangeStateSubscriber;
@@ -32,6 +33,10 @@ pub struct TradingStateManager {
 
     /// Durable fill/funding ledger. Required for live PnL and daily-loss.
     execution_ledger: Arc<Mutex<Option<Arc<ExecutionLedger>>>>,
+
+    /// Shared with the subscriber so flatten rows settle on fill / flat without
+    /// waiting for the next FlattenAndPause.
+    submission_journal: Arc<Mutex<Option<Arc<SubmissionJournal>>>>,
 }
 
 impl TradingStateManager {
@@ -60,10 +65,12 @@ impl TradingStateManager {
             TradingState::new().with_instrument_type(instrument_type.clone()),
         ));
         let execution_ledger = Arc::new(Mutex::new(None));
+        let submission_journal = Arc::new(Mutex::new(None));
         let subscriber = Arc::new(tokio::sync::Mutex::new(
             ExchangeStateSubscriber::new(exchange_update_rx, state.clone())
                 .with_instrument_type(instrument_type.clone())
-                .with_execution_ledger_slot(execution_ledger.clone()),
+                .with_execution_ledger_slot(execution_ledger.clone())
+                .with_submission_journal_slot(submission_journal.clone()),
         ));
         let reconciler =
             PositionReconciler::new(exchange_state_manager).with_instrument_type(instrument_type);
@@ -73,6 +80,7 @@ impl TradingStateManager {
             subscriber,
             reconciler,
             execution_ledger,
+            submission_journal,
         }
     }
 
@@ -89,6 +97,13 @@ impl TradingStateManager {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .clone()
+    }
+
+    pub fn set_submission_journal(&self, journal: Arc<SubmissionJournal>) {
+        *self
+            .submission_journal
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = Some(journal);
     }
 
     /// Start the subscriber to listen for ExchangeStateManager updates

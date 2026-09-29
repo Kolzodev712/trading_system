@@ -7,7 +7,7 @@ use tokio::sync::RwLock;
 use tracing::{error, info, warn};
 
 use crate::cex::operator::FileStrategyOperator;
-use crate::config::runtime_snapshot::{RuntimeSnapshot, SNAPSHOT_FILE};
+use crate::config::runtime_snapshot::RuntimeSnapshot;
 use crate::config::{BotConfig, StrategiesConfig};
 use crate::grpc::TradingGrpcServer;
 use crate::platform::commands::RunnerCommandHandler;
@@ -142,6 +142,8 @@ pub async fn strategy_runner_with(
         &venue,
         &environment,
     )?;
+    let snapshot_path = bot_config.runtime_snapshot_path.clone();
+    let restart_flag_path = bot_config.restart_flag_path.clone();
 
     // Get pairs from exchange config
     let configured_pairs = bot_config.get_pairs()?;
@@ -345,6 +347,9 @@ pub async fn strategy_runner_with(
         trading_engine::state::SubmissionJournal::open(&bot_config.submission_journal_path)
             .map_err(|err| format!("submission journal: {err}"))?,
     );
+    if let Some(tsm) = &services.trading_state_manager {
+        tsm.set_submission_journal(journal.clone());
+    }
     let operator = Arc::new(
         FileStrategyOperator::new(
             strategies_config_path.clone(),
@@ -353,6 +358,7 @@ pub async fn strategy_runner_with(
             trading_control.clone(),
             services.shutdown_manager.clone(),
         )
+        .with_persist_paths(snapshot_path.clone(), restart_flag_path)
         .with_flatten_path(
             journal.clone(),
             services
@@ -768,7 +774,7 @@ pub async fn strategy_runner_with(
     let snap = load_and_apply_strategy_enablement(
         &*strategy_manager_arc.read().await,
         &strategy_configs,
-        SNAPSHOT_FILE,
+        &snapshot_path,
     )
     .await?;
     if let Some(snap) = snap.filter(|s| s.mode == "strategies") {
@@ -807,7 +813,7 @@ pub async fn strategy_runner_with(
     services.shutdown_manager.wait_for_shutdown().await;
 
     info!("Shutting down gracefully...");
-    let on_stop = RuntimeSnapshot::load(crate::config::runtime_snapshot::SNAPSHOT_FILE)
+    let on_stop = RuntimeSnapshot::load(&snapshot_path)
         .ok()
         .flatten()
         .map(|snap| snap.on_stop)

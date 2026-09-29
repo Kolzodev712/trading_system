@@ -585,6 +585,22 @@ impl TradingClient<OrderRequest> for BybitClient {
                         resp.ret_msg
                     )));
                 }
+                let remaining = self.fetch_open_orders().await.map_err(|err| {
+                    EngineError::CustomError(anyhow::anyhow!(
+                        "CancelWorking unverified: REST GET open orders after cancelAll failed: {err}"
+                    ))
+                })?;
+                let still: Vec<_> = remaining
+                    .iter()
+                    .filter(|order| &order.instrument.pair == pair && order.is_working())
+                    .map(|order| order.order_id.as_str().to_string())
+                    .collect();
+                if !still.is_empty() {
+                    return Err(EngineError::CustomError(anyhow::anyhow!(
+                        "CancelWorking unverified: working orders remain after cancelAll ({})",
+                        still.join(",")
+                    )));
+                }
                 Ok(())
             }
             _ => Err(EngineError::CustomError(anyhow::anyhow!(

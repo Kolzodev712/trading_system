@@ -12,8 +12,8 @@ use smol_str::SmolStr;
 use trading_core::{
     error::EngineError,
     types::{
-        common::{Instrument, InstrumentType, OrderType, Pair, Side},
-        exchange::{OrderRequest, Position},
+        common::{Instrument, InstrumentType, OrderStatus, OrderType, Pair, Side},
+        exchange::{ClientOrderLookup, Order, OrderRequest, Position},
     },
     venue::cex::traits::TradingClient,
 };
@@ -57,6 +57,7 @@ pub async fn submit_operator_reduce_only_exits(
     tsm_positions: &[(Pair, Decimal)],
 ) -> Result<OperatorFlattenReport, EngineError> {
     recover_unknown_submissions(journal, trading_client, trading_state).await?;
+    settle_operator_flatten_exits(journal, trading_client, trading_state).await?;
 
     let unresolved: Vec<SubmissionRecord> = journal
         .unresolved()?
@@ -139,6 +140,109 @@ pub async fn submit_operator_reduce_only_exits(
     Ok(report)
 }
 
+/// REST-check remaining working orders after a cancel acknowledgement.
+/// A successful cancelAll is not venue-empty until this query succeeds with none working.
+pub async fn verify_rest_working_orders_cleared(
+    trading_client: &dyn TradingClient<OrderRequest>,
+) -> Result<(), EngineError> {
+    match trading_client.fetch_open_orders().await {
+        Ok(orders) => {
+            let remaining: Vec<_> = orders
+                .iter()
+                .filter(|order| order.is_working())
+                .map(|order| order.order_id.as_str().to_string())
+                .collect();
+            if remaining.is_empty() {
+                Ok(())
+            } else {
+                Err(EngineError::CustomError(anyhow::anyhow!(
+                    "CancelWorking unverified: REST still shows working orders after cancel ({})",
+                    remaining.join(",")
+                )))
+            }
+        }
+        Err(err) => Err(EngineError::CustomError(anyhow::anyhow!(
+            "CancelWorking unverified: REST GET /open_orders failed: {err}"
+        ))),
+    }
+}
+
+pub fn merge_rest_working_orders(
+    order_ids: &mut Vec<trading_core::types::common::OrderId>,
+    pairs: &mut Vec<Pair>,
+    rest: &[Order],
+) {
+    for order in rest.iter().filter(|order| order.is_working()) {
+        if !order_ids.iter().any(|id| id == &order.order_id) {
+            order_ids.push(order.order_id.clone());
+        }
+        if !pairs.iter().any(|pair| pair == &order.instrument.pair) {
+            pairs.push(order.instrument.pair.clone());
+        }
+    }
+}
+
+/// Move a journaled flatten off `Acknowledged` once the venue fill or flat position is verified.
+pub async fn settle_operator_flatten_exits(
+    journal: &SubmissionJournal,
+    trading_client: &dyn TradingClient<OrderRequest>,
+    trading_state: &mut TradingState,
+) -> Result<(), EngineError> {
+    let latest = journal.load_latest()?;
+    let mut positions_cache: Option<Vec<Position>> = None;
+    for record in latest.into_values() {
+        if !is_operator_flatten(&record)
+            || matches!(
+                record.state,
+                SubmissionState::Terminal | SubmissionState::Rejected
+            )
+        {
+            continue;
+        }
+        match trading_client
+            .fetch_order_by_client_id(&record.client_order_id)
+            .await
+        {
+            Ok(ClientOrderLookup::Terminal(order)) => {
+                trading_state.apply_fill(&order);
+                trading_state.clear_submission(&record.client_order_id);
+                trading_state.active_orders.remove(&order.order_id);
+                journal.append(&record.clone().with_state(match order.status {
+                    OrderStatus::Rejected => SubmissionState::Rejected,
+                    _ => SubmissionState::Terminal,
+                }))?;
+            }
+            Ok(ClientOrderLookup::Working(order)) => {
+                trading_state.import_working_order(order);
+            }
+            Ok(ClientOrderLookup::Inconclusive) => {
+                if positions_cache.is_none() {
+                    match trading_client.fetch_positions().await {
+                        Ok(positions) => positions_cache = Some(positions),
+                        Err(_) => continue,
+                    }
+                }
+                let Some(positions) = positions_cache.as_ref() else {
+                    continue;
+                };
+                if let Ok(pending) = record.to_pending() {
+                    if pair_is_flat(positions, &pending.symbol) {
+                        trading_state.clear_submission(&record.client_order_id);
+                        journal.append(&record.clone().with_state(SubmissionState::Terminal))?;
+                    }
+                }
+            }
+            Err(err) => {
+                tracing::warn!(
+                    client_order_id = %record.client_order_id,
+                    "flatten settle lookup failed (keeping in-flight): {err}"
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
 pub async fn resolve_inconclusive_flatten(
     journal: &SubmissionJournal,
     trading_client: &dyn TradingClient<OrderRequest>,
@@ -186,15 +290,10 @@ fn has_inflight_flatten(
 }
 
 fn has_working_exit(state: &TradingState, pair: &Pair) -> bool {
-    state.active_orders.values().any(|order| {
-        &order.instrument.pair == pair
-            && matches!(
-                order.status,
-                trading_core::types::common::OrderStatus::New
-                    | trading_core::types::common::OrderStatus::PartiallyFilled
-                    | trading_core::types::common::OrderStatus::PendingCancel
-            )
-    })
+    state
+        .active_orders
+        .values()
+        .any(|order| &order.instrument.pair == pair && order.is_working())
 }
 
 fn pair_is_flat(positions: &[Position], pair: &Pair) -> bool {
@@ -258,6 +357,7 @@ mod tests {
         placed: AtomicUsize,
         place_err: Mutex<Option<String>>,
         last_link: Mutex<Option<String>>,
+        rest_open: Mutex<Vec<Order>>,
     }
 
     impl Scripted {
@@ -268,6 +368,7 @@ mod tests {
                 placed: AtomicUsize::new(0),
                 place_err: Mutex::new(None),
                 last_link: Mutex::new(None),
+                rest_open: Mutex::new(vec![]),
             }
         }
     }
@@ -293,9 +394,9 @@ mod tests {
                 self.placed.fetch_add(1, Ordering::SeqCst);
                 return Err(EngineError::CustomError(anyhow::anyhow!(err)));
             }
-            self.placed.fetch_add(1, Ordering::SeqCst);
+            let n = self.placed.fetch_add(1, Ordering::SeqCst) + 1;
             Ok(Order {
-                order_id: OrderId::new("ex-1".into()),
+                order_id: OrderId::new(format!("ex-{n}").into()),
                 client_order_id: Some(SmolStr::new(&link)),
                 instrument: req.instrument,
                 side: req.side,
@@ -321,7 +422,7 @@ mod tests {
         }
 
         async fn fetch_open_orders(&self) -> Result<Vec<Order>, EngineError> {
-            Ok(vec![])
+            Ok(self.rest_open.lock().await.clone())
         }
 
         async fn fetch_order_by_client_id(
@@ -603,5 +704,112 @@ mod tests {
             Some(OPERATOR_FLATTEN_INTENT)
         );
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn filled_acknowledged_flatten_becomes_terminal_and_second_exit_sends() {
+        let path = journal_path("two-cycle");
+        let journal = SubmissionJournal::open(&path).unwrap();
+        let client = Scripted::new(vec![long_pos(Decimal::new(1, 3))]);
+        let mut state = TradingState::new().with_instrument_type(InstrumentType::Futures);
+        let first = submit_operator_reduce_only_exits(
+            &journal,
+            &client,
+            &mut state,
+            InstrumentType::Futures,
+            &[],
+        )
+        .await
+        .expect("first flatten");
+        assert_eq!(client.placed.load(Ordering::SeqCst), 1);
+        let first_id = first.client_order_ids[0].clone();
+        assert_eq!(
+            journal.load_latest().unwrap()[&first_id].state,
+            SubmissionState::Acknowledged
+        );
+
+        state.active_orders.clear();
+        let filled = Order {
+            order_id: OrderId::new("ex-1".into()),
+            client_order_id: Some(SmolStr::new(&first_id)),
+            instrument: Instrument::new(InstrumentType::Futures, pair()),
+            side: Side::Sell,
+            price: Decimal::new(1, 0),
+            amount: Decimal::new(1, 3),
+            internal_created_at: 1,
+            exchange_created_at: Some(1),
+            status: OrderStatus::Filled,
+            filled_amount: Decimal::new(1, 3),
+        };
+        client
+            .lookups
+            .lock()
+            .await
+            .insert(first_id.clone(), ClientOrderLookup::Terminal(filled));
+        *client.positions.lock().await = vec![long_pos(Decimal::new(2, 3))];
+
+        let second = submit_operator_reduce_only_exits(
+            &journal,
+            &client,
+            &mut state,
+            InstrumentType::Futures,
+            &[(pair(), Decimal::new(2, 3))],
+        )
+        .await
+        .expect("second flatten after verified fill");
+        assert_eq!(client.placed.load(Ordering::SeqCst), 2);
+        assert_eq!(second.client_order_ids.len(), 1);
+        assert_ne!(second.client_order_ids[0], first_id);
+        let latest = journal.load_latest().unwrap();
+        assert_eq!(latest[&first_id].state, SubmissionState::Terminal);
+        assert_eq!(
+            latest[&second.client_order_ids[0]].state,
+            SubmissionState::Acknowledged
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn merge_rest_includes_orders_missing_from_local_cache() {
+        let leftover = Order {
+            order_id: OrderId::new("cache-miss".into()),
+            client_order_id: None,
+            instrument: Instrument::new(InstrumentType::Futures, pair()),
+            side: Side::Buy,
+            price: Decimal::new(1, 0),
+            amount: Decimal::new(1, 3),
+            internal_created_at: 1,
+            exchange_created_at: Some(1),
+            status: OrderStatus::New,
+            filled_amount: Decimal::ZERO,
+        };
+        let mut ids = vec![];
+        let mut pairs = vec![];
+        merge_rest_working_orders(&mut ids, &mut pairs, &[leftover]);
+        assert_eq!(ids.len(), 1);
+        assert_eq!(pairs, vec![pair()]);
+    }
+
+    #[tokio::test]
+    async fn rest_working_after_cancel_is_unverified() {
+        let leftover = Order {
+            order_id: OrderId::new("still-open".into()),
+            client_order_id: None,
+            instrument: Instrument::new(InstrumentType::Futures, pair()),
+            side: Side::Buy,
+            price: Decimal::new(1, 0),
+            amount: Decimal::new(1, 3),
+            internal_created_at: 1,
+            exchange_created_at: Some(1),
+            status: OrderStatus::New,
+            filled_amount: Decimal::ZERO,
+        };
+        let client = Scripted::new(vec![]);
+        *client.rest_open.lock().await = vec![leftover];
+        let err = verify_rest_working_orders_cleared(&client)
+            .await
+            .expect_err("remaining REST working must fail closed");
+        assert!(err.to_string().contains("still shows working"));
+        assert!(err.to_string().contains("still-open"));
     }
 }

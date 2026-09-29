@@ -15,7 +15,8 @@ use trading_core::grpc::TradingControl;
 use trading_core::types::common::{InstrumentType, Pair};
 use trading_engine::state::manager::TradingStateManager;
 use trading_engine::state::{
-    flatten_cancel_working_failed, submit_operator_reduce_only_exits, SubmissionJournal,
+    flatten_cancel_working_failed, merge_rest_working_orders, submit_operator_reduce_only_exits,
+    verify_rest_working_orders_cleared, SubmissionJournal,
 };
 use trading_engine::strategies::strategy_manager::StrategyManager;
 
@@ -297,7 +298,7 @@ impl StrategyOperator for FileStrategyOperator {
             let ctx = self.flatten_path.as_ref().ok_or_else(|| {
                 "flatten on_stop: journaled reduce-only path required; latch held".to_string()
             })?;
-            let (order_ids, pairs, tsm_positions) = {
+            let (mut order_ids, mut pairs, tsm_positions) = {
                 let state = ctx.trading_state_manager.get_state();
                 let guard = state.read().await;
                 let order_ids = guard
@@ -316,8 +317,6 @@ impl StrategyOperator for FileStrategyOperator {
                         .values()
                         .map(|position| position.symbol.clone()),
                 );
-                pairs.sort_by(|a, b| a.base.cmp(&b.base).then(a.quote.cmp(&b.quote)));
-                pairs.dedup();
                 let tsm_positions: Vec<(Pair, Decimal)> = guard
                     .positions
                     .values()
@@ -325,8 +324,37 @@ impl StrategyOperator for FileStrategyOperator {
                     .collect();
                 (order_ids, pairs, tsm_positions)
             };
+            let rest_err = {
+                let client = self.trading_control.trading_client();
+                let client = client.read().await;
+                match client.fetch_open_orders().await {
+                    Ok(rest) => {
+                        merge_rest_working_orders(&mut order_ids, &mut pairs, &rest);
+                        None
+                    }
+                    Err(err) => Some(err.to_string()),
+                }
+            };
+            if let Some(err) = rest_err {
+                return Err(flatten_cancel_working_failed(&format!(
+                    "REST GET /open_orders failed: {err}"
+                )));
+            }
+            pairs.sort_by(|a, b| a.base.cmp(&b.base).then(a.quote.cmp(&b.quote)));
+            pairs.dedup();
             if let Err(e) = self.trading_control.cancel_working(order_ids, pairs).await {
                 return Err(flatten_cancel_working_failed(&e.to_string()));
+            }
+            let rest_after = {
+                let client = self.trading_control.trading_client();
+                let client = client.read().await;
+                match verify_rest_working_orders_cleared(&*client).await {
+                    Ok(()) => None,
+                    Err(err) => Some(err.to_string()),
+                }
+            };
+            if let Some(err) = rest_after {
+                return Err(flatten_cancel_working_failed(&err));
             }
             let client = self.trading_control.trading_client();
             let client = client.read().await;

@@ -26,8 +26,9 @@ pub use ledger::{
     economic_source, ExecutionLedger, FillRecord, FundingRecord, LedgerRecord, LedgerSnapshot,
 };
 pub use operator_flatten::{
-    flatten_cancel_working_failed, is_operator_flatten, submit_operator_reduce_only_exits,
-    OperatorFlattenReport, OPERATOR_FLATTEN_INTENT,
+    flatten_cancel_working_failed, is_operator_flatten, merge_rest_working_orders,
+    submit_operator_reduce_only_exits, verify_rest_working_orders_cleared, OperatorFlattenReport,
+    OPERATOR_FLATTEN_INTENT,
 };
 pub use submission::{
     recover_unknown_submissions, RecoveryReport, SubmissionJournal, SubmissionRecord,

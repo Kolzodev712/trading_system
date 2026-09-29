@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 # Increment 10: Candidate #2 → Bybit demo. Entries stay paused until paused-path
 # checks pass, then enable explicitly. Does not promote to mainnet.
-# Journal, ledger, and runtime snapshot survive reruns unless INC10_RESET=1.
+# Journal, ledger, snapshot, and runner logs are preserved. INC10_RESET=1 is rejected.
+# Bounded measured run (only if INC10_ENABLE=1): 0.001 BTC exposure, one working
+# order, five minutes from Resume, then pause/cancel/flatten to independently
+# verified flat. Interrupted or failed end-state is not success.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -22,12 +25,19 @@ export TRACE_JAEGER_DISABLED="${TRACE_JAEGER_DISABLED:-1}"
 mkdir -p "${WORKDIR}" "${ROOT}/config/cex"
 
 if [[ "${INC10_RESET:-0}" == "1" ]]; then
-  echo "INC10_RESET=1: wiping journal, ledger, snapshot, and operator token"
-  rm -f "${JOURNAL}" "${LEDGER}" "${SNAPSHOT_SRC}" "${TOKEN_FILE}"
+  echo "FAILED: INC10_RESET=1 is not allowed for this bounded demo procedure (evidence must be preserved)" >&2
+  exit 1
 fi
 
-rm -f "${WORKDIR}"/runner*.log
-# Do not delete journal, ledger, or SNAPSHOT_SRC on ordinary reruns.
+mkdir -p "${WORKDIR}/logs"
+# Archive prior runner logs; do not delete journal, ledger, snapshot, or evidence logs.
+if compgen -G "${WORKDIR}/runner*.log" >/dev/null; then
+  ts="$(date -u +%Y%m%dT%H%M%SZ)"
+  for f in "${WORKDIR}"/runner*.log; do
+    mv "${f}" "${WORKDIR}/logs/$(basename "${f}").${ts}"
+  done
+  echo "archived prior runner logs under ${WORKDIR}/logs"
+fi
 
 if [[ ! -f "${SOURCE_BOT}" ]]; then
   echo "FAILED: missing ${SOURCE_BOT} (gitignored demo bot with demo:true keys)" >&2
@@ -38,11 +48,24 @@ python3 - "${SOURCE_BOT}" "${WORKDIR}/bot.json" "${JOURNAL}" "${LEDGER}" <<'PY'
 import json, sys
 src, dest, journal, ledger = sys.argv[1:5]
 bot = json.loads(open(src).read())
-cfg = bot.setdefault("exchange_engine", {}).setdefault("config", {})
+eng = bot.setdefault("exchange_engine", {})
+if str(eng.get("exchange", "")).strip().lower() != "bybit":
+    raise SystemExit("FAILED: source bot must use exchange_engine.exchange=Bybit")
+cfg = eng.setdefault("config", {})
 if cfg.get("demo") is not True:
     raise SystemExit("FAILED: source bot must set exchange_engine.config.demo=true")
 if cfg.get("testnet") is True:
     raise SystemExit("FAILED: source bot must not set testnet when demo=true")
+inst = str(cfg.get("instrumentType") or cfg.get("instrument_type") or "")
+if inst.lower() != "futures":
+    raise SystemExit("FAILED: source bot must be Futures (USDT linear)")
+pairs = cfg.get("pairs") or []
+if len(pairs) != 1:
+    raise SystemExit("FAILED: source bot must configure exactly one pair (BTC/USDT linear)")
+base = str(pairs[0].get("base", "")).upper()
+quote = str(pairs[0].get("quote", "")).upper()
+if (base, quote) != ("BTC", "USDT"):
+    raise SystemExit("FAILED: source bot pair must be BTC/USDT")
 bot["execution_mode"] = "exchange"
 bot["submission_journal_path"] = journal
 bot["execution_ledger_path"] = ledger
@@ -52,8 +75,8 @@ bot["reconciliation"]["exchange_level_interval_ms"] = 5000
 bot["reconciliation"]["trading_level_interval_ms"] = 5000
 bot["reconciliation"]["enabled"] = True
 open(dest, "w").write(json.dumps(bot, indent=2) + "\n")
-print("inc10 bot written (credentials not printed); demo=true futures BTC/USDT")
-print(f"journal={journal} ledger={ledger} (preserved unless INC10_RESET=1)")
+print("inc10 bot written (credentials not printed); Bybit DEMO futures BTC/USDT linear only")
+print(f"journal={journal} ledger={ledger} (preserved; INC10_RESET is rejected)")
 PY
 
 cat > "${WORKDIR}/strategies.json" <<'EOF'
@@ -80,10 +103,10 @@ cat > "${WORKDIR}/strategies.json" <<'EOF'
     }
   ],
   "risk_limits": {
-    "total_max_position": "0.002",
-    "max_total_orders": 2,
-    "max_notional": "200",
-    "max_order_qty": "0.002"
+    "total_max_position": "0.001",
+    "max_total_orders": 1,
+    "max_notional": "150",
+    "max_order_qty": "0.001"
   }
 }
 EOF
@@ -256,11 +279,12 @@ preserve_snapshot_copy() {
 compare_demo_account() {
   local tag="$1"
   local status="$2"
-  python3 - "${WORKDIR}/bot.json" "${status}" "${WORKDIR}/venue_${tag}.json" <<'PY'
+  local require_flat="${3:-0}"
+  python3 - "${WORKDIR}/bot.json" "${status}" "${WORKDIR}/venue_${tag}.json" "${require_flat}" <<'PY'
 import hashlib, hmac, json, re, sys, time, urllib.parse, urllib.request
 from decimal import Decimal, InvalidOperation
 
-bot_path, status, out_path = sys.argv[1:4]
+bot_path, status, out_path, require_flat = sys.argv[1:5]
 bot = json.loads(open(bot_path).read())
 cfg = bot["exchange_engine"]["config"]
 cred = cfg["credentials"]
@@ -395,32 +419,102 @@ if qty_norm(strat_pos) != net:
     raise SystemExit(
         f"FAILED: strategy pos={strat_pos} != demo REST net qty {net}"
     )
+if require_flat == "1":
+    if order_rows or venue_positions or grpc_orders or grpc_positions or qty_norm(strat_pos) != 0:
+        raise SystemExit(
+            "FAILED: account is not independently flat "
+            f"(rest_orders={len(order_rows)} rest_pos={venue_positions} "
+            f"grpc_orders={grpc_orders} grpc_pos={grpc_positions} strat={strat_pos})"
+        )
+    print("independent demo REST and runner are flat (zero orders, zero position)")
 PY
 }
 
+require_bounded_status() {
+  local status="$1"
+  python3 - "${status}" <<'PY'
+import re, sys
+from decimal import Decimal, InvalidOperation
+status = sys.argv[1]
+limit = Decimal("0.001")
+
+def qty(value):
+    try:
+        return abs(Decimal(str(value)))
+    except (InvalidOperation, ValueError):
+        return Decimal("0")
+
+orders = 0
+m = re.search(r"orders=(\d+)", status)
+if m:
+    orders = int(m.group(1))
+if orders > 1:
+    raise SystemExit(f"FAILED: working orders {orders} exceeds bound 1")
+strat = Decimal("0")
+m = re.search(r"strategy .* pos=([0-9.-]+)", status)
+if m:
+    strat = qty(m.group(1))
+if strat > limit:
+    raise SystemExit(f"FAILED: strategy pos {strat} exceeds 0.001 BTC")
+for m in re.finditer(r"position \S+ qty=([0-9.-]+)", status):
+    if qty(m.group(1)) > limit:
+        raise SystemExit(f"FAILED: position qty {m.group(1)} exceeds 0.001 BTC")
+for m in re.finditer(r"order \S+ \S+ \S+ px=\S+ qty=([0-9.-]+)", status):
+    if qty(m.group(1)) > limit:
+        raise SystemExit(f"FAILED: working order qty {m.group(1)} exceeds 0.001 BTC")
+print(f"bounded: orders={orders} strategy_abs_pos={strat} (<=0.001 BTC, <=1 working order)")
+PY
+}
+
+require_operator_cmd() {
+  local action="$1"
+  local request_id="$2"
+  local out rc
+  set +e
+  out="$("${CTL[@]}" "${action}" "${request_id}" 2>&1)"
+  rc=$?
+  set -e
+  echo "${out}"
+  if [[ "${rc}" -ne 0 ]]; then
+    echo "FAILED: ${action} RPC failed (rc=${rc})" >&2
+    return 1
+  fi
+  if ! echo "${out}" | grep -q 'accepted=true'; then
+    echo "FAILED: ${action} was not accepted" >&2
+    echo "${out}" >&2
+    return 1
+  fi
+  return 0
+}
+
+record_evidence() {
+  echo "== evidence paths =="
+  echo "workdir=${WORKDIR}"
+  echo "journal=${JOURNAL} ledger=${LEDGER}"
+  if [[ -f "${JOURNAL}" ]]; then
+    echo "journal lines=$(wc -l < "${JOURNAL}")"
+    tail -n 30 "${JOURNAL}" || true
+  else
+    echo "journal: none yet"
+  fi
+  if [[ -f "${LEDGER}" ]]; then
+    echo "ledger lines=$(wc -l < "${LEDGER}")"
+    tail -n 30 "${LEDGER}" || true
+  else
+    echo "ledger: none yet"
+  fi
+}
+
 end_measured_run() {
-  echo "== end measured run: pause, resolve working, record reconciled state =="
-  local pause_out cancel_out
-  set +e
-  pause_out="$("${CTL[@]}" pause "inc10-end-pause" 2>&1)"
-  local pause_rc=$?
-  set -e
-  echo "${pause_out}"
-  if [[ "${pause_rc}" -ne 0 ]]; then
-    echo "FAILED: PauseEntries RPC failed (rc=${pause_rc})" >&2
-    exit 1
+  echo "== end measured run: pause, cancel working, flatten, verify independently flat =="
+  if ! require_operator_cmd pause "inc10-end-pause"; then
+    record_evidence
+    return 1
   fi
-  require_status 'accepted=true' "${pause_out}"
-  set +e
-  cancel_out="$("${CTL[@]}" cancel "inc10-end-cancel" 2>&1)"
-  local cancel_rc=$?
-  set -e
-  echo "${cancel_out}"
-  if [[ "${cancel_rc}" -ne 0 ]]; then
-    echo "FAILED: CancelWorking RPC failed (rc=${cancel_rc})" >&2
-    exit 1
+  if ! require_operator_cmd cancel "inc10-end-cancel"; then
+    record_evidence
+    return 1
   fi
-  require_status 'accepted=true' "${cancel_out}"
   local i status resolved=0
   for i in $(seq 1 40); do
     status="$("${CTL[@]}" status)"
@@ -433,23 +527,39 @@ end_measured_run() {
   if [[ "${resolved}" -ne 1 ]]; then
     echo "FAILED: working orders still present after CancelWorking" >&2
     echo "${status}" >&2
-    exit 1
+    record_evidence
+    return 1
   fi
-  sleep 2
+  if ! require_operator_cmd flatten "inc10-end-flatten"; then
+    record_evidence
+    return 1
+  fi
+  local flat=0
+  for i in $(seq 1 60); do
+    status="$("${CTL[@]}" status)"
+    if echo "${status}" | grep -q "orders=0" \
+      && echo "${status}" | grep -q "positions=0" \
+      && echo "${status}" | grep -qE 'pos=0 cap='; then
+      flat=1
+      break
+    fi
+    sleep 1
+  done
   status="$("${CTL[@]}" status | tee "${WORKDIR}/grpc_status_end.txt")"
   echo "${status}"
+  if [[ "${flat}" -ne 1 ]] || ! compare_demo_account end_flat "${status}" 1; then
+    echo "FAILED: end-state is not independently flat (zero orders and zero position)" >&2
+    record_evidence
+    return 1
+  fi
   require_status 'entries_paused=true' "${status}"
   require_status 'orders=0' "${status}"
-  compare_demo_account end "${status}"
+  require_status 'positions=0' "${status}"
   preserve_snapshot_copy
-  if [[ -f "${JOURNAL}" ]]; then
-    echo "journal lines=$(wc -l < "${JOURNAL}") path=${JOURNAL}"
-  fi
-  if [[ -f "${LEDGER}" ]]; then
-    echo "ledger lines=$(wc -l < "${LEDGER}") path=${LEDGER}"
-  fi
-  echo "measured run ended: entries paused, working resolved, demo REST vs runner recorded"
+  record_evidence
+  echo "measured run end-state verified: paused, zero working orders, zero position (Demo REST and runner)"
   kill_runner
+  return 0
 }
 
 cleanup() {
@@ -497,6 +607,13 @@ require_open_order_rest_ok "${LOG}"
 
 echo "== independent demo account vs runner (paused) =="
 compare_demo_account paused "${status}"
+require_bounded_status "${status}"
+if ! grep -q '"total_max_position": "0.001"' "${WORKDIR}/strategies.json" \
+  || ! grep -q '"max_total_orders": 1' "${WORKDIR}/strategies.json" \
+  || ! grep -q '"max_order_qty": "0.001"' "${WORKDIR}/strategies.json"; then
+  echo "FAILED: strategies.json does not enforce 0.001 BTC / 1 working order bounds" >&2
+  exit 1
+fi
 
 echo "== unauthorized mutating RPC is denied =="
 set +e
@@ -541,7 +658,7 @@ compare_demo_account restart "${status}"
 preserve_snapshot_copy
 
 echo "${status}"
-echo "inc10 paused-path checks passed (connectivity, auth, runner REST recon, restart, independent REST)."
+echo "inc10 paused-path checks passed (connectivity, auth, runner REST recon, restart, independent REST, 0.001 BTC / 1-order bounds)."
 echo "workdir=${WORKDIR}"
 echo "journal=${JOURNAL} ledger=${LEDGER} snapshot=${SNAPSHOT_SRC}"
 
@@ -554,31 +671,81 @@ if [[ "${INC10_ENABLE:-0}" != "1" ]]; then
   exit 0
 fi
 
+MEASURE_SECS="${INC10_MEASURE_SECS:-300}"
+MEASURED_SUCCESS=0
+MEASURED_PHASE=1
+
+fail_measured() {
+  local msg="$1"
+  echo "FAILED: ${msg}" >&2
+  record_evidence
+  if ! end_measured_run; then
+    echo "FAILED: end-state after abort was not independently flat; leaving runner for inspection" >&2
+    INC10_KEEP=1
+    trap - EXIT
+    exit 1
+  fi
+  echo "FAILED: ${msg} (account flattened; not a successful measured run)" >&2
+  trap - EXIT
+  exit 1
+}
+
+on_measured_interrupt() {
+  fail_measured "measured run interrupted"
+}
+trap on_measured_interrupt INT TERM
+
 echo "== independent demo account vs runner (before enable) =="
 status="$("${CTL[@]}" status)"
 compare_demo_account before_enable "${status}"
+require_bounded_status "${status}"
 
-echo "== enable trading + Resume for controlled demo run =="
+echo "== enable trading + Resume for bounded demo run (${MEASURE_SECS}s) =="
 enable_out="$("${CTL[@]}" enable "${TRADING_STRATEGY}")"
 echo "${enable_out}"
 resume_out="$("${CTL[@]}" resume inc10-resume-1)"
 echo "${resume_out}"
+require_status 'accepted=true' "${resume_out}"
 status="$("${CTL[@]}" status | tee "${WORKDIR}/grpc_status_enabled.txt")"
 require_status 'entries_paused=false' "${status}"
 require_status 'global_trading=true' "${status}"
+require_status 'environment=DEMO' "${status}"
+require_status 'venue=BYBIT' "${status}"
 
-echo "== measure for ${INC10_MEASURE_SECS:-45}s =="
-sleep "${INC10_MEASURE_SECS:-45}"
-"${CTL[@]}" status | tee "${WORKDIR}/grpc_status_after_measure.txt"
-if [[ -f "${LEDGER}" ]]; then
-  echo "ledger:"; wc -l "${LEDGER}"; tail -n 20 "${LEDGER}" || true
-fi
-if [[ -f "${JOURNAL}" ]]; then
-  echo "journal:"; wc -l "${JOURNAL}"; tail -n 20 "${JOURNAL}" || true
-fi
+echo "== measure until ${MEASURE_SECS}s from Resume, abort on recon/readiness/bound failure =="
+elapsed=0
+while [[ "${elapsed}" -lt "${MEASURE_SECS}" ]]; do
+  sleep 5
+  elapsed=$((elapsed + 5))
+  status="$("${CTL[@]}" status)"
+  echo "${status}" | tee "${WORKDIR}/grpc_status_after_measure.txt" >/dev/null
+  if ! require_bounded_status "${status}"; then
+    fail_measured "exposure or working-order bound exceeded"
+  fi
+  if echo "${status}" | grep -qE 'readiness=(not_ready|blocked|error)'; then
+    fail_measured "strategy readiness failed during measured run"
+  fi
+  if grep -qE 'Failed to fetch open orders|Invalid path or category mismatch|order/open-order' \
+    "${WORKDIR}/runner-restart.log" "${LOG}" 2>/dev/null; then
+    fail_measured "open-order reconciliation failed during measured run"
+  fi
+  echo "t+${elapsed}s bounded check ok"
+done
+
+record_evidence
 grep -E 'placing order|order.create|Known place|unknown|fill|execution' "${WORKDIR}/runner-restart.log" "${LOG}" \
   | tail -n 40 | tee "${WORKDIR}/execution_snippets.txt" || true
 
-end_measured_run
-echo "inc10 Stage D demo path asserted (controlled enable then paused end-state). Review evidence in ${WORKDIR}."
+if ! end_measured_run; then
+  echo "FAILED: measured-run end-state was not independently flat" >&2
+  INC10_KEEP=1
+  trap - EXIT
+  exit 1
+fi
+MEASURED_SUCCESS=1
+if [[ ! -s "${JOURNAL}" && ! -s "${LEDGER}" ]]; then
+  echo "bounded run produced no journal or ledger rows (no order/fill in ${MEASURE_SECS}s). Increment 10 remains open."
+else
+  echo "bounded run evidence recorded in ${WORKDIR}. Review orders, fills, journal, ledger, recon, and latency before closing Increment 10."
+fi
 trap - EXIT

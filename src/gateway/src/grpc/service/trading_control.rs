@@ -9,7 +9,8 @@ use trading_core::grpc::TradingControl;
 use trading_engine::levels::LevelManager;
 use trading_engine::state::manager::TradingStateManager;
 use trading_engine::state::{
-    flatten_cancel_working_failed, submit_operator_reduce_only_exits, SubmissionJournal,
+    flatten_cancel_working_failed, merge_rest_working_orders, submit_operator_reduce_only_exits,
+    verify_rest_working_orders_cleared, SubmissionJournal,
 };
 
 pub struct TradingControlService {
@@ -218,12 +219,57 @@ impl TradingControlService {
             return Ok(Response::new(cached));
         }
         self.trading_control.latch_flatten_and_pause().await;
-        let (order_ids, pairs) = self.collect_working().await;
+        let rest_before = {
+            let client = self.trading_control.trading_client();
+            let client = client.read().await;
+            match client.fetch_open_orders().await {
+                Ok(orders) => orders,
+                Err(err) => {
+                    drop(client);
+                    let response = trading_cli::OperatorCommandResponse {
+                        accepted: false,
+                        state: "failed".into(),
+                        message: flatten_cancel_working_failed(&format!(
+                            "REST GET /open_orders failed: {err}"
+                        )),
+                        venue,
+                        environment,
+                        scope: scope_label(&req.symbol),
+                        order_ids: vec![],
+                    };
+                    self.remember(&req.request_id, response.clone()).await;
+                    return Ok(Response::new(response));
+                }
+            }
+        };
+        let (mut order_ids, mut pairs) = self.collect_working().await;
+        merge_rest_working_orders(&mut order_ids, &mut pairs, &rest_before);
         let cancel_err = match self.trading_control.cancel_working(order_ids, pairs).await {
             Ok(_) => None,
             Err(e) => Some(e.to_string()),
         };
         if let Some(err) = cancel_err {
+            let response = trading_cli::OperatorCommandResponse {
+                accepted: false,
+                state: "failed".into(),
+                message: flatten_cancel_working_failed(&err),
+                venue,
+                environment,
+                scope: scope_label(&req.symbol),
+                order_ids: vec![],
+            };
+            self.remember(&req.request_id, response.clone()).await;
+            return Ok(Response::new(response));
+        }
+        let rest_after_err = {
+            let client = self.trading_control.trading_client();
+            let client = client.read().await;
+            match verify_rest_working_orders_cleared(&*client).await {
+                Ok(()) => None,
+                Err(err) => Some(err.to_string()),
+            }
+        };
+        if let Some(err) = rest_after_err {
             let response = trading_cli::OperatorCommandResponse {
                 accepted: false,
                 state: "failed".into(),
@@ -562,6 +608,126 @@ mod tests {
         assert!(response.message.contains("Reduce-only exit was not sent"));
         assert!(service.trading_control.flatten_latched().await);
         assert!(service.trading_control.entries_paused().await);
+        assert_eq!(placed.load(Ordering::SeqCst), 0);
+    }
+
+    #[derive(Debug)]
+    struct RemainingWorkingAfterCancelClient {
+        placed: Arc<AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl TradingClient<OrderRequest> for RemainingWorkingAfterCancelClient {
+        fn exchange_id(&self) -> Exchange {
+            Exchange::Paper
+        }
+
+        async fn test_open_order(&self, _req: OrderRequest) -> Result<(), EngineError> {
+            Ok(())
+        }
+
+        async fn open_order(&self, _req: OrderRequest) -> Result<Order, EngineError> {
+            self.placed.fetch_add(1, Ordering::SeqCst);
+            Err(EngineError::NotSupported("test".into()))
+        }
+
+        async fn cancel_order_by_id(&self, _order_id: OrderId) -> Result<(), EngineError> {
+            Ok(())
+        }
+
+        async fn cancel_all_orders(&self, _pair: &Pair) -> Result<(), EngineError> {
+            Ok(())
+        }
+
+        async fn fetch_balance(&self) -> Result<Vec<Balance>, EngineError> {
+            Ok(vec![])
+        }
+
+        async fn fetch_open_orders(&self) -> Result<Vec<Order>, EngineError> {
+            Ok(vec![Order {
+                order_id: OrderId::new("cache-miss".into()),
+                client_order_id: None,
+                instrument: trading_core::types::common::Instrument::new(
+                    trading_core::types::common::InstrumentType::Futures,
+                    Pair::new("BTC", "USDT"),
+                ),
+                side: trading_core::types::common::Side::Buy,
+                price: Decimal::ONE,
+                amount: Decimal::new(1, 3),
+                internal_created_at: 1,
+                exchange_created_at: Some(1),
+                status: trading_core::types::common::OrderStatus::New,
+                filled_amount: Decimal::ZERO,
+            }])
+        }
+
+        async fn fetch_trades(&self, _pair: Option<&Pair>) -> Result<Vec<Trade>, EngineError> {
+            Ok(vec![])
+        }
+
+        async fn fetch_market_data_snapshot(&self, _pair: &Pair) -> Result<(), EngineError> {
+            Ok(())
+        }
+
+        async fn amend_order(
+            &self,
+            _order_id: OrderId,
+            _new_request: OrderRequest,
+        ) -> Result<Order, EngineError> {
+            Err(EngineError::NotSupported("test".into()))
+        }
+
+        async fn bulk_open_orders(
+            &self,
+            _req: trading_core::types::exchange::BulkOrderRequest,
+        ) -> Result<trading_core::types::exchange::BulkOrderResponse, EngineError> {
+            Err(EngineError::NotSupported("test".into()))
+        }
+
+        async fn bulk_amend_orders(
+            &self,
+            _req: trading_core::types::exchange::BulkAmendRequest,
+        ) -> Result<trading_core::types::exchange::BulkAmendResponse, EngineError> {
+            Err(EngineError::NotSupported("test".into()))
+        }
+    }
+
+    #[tokio::test]
+    async fn flatten_and_pause_does_not_send_when_rest_still_working() {
+        let placed = Arc::new(AtomicUsize::new(0));
+        let client: Arc<RwLock<dyn TradingClient<OrderRequest>>> =
+            Arc::new(RwLock::new(RemainingWorkingAfterCancelClient {
+                placed: placed.clone(),
+            }));
+        let service = flatten_service(client);
+        {
+            let state = service.trading_state_manager.get_state();
+            let mut guard = state.write().await;
+            guard.positions.insert(
+                Pair::new("BTC", "USDT"),
+                Position {
+                    symbol: Pair::new("BTC", "USDT"),
+                    quantity: Decimal::new(1, 3),
+                    avg_price: Decimal::ONE,
+                },
+            );
+        }
+        let response = service
+            .flatten_and_pause(
+                Request::new(trading_cli::OperatorCommandRequest {
+                    request_id: "rest-still-working".into(),
+                    symbol: String::new(),
+                }),
+                "PAPER".into(),
+                "LOCAL".into(),
+                trading_core::types::common::InstrumentType::Futures,
+            )
+            .await
+            .expect("rpc")
+            .into_inner();
+        assert!(!response.accepted);
+        assert!(response.message.contains("working orders after cancel"));
+        assert!(service.trading_control.flatten_latched().await);
         assert_eq!(placed.load(Ordering::SeqCst), 0);
     }
 }

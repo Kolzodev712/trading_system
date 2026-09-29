@@ -54,6 +54,16 @@ pub struct Order {
     pub filled_amount: Decimal,
 }
 
+impl Order {
+    /// True while the venue still shows a live working order.
+    pub fn is_working(&self) -> bool {
+        matches!(
+            self.status,
+            OrderStatus::New | OrderStatus::PartiallyFilled | OrderStatus::PendingCancel
+        )
+    }
+}
+
 /// Lookup of an order by client / `orderLinkId`.
 ///
 /// `Inconclusive` is not a rejection: the caller must keep any reservation.

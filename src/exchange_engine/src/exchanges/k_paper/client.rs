@@ -267,9 +267,26 @@ impl TradingClient<OrderRequest> for KPaperClient {
             }
         }
         match cancel_all_after_rest(rest_ok, first_err) {
-            Ok(()) => Ok(()),
-            Err(msg) => Err(EngineError::CustomError(anyhow::anyhow!(msg))),
+            Ok(()) => {}
+            Err(msg) => return Err(EngineError::CustomError(anyhow::anyhow!(msg))),
         }
+        let remaining = self.fetch_open_orders().await.map_err(|e| {
+            EngineError::CustomError(anyhow::anyhow!(
+                "CancelWorking unverified: REST GET /open_orders after cancel failed: {e}"
+            ))
+        })?;
+        let still: Vec<_> = remaining
+            .iter()
+            .filter(|order| order.instrument.pair == *pair && order.is_working())
+            .map(|order| order.order_id.as_str().to_string())
+            .collect();
+        if !still.is_empty() {
+            return Err(EngineError::CustomError(anyhow::anyhow!(
+                "CancelWorking unverified: working orders remain after cancel ({})",
+                still.join(",")
+            )));
+        }
+        Ok(())
     }
 
     async fn fetch_balance(&self) -> Result<Vec<Balance>, EngineError> {

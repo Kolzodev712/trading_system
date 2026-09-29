@@ -418,6 +418,26 @@ flatten_to_flat() {
   paper_post test/reset_lab_faults
 }
 
+operator_flatten_states() {
+  python3 - <<'PY' "${JOURNAL}"
+import json, sys
+path = sys.argv[1]
+latest = {}
+try:
+    with open(path) as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            rec = json.loads(line)
+            if rec.get("strategy_id") == "operator_flatten":
+                latest[rec["client_order_id"]] = rec.get("state")
+except FileNotFoundError:
+    pass
+print(json.dumps(latest, sort_keys=True))
+PY
+}
+
 require_log() {
   local pattern="$1"
   local file
@@ -532,6 +552,57 @@ wait_for_grpc_flat
 "${CTL[@]}" resume inc9a-resume-2
 resume_status="$("${CTL[@]}" status)"
 echo "${resume_status}"
+
+echo "== two-flatten cycle: new position, second FlattenAndPause, new client id =="
+first_flatten_states="$(operator_flatten_states)"
+echo "operator_flatten after first flatten: ${first_flatten_states}"
+python3 - <<'PY' "${first_flatten_states}"
+import json, sys
+states = json.loads(sys.argv[1])
+if not states:
+    raise SystemExit("FAILED: no operator_flatten journal row after first flatten")
+print("first flatten client ids:", ",".join(sorted(states)))
+PY
+enable_entries twoflatten
+wait_for_paper_fill
+second_pos_before="$(paper_get positions)"
+echo "paper positions before second flatten: ${second_pos_before}"
+if ! echo "${second_pos_before}" | grep -q "0.001"; then
+  echo "FAILED: second cycle did not acquire a Paper position" >&2
+  echo "${second_pos_before}" >&2
+  exit 1
+fi
+"${CTL[@]}" flatten inc9a-flatten-2
+wait_for_grpc_flat
+second_flatten_states="$(operator_flatten_states)"
+echo "operator_flatten after second flatten: ${second_flatten_states}"
+python3 - <<'PY' "${first_flatten_states}" "${second_flatten_states}" "${JOURNAL}" "${LEDGER}"
+import json, sys
+first = json.loads(sys.argv[1])
+second = json.loads(sys.argv[2])
+new = [cid for cid in second if cid not in first]
+if len(new) != 1:
+    raise SystemExit(f"FAILED: expected one new flatten client id, first={first} second={second} new={new}")
+for cid, state in first.items():
+    if second.get(cid) != "terminal":
+        raise SystemExit(f"FAILED: first flatten {cid} did not become terminal (was {state}, now {second.get(cid)})")
+if second[new[0]] not in ("acknowledged", "submitted", "terminal"):
+    raise SystemExit(f"FAILED: second flatten {new[0]} unexpected state {second[new[0]]}")
+print("second flatten client id:", new[0], "state:", second[new[0]])
+print("journal bytes", __import__("os").path.getsize(sys.argv[3]))
+print("ledger bytes", __import__("os").path.getsize(sys.argv[4]))
+PY
+echo "paper open_orders after second flatten: $(paper_get open_orders)"
+echo "paper positions after second flatten: $(paper_get positions)"
+second_latch="$("${CTL[@]}" status)"
+echo "${second_latch}"
+if ! echo "${second_latch}" | grep -q "flatten_latched=true"; then
+  echo "FAILED: second FlattenAndPause did not keep flatten_latched" >&2
+  exit 1
+fi
+"${CTL[@]}" resume inc9a-resume-two-flatten
+resume_two="$("${CTL[@]}" status)"
+echo "${resume_two}"
 
 echo "== explicit reject releases reservation =="
 flatten_to_flat reject
@@ -1039,6 +1110,86 @@ done
 if [[ "${cancelled}" -ne 1 ]]; then
   echo "FAILED: Paper still has working orders after recovered CancelWorking" >&2
   echo "orders=$(paper_get open_orders)" >&2
+  exit 1
+fi
+
+echo "== FlattenAndPause unverified when REST open_orders fails; recover after reset =="
+flatten_to_flat flattenrestfail
+"${CTL[@]}" disable "${TRADING_STRATEGY}" || true
+kill_runner
+paper_post test/reset_lab_faults
+export TRADING_TEST_CLIENT_ORDER_ID=inc9a-flatten-restfail-1
+export TRADING_TEST_LIMIT_PRICE=49000
+export TRADING_TEST_ORDER_QTY=0.002
+start_runner "${WORKDIR}/runner-flatten-restfail.log"
+enable_entries flattenrestfail
+flatten_resting=0
+for _ in $(seq 1 30); do
+  if curl -sf "${HTTP}/orders/by_client_id/inc9a-flatten-restfail-1" >/dev/null; then
+    flatten_resting=1
+    break
+  fi
+  sleep 0.5
+done
+unset TRADING_TEST_CLIENT_ORDER_ID TRADING_TEST_LIMIT_PRICE TRADING_TEST_ORDER_QTY
+if [[ "${flatten_resting}" -ne 1 ]]; then
+  echo "FAILED: FlattenAndPause rest-fail resting order was not booked" >&2
+  tail -n 40 "${WORKDIR}/runner-flatten-restfail.log" >&2
+  exit 1
+fi
+flatten_cids_before="$(operator_flatten_states)"
+paper_post test/fail_open_orders
+flatten_fail_out="$("${CTL[@]}" flatten inc9a-flatten-restfail-rpc)"
+echo "${flatten_fail_out}"
+if echo "${flatten_fail_out}" | grep -q "accepted=true"; then
+  echo "FAILED: FlattenAndPause reported success without a REST venue check" >&2
+  exit 1
+fi
+if ! echo "${flatten_fail_out}" | grep -qiE "unverified|accepted=false|state=failed"; then
+  echo "FAILED: FlattenAndPause did not report unverified/failed on REST error" >&2
+  exit 1
+fi
+flatten_fail_status="$("${CTL[@]}" status)"
+echo "${flatten_fail_status}"
+if ! echo "${flatten_fail_status}" | grep -q "flatten_latched=true"; then
+  echo "FAILED: FlattenAndPause REST failure released the flatten latch" >&2
+  exit 1
+fi
+flatten_cids_after_fail="$(operator_flatten_states)"
+python3 - <<'PY' "${flatten_cids_before}" "${flatten_cids_after_fail}"
+import json, sys
+before = json.loads(sys.argv[1])
+after = json.loads(sys.argv[2])
+new = [cid for cid in after if cid not in before]
+if new:
+    raise SystemExit(f"FAILED: FlattenAndPause minted reduce-only ids despite REST failure: {new}")
+print("no new operator_flatten client id after REST failure")
+PY
+if ! curl -sf "${HTTP}/orders/by_client_id/inc9a-flatten-restfail-1" >/dev/null; then
+  echo "FAILED: FlattenAndPause REST failure cancelled the working order without venue proof" >&2
+  exit 1
+fi
+paper_post test/reset_lab_faults
+flatten_recover_out="$("${CTL[@]}" flatten inc9a-flatten-restfail-recover)"
+echo "${flatten_recover_out}"
+flatten_recovered=0
+for _ in $(seq 1 20); do
+  if [[ "$(paper_get open_orders)" == "[]" ]]; then
+    flatten_recovered=1
+    break
+  fi
+  sleep 0.5
+done
+if [[ "${flatten_recovered}" -ne 1 ]]; then
+  echo "FAILED: FlattenAndPause did not clear Paper working orders after REST recovered" >&2
+  echo "orders=$(paper_get open_orders)" >&2
+  echo "${flatten_recover_out}" >&2
+  exit 1
+fi
+recover_status="$("${CTL[@]}" status)"
+echo "${recover_status}"
+if ! echo "${recover_status}" | grep -q "flatten_latched=true"; then
+  echo "FAILED: recovered FlattenAndPause did not keep flatten_latched" >&2
   exit 1
 fi
 

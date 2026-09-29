@@ -1356,7 +1356,7 @@ impl TradingClient<OrderRequest> for BybitClient {
             buy_leverage: leverage_str.clone(),
             sell_leverage: leverage_str,
         };
-        let ack: BybitAckResponse = self
+        let ack: BybitAckResponse = match self
             .rest_client
             .call(
                 "position/set-leverage",
@@ -1366,10 +1366,25 @@ impl TradingClient<OrderRequest> for BybitClient {
                 None,
                 true,
             )
-            .await?
-            .ok_or_else(|| {
-                EngineError::CustomError(anyhow::anyhow!("No response from set-leverage"))
-            })?;
+            .await
+        {
+            Ok(Some(ack)) => ack,
+            Err(e) if e.to_string().contains("110043") => {
+                tracing::info!("Bybit leverage already at requested value for {}", pair);
+                return Ok(LeverageInfo {
+                    pair: pair.clone(),
+                    leverage,
+                    max_leverage: leverage,
+                    last_update: chrono::Utc::now().timestamp_millis() as u64,
+                });
+            }
+            Err(e) => return Err(e),
+            Ok(None) => {
+                return Err(EngineError::CustomError(anyhow::anyhow!(
+                    "No response from set-leverage"
+                )));
+            }
+        };
         if ack.ret_code != 0 {
             return Err(EngineError::CustomError(anyhow::anyhow!(
                 "set-leverage failed: {}",
@@ -1430,7 +1445,7 @@ impl TradingClient<OrderRequest> for BybitClient {
                 .map(|pair| pair.convert_to_smolstr()),
             mode: position_mode_to_bybit(mode),
         };
-        let ack: BybitAckResponse = self
+        let ack: BybitAckResponse = match self
             .rest_client
             .call(
                 "position/switch-mode",
@@ -1440,10 +1455,20 @@ impl TradingClient<OrderRequest> for BybitClient {
                 None,
                 true,
             )
-            .await?
-            .ok_or_else(|| {
-                EngineError::CustomError(anyhow::anyhow!("No response from switch-mode"))
-            })?;
+            .await
+        {
+            Ok(Some(ack)) => ack,
+            Err(e) if e.to_string().contains("110025") => {
+                tracing::info!("Bybit position mode already at requested value");
+                return Ok(());
+            }
+            Err(e) => return Err(e),
+            Ok(None) => {
+                return Err(EngineError::CustomError(anyhow::anyhow!(
+                    "No response from switch-mode"
+                )));
+            }
+        };
         if ack.ret_code != 0 {
             return Err(EngineError::CustomError(anyhow::anyhow!(
                 "switch-mode failed: {}",

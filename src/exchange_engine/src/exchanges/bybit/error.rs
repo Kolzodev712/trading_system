@@ -107,6 +107,14 @@ pub enum BybitError {
     #[error("Cannot switch position mode with existing position (110024)")]
     CannotSwitchPositionMode,
 
+    /// Already in the requested mode. Bybit returns this instead of retCode=0.
+    #[error("Position mode is not modified (110025)")]
+    PositionModeUnchanged,
+
+    /// Already at the requested leverage. Bybit returns this instead of retCode=0.
+    #[error("Leverage not modified (110043)")]
+    LeverageUnchanged,
+
     #[error("WebSocket op type not found (10404): Category not correct/supported")]
     WsOpTypeNotFound,
 
@@ -169,6 +177,8 @@ impl BybitError {
             110013 => BybitError::CannotSetLeverageRiskLimit,
             110020 => BybitError::TooManyActiveOrders,
             110024 => BybitError::CannotSwitchPositionMode,
+            110025 => BybitError::PositionModeUnchanged,
+            110043 => BybitError::LeverageUnchanged,
             10403 => BybitError::WsIpRateLimitExceeded,
             10404 => BybitError::WsOpTypeNotFound,
             10429 => BybitError::WsRateLimit,
@@ -273,6 +283,14 @@ mod tests {
         assert_eq!(
             BybitError::from_ret_code(110001, "test"),
             BybitError::OrderNotFound
+        );
+        assert_eq!(
+            BybitError::from_ret_code(110025, "Position mode is not modified"),
+            BybitError::PositionModeUnchanged
+        );
+        assert_eq!(
+            BybitError::from_ret_code(110043, "leverage not modified"),
+            BybitError::LeverageUnchanged
         );
         assert_eq!(
             BybitError::from_ret_code(99999, "unknown"),

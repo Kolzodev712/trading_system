@@ -310,3 +310,18 @@ impl BybitHttpClient {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::exchanges::bybit::pagination::BYBIT_OPEN_ORDERS_PATH;
+    use trading_core::rest::RestExchangeHandler;
+
+    #[tokio::test]
+    async fn demo_open_orders_url_is_v5_realtime() {
+        let url = BybitHandler
+            .build_url("https://api-demo.bybit.com/v5/", BYBIT_OPEN_ORDERS_PATH)
+            .await;
+        assert_eq!(url.as_str(), "https://api-demo.bybit.com/v5/order/realtime");
+    }
+}

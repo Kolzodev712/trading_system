@@ -7,7 +7,7 @@ use super::{
     config::BybitConfig,
     pagination::{
         collect_open_order_pages, linear_list_selector, OpenOrderPageItem, OrderPage,
-        BYBIT_OPEN_ORDER_MAX_PAGES, BYBIT_OPEN_ORDER_PAGE_LIMIT,
+        BYBIT_OPEN_ORDERS_PATH, BYBIT_OPEN_ORDER_MAX_PAGES, BYBIT_OPEN_ORDER_PAGE_LIMIT,
     },
     rest::{
         client::BybitHttpClient,
@@ -246,7 +246,7 @@ impl BybitClient {
         let response: BybitOpenOrdersResponse = self
             .rest_client
             .call(
-                "order/open-order",
+                BYBIT_OPEN_ORDERS_PATH,
                 HttpMethod::GET,
                 Some(params),
                 None,
@@ -255,7 +255,9 @@ impl BybitClient {
             )
             .await?
             .ok_or_else(|| {
-                EngineError::CustomError(anyhow::anyhow!("No response from open-order"))
+                EngineError::CustomError(anyhow::anyhow!(
+                    "No response from {BYBIT_OPEN_ORDERS_PATH}"
+                ))
             })?;
 
         if response.ret_code != 0 {
@@ -392,7 +394,7 @@ impl TradingClient<OrderRequest> for BybitClient {
         let response: BybitOpenOrdersResponse = self
             .rest_client
             .call(
-                "order/open-order",
+                BYBIT_OPEN_ORDERS_PATH,
                 HttpMethod::GET,
                 Some(params),
                 None,
@@ -671,7 +673,7 @@ impl TradingClient<OrderRequest> for BybitClient {
         client_order_id: &str,
     ) -> Result<ClientOrderLookup, EngineError> {
         if let Some(orders) = self
-            .lookup_orders_by_link_id("order/open-order", client_order_id)
+            .lookup_orders_by_link_id(BYBIT_OPEN_ORDERS_PATH, client_order_id)
             .await?
         {
             if let Some(order) = orders.into_iter().next() {

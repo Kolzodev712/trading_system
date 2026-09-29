@@ -88,6 +88,52 @@ cat > "${WORKDIR}/strategies.json" <<'EOF'
 }
 EOF
 
+# Envoy Lua reads this bind mount as a non-root worker. Grant that uid read via ACL
+# (or the file's group). Do not chmod 0644 / other-readable.
+envoy_proxy_uid() {
+  local pid user uid
+  if [[ -n "${INC10_ENVOY_UID:-}" ]]; then
+    printf '%s\n' "${INC10_ENVOY_UID}"
+    return 0
+  fi
+  pid="$(docker inspect docker-grpc-web-proxy-1 --format '{{.State.Pid}}' 2>/dev/null || true)"
+  if [[ -n "${pid}" && "${pid}" != "0" && -r "/proc/${pid}/status" ]]; then
+    uid="$(awk '/^Uid:/{print $2}' "/proc/${pid}/status")"
+    if [[ -n "${uid}" ]]; then
+      printf '%s\n' "${uid}"
+      return 0
+    fi
+  fi
+  user="$(docker image inspect envoyproxy/envoy:v1.31-latest --format '{{.Config.User}}' 2>/dev/null || true)"
+  user="${user%%:*}"
+  if [[ "${user}" =~ ^[0-9]+$ ]]; then
+    printf '%s\n' "${user}"
+    return 0
+  fi
+  # Official envoy image USER envoy is uid 101.
+  printf '101\n'
+}
+
+restrict_operator_token_file() {
+  local path="$1"
+  local uid
+  chmod 600 "${path}"
+  uid="$(envoy_proxy_uid)"
+  if command -v setfacl >/dev/null 2>&1; then
+    if setfacl -m "u:${uid}:r" "${path}"; then
+      echo "operator token mode=0600 ACL u:${uid}:r (not world-readable)"
+      return 0
+    fi
+  fi
+  if chgrp "${uid}" "${path}" 2>/dev/null && chmod 640 "${path}"; then
+    echo "operator token mode=0640 group=${uid} (not world-readable)"
+    return 0
+  fi
+  echo "FAILED: cannot grant Envoy uid ${uid} read on ${path} without world-readable bits" >&2
+  echo "Set INC10_ENVOY_UID or install setfacl (acl package)." >&2
+  exit 1
+}
+
 if [[ -z "${TRADING_OPERATOR_TOKEN:-}" && -f "${TOKEN_FILE}" ]]; then
   TRADING_OPERATOR_TOKEN="$(head -n1 "${TOKEN_FILE}")"
 fi
@@ -96,8 +142,7 @@ if [[ -z "${TRADING_OPERATOR_TOKEN:-}" ]]; then
 fi
 export TRADING_OPERATOR_TOKEN
 printf '%s\n' "${TRADING_OPERATOR_TOKEN}" > "${TOKEN_FILE}"
-# Envoy Lua reads this via a bind mount; 0644 lets the proxy worker open it.
-chmod 644 "${TOKEN_FILE}"
+restrict_operator_token_file "${TOKEN_FILE}"
 echo "operator token file=${TOKEN_FILE} (not printed); Envoy: TRADING_OPERATOR_TOKEN_FILE=${TOKEN_FILE}"
 
 CTL=(cargo run -q -p cli --bin grpc_ctl --)
@@ -174,6 +219,30 @@ require_status() {
   fi
 }
 
+require_open_order_rest_ok() {
+  local log="$1"
+  local i
+  for i in $(seq 1 40); do
+    if grep -q "Bootstrap: Replaced open orders from REST" "${log}"; then
+      break
+    fi
+    sleep 0.25
+  done
+  if ! grep -q "Bootstrap: Replaced open orders from REST" "${log}"; then
+    echo "FAILED: runner did not complete REST open-order bootstrap (${log})" >&2
+    tail -n 80 "${log}" >&2
+    exit 1
+  fi
+  # One exchange-level recon interval (script sets 5000ms) plus bootstrap.
+  sleep 6
+  if grep -qE 'Failed to fetch open orders|Invalid path or category mismatch|order/open-order' "${log}"; then
+    echo "FAILED: runner open-order REST still failing (${log})" >&2
+    grep -E 'Failed to fetch open orders|Invalid path|order/open-order|Replaced open orders' "${log}" | tail -n 20 >&2
+    exit 1
+  fi
+  echo "runner open-order REST ok ($(grep -c 'Bootstrap: Replaced open orders from REST' "${log}") bootstrap; no 404/open-order path)"
+}
+
 preserve_snapshot_copy() {
   if [[ -f "${SNAPSHOT_SRC}" ]]; then
     cp -a "${SNAPSHOT_SRC}" "${WORKDIR}/runtime-snapshot.json"
@@ -189,6 +258,7 @@ compare_demo_account() {
   local status="$2"
   python3 - "${WORKDIR}/bot.json" "${status}" "${WORKDIR}/venue_${tag}.json" <<'PY'
 import hashlib, hmac, json, re, sys, time, urllib.parse, urllib.request
+from decimal import Decimal, InvalidOperation
 
 bot_path, status, out_path = sys.argv[1:4]
 bot = json.loads(open(bot_path).read())
@@ -222,11 +292,41 @@ def signed_get(path, params):
 
 pos = signed_get("/v5/position/list", {"category": "linear", "symbol": "BTCUSDT"})
 orders = signed_get("/v5/order/realtime", {"category": "linear", "symbol": "BTCUSDT"})
-pos_rows = [
-    p
-    for p in pos.get("list") or []
-    if str(p.get("size", "0")) not in ("0", "0.0", "")
-]
+
+
+def qty_norm(value):
+    try:
+        return Decimal(str(value if value is not None else "0"))
+    except (InvalidOperation, ValueError):
+        return Decimal("0")
+
+
+def side_norm(value):
+    s = str(value or "").strip().lower()
+    if s in ("buy", "long"):
+        return "buy"
+    if s in ("sell", "short"):
+        return "sell"
+    return s
+
+
+def symbol_norm(value):
+    return str(value or "").replace("/", "").replace("-", "").upper()
+
+
+venue_positions = []
+for p in pos.get("list") or []:
+    qty = qty_norm(p.get("size") or "0")
+    if qty == 0:
+        continue
+    venue_positions.append(
+        {
+            "symbol": symbol_norm(p.get("symbol")),
+            "side": side_norm(p.get("side")),
+            "qty": str(qty),
+        }
+    )
+venue_positions.sort(key=lambda r: (r["symbol"], r["side"], r["qty"]))
 order_rows = orders.get("list") or []
 grpc_orders = 0
 m = re.search(r"orders=(\d+)", status)
@@ -236,48 +336,105 @@ grpc_pos_n = 0
 m = re.search(r"positions=(\d+)", status)
 if m:
     grpc_pos_n = int(m.group(1))
-# strategy line pos=0 or pos=0.001
 strat_pos = "0"
-m = re.search(r"strategy .* pos=([0-9.]+)", status)
+m = re.search(r"strategy .* pos=([0-9.-]+)", status)
 if m:
     strat_pos = m.group(1)
+grpc_positions = []
+for m in re.finditer(
+    r"position (\S+) qty=([0-9.-]+) side=(\S+)",
+    status,
+):
+    qty = qty_norm(m.group(2))
+    if qty == 0:
+        continue
+    grpc_positions.append(
+        {
+            "symbol": symbol_norm(m.group(1)),
+            "side": side_norm(m.group(3)),
+            "qty": str(qty),
+        }
+    )
+grpc_positions.sort(key=lambda r: (r["symbol"], r["side"], r["qty"]))
 venue = {
-    "demo_positions_nonzero": len(pos_rows),
+    "demo_positions": venue_positions,
     "demo_open_orders": len(order_rows),
     "grpc_orders": grpc_orders,
-    "grpc_positions": grpc_pos_n,
+    "grpc_positions_n": grpc_pos_n,
+    "grpc_positions": grpc_positions,
     "grpc_strategy_pos": strat_pos,
 }
 open(out_path, "w").write(json.dumps(venue, indent=2) + "\n")
 print(
-    f"independent demo REST: open_orders={len(order_rows)} nonzero_positions={len(pos_rows)} "
-    f"grpc orders={grpc_orders} positions={grpc_pos_n} strategy_pos={strat_pos}"
+    f"independent demo REST: open_orders={len(order_rows)} positions={venue_positions} "
+    f"grpc orders={grpc_orders} positions={grpc_positions} strategy_pos={strat_pos}"
 )
 if len(order_rows) != grpc_orders:
     raise SystemExit(
         f"FAILED: demo REST open orders {len(order_rows)} != grpc orders={grpc_orders}"
     )
-venue_flat = len(pos_rows) == 0
-grpc_flat = grpc_pos_n == 0 and strat_pos in ("0", "0.0", "0.000")
-if venue_flat != grpc_flat:
+
+
+def pos_key(row):
+    return (row["symbol"], row["side"], qty_norm(row["qty"]))
+
+
+if [pos_key(r) for r in venue_positions] != [pos_key(r) for r in grpc_positions]:
     raise SystemExit(
-        f"FAILED: demo REST nonzero positions {len(pos_rows)} vs grpc positions={grpc_pos_n} pos={strat_pos}"
+        f"FAILED: demo REST positions {venue_positions} != grpc positions {grpc_positions}"
+    )
+if len(venue_positions) != grpc_pos_n:
+    raise SystemExit(
+        f"FAILED: demo REST position count {len(venue_positions)} != grpc positions={grpc_pos_n}"
+    )
+net = Decimal("0")
+for row in venue_positions:
+    q = qty_norm(row["qty"])
+    net += q if row["side"] == "buy" else -q
+if qty_norm(strat_pos) != net:
+    raise SystemExit(
+        f"FAILED: strategy pos={strat_pos} != demo REST net qty {net}"
     )
 PY
 }
 
 end_measured_run() {
   echo "== end measured run: pause, resolve working, record reconciled state =="
-  "${CTL[@]}" pause "inc10-end-pause" || true
-  "${CTL[@]}" cancel "inc10-end-cancel" || true
-  local i status
+  local pause_out cancel_out
+  set +e
+  pause_out="$("${CTL[@]}" pause "inc10-end-pause" 2>&1)"
+  local pause_rc=$?
+  set -e
+  echo "${pause_out}"
+  if [[ "${pause_rc}" -ne 0 ]]; then
+    echo "FAILED: PauseEntries RPC failed (rc=${pause_rc})" >&2
+    exit 1
+  fi
+  require_status 'accepted=true' "${pause_out}"
+  set +e
+  cancel_out="$("${CTL[@]}" cancel "inc10-end-cancel" 2>&1)"
+  local cancel_rc=$?
+  set -e
+  echo "${cancel_out}"
+  if [[ "${cancel_rc}" -ne 0 ]]; then
+    echo "FAILED: CancelWorking RPC failed (rc=${cancel_rc})" >&2
+    exit 1
+  fi
+  require_status 'accepted=true' "${cancel_out}"
+  local i status resolved=0
   for i in $(seq 1 40); do
     status="$("${CTL[@]}" status)"
     if echo "${status}" | grep -q "orders=0"; then
+      resolved=1
       break
     fi
     sleep 0.5
   done
+  if [[ "${resolved}" -ne 1 ]]; then
+    echo "FAILED: working orders still present after CancelWorking" >&2
+    echo "${status}" >&2
+    exit 1
+  fi
   sleep 2
   status="$("${CTL[@]}" status | tee "${WORKDIR}/grpc_status_end.txt")"
   echo "${status}"
@@ -335,6 +492,9 @@ fi
 grep -E 'Bybit position mode|one-way|REST|private|gRPC server|entries start paused' "${LOG}" | tail -n 30 \
   | tee "${WORKDIR}/connectivity_snippets.txt" || true
 
+echo "== runner paused REST open-order reconciliation =="
+require_open_order_rest_ok "${LOG}"
+
 echo "== independent demo account vs runner (paused) =="
 compare_demo_account paused "${status}"
 
@@ -376,11 +536,12 @@ if grep -qE 'Bybit demo mode: placing order via REST' "${WORKDIR}/runner-restart
   echo "FAILED: relaunched paused runner placed an order" >&2
   exit 1
 fi
+require_open_order_rest_ok "${WORKDIR}/runner-restart.log"
 compare_demo_account restart "${status}"
 preserve_snapshot_copy
 
 echo "${status}"
-echo "inc10 paused-path checks passed (connectivity, auth, restart, independent REST)."
+echo "inc10 paused-path checks passed (connectivity, auth, runner REST recon, restart, independent REST)."
 echo "workdir=${WORKDIR}"
 echo "journal=${JOURNAL} ledger=${LEDGER} snapshot=${SNAPSHOT_SRC}"
 

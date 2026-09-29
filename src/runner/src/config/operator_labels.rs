@@ -22,6 +22,23 @@ pub fn execution_status_from_bot(bot: &BotConfig) -> (ExecutionMode, String, Str
     )
 }
 
+/// Increment 10: Bybit Exchange is demo-only. Paper Exchange remains the lab.
+pub fn exchange_live_is_authorized(
+    execution_mode: ExecutionMode,
+    venue: &str,
+    environment: &str,
+) -> Result<(), String> {
+    if execution_mode != ExecutionMode::Exchange {
+        return Ok(());
+    }
+    if venue.eq_ignore_ascii_case("BYBIT") && !environment.eq_ignore_ascii_case("DEMO") {
+        return Err(
+            "Bybit Exchange is Increment 10 demo-only; MAINNET/TESTNET are not authorized".into(),
+        );
+    }
+    Ok(())
+}
+
 pub fn venue_label(exchange: &Exchange) -> String {
     match exchange {
         Exchange::Bybit => "BYBIT",
@@ -99,6 +116,16 @@ mod tests {
             environment_label(&Exchange::Bybit, &json!({"demo": true})),
             "DEMO"
         );
+    }
+
+    #[test]
+    fn bybit_exchange_allows_demo_rejects_mainnet() {
+        use trading_core::types::ExecutionMode;
+        assert!(exchange_live_is_authorized(ExecutionMode::Exchange, "BYBIT", "DEMO").is_ok());
+        assert!(exchange_live_is_authorized(ExecutionMode::Shadow, "BYBIT", "MAINNET").is_ok());
+        assert!(exchange_live_is_authorized(ExecutionMode::Exchange, "PAPER", "LOCAL").is_ok());
+        assert!(exchange_live_is_authorized(ExecutionMode::Exchange, "BYBIT", "MAINNET").is_err());
+        assert!(exchange_live_is_authorized(ExecutionMode::Exchange, "BYBIT", "TESTNET").is_err());
     }
 
     #[test]

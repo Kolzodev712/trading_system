@@ -17,6 +17,7 @@ LEDGER="${WORKDIR}/execution-ledger.jsonl"
 export TRADING_STRATEGY="${TRADING_STRATEGY:-BTCPriceMALongFlatV1}"
 export TRADING_SYMBOL="${TRADING_SYMBOL:-BTC/USDT}"
 export TRADING_GRPC="${TRADING_GRPC:-http://127.0.0.1:50051}"
+export TRACE_JAEGER_DISABLED="${TRACE_JAEGER_DISABLED:-1}"
 
 mkdir -p "${WORKDIR}"
 rm -f "${WORKDIR}"/runner*.log "${PAPER_LOG}" "${JOURNAL}" "${LEDGER}"
@@ -86,12 +87,27 @@ cleanup() {
     echo "INC9A_KEEP=1: leaving Paper pid=${PAPER_PID:-} runner pid=${RUNNER_PID:-}"
     return 0
   fi
-  if [[ -n "${RUNNER_PID:-}" ]] && kill -0 "${RUNNER_PID}" 2>/dev/null; then
-    kill -KILL "${RUNNER_PID}" 2>/dev/null || true
+  if declare -F kill_runner >/dev/null; then
+    kill_runner
   fi
-  if [[ -n "${PAPER_PID:-}" ]] && kill -0 "${PAPER_PID}" 2>/dev/null; then
-    kill -TERM "${PAPER_PID}" 2>/dev/null || true
+  if [[ -n "${PAPER_PID:-}" ]]; then
+    local stack pid children=""
+    stack="${PAPER_PID}"
+    while [[ -n "${stack}" ]]; do
+      set -- ${stack}
+      pid="$1"
+      shift || true
+      stack="${*:-}"
+      for c in $(pgrep -P "${pid}" 2>/dev/null || true); do
+        stack="${stack} ${c}"
+      done
+      children="${children} ${pid}"
+    done
+    # shellcheck disable=SC2086
+    kill -TERM ${children} 2>/dev/null || true
   fi
+  PAPER_PID=""
+  pkill -TERM -f '/paper-exchange-server' 2>/dev/null || true
 }
 trap cleanup EXIT
 
@@ -222,15 +238,38 @@ start_paper() {
 }
 
 kill_runner() {
-  if [[ -n "${RUNNER_PID:-}" ]] && kill -0 "${RUNNER_PID}" 2>/dev/null; then
-    kill -KILL "${RUNNER_PID}" 2>/dev/null || true
+  # cargo run is not the binary; SIGKILL on the cargo pid leaves btc_price_ma_app
+  # bound to Paper and 50051 (two runners consume one-shot lab faults).
+  if [[ -n "${RUNNER_PID:-}" ]]; then
+    local stack pid children=""
+    stack="${RUNNER_PID}"
+    while [[ -n "${stack}" ]]; do
+      set -- ${stack}
+      pid="$1"
+      shift || true
+      stack="${*:-}"
+      for c in $(pgrep -P "${pid}" 2>/dev/null || true); do
+        stack="${stack} ${c}"
+      done
+      children="${children} ${pid}"
+    done
+    # shellcheck disable=SC2086
+    kill -KILL ${children} 2>/dev/null || true
     wait "${RUNNER_PID}" 2>/dev/null || true
   fi
   RUNNER_PID=""
+  pkill -KILL -f '/btc_price_ma_app ' 2>/dev/null || true
   if command -v fuser >/dev/null 2>&1; then
     fuser -k 50051/tcp 2>/dev/null || true
-    sleep 1
   fi
+  local _i
+  for _i in $(seq 1 20); do
+    if ! fuser 50051/tcp >/dev/null 2>&1; then
+      break
+    fi
+    fuser -k 50051/tcp 2>/dev/null || true
+    sleep 0.25
+  done
 }
 
 compact_resolved_journal() {
@@ -866,7 +905,10 @@ paper_post test/reset_lab_faults
 export TRADING_TEST_CLIENT_ORDER_ID=inc9a-race-1
 export TRADING_TEST_LIMIT_PRICE=49000
 export TRADING_TEST_ORDER_QTY=0.002
+export TRADING_TEST_FORCE_PLACE=1
+export TRADING_TEST_HOLD_INTENTS=1
 start_runner "${WORKDIR}/runner-race.log"
+unset TRADING_TEST_FORCE_PLACE TRADING_TEST_HOLD_INTENTS
 enable_entries race
 resting=0
 for _ in $(seq 1 30); do

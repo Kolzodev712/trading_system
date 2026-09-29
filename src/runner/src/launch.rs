@@ -85,6 +85,13 @@ pub async fn launch(
             jaeger.agent_endpoint = endpoint;
         }
     }
+    // opentelemetry-jaeger 0.20 panics on current tokio when installing the UDP agent
+    // (`tokio_allow_from_blocking_fd`). Lab scripts set TRACE_JAEGER_DISABLED=1.
+    if std::env::var("TRACE_JAEGER_DISABLED").ok().as_deref() == Some("1") {
+        if let Some(ref mut jaeger) = exporters.jaeger {
+            jaeger.enabled = false;
+        }
+    }
     let tracing_handles = match trading_trace::init_exporters(
         &exporters,
         "trading-system",

@@ -1,6 +1,6 @@
 # Prop Trading Productionization and Research Architecture Plan
 
-**Status:** Increments 0–9A are accepted locally as a Paper qualification. Increment 10 remains open. The 300s Demo Resume produced no orders because Hold was stale. The Hold fixture is diagnostic only. A paused Demo run of the reviewed fresh-entry fixture showed a fresh Hold gate and independently flat account; it did not Resume or place orders. Candidate #2 remains an operational baseline, not validated alpha.  
+**Status:** Increments 0–9A are accepted locally as a Paper qualification. Increment 10 remains open pending owner review of the bounded Demo measured-run evidence. One 300s Bybit Demo Resume with the reviewed fresh-entry fixture placed and flattened 0.001 BTC; that is an operational Demo test with a synthetic signal, not validated alpha.  
 **Date:** 2026-09-28  
 **Repository:** `trading_system`  
 **Audience:** Cursor / implementation agent / repository owner  
@@ -2565,6 +2565,8 @@ Do not promote to mainnet automatically.
 
 **Five-minute procedure fixture opt-in (script fix, not a new increment; Resume not approved):** `scripts/inc10_bybit_demo.sh` `INC10_FRESH_ENTRY_FIXTURE=1` loads only the reviewed candles on the real clock and keeps 0.001 BTC / one-order / verified-flat / five-minute measured checks. Without the opt-in, fixture env is still rejected. `INC10_ENABLE` remains the Resume gate. Paused test `INC10_FRESH_ENTRY_FIXTURE=1` `INC10_ENABLE` unset (workdir `/tmp/inc10-bybit-demo-fresh-optin`): `synthetic_candle_fixture=true`, `fresh_entry_eligible=true` `entry_freshness=fresh` age 44021s (restart 44040s), independently flat, no orders, no Resume.
 
+**Bounded measured Resume (2026-09-29T12:21:54Z UTC; Increment 10 still open pending evidence review):** Owner-authorized one-shot. Runner `e923fa8`, UI `923dd30`, k-paper `6d03acc`. `INC10_FRESH_ENTRY_FIXTURE=1` `INC10_ENABLE=1` `INC10_MEASURE_SECS=300`, workdir `/tmp/inc10-bybit-demo-measured-e923fa8`. Preflight: synthetic fixture on BYBIT DEMO exchange, Hold gate fresh (age 44513s), independently flat, then Resume `accepted=true`. Live book. Buy 0.001 BTCUSDT linear: journal `bd235f19-…` prepared→submitted (5ms)→acknowledged (403ms submit-to-ack) at px 84182.1; ledger fill `order_id=4fd15467-…` qty 0.001 px 84175.3 fee 0.04629642 USDT; exchange_ts 12:21:54.563Z receive_ts 12:21:54.653Z (**90ms**). REST place logged `Bybit demo mode: placing order via REST`. During measure: `pos=0.001` `orders=0/1` `filled_position=0.001`, bound held. End: PauseEntries → CancelWorking (0) → FlattenAndPause `in_progress` (RPC success not treated as flat; open `BTC/USDT` then sell fill). Flatten ledger fill `order_id=64eb5576-…` Sell 0.001 px 84167.4 fee 0.04629207 USDT; exchange_ts 12:27:06.813Z receive_ts 12:27:06.903Z (**90ms**). Independent Demo REST and runner flat. No open-order REST failures. Journal records the entry path only; both fills are in the ledger. Do not automatically rerun. Do not promote to mainnet. Candidate #2 remains an operational baseline, not validated alpha.
+
 Stop and report a demo readiness report.
 
 ---
@@ -2586,7 +2588,7 @@ Do not implement Candidate #3's trading rule until a separate strategy research 
 
 # 67. Current Cursor instruction
 
-The Increment 9A Paper qualification is **accepted locally** (`trading_system` `9dab54e`, k-paper `590f3ad` / `6d03acc`, UI `10496e7`) on source review plus the reported matrix exit; the lab was not rerun in that review. Increment 10 paused-demo qualification is at `c6b24da`. A 300s Demo Resume at `1e0291f` + procedure `c6b24da` (`2026-09-29T10:18:23Z`) produced no orders; Hold was stale (last flat-to-long age 901103s). The Hold fixture is diagnostic only. A paused Demo run of the reviewed fresh-entry fixture (`scripts/inc10_demo_fresh_entry_paused.sh`, evidence `/tmp/inc10-demo-fresh-entry-paused`) showed a fresh Hold gate on a flat account; it did not Resume or place orders. UI Hold-gate pin `923dd30`. Resume is not approved. Candidate #2 remains an operational baseline, not validated alpha. The accepted 5B connectivity record remains `trading_system` `043ca64523f42212cd8a2616ba6201d61d7c878a` (evidence `1f00fdc80f7bbbb39b836da9445e041eb18e6c77`).
+The Increment 9A Paper qualification is **accepted locally** (`trading_system` `9dab54e`, k-paper `590f3ad` / `6d03acc`, UI `10496e7`) on source review plus the reported matrix exit; the lab was not rerun in that review. Increment 10 paused-demo qualification is at `c6b24da`. A 300s Demo Resume at `1e0291f` (`2026-09-29T10:18:23Z`) produced no orders because Hold was stale. A later owner-authorized 300s Resume at `e923fa8` (`2026-09-29T12:21:54Z`, `INC10_FRESH_ENTRY_FIXTURE=1`) placed and flattened 0.001 BTC on Bybit Demo with journal, ledger, recon, and fill-latency evidence in `/tmp/inc10-bybit-demo-measured-e923fa8`. That is an operational Demo test with a synthetic signal. Increment 10 remains open pending owner review of that evidence. Do not rerun. Do not promote to mainnet. UI Hold-gate pin `923dd30`. Candidate #2 remains an operational baseline, not validated alpha. The accepted 5B connectivity record remains `trading_system` `043ca64523f42212cd8a2616ba6201d61d7c878a` (evidence `1f00fdc80f7bbbb39b836da9445e041eb18e6c77`).
 
 | Increment | Status | Gate |
 | --- | --- | --- |
@@ -2599,9 +2601,9 @@ The Increment 9A Paper qualification is **accepted locally** (`trading_system` `
 | 8 | Accepted locally | Explicit Exchange risk, prospective effective exposure, PauseEntries/CancelWorking/FlattenAndPause/Resume, operator token on mutating RPCs, UI confirmation does not treat flatten RPC as flat |
 | 9 | Accepted locally | Durable execution ledger, fees/funding/weighted PnL, restart replay, daily-loss from ledger or fail-closed if configured without it, UI simulation label for Paper |
 | 9A | Accepted locally as Paper qualification | Section 49 rows through C2→Paper; frozen N=28 adapter comparison; grpc and browser CancelWorking; source review of `9dab54e` |
-| 10 | Paused-demo recorded; Increment 10 still open | 300s Resume had no orders because Hold was stale. Hold fixture is diagnostic only. Paused fresh-entry fixture run showed eligible/fresh on a flat Demo account; no Resume and no orders. Complete only after orders, fills, journal, ledger, recon, and latency are reviewed |
+| 10 | Measured Demo Resume recorded; Increment 10 still open | Owner-authorized 300s fixture Resume at `e923fa8` placed and flattened 0.001 BTC. Evidence `/tmp/inc10-bybit-demo-measured-e923fa8` is for review. Not validated alpha. Do not rerun. Do not mainnet |
 
-Cursor: Keep Candidate #2 paused on Bybit Demo. Do not Resume until explicit owner approval. `INC10_FRESH_ENTRY_FIXTURE=1` on `scripts/inc10_bybit_demo.sh` is the opt-in that carries the reviewed fresh signal into the five-minute measured path; that path was tested paused only. The fixture becomes stale at 2026-09-30T00:00:00Z. Increment 10 remains open. Do not treat Candidate #2 as validated alpha.
+Cursor: Do not Resume again. Do not rerun the measured Demo path. Do not promote to mainnet. Increment 10 remains open pending owner review of `/tmp/inc10-bybit-demo-measured-e923fa8`. Candidate #2 remains an operational baseline, not validated alpha.
 
 ---
 

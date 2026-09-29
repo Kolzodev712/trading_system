@@ -3,7 +3,7 @@
 **Version**: 0.1  
 **Last Updated**: 2026-09-29
 
-The Runner is the application orchestrator that initializes services, wires them together, and exposes gRPC via the gateway crate. Zenoh event/command export is **opt-in** (`ZENOH_ENABLED=1`); leave it unset on Paper/Demo qualification paths. Candidate #2 uses `btc_price_ma_app`, not the default `runner` binary. Current system status: [docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md).
+The Runner is the application orchestrator that initializes services, wires them together, and exposes gRPC via the gateway crate. Zenoh event/command export is **opt-in** (`ZENOH_ENABLED=1`); leave it unset unless you need that data plane. Candidate #2 uses `btc_price_ma_app`, not the default `runner` binary. Current architecture: [docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md).
 
 ## Key Principles
 
@@ -170,7 +170,7 @@ main.rs
 ### External
 
 - **gRPC**: Provided by the gateway crate; runner spawns the server. `trading-system-ui` (gRPC-Web via Envoy) and the legacy TUI are clients.
-- **Zenoh**: Opt-in (`ZENOH_ENABLED=1`). Events (hot/cold) published; commands via queryable. Not required for Paper/Demo qualification.
+- **Zenoh**: Opt-in (`ZENOH_ENABLED=1`). Events (hot/cold) published; commands via queryable. Not required for Paper or Demo labs.
 - **MongoDB**: Configuration persistence.
 
 ## Configuration

@@ -7,9 +7,9 @@
 
 A modular, exchange-agnostic trading system built in Rust with support for real-time market data, order execution, level-based trading, and strategy-based trading.
 
-**Current architecture:** [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) (narrative: [docs/Trading-System-Analysis.txt](docs/Trading-System-Analysis.txt)). Increment record: [docs/PROP_TRADING_RESEARCH_AND_PRODUCTION_PLAN.md](docs/PROP_TRADING_RESEARCH_AND_PRODUCTION_PLAN.md).
+**Current architecture:** [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) (narrative: [docs/Trading-System-Analysis.txt](docs/Trading-System-Analysis.txt)). Increment status and next gates: [docs/PROGRESSION.md](docs/PROGRESSION.md).
 
-Decoupling, the three-repository split, Paper qualification (Increment 9A), and bounded Bybit Demo qualification (Increment 10, synthetic signal) are complete at that stated scope. Operator flatten durability is implemented after that Demo gate. The system is **not** production complete and **not** mainnet ready. Candidate #2 is an operational baseline, not validated alpha.
+The system is **not** production complete and **not** mainnet ready. Candidate #2 is an operational baseline, not validated alpha.
 
 ## Table of Contents
 
@@ -821,7 +821,7 @@ export MONGODB_URI=mongodb://localhost:27017
 
 For the existing **Spot/levels Paper smoke test** with K-paper, the runner and legacy TUI, see the [local dev guide](docs/LOCAL_DEV_GUIDE.md).
 
-For the current architecture (decoupling, three repos, Paper, Demo, open items), start with [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). The increment record is [Prop Trading Productionization and Research Architecture Plan](docs/PROP_TRADING_RESEARCH_AND_PRODUCTION_PLAN.md). The old TUI is not the planned operator control layer.
+Architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Progression: [docs/PROGRESSION.md](docs/PROGRESSION.md). The browser UI is the operator console; the TUI is a separate gRPC client.
 
 ### Pre-Flight Checks
 
@@ -1394,7 +1394,7 @@ RUST_LOG=debug cargo run --package runner
 
 ## Architecture Documentation
 
-**Current:** [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) · [docs/Trading-System-Analysis.txt](docs/Trading-System-Analysis.txt) · [architecture/README.md](architecture/README.md)
+**Current:** [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) · [docs/PROGRESSION.md](docs/PROGRESSION.md) · [docs/Trading-System-Analysis.txt](docs/Trading-System-Analysis.txt) · [architecture/README.md](architecture/README.md)
 
 Older Structurizr/engine diagrams below are in-process views and are not a production or mainnet status.
 
@@ -1427,8 +1427,8 @@ For detailed architecture information, see the [architecture/](architecture/) di
   - See [Trading Trace Library README](libs/trading_trace/README.md) for complete documentation
 - **[Live Config Service](architecture/07-live-config-service.md)**: Runtime configuration updates
 - **[Runner](architecture/08-runner.md)**: Application orchestrator
-- **[TUI CLI](architecture/09-tui-cli.md)**: Legacy terminal client (not the planned operator layer)
-- **[Architecture README](architecture/README.md)**: Engine-level docs; current status is [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+- **[TUI CLI](architecture/09-tui-cli.md)**: Legacy terminal gRPC client (browser operator console is `trading-system-ui`)
+- **[Architecture README](architecture/README.md)**: Engine-level docs; current system is [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md); progression is [docs/PROGRESSION.md](docs/PROGRESSION.md)
 
 ## Authors
 

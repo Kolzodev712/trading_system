@@ -2,7 +2,7 @@
 
 **Version**: 0.1  
 **Last Updated**: 2026-09-29  
-**Status:** Legacy terminal client. The planned operator layer is `trading-system-ui`. Current architecture: [docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md).
+**Status:** Legacy terminal gRPC client. The browser operator console is `trading-system-ui`. Current architecture: [docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md).
 
 ## Overview
 
@@ -10,7 +10,7 @@ The TUI (Terminal User Interface) CLI is an external process that provides a ter
 
 ## Key Principle
 
-The TUI is **a** gRPC client, not the planned operator control layer and not exchange authority.
+The TUI is **a** gRPC client. It is not exchange authority; the browser UI is the operator console.
 
 ## Architecture
 

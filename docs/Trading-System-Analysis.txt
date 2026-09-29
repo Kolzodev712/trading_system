@@ -1,16 +1,16 @@
 Trading System — current architecture analysis
-As of 2026-09-29 (Increment 10 accepted)
+As of 2026-09-29
 
 This file supersedes older Trading-System-Analysis drafts. Those described a single in-process
-monolith with TUI-first control, strategy logic mixed into trading_engine, and no accepted
-Paper/Demo qualifications. Do not treat an older copy as current.
+monolith with TUI-first control, strategy logic mixed into trading_engine, and no separate
+Paper/Demo venues. Do not treat an older copy as current.
 
 Canonical markdown: docs/ARCHITECTURE.md
-Increment record: docs/PROP_TRADING_RESEARCH_AND_PRODUCTION_PLAN.md (sections 6, 65, 67)
+Progression (increments, open work, next gates): docs/PROGRESSION.md
 
 
-WHAT IS COMPLETE (stated scope only)
-------------------------------------
+WHAT THIS SYSTEM IS
+-------------------
 The architectural refactor is implemented: pure strategy, historical research, and live
 execution are separate crates. Candidate #2 is composed in-process by btc_price_ma_app; the
 generic runner and trading_engine do not depend on strategy_core or research crates.
@@ -20,34 +20,20 @@ Three git repositories have distinct roles:
   k-paper            — local Paper exchange / deterministic fault lab
   trading-system-ui  — browser operator UI (not exchange authority)
 
-Increment 9A is accepted locally as a Paper qualification (C2→Paper, frozen N=28, CancelWorking).
-Increment 10 is accepted as bounded Bybit Demo operational qualification: independently flat
-before enablement; one 0.001 BTC buy and one 0.001 BTC reduce-only sell matching ledger and
-Demo history; journal entry path on the buy; ended flat, entries paused, flatten latch held.
-Evidence: docs/inc10-evidence-measured-e923fa8/ (commit 042eac9). No further Demo run is
-needed to bring the docs up to date.
+k-paper is the local futures/fault laboratory. Bybit Demo is a bounded operational lab,
+not mainnet. Flatten RPC success is not treated as flat.
 
-The Demo run used a synthetic fresh-entry fixture. That is execution qualification, not
-strategy validation.
+The system is not production complete and is not mainnet ready. Candidate #2 is an
+operational baseline, not validated alpha.
 
 
-WHAT IS NOT COMPLETE
---------------------
-The system is not production complete and is not mainnet ready.
-
-Operator flatten (after Increment 10): one journaled reduce-only path in
-trading_engine (not trading_core). FlattenAndPause, restart flatten,
-TRADING_FLATTEN, and the former gRPC TSM fallback persist client ID and
-operator_flatten intent before send; recover by client ID and venue
-position before retry. FlattenAndPause reports CancelWorking unverified
-(including failed /open_orders), keeps the latch held, and does not send
-reduce-only.
-
-Explicitly open:
-  1. Validate Candidate #2 as a strategy (Demo tested execution with a synthetic signal).
-  2. Any separate mainnet readiness and approval work.
-
-Increment 11 (research-framework cleanup for Candidate #3) is not started until asked.
+OPERATOR FLATTEN
+----------------
+One journaled reduce-only path in trading_engine (not trading_core). FlattenAndPause,
+restart flatten, TRADING_FLATTEN, and the former gRPC TSM fallback persist client ID and
+operator_flatten intent before send; recover by client ID. Acknowledged becomes Terminal
+after a verified fill or flat venue. FlattenAndPause reports CancelWorking unverified
+(including failed /open_orders), keeps the latch held, and does not send reduce-only.
 
 
 DECOUPLING (implemented)
@@ -60,8 +46,7 @@ Primary N=28 uses exactly 28 completed daily closes including the current comple
 log_spread is ln(current) minus the mean of ln(closes) over that window. A short
 window is an error, not NotReady. Forming-bar drop, wall-clock as_of, and
 max_entry_age_secs belong to the adapter, not strategy_core. First ready live step
-from a series that initializes N then steps needs N+1 completed bars (29 in the
-Increment 10 fixture).
+from a series that initializes N then steps needs N+1 completed bars (29 for N=28).
 
 research_engine / research_cli: historical evaluation. Do not link the live runner.
 
@@ -74,17 +59,8 @@ No dependency on strategy_core, research_engine, research_cli, or btc_price_ma_a
 
 Operator path: trading-system-ui -> Envoy gRPC-Web -> runner gateway. Mutating RPCs on
 non-Paper venues require TRADING_OPERATOR_TOKEN at the proxy/runner. The UI login is not
-that authorization. The legacy TUI is not the planned operator layer.
+that authorization. The legacy TUI is a separate gRPC client; the browser UI is the
+operator console.
 
 Python strategy_dsl / architecture/10-strategy-engine.md is a separate proposed IR path,
 not the Candidate #2 model.
-
-
-QUALIFICATION PINS
-------------------
-Paper 9A:  trading_system 9dab54e, k-paper 590f3ad / 6d03acc, UI 10496e7
-Demo 10:   trading_system e923fa8 / pack 042eac9, UI 923dd30, k-paper 6d03acc
-           pack docs/inc10-evidence-measured-e923fa8/
-
-90 ms recorded on Demo fills is exchange timestamp to local receive, not full order
-execution latency.

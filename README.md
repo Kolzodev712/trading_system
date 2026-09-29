@@ -433,7 +433,7 @@ brew services start mongodb-community
 
 **Configuration**: API keys in `config/bot.json` (see [Configuration](#configuration))
 
-**Note**: Sample configurations are available in `sample_config/binance/` and `sample_config/bybit/` directories.
+**Note**: Sample configurations are available in `sample_config/binance/`, `sample_config/bybit/` (placeholder Spot), `sample_config/bybit-shadow/`, and `sample_config/bybit-demo/` (Bybit Demo Futures BTC/USDT; see [docs/BYBIT_DEMO_RUNBOOK.md](docs/BYBIT_DEMO_RUNBOOK.md)).
 
 ### Optional Services
 
@@ -661,6 +661,8 @@ To set up the configuration:
    cp sample_config/bybit/levels.json config/levels.json
    cp sample_config/bybit/indicators.json config/indicators.json
    ```
+
+   `sample_config/bybit/` is a placeholder Spot ETH/SOL template. For Bybit **Demo** Futures BTC/USDT with Candidate #2, use `sample_config/bybit-demo/` and [docs/BYBIT_DEMO_RUNBOOK.md](docs/BYBIT_DEMO_RUNBOOK.md). Do not launch that path with `scripts/inc10_bybit_demo.sh`.
 
 3. **Edit `config/bot.json`** and add your:
    - Exchange API keys (see [Configuration](#configuration) for structure)

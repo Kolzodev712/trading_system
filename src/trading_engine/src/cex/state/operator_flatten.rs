@@ -243,6 +243,100 @@ pub async fn settle_operator_flatten_exits(
     Ok(())
 }
 
+/// Journal `Terminal`/`Rejected` when a verified fill (or other terminal status)
+/// matches an in-flight operator-flatten client ID. Call from the private stream
+/// so settlement does not wait for the next FlattenAndPause.
+pub fn settle_operator_flatten_on_order(
+    journal: &SubmissionJournal,
+    trading_state: &mut TradingState,
+    order: &Order,
+) -> Result<bool, EngineError> {
+    let Some(cid) = order.client_order_id.as_ref() else {
+        return Ok(false);
+    };
+    let is_terminal = matches!(
+        order.status,
+        OrderStatus::Filled | OrderStatus::Canceled | OrderStatus::Rejected | OrderStatus::Expired
+    );
+    if !is_terminal {
+        return Ok(false);
+    }
+    let latest = journal.load_latest()?;
+    let Some(record) = latest.get(cid.as_str()) else {
+        return Ok(false);
+    };
+    if !is_operator_flatten(record)
+        || matches!(
+            record.state,
+            SubmissionState::Terminal | SubmissionState::Rejected
+        )
+    {
+        return Ok(false);
+    }
+    trading_state.clear_submission(cid);
+    trading_state.active_orders.remove(&order.order_id);
+    let next = match order.status {
+        OrderStatus::Rejected => SubmissionState::Rejected,
+        _ => SubmissionState::Terminal,
+    };
+    journal.append(&record.clone().with_state(next))?;
+    tracing::info!(
+        client_order_id = %cid,
+        status = ?order.status,
+        "operator flatten settled from verified order"
+    );
+    Ok(true)
+}
+
+/// Journal `Terminal` for in-flight operator flattens when TSM already shows the
+/// pair flat and no working exit remains. Covers a missed fill while the account
+/// is still flat, before Demo order history (about seven days) expires.
+pub fn settle_operator_flatten_when_local_flat(
+    journal: &SubmissionJournal,
+    trading_state: &mut TradingState,
+) -> Result<usize, EngineError> {
+    let latest = journal.load_latest()?;
+    let mut settled = 0usize;
+    for record in latest.into_values() {
+        if !is_operator_flatten(&record)
+            || matches!(
+                record.state,
+                SubmissionState::Terminal | SubmissionState::Rejected
+            )
+        {
+            continue;
+        }
+        let Ok(pending) = record.to_pending() else {
+            continue;
+        };
+        if trading_state.position_sync_pending(&pending.symbol)
+            || trading_state.position_disagreement(&pending.symbol)
+        {
+            continue;
+        }
+        if has_working_exit(trading_state, &pending.symbol) {
+            continue;
+        }
+        let qty = trading_state
+            .get_position(&pending.symbol)
+            .map(|position| position.quantity.abs())
+            .unwrap_or(Decimal::ZERO);
+        if qty > flat_eps() {
+            continue;
+        }
+        trading_state.clear_submission(&record.client_order_id);
+        let client_order_id = record.client_order_id.clone();
+        journal.append(&record.with_state(SubmissionState::Terminal))?;
+        settled += 1;
+        tracing::info!(
+            client_order_id = %client_order_id,
+            pair = %pending.symbol,
+            "operator flatten settled while local position is flat"
+        );
+    }
+    Ok(settled)
+}
+
 pub async fn resolve_inconclusive_flatten(
     journal: &SubmissionJournal,
     trading_client: &dyn TradingClient<OrderRequest>,
@@ -766,6 +860,159 @@ mod tests {
             latest[&second.client_order_ids[0]].state,
             SubmissionState::Acknowledged
         );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    fn filled_sell(cid: &str, exchange_id: &str) -> Order {
+        Order {
+            order_id: OrderId::new(exchange_id.into()),
+            client_order_id: Some(SmolStr::new(cid)),
+            instrument: Instrument::new(InstrumentType::Futures, pair()),
+            side: Side::Sell,
+            price: Decimal::new(1, 0),
+            amount: Decimal::new(1, 3),
+            internal_created_at: 1,
+            exchange_created_at: Some(1),
+            status: OrderStatus::Filled,
+            filled_amount: Decimal::new(1, 3),
+        }
+    }
+
+    #[test]
+    fn acknowledged_flatten_settles_on_verified_fill_without_next_flatten() {
+        let path = journal_path("fill-settle");
+        let journal = SubmissionJournal::open(&path).unwrap();
+        let mut state = TradingState::new().with_instrument_type(InstrumentType::Futures);
+        let pending = pending_flatten("flatten-fill-1");
+        persist(
+            &journal,
+            &mut state,
+            &pending,
+            SubmissionState::Acknowledged,
+        )
+        .unwrap();
+        let filled = filled_sell("flatten-fill-1", "ex-fill");
+        assert!(settle_operator_flatten_on_order(&journal, &mut state, &filled).unwrap());
+        assert_eq!(
+            journal.load_latest().unwrap()["flatten-fill-1"].state,
+            SubmissionState::Terminal
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn acknowledged_flatten_settles_when_local_position_is_flat() {
+        let path = journal_path("flat-settle");
+        let journal = SubmissionJournal::open(&path).unwrap();
+        let mut state = TradingState::new().with_instrument_type(InstrumentType::Futures);
+        persist(
+            &journal,
+            &mut state,
+            &pending_flatten("flatten-flat-1"),
+            SubmissionState::Acknowledged,
+        )
+        .unwrap();
+        state.set_position(pair(), Decimal::ZERO, Decimal::ZERO);
+        assert_eq!(
+            settle_operator_flatten_when_local_flat(&journal, &mut state).unwrap(),
+            1
+        );
+        assert_eq!(
+            journal.load_latest().unwrap()["flatten-flat-1"].state,
+            SubmissionState::Terminal
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn local_flat_does_not_settle_while_position_sync_pending() {
+        let path = journal_path("flat-pending");
+        let journal = SubmissionJournal::open(&path).unwrap();
+        let mut state = TradingState::new().with_instrument_type(InstrumentType::Futures);
+        persist(
+            &journal,
+            &mut state,
+            &pending_flatten("flatten-pending-1"),
+            SubmissionState::Acknowledged,
+        )
+        .unwrap();
+        state.mark_position_sync_pending(pair());
+        assert_eq!(
+            settle_operator_flatten_when_local_flat(&journal, &mut state).unwrap(),
+            0
+        );
+        assert_eq!(
+            journal.load_latest().unwrap()["flatten-pending-1"].state,
+            SubmissionState::Acknowledged
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn recover_then_settle_terminals_acknowledged_flatten_without_new_send() {
+        let path = journal_path("recover-settle");
+        let journal = SubmissionJournal::open(&path).unwrap();
+        let client = Scripted::new(vec![]);
+        let mut state = TradingState::new().with_instrument_type(InstrumentType::Futures);
+        persist(
+            &journal,
+            &mut state,
+            &pending_flatten("flatten-recover-1"),
+            SubmissionState::Acknowledged,
+        )
+        .unwrap();
+        client.lookups.lock().await.insert(
+            "flatten-recover-1".into(),
+            ClientOrderLookup::Terminal(filled_sell("flatten-recover-1", "ex-recover")),
+        );
+        recover_unknown_submissions(&journal, &client, &mut state)
+            .await
+            .expect("recover skips acknowledged");
+        assert_eq!(
+            journal.load_latest().unwrap()["flatten-recover-1"].state,
+            SubmissionState::Acknowledged
+        );
+        settle_operator_flatten_exits(&journal, &client, &mut state)
+            .await
+            .expect("settle on recover");
+        assert_eq!(
+            journal.load_latest().unwrap()["flatten-recover-1"].state,
+            SubmissionState::Terminal
+        );
+        assert_eq!(client.placed.load(Ordering::SeqCst), 0);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn filled_then_flat_then_new_position_uses_new_client_id() {
+        let path = journal_path("fill-then-reopen");
+        let journal = SubmissionJournal::open(&path).unwrap();
+        let client = Scripted::new(vec![long_pos(Decimal::new(1, 3))]);
+        let mut state = TradingState::new().with_instrument_type(InstrumentType::Futures);
+        let first = submit_operator_reduce_only_exits(
+            &journal,
+            &client,
+            &mut state,
+            InstrumentType::Futures,
+            &[],
+        )
+        .await
+        .expect("first flatten");
+        let first_id = first.client_order_ids[0].clone();
+        let filled = filled_sell(&first_id, "ex-1");
+        assert!(settle_operator_flatten_on_order(&journal, &mut state, &filled).unwrap());
+        *client.positions.lock().await = vec![long_pos(Decimal::new(2, 3))];
+        let second = submit_operator_reduce_only_exits(
+            &journal,
+            &client,
+            &mut state,
+            InstrumentType::Futures,
+            &[(pair(), Decimal::new(2, 3))],
+        )
+        .await
+        .expect("second flatten after fill settle");
+        assert_eq!(client.placed.load(Ordering::SeqCst), 2);
+        assert_ne!(second.client_order_ids[0], first_id);
         let _ = std::fs::remove_file(&path);
     }
 

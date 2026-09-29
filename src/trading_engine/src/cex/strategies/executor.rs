@@ -255,6 +255,28 @@ impl<S: Strategy> StrategyExecutor<S> {
                     still_ambiguous = report.still_ambiguous,
                     "submission recovery finished"
                 );
+                if let Err(err) = crate::cex::state::settle_operator_flatten_when_local_flat(
+                    journal.as_ref(),
+                    &mut state,
+                ) {
+                    error!("operator flatten settle on recover failed: {err}");
+                    state.halt_new_exposure(format!(
+                        "operator flatten settle on recover failed: {err}"
+                    ));
+                }
+                match crate::cex::state::settle_operator_flatten_exits(
+                    journal.as_ref(),
+                    &*client,
+                    &mut state,
+                )
+                .await
+                {
+                    Ok(()) => info!("operator flatten settle finished"),
+                    Err(err) => {
+                        error!("operator flatten settle failed: {err}");
+                        state.halt_new_exposure(format!("operator flatten settle failed: {err}"));
+                    }
+                }
             }
             Err(err) => {
                 error!("submission recovery failed: {err}");
@@ -318,6 +340,8 @@ impl<S: Strategy> StrategyExecutor<S> {
         let strategy_for_price = Arc::clone(&strategy);
         let reconciliation_interval_secs = self.reconciliation_interval_secs;
         let immediate_recon = Arc::clone(&self.immediate_recon);
+        let journal_for_recon = self.submission_journal.clone();
+        let client_for_recon = Arc::clone(&trading_client);
         tokio::spawn(async move {
             info!(
                 "Starting periodic trading-level reconciliation (interval: {} seconds) for {} pair(s)",
@@ -364,6 +388,32 @@ impl<S: Strategy> StrategyExecutor<S> {
                         Err(e) => {
                             error!("Trading-level reconciliation error for {}: {e}", pair);
                         }
+                    }
+                }
+                if let Some(journal) = &journal_for_recon {
+                    let client = client_for_recon.read().await;
+                    let state_lock = trading_state_manager_for_recon.get_state();
+                    let mut state = state_lock.write().await;
+                    if let Err(err) = crate::cex::state::settle_operator_flatten_when_local_flat(
+                        journal.as_ref(),
+                        &mut state,
+                    ) {
+                        error!("operator flatten settle during recon failed: {err}");
+                        state.halt_new_exposure(format!(
+                            "operator flatten settle during recon failed: {err}"
+                        ));
+                    }
+                    if let Err(err) = crate::cex::state::settle_operator_flatten_exits(
+                        journal.as_ref(),
+                        &*client,
+                        &mut state,
+                    )
+                    .await
+                    {
+                        error!("operator flatten REST settle during recon failed: {err}");
+                        state.halt_new_exposure(format!(
+                            "operator flatten REST settle during recon failed: {err}"
+                        ));
                     }
                 }
             }

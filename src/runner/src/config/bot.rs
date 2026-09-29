@@ -63,6 +63,14 @@ pub struct BotConfig {
     /// Append-only execution ledger for fills, fees, and funding. Runtime data.
     #[serde(default = "default_execution_ledger_path")]
     pub execution_ledger_path: String,
+
+    /// Process-local enablement snapshot. Runtime data; not position truth.
+    #[serde(default = "default_runtime_snapshot_path")]
+    pub runtime_snapshot_path: String,
+
+    /// RequestRestart flag file. Runtime data.
+    #[serde(default = "default_restart_flag_path")]
+    pub restart_flag_path: String,
 }
 
 /// Venue selection for this process.
@@ -86,6 +94,14 @@ fn default_submission_journal_path() -> String {
 
 fn default_execution_ledger_path() -> String {
     "runtime-data/execution-ledger.jsonl".to_string()
+}
+
+fn default_runtime_snapshot_path() -> String {
+    crate::config::runtime_snapshot::SNAPSHOT_FILE.to_string()
+}
+
+fn default_restart_flag_path() -> String {
+    crate::config::runtime_snapshot::RESTART_FLAG_FILE.to_string()
 }
 
 impl Default for VenueConfig {
@@ -687,6 +703,57 @@ mod config_smoke_tests {
         assert_eq!(mode, trading_core::types::ExecutionMode::Shadow);
         assert_eq!(venue, "BYBIT");
         assert_eq!(environment, "MAINNET");
+    }
+
+    #[test]
+    fn bot_bybit_demo_sample_is_demo_exchange_btc_usdt() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../sample_config/bybit-demo/bot.json");
+        let cfg = BotConfig::load_from_file(path.to_str().unwrap()).unwrap();
+        cfg.validate().unwrap();
+        assert_eq!(
+            cfg.execution_mode,
+            trading_core::types::ExecutionMode::Exchange
+        );
+        assert!(cfg.submission_journal_path.contains("bybit-demo"));
+        assert!(cfg.execution_ledger_path.contains("bybit-demo"));
+        assert!(cfg.runtime_snapshot_path.contains("bybit-demo"));
+        let demo = cfg
+            .exchange_engine
+            .config
+            .get("demo")
+            .and_then(|v| v.as_bool());
+        let testnet = cfg
+            .exchange_engine
+            .config
+            .get("testnet")
+            .and_then(|v| v.as_bool());
+        assert_eq!(demo, Some(true));
+        assert_eq!(testnet, Some(false));
+        let strategies = StrategiesConfig::load_from_file(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../sample_config/bybit-demo/strategies.json")
+                .to_str()
+                .unwrap(),
+        )
+        .unwrap();
+        strategies.validate().unwrap();
+        strategies
+            .risk_limits()
+            .require_explicit_for_exchange(cfg.execution_mode)
+            .unwrap();
+        let configs = strategies.as_vec();
+        assert_eq!(configs[0].strategy_type.as_str(), "BTCPriceMALongFlatV1");
+        assert_eq!(configs[0].lookback, Some(28));
+        assert_eq!(configs[0].max_entry_age_secs, Some(86_400));
+        assert_eq!(configs[0].max_market_data_age_ms, Some(15_000));
+        assert_eq!(configs[0].symbol, Pair::new("BTC", "USDT"));
+        let (mode, venue, environment) = crate::config::execution_status_from_bot(&cfg);
+        crate::config::operator_labels::exchange_live_is_authorized(mode, &venue, &environment)
+            .unwrap();
+        assert_eq!(mode, trading_core::types::ExecutionMode::Exchange);
+        assert_eq!(venue, "BYBIT");
+        assert_eq!(environment, "DEMO");
     }
 
     #[test]

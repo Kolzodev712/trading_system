@@ -4,7 +4,9 @@
 
 The decoupling, three-repository split, Paper qualification (Increment 9A), and bounded Bybit Demo qualification (Increment 10, synthetic signal) are **complete at that stated scope**. The system is **not** documented as production complete or mainnet ready.
 
-**Explicitly open:** journal and recover FlattenAndPause’s reduce-only submission; propagate a CancelWorking failure from FlattenAndPause; validate Candidate #2 as a strategy; separate mainnet readiness and approval.
+**Explicitly open:** validate Candidate #2 as a strategy; separate mainnet readiness and approval.
+
+Operator flatten durability and CancelWorking-from-FlattenAndPause are implemented in `trading_engine` / gateway (journaled client ID before send; unverified CancelWorking is reported and does not send reduce-only).
 
 The numbered files in this directory describe **in-process engines**. They can lag crate layout (extracted `strategy_core` / `research_engine`, `btc_price_ma_app`, gateway, operator RPCs). [architecture.dsl](architecture.dsl) is a pre-decoupling engine view. [10-strategy-engine.md](10-strategy-engine.md) is a proposed Python DSL/IR path, not Candidate #2.
 

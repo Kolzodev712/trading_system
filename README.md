@@ -9,7 +9,7 @@ A modular, exchange-agnostic trading system built in Rust with support for real-
 
 **Current architecture:** [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) (narrative: [docs/Trading-System-Analysis.txt](docs/Trading-System-Analysis.txt)). Increment record: [docs/PROP_TRADING_RESEARCH_AND_PRODUCTION_PLAN.md](docs/PROP_TRADING_RESEARCH_AND_PRODUCTION_PLAN.md).
 
-Decoupling, the three-repository split, Paper qualification (Increment 9A), and bounded Bybit Demo qualification (Increment 10, synthetic signal) are complete at that stated scope. The system is **not** production complete and **not** mainnet ready. Candidate #2 is an operational baseline, not validated alpha.
+Decoupling, the three-repository split, Paper qualification (Increment 9A), and bounded Bybit Demo qualification (Increment 10, synthetic signal) are complete at that stated scope. Operator flatten durability is implemented after that Demo gate. The system is **not** production complete and **not** mainnet ready. Candidate #2 is an operational baseline, not validated alpha.
 
 ## Table of Contents
 

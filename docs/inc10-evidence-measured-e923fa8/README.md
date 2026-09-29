@@ -40,3 +40,5 @@ The buy’s `orderLinkId` is the journal client ID. Distinct exchange `orderId` 
 2. `flatten_and_pause` does `let _ = self.trading_control.cancel_working(...)`. A CancelWorking error inside FlattenAndPause is ignored.
 
 Neither item proves this run ended incorrectly. Independent REST+runner were flat at stop.
+
+Later `trading_system` work journals operator flatten client IDs and reports CancelWorking from FlattenAndPause. That does not change this evidence pack.

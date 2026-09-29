@@ -67,52 +67,6 @@ async fn execution_report_handler<F, Fut>(
     }
 }
 
-async fn flatten_open_positions(
-    trading_client: Arc<
-        RwLock<
-            dyn trading_core::venue::cex::traits::TradingClient<
-                trading_core::types::exchange::OrderRequest,
-            >,
-        >,
-    >,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let positions = trading_client.read().await.fetch_positions().await?;
-    let mut closed = 0usize;
-    for position in positions {
-        let qty = position.quantity.abs();
-        if qty <= rust_decimal::Decimal::new(1, 6) {
-            continue;
-        }
-        let side = if position.quantity > rust_decimal::Decimal::ZERO {
-            trading_core::types::common::Side::Sell
-        } else {
-            trading_core::types::common::Side::Buy
-        };
-        let mut exchange_params = std::collections::HashMap::new();
-        exchange_params.insert(
-            smol_str::SmolStr::new("reduceOnly"),
-            smol_str::SmolStr::new("true"),
-        );
-        info!("Flattening {} {:?} qty={}", position.pair(), side, qty);
-        let request = trading_core::types::exchange::OrderRequest {
-            instrument: position.instrument.clone(),
-            side,
-            order_type: trading_core::types::common::OrderType::Market,
-            price: rust_decimal::Decimal::ZERO,
-            amount: qty,
-            timestamp: None,
-            exchange_params,
-        };
-        let order = trading_client.write().await.open_order(request).await?;
-        info!("Flatten order placed: {:?}", order.order_id);
-        closed += 1;
-    }
-    if closed == 0 {
-        info!("Flatten: no open futures positions");
-    }
-    Ok(())
-}
-
 async fn append_shadow_decisions(
     journal: &trading_engine::cex::shadow::ShadowJournal,
     manager: &StrategyManager,
@@ -387,13 +341,27 @@ pub async fn strategy_runner_with(
         strategy_manager_arc.clone(),
     )));
     let strategy_caps = Arc::new(RwLock::new(strategy_caps));
-    let operator = Arc::new(FileStrategyOperator::new(
-        strategies_config_path.clone(),
-        strategy_caps.clone(),
-        strategy_manager_arc.clone(),
-        trading_control.clone(),
-        services.shutdown_manager.clone(),
-    ));
+    let journal = std::sync::Arc::new(
+        trading_engine::state::SubmissionJournal::open(&bot_config.submission_journal_path)
+            .map_err(|err| format!("submission journal: {err}"))?,
+    );
+    let operator = Arc::new(
+        FileStrategyOperator::new(
+            strategies_config_path.clone(),
+            strategy_caps.clone(),
+            strategy_manager_arc.clone(),
+            trading_control.clone(),
+            services.shutdown_manager.clone(),
+        )
+        .with_flatten_path(
+            journal.clone(),
+            services
+                .trading_state_manager
+                .clone()
+                .ok_or("Trading state requires venue.mode \"cex\"")?,
+            instrument_type.clone(),
+        ),
+    );
 
     let shadow_journal = if execution_mode == trading_core::types::ExecutionMode::Shadow {
         Some(trading_engine::cex::shadow::ShadowJournal::new(
@@ -486,7 +454,8 @@ pub async fn strategy_runner_with(
     let grpc_service = grpc_service
         .with_execution_status(execution_mode, venue.clone(), environment.clone())
         .with_strategy_operator(operator)
-        .with_strategy_caps(strategy_caps.clone());
+        .with_strategy_caps(strategy_caps.clone())
+        .with_submission_journal(journal.clone());
 
     let grpc_server = TradingGrpcServer::from_service(grpc_service);
     let mut shutdown_rx_grpc = services.shutdown_manager.subscribe();
@@ -610,10 +579,7 @@ pub async fn strategy_runner_with(
             .map(|value| value as u32),
     )
     .with_max_market_data_age_ms(first_config.max_market_data_age_ms)
-    .with_submission_journal(std::sync::Arc::new(
-        trading_engine::state::SubmissionJournal::open(&bot_config.submission_journal_path)
-            .map_err(|err| format!("submission journal: {err}"))?,
-    ))
+    .with_submission_journal(journal.clone())
     .with_exchange_state_manager(services.exchange_state_manager()?.clone());
 
     // Set up execution report handler (StrategyManager handles routing to all strategies)
@@ -772,7 +738,30 @@ pub async fn strategy_runner_with(
             warn!("TRADING_FLATTEN ignored in Shadow (no exchange order calls)");
         } else {
             info!("TRADING_FLATTEN=1: closing open futures positions (reduce-only)");
-            flatten_open_positions(trading_client.clone()).await?;
+            let tsm = services
+                .trading_state_manager
+                .as_ref()
+                .ok_or("Trading state requires venue.mode \"cex\"")?;
+            let tsm_positions: Vec<(trading_core::types::common::Pair, rust_decimal::Decimal)> = {
+                let state = tsm.get_state();
+                let guard = state.read().await;
+                guard
+                    .positions
+                    .values()
+                    .map(|p| (p.symbol.clone(), p.quantity))
+                    .collect()
+            };
+            let client = trading_client.read().await;
+            let state_lock = tsm.get_state();
+            let mut state = state_lock.write().await;
+            trading_engine::state::submit_operator_reduce_only_exits(
+                journal.as_ref(),
+                &*client,
+                &mut state,
+                instrument_type.clone(),
+                &tsm_positions,
+            )
+            .await?;
         }
     }
 

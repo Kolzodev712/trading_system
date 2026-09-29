@@ -213,57 +213,6 @@ impl TradingControl {
         self.cancel_all_orders_for_pairs(pairs_with_orders, active_order_ids)
             .await
     }
-
-    /// Place reduce-only market exits for open positions. Does not claim flat.
-    pub async fn submit_reduce_only_flatten(
-        &self,
-    ) -> Result<Vec<String>, Box<dyn std::error::Error>> {
-        let positions = match self.trading_client.read().await.fetch_positions().await {
-            Ok(positions) => positions,
-            Err(err) => {
-                let msg = err.to_string().to_lowercase();
-                if msg.contains("not supported") {
-                    Vec::new()
-                } else {
-                    return Err(err.into());
-                }
-            }
-        };
-        let mut flatten_ids = Vec::new();
-        for position in positions {
-            let qty = position.quantity.abs();
-            if qty <= rust_decimal::Decimal::new(1, 6) {
-                continue;
-            }
-            let side = if position.quantity > rust_decimal::Decimal::ZERO {
-                crate::types::common::Side::Sell
-            } else {
-                crate::types::common::Side::Buy
-            };
-            let mut exchange_params = std::collections::HashMap::new();
-            exchange_params.insert(
-                smol_str::SmolStr::new("reduceOnly"),
-                smol_str::SmolStr::new("true"),
-            );
-            let request = OrderRequest {
-                instrument: position.instrument.clone(),
-                side,
-                order_type: crate::types::common::OrderType::Market,
-                price: rust_decimal::Decimal::ZERO,
-                amount: qty,
-                timestamp: None,
-                exchange_params,
-            };
-            let order = self
-                .trading_client
-                .write()
-                .await
-                .open_order(request)
-                .await?;
-            flatten_ids.push(order.order_id.as_str().to_string());
-        }
-        Ok(flatten_ids)
-    }
 }
 
 /// PauseEntries blocks increases. FlattenAndPause allows reductions even when the

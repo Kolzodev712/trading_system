@@ -12,8 +12,18 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use trading_core::grpc::TradingControl;
-use trading_core::types::common::Pair;
+use trading_core::types::common::{InstrumentType, Pair};
+use trading_engine::state::manager::TradingStateManager;
+use trading_engine::state::{
+    flatten_cancel_working_failed, submit_operator_reduce_only_exits, SubmissionJournal,
+};
 use trading_engine::strategies::strategy_manager::StrategyManager;
+
+struct FlattenPath {
+    journal: Arc<SubmissionJournal>,
+    trading_state_manager: Arc<TradingStateManager>,
+    instrument_type: InstrumentType,
+}
 
 pub struct FileStrategyOperator {
     strategies_path: String,
@@ -23,6 +33,7 @@ pub struct FileStrategyOperator {
     strategy_manager: Arc<RwLock<StrategyManager>>,
     trading_control: Arc<TradingControl>,
     shutdown: ShutdownManager,
+    flatten_path: Option<FlattenPath>,
 }
 
 impl FileStrategyOperator {
@@ -41,7 +52,22 @@ impl FileStrategyOperator {
             strategy_manager,
             trading_control,
             shutdown,
+            flatten_path: None,
         }
+    }
+
+    pub fn with_flatten_path(
+        mut self,
+        journal: Arc<SubmissionJournal>,
+        trading_state_manager: Arc<TradingStateManager>,
+        instrument_type: InstrumentType,
+    ) -> Self {
+        self.flatten_path = Some(FlattenPath {
+            journal,
+            trading_state_manager,
+            instrument_type,
+        });
+        self
     }
 
     #[cfg(test)]
@@ -268,9 +294,53 @@ impl StrategyOperator for FileStrategyOperator {
         *self.trading_control.enabled_flag().write().await = false;
         if on_stop == "flatten" {
             self.trading_control.latch_flatten_and_pause().await;
-            if let Err(e) = self.trading_control.submit_reduce_only_flatten().await {
-                return Err(format!("flatten on_stop failed: {e}"));
+            let ctx = self.flatten_path.as_ref().ok_or_else(|| {
+                "flatten on_stop: journaled reduce-only path required; latch held".to_string()
+            })?;
+            let (order_ids, pairs, tsm_positions) = {
+                let state = ctx.trading_state_manager.get_state();
+                let guard = state.read().await;
+                let order_ids = guard
+                    .active_orders
+                    .values()
+                    .map(|order| order.order_id.clone())
+                    .collect();
+                let mut pairs: Vec<Pair> = guard
+                    .active_orders
+                    .values()
+                    .map(|order| order.instrument.pair.clone())
+                    .collect();
+                pairs.extend(
+                    guard
+                        .positions
+                        .values()
+                        .map(|position| position.symbol.clone()),
+                );
+                pairs.sort_by(|a, b| a.base.cmp(&b.base).then(a.quote.cmp(&b.quote)));
+                pairs.dedup();
+                let tsm_positions: Vec<(Pair, Decimal)> = guard
+                    .positions
+                    .values()
+                    .map(|position| (position.symbol.clone(), position.quantity))
+                    .collect();
+                (order_ids, pairs, tsm_positions)
+            };
+            if let Err(e) = self.trading_control.cancel_working(order_ids, pairs).await {
+                return Err(flatten_cancel_working_failed(&e.to_string()));
             }
+            let client = self.trading_control.trading_client();
+            let client = client.read().await;
+            let state_lock = ctx.trading_state_manager.get_state();
+            let mut state = state_lock.write().await;
+            submit_operator_reduce_only_exits(
+                ctx.journal.as_ref(),
+                &*client,
+                &mut state,
+                ctx.instrument_type.clone(),
+                &tsm_positions,
+            )
+            .await
+            .map_err(|e| format!("flatten on_stop failed: {e}"))?;
         }
         self.shutdown.signal_shutdown();
         Ok(())

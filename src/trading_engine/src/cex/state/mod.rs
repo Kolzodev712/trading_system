@@ -17,12 +17,17 @@ use trading_core::{
 
 pub mod ledger;
 pub mod manager;
+mod operator_flatten;
 mod reconciler;
 pub mod submission;
 mod subscriber;
 
 pub use ledger::{
     economic_source, ExecutionLedger, FillRecord, FundingRecord, LedgerRecord, LedgerSnapshot,
+};
+pub use operator_flatten::{
+    flatten_cancel_working_failed, is_operator_flatten, submit_operator_reduce_only_exits,
+    OperatorFlattenReport, OPERATOR_FLATTEN_INTENT,
 };
 pub use submission::{
     recover_unknown_submissions, RecoveryReport, SubmissionJournal, SubmissionRecord,

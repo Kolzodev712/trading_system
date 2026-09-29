@@ -244,6 +244,24 @@ pub async fn recover_unknown_submissions(
                 continue;
             }
         };
+        if matches!(lookup, ClientOrderLookup::Inconclusive)
+            && super::operator_flatten::is_operator_flatten(&record)
+        {
+            if super::operator_flatten::resolve_inconclusive_flatten(
+                journal,
+                trading_client,
+                trading_state,
+                &record,
+            )
+            .await?
+            {
+                report.resolved_terminal += 1;
+                continue;
+            }
+            journal.append(&record.with_state(SubmissionState::RecoveryRequired))?;
+            report.still_ambiguous += 1;
+            continue;
+        }
         apply_lookup(journal, trading_state, &record, lookup, &mut report)?;
     }
     Ok(report)

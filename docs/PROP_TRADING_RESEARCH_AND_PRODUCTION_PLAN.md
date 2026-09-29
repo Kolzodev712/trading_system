@@ -1,6 +1,6 @@
 # Prop Trading Productionization and Research Architecture Plan
 
-**Status:** Increments 0–9A are accepted locally as a Paper qualification. Increment 10 is accepted as a bounded Bybit Demo operational qualification (`docs/inc10-evidence-measured-e923fa8/`, runner `e923fa8` / pack `042eac9`, UI `923dd30`, k-paper `6d03acc`). Architectural decoupling and the three-repository split are implemented. That Demo run is execution with a synthetic signal, not validated alpha and not a mainnet approval. The system is not production complete. No further Demo run is needed for this gate. Open: FlattenAndPause journal/recovery, CancelWorking-from-flatten, Candidate #2 strategy validation, mainnet readiness. Current architecture write-up: `docs/ARCHITECTURE.md`.  
+**Status:** Increments 0–9A are accepted locally as a Paper qualification. Increment 10 is accepted as a bounded Bybit Demo operational qualification (`docs/inc10-evidence-measured-e923fa8/`, runner `e923fa8` / pack `042eac9`, UI `923dd30`, k-paper `6d03acc`). Architectural decoupling and the three-repository split are implemented. Operator flatten journal/recovery and CancelWorking-from-FlattenAndPause are implemented after that Demo gate. That Demo run is execution with a synthetic signal, not validated alpha and not a mainnet approval. The system is not production complete. No further Demo run is needed for this gate. Open: Candidate #2 strategy validation, mainnet readiness. Current architecture write-up: `docs/ARCHITECTURE.md`.  
 **Date:** 2026-09-28  
 **Repository:** `trading_system`  
 **Audience:** Cursor / implementation agent / repository owner  
@@ -445,12 +445,12 @@ The browser path is `trading-system-ui` -> gRPC-Web proxy (currently Envoy) -> r
 
 **Implemented and accepted at stated scope:** crate decoupling (section 6); three-repository roles (section 6.1); Increments 0–9A as a local Paper qualification; Increment 10 as bounded Bybit Demo operational qualification (synthetic signal; pack `docs/inc10-evidence-measured-e923fa8/`). Operator commands `PauseEntries`, `CancelWorking`, `FlattenAndPause`, and `Resume` exist in proto, runner, and UI. Flatten RPC success is not treated as flat.
 
+**Implemented after Increment 10 (not a Demo rerun):** one journaled operator reduce-only path in `trading_engine` (`submit_operator_reduce_only_exits`). FlattenAndPause, restart `on_stop=flatten`, `TRADING_FLATTEN`, and the former gRPC TSM fallback persist a stable client ID and `operator_flatten` intent before send; recover by client ID and venue position before retry. FlattenAndPause reports CancelWorking unverified (including failed GET `/open_orders`), keeps the pause/flatten latch held, and does not send reduce-only.
+
 **Explicitly open (do not document as done):**
 
-1. Journal and recover FlattenAndPause’s reduce-only submission.
-2. Propagate a CancelWorking failure from FlattenAndPause.
-3. Validate Candidate #2 as a strategy; the Demo run tested execution using a synthetic signal.
-4. Any separate mainnet readiness and approval work.
+1. Validate Candidate #2 as a strategy; the Demo run tested execution using a synthetic signal.
+2. Any separate mainnet readiness and approval work.
 
 The system is **not** production complete and **not** mainnet ready. Increment 11 is not started until the owner asks. Python DSL / DEX / HFT proposals are separate tracks and are not this qualification.
 
@@ -2030,7 +2030,7 @@ This document is the authority for **the Candidate #2 research/runtime separatio
 
 Check out the relevant repositories with write access before starting a cross-repo increment. Record starting and ending SHAs for each; pin matching revisions and run both producer/consumer checks before marking the increment complete. After 5R, use the Candidate #2 app binary for Shadow/Paper/demo rather than assuming the default runner binary can instantiate it. Implement backend state and the source proto first, then sync the UI proto and generated code. When a precise simulator accounting rule, API shape or security mechanism is not fixed here, document the bounded choice and its acceptance tests within that increment rather than silently guessing or postponing the safety gate.
 
-Increments 0–9A are accepted locally as a Paper qualification. Increment 10 is accepted as bounded Bybit Demo operational qualification (synthetic signal). This plan does not authorize Candidate #2 as validated alpha, a self-hosting operations program, Candidate #3's trading rule, or mainnet deployment. Those need separate decisions. Increment 11 is not started until the owner asks. Confirmed follow-ups that remain open: journal and recover FlattenAndPause’s reduce-only submission; propagate a CancelWorking failure from FlattenAndPause.
+Increments 0–9A are accepted locally as a Paper qualification. Increment 10 is accepted as bounded Bybit Demo operational qualification (synthetic signal). Operator flatten journal/recovery and CancelWorking-from-FlattenAndPause are implemented after that Demo gate. This plan does not authorize Candidate #2 as validated alpha, a self-hosting operations program, Candidate #3's trading rule, or mainnet deployment. Those need separate decisions. Increment 11 is not started until the owner asks.
 
 ---
 
@@ -2572,7 +2572,7 @@ Do not promote to mainnet automatically.
 
 **Owner acceptance of Increment 10 (2026-09-29; committed pack reviewed directly; no further Demo run):** Bounded Bybit Demo operational qualification **accepted**. Independently flat before enablement. Demo history: exactly one 0.001 BTC buy and one 0.001 BTC reduce-only sell; execution IDs, quantities, prices, and fees match the two ledger rows. The buy’s client ID matches its prepared → submitted → acknowledged journal path. The four generic REST log lines correspond to those two creates and two cancel-all calls, with no extra sell in order history. Runner and Demo venue ended flat, entries paused, flatten latch held. Reported 403 ms submit-to-ack and 90 ms exchange-to-receive per fill match the recorded timestamps; 90 ms is **not** full order execution latency. Reconciliation logged brief 0.001 BTC disagreements after the entry and exit, then the final runner and venue states agreed. This verdict is Demo execution with a synthetic signal. It does **not** validate Candidate #2 as alpha and does **not** approve mainnet.
 
-**Confirmed production follow-ups (do not block Increment 10; not a Demo rerun):** (1) Journal and recover operator FlattenAndPause submissions; the reduce-only exit uses `trading_client().open_order` and is not appended to the submission journal (empty `orderLinkId` on the sell). (2) Propagate a CancelWorking failure from FlattenAndPause (`let _ = self.trading_control.cancel_working(...)` today).
+**Confirmed production follow-ups (do not block Increment 10; not a Demo rerun):** At the Demo SHA these were open: (1) journal/recover FlattenAndPause reduce-only (empty `orderLinkId` on the sell); (2) FlattenAndPause discarded CancelWorking (`let _ = ...`). Both are implemented in a later commit: one `trading_engine` journaled path; FlattenAndPause reports CancelWorking unverified and does not send reduce-only. Remaining open: Candidate #2 strategy validation; mainnet readiness.
 
 ---
 
@@ -2593,7 +2593,7 @@ Do not implement Candidate #3's trading rule until a separate strategy research 
 
 # 67. Current Cursor instruction
 
-The Increment 9A Paper qualification is **accepted locally** (`trading_system` `9dab54e`, k-paper `590f3ad` / `6d03acc`, UI `10496e7`) on source review plus the reported matrix exit; the lab was not rerun in that review. Increment 10 is **accepted** as a bounded Bybit Demo operational qualification on committed evidence pack `docs/inc10-evidence-measured-e923fa8/` (runner `e923fa8` / pack commit `042eac9`, UI `923dd30`, k-paper `6d03acc`). That is Demo execution with a synthetic signal. Architecture docs (`docs/ARCHITECTURE.md`, `docs/Trading-System-Analysis.txt`, `architecture/README.md`) describe the implemented decoupling, three repo roles, Paper qualification, and Demo result; they must not claim production complete or mainnet ready. Do not Resume again. Do not rerun Demo for this gate. Do not promote to mainnet. Do not start Increment 11 until the owner asks. Explicitly open: (1) journal and recover FlattenAndPause’s reduce-only submission; (2) propagate a CancelWorking failure from FlattenAndPause; (3) validate Candidate #2 as a strategy; (4) separate mainnet readiness and approval. Candidate #2 remains an operational baseline, not validated alpha. The accepted 5B connectivity record remains `trading_system` `043ca64523f42212cd8a2616ba6201d61d7c878a` (evidence `1f00fdc80f7bbbb39b836da9445e041eb18e6c77`).
+The Increment 9A Paper qualification is **accepted locally** (`trading_system` `9dab54e`, k-paper `590f3ad` / `6d03acc`, UI `10496e7`) on source review plus the reported matrix exit; the lab was not rerun in that review. Increment 10 is **accepted** as a bounded Bybit Demo operational qualification on committed evidence pack `docs/inc10-evidence-measured-e923fa8/` (runner `e923fa8` / pack commit `042eac9`, UI `923dd30`, k-paper `6d03acc`). That is Demo execution with a synthetic signal. Architecture docs (`docs/ARCHITECTURE.md`, `docs/Trading-System-Analysis.txt`, `architecture/README.md`) describe the implemented decoupling, three repo roles, Paper qualification, Demo result, and the later operator-flatten recovery path; they must not claim production complete or mainnet ready. Do not Resume again. Do not rerun Demo for this gate. Do not promote to mainnet. Do not start Increment 11 until the owner asks. Explicitly open: (1) validate Candidate #2 as a strategy; (2) separate mainnet readiness and approval. Candidate #2 remains an operational baseline, not validated alpha. The accepted 5B connectivity record remains `trading_system` `043ca64523f42212cd8a2616ba6201d61d7c878a` (evidence `1f00fdc80f7bbbb39b836da9445e041eb18e6c77`).
 
 | Increment | Status | Gate |
 | --- | --- | --- |
@@ -2606,10 +2606,10 @@ The Increment 9A Paper qualification is **accepted locally** (`trading_system` `
 | 8 | Accepted locally | Explicit Exchange risk, prospective effective exposure, PauseEntries/CancelWorking/FlattenAndPause/Resume, operator token on mutating RPCs, UI confirmation does not treat flatten RPC as flat |
 | 9 | Accepted locally | Durable execution ledger, fees/funding/weighted PnL, restart replay, daily-loss from ledger or fail-closed if configured without it, UI simulation label for Paper |
 | 9A | Accepted locally as Paper qualification | Section 49 rows through C2→Paper; frozen N=28 adapter comparison; grpc and browser CancelWorking; source review of `9dab54e` |
-| 10 | Accepted as bounded Bybit Demo operational qualification | Committed pack `docs/inc10-evidence-measured-e923fa8/` (`042eac9`). Synthetic signal. Not validated alpha. Not mainnet. Open: flatten journal/recovery, CancelWorking-from-flatten, C2 strategy validation, mainnet readiness |
+| 10 | Accepted as bounded Bybit Demo operational qualification | Committed pack `docs/inc10-evidence-measured-e923fa8/` (`042eac9`). Synthetic signal. Not validated alpha. Not mainnet. Operator flatten journal/recovery and CancelWorking-from-flatten implemented after that Demo SHA. Open: C2 strategy validation, mainnet readiness |
 | 11 | Not started | Research-framework cleanup for Candidate #3; do not start until asked |
 
-Cursor: Increment 10 is accepted. Architecture docs may describe decoupling, three repos, Paper, and Demo at that stated scope. Do not Resume. Do not rerun Demo for this gate. Do not document production complete or mainnet ready. Do not start Increment 11 until asked. Explicitly open: journal and recover FlattenAndPause’s reduce-only submission; propagate a CancelWorking failure from FlattenAndPause; validate Candidate #2 as a strategy; separate mainnet readiness and approval. Candidate #2 remains an operational baseline, not validated alpha.
+Cursor: Increment 10 is accepted. Architecture docs may describe decoupling, three repos, Paper, and Demo at that stated scope. Operator flatten journal/recovery and CancelWorking-from-FlattenAndPause are implemented after that Demo gate. Do not Resume. Do not rerun Demo for this gate. Do not document production complete or mainnet ready. Do not start Increment 11 until asked. Explicitly open: validate Candidate #2 as a strategy; separate mainnet readiness and approval. Candidate #2 remains an operational baseline, not validated alpha.
 
 ---
 

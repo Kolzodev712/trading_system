@@ -1,14 +1,10 @@
 # Architecture Documentation
 
-**Current reference (2026-09-29):** [docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md) and [docs/Trading-System-Analysis.txt](../docs/Trading-System-Analysis.txt). Increment record: [docs/PROP_TRADING_RESEARCH_AND_PRODUCTION_PLAN.md](../docs/PROP_TRADING_RESEARCH_AND_PRODUCTION_PLAN.md).
-
-The decoupling, three-repository split, Paper qualification (Increment 9A), and bounded Bybit Demo qualification (Increment 10, synthetic signal) are **complete at that stated scope**. The system is **not** documented as production complete or mainnet ready.
-
-**Explicitly open:** validate Candidate #2 as a strategy; separate mainnet readiness and approval.
-
-Operator flatten durability and CancelWorking-from-FlattenAndPause are implemented in `trading_engine` / gateway (journaled client ID before send; unverified CancelWorking is reported and does not send reduce-only).
+**Current reference:** [docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md) and [docs/Trading-System-Analysis.txt](../docs/Trading-System-Analysis.txt). Increment status and next gates: [docs/PROGRESSION.md](../docs/PROGRESSION.md).
 
 The numbered files in this directory describe **in-process engines**. They can lag crate layout (extracted `strategy_core` / `research_engine`, `btc_price_ma_app`, gateway, operator RPCs). [architecture.dsl](architecture.dsl) is a pre-decoupling engine view. [10-strategy-engine.md](10-strategy-engine.md) is a proposed Python DSL/IR path, not Candidate #2.
+
+The system is **not** production complete or mainnet ready. Candidate #2 is an operational baseline, not validated alpha.
 
 ## Overview
 
@@ -18,7 +14,8 @@ Live CEX services still run in-process and communicate on broadcast channels. Th
 
 ### Current system (start here)
 
-0. **[Current architecture](../docs/ARCHITECTURE.md)** — decoupling, three repos, Paper, Demo, open items
+0. **[Current architecture](../docs/ARCHITECTURE.md)** — decoupling, three repos, operator flatten, operator RPCs
+0a. **[Progression](../docs/PROGRESSION.md)** — increment status, open work, next gates
 
 ### Core services (in-process engines)
 
@@ -33,13 +30,13 @@ Live CEX services still run in-process and communicate on broadcast channels. Th
 
 7. **[Live Config Service](07-live-config-service.md)** — runtime config updates
 8. **[Runner](08-runner.md)** — orchestrator; gRPC via **gateway**; Zenoh **opt-in** (`ZENOH_ENABLED=1`); Candidate #2 via `btc_price_ma_app`
-9. **[TUI CLI](09-tui-cli.md)** — legacy terminal client; **not** the planned operator layer (`trading-system-ui` is)
+9. **[TUI CLI](09-tui-cli.md)** — legacy terminal gRPC client; browser operator console is `trading-system-ui`
 
 ### Other
 
-10. **[Strategy Engine (proposed DSL)](10-strategy-engine.md)** — Python IR proposal; not the Increment 0–10 Candidate #2 path
+10. **[Strategy Engine (proposed DSL)](10-strategy-engine.md)** — Python IR proposal; not Candidate #2
 11. **[Docker Guide](DOCKER.md)**
-12. **[Structurizr](STRUCTURIZR.md)** — historical engine diagrams; not current qualification status
+12. **[Structurizr](STRUCTURIZR.md)** — historical engine diagrams; not current system status
 
 ## Architecture principles
 
@@ -63,7 +60,7 @@ Live CEX services still run in-process and communicate on broadcast channels. Th
 
 - **Channels**: in-process broadcast (source of truth inside the runner)
 - **gRPC**: UI/TUI via gateway; mutating non-Paper RPCs require `TRADING_OPERATOR_TOKEN` at Envoy/runner
-- **Zenoh**: opt-in (`ZENOH_ENABLED=1`); not the Paper/Demo qualification path
+- **Zenoh**: opt-in (`ZENOH_ENABLED=1`); not required for Paper or Demo labs
 - **REST/WS**: exchange and k-paper adapters
 
 ### Key engine principles (still true)
@@ -75,6 +72,7 @@ Live CEX services still run in-process and communicate on broadcast channels. Th
 
 ## Related
 
+- [Progression](../docs/PROGRESSION.md)
 - [Venue modes](../docs/VENUE_MODES.md)
 - [Command plane](../docs/COMMAND_PLANE.md)
 - [Platform data plane](../docs/PLATFORM_DATA_PLANE.md)

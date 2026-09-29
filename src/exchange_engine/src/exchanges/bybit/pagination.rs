@@ -9,6 +9,10 @@ use std::collections::HashSet;
 use std::fmt::{Display, Formatter};
 use std::future::Future;
 
+/// REST path appended to `/v5/`. Bybit Get Open Orders is `GET /v5/order/realtime`.
+/// The docs page slug is `order/open-order`; that is not the HTTP path.
+pub const BYBIT_OPEN_ORDERS_PATH: &str = "order/realtime";
+
 /// Bybit `limit` for `GET /v5/order/realtime` is `1..=50`.
 pub const BYBIT_OPEN_ORDER_PAGE_LIMIT: u32 = 50;
 
@@ -445,5 +449,11 @@ mod tests {
         let selector = linear_list_selector(BybitCategory::Linear, None, SmolStr::new("USDT"))
             .expect("selector");
         assert_eq!(selector.settle_coin.as_deref(), Some("USDT"));
+    }
+
+    #[test]
+    fn open_orders_http_path_is_realtime_not_docs_slug() {
+        assert_eq!(BYBIT_OPEN_ORDERS_PATH, "order/realtime");
+        assert_ne!(BYBIT_OPEN_ORDERS_PATH, "order/open-order");
     }
 }

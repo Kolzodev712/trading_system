@@ -1,5 +1,6 @@
-//! Bybit open orders response types
-//! See: <https://bybit-exchange.github.io/docs/v5/order/open-order>
+//! Bybit open orders response types.
+//! Docs page: <https://bybit-exchange.github.io/docs/v5/order/open-order>
+//! HTTP: `GET /v5/order/realtime` (`BYBIT_OPEN_ORDERS_PATH`).
 
 use super::{BybitCategory, BybitOrderStatus, BybitOrderType, BybitSide};
 use rust_decimal::Decimal;

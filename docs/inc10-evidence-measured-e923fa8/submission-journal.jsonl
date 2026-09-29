@@ -1,0 +1,3 @@
+{"client_order_id":"bd235f19-a599-464c-8494-a59d52e69450","symbol_base":"BTC","symbol_quote":"USDT","side":"Buy","amount":"0.001","price":"84182.1","created_at_ms":1790684514243,"last_check_at_ms":1790684514243,"state":"prepared"}
+{"client_order_id":"bd235f19-a599-464c-8494-a59d52e69450","symbol_base":"BTC","symbol_quote":"USDT","side":"Buy","amount":"0.001","price":"84182.1","created_at_ms":1790684514248,"last_check_at_ms":1790684514248,"state":"submitted"}
+{"client_order_id":"bd235f19-a599-464c-8494-a59d52e69450","symbol_base":"BTC","symbol_quote":"USDT","side":"Buy","amount":"0.001","price":"84182.1","created_at_ms":1790684514651,"last_check_at_ms":1790684514651,"state":"acknowledged"}

@@ -1,0 +1,87 @@
+{
+  "source": "Bybit Demo GET /v5/order/history and /v5/execution/list (read-only)",
+  "host": "api-demo.bybit.com",
+  "window": {
+    "startTime_ms": 1790684500000,
+    "endTime_ms": 1790684840000,
+    "start_utc": "2026-09-29T12:21:40Z",
+    "end_utc": "2026-09-29T12:27:20Z"
+  },
+  "note": "Credentials not included. Runner logs do not distinguish order/create from cancel in the Demo REST fallback line.",
+  "orders": [
+    {
+      "orderId": "64eb5576-ab5f-4e5e-bc87-ad0136c84870",
+      "orderLinkId": "",
+      "symbol": "BTCUSDT",
+      "side": "Sell",
+      "orderType": "Market",
+      "qty": "0.001",
+      "price": "83318.1",
+      "avgPrice": "84167.4",
+      "orderStatus": "Filled",
+      "reduceOnly": true,
+      "createType": "CreateByUser",
+      "timeInForce": "IOC",
+      "cumExecQty": "0.001",
+      "cumExecFee": "0.04629207",
+      "createdTime": "1790684826812",
+      "updatedTime": "1790684826813",
+      "cancelType": "UNKNOWN",
+      "rejectReason": "EC_NoError",
+      "leavesQty": "0"
+    },
+    {
+      "orderId": "4fd15467-3060-4ea2-9045-681539918fcd",
+      "orderLinkId": "bd235f19-a599-464c-8494-a59d52e69450",
+      "symbol": "BTCUSDT",
+      "side": "Buy",
+      "orderType": "Limit",
+      "qty": "0.001",
+      "price": "84182.1",
+      "avgPrice": "84175.3",
+      "orderStatus": "Filled",
+      "reduceOnly": false,
+      "createType": "CreateByUser",
+      "timeInForce": "GTC",
+      "cumExecQty": "0.001",
+      "cumExecFee": "0.04629642",
+      "createdTime": "1790684514562",
+      "updatedTime": "1790684514563",
+      "cancelType": "UNKNOWN",
+      "rejectReason": "EC_NoError",
+      "leavesQty": "0"
+    }
+  ],
+  "executions": [
+    {
+      "orderId": "64eb5576-ab5f-4e5e-bc87-ad0136c84870",
+      "orderLinkId": "",
+      "execId": "a5fb907d-d523-4eaf-b454-8e9ae50ba1aa",
+      "symbol": "BTCUSDT",
+      "side": "Sell",
+      "execQty": "0.001",
+      "execPrice": "84167.4",
+      "execFee": "0.04629207",
+      "feeCurrency": "USDT",
+      "execType": "Trade",
+      "execTime": "1790684826813",
+      "isMaker": false,
+      "closedSize": "0.001"
+    },
+    {
+      "orderId": "4fd15467-3060-4ea2-9045-681539918fcd",
+      "orderLinkId": "bd235f19-a599-464c-8494-a59d52e69450",
+      "execId": "2ca16cde-9135-49f5-9dae-c2b332972677",
+      "symbol": "BTCUSDT",
+      "side": "Buy",
+      "execQty": "0.001",
+      "execPrice": "84175.3",
+      "execFee": "0.04629642",
+      "feeCurrency": "USDT",
+      "execType": "Trade",
+      "execTime": "1790684514563",
+      "isMaker": false,
+      "closedSize": "0"
+    }
+  ]
+}

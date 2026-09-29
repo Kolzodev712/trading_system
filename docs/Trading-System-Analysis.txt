@@ -35,11 +35,17 @@ WHAT IS NOT COMPLETE
 --------------------
 The system is not production complete and is not mainnet ready.
 
+Operator flatten (after Increment 10): one journaled reduce-only path in
+trading_engine (not trading_core). FlattenAndPause, restart flatten,
+TRADING_FLATTEN, and the former gRPC TSM fallback persist client ID and
+operator_flatten intent before send; recover by client ID and venue
+position before retry. FlattenAndPause reports CancelWorking unverified
+(including failed /open_orders), keeps the latch held, and does not send
+reduce-only.
+
 Explicitly open:
-  1. Journal and recover FlattenAndPause’s reduce-only submission.
-  2. Propagate a CancelWorking failure from FlattenAndPause.
-  3. Validate Candidate #2 as a strategy (Demo tested execution with a synthetic signal).
-  4. Any separate mainnet readiness and approval work.
+  1. Validate Candidate #2 as a strategy (Demo tested execution with a synthetic signal).
+  2. Any separate mainnet readiness and approval work.
 
 Increment 11 (research-framework cleanup for Candidate #3) is not started until asked.
 
@@ -48,6 +54,14 @@ DECOUPLING (implemented)
 ------------------------
 strategy_core: ModelState + CompletedCandle -> decision. No exchange, runtime, or
 research accounting.
+
+Close-window API: on_candle(state, lookback, window) requires window.len()==lookback.
+Primary N=28 uses exactly 28 completed daily closes including the current complete.
+log_spread is ln(current) minus the mean of ln(closes) over that window. A short
+window is an error, not NotReady. Forming-bar drop, wall-clock as_of, and
+max_entry_age_secs belong to the adapter, not strategy_core. First ready live step
+from a series that initializes N then steps needs N+1 completed bars (29 in the
+Increment 10 fixture).
 
 research_engine / research_cli: historical evaluation. Do not link the live runner.
 

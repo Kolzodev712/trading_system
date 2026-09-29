@@ -56,6 +56,16 @@ Invariants that shipped:
 
 Python `strategy_dsl` / `architecture/10-strategy-engine.md` is a **separate proposed IR path**, not the Candidate #2 production model.
 
+## strategy_core close-window API
+
+`libs/strategy_core` is a pure model. It does not load datasets, drop forming bars, fetch klines, or submit orders. Callers supply **completed close windows**.
+
+- `on_candle(state, lookback, window)` requires `window.len() == lookback`. For primary N=28, that is exactly 28 completed daily closes **including the current completed close**.
+- `log_spread` / `geometric_mean` / `wants_long` use that same window: log(current close) minus the mean of log closes over the window.
+- `Step::NotReady` is unused by `on_candle`; a short window is a hard error, not a soft warmup. Live/research adapters therefore keep a rolling buffer and only call `on_candle` once they have N completes.
+- A historical series that first initializes N closes then steps the next complete needs **N+1** completed bars before the first ready live step (the Increment 10 fixture is 29 UTC dailies for that reason).
+- Entry freshness (`max_entry_age_secs`, forming-bar drop, wall-clock `as_of`) lives in the adapter / `completed_dailies`, not in `strategy_core`.
+
 ## Paper qualification (Increment 9A)
 
 Accepted locally on `trading_system` `9dab54e`, k-paper `590f3ad` / record `6d03acc`, UI `10496e7` (source review plus reported matrix; that review did not rerun the lab). Scope: section 49 rows through Candidate #2 → Paper, frozen N=28 adapter comparison, grpc and browser CancelWorking. This is a controlled futures/fault laboratory qualification, not Demo and not alpha.
@@ -66,12 +76,16 @@ Accepted as a **bounded Bybit Demo operational qualification** on committed pack
 
 That verdict does **not** validate Candidate #2 as a strategy and does **not** approve mainnet.
 
+## Operator flatten (implemented after Increment 10)
+
+Operator reduce-only exits use one journaled path in `trading_engine` (`submit_operator_reduce_only_exits`), not `trading_core`. FlattenAndPause, restart `on_stop=flatten`, `TRADING_FLATTEN`, and the former gRPC TSM `open_order` fallback share it. The runner persists a stable client ID and `operator_flatten` intent (`Prepared` then `Submitted`) before send. Recovery looks up that client ID; an inconclusive acknowledgement is resolved against venue position before any retry. Journal append failure halts and does not send.
+
+FlattenAndPause latches first, then CancelWorking. An unverified CancelWorking (including failed GET `/open_orders`) is reported as `accepted=false`; working orders are not treated as cancelled; the pause/flatten latch stays held; reduce-only is not sent.
+
 ## Explicitly open
 
-1. Journal and recover FlattenAndPause’s reduce-only submission (today `trading_client().open_order` with no submission-journal append; Demo sell `orderLinkId` was empty).
-2. Propagate a CancelWorking failure from FlattenAndPause (today `let _ = self.trading_control.cancel_working(...)`).
-3. Validate Candidate #2 as a strategy. The Demo run tested execution using a synthetic signal.
-4. Separate mainnet readiness and approval work. Do not document the system as production complete or mainnet ready.
+1. Validate Candidate #2 as a strategy. The Demo run tested execution using a synthetic signal.
+2. Separate mainnet readiness and approval work. Do not document the system as production complete or mainnet ready.
 
 Increment 11 (research-framework cleanup for Candidate #3) is not started until the owner asks.
 

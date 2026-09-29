@@ -56,6 +56,7 @@ pub struct TradingCliServiceImpl {
     venue_label: String,
     environment: String,
     operator_results: Arc<Mutex<HashMap<String, trading_cli::OperatorCommandResponse>>>,
+    submission_journal: Option<Arc<trading_engine::state::SubmissionJournal>>,
 }
 
 impl TradingCliServiceImpl {
@@ -96,6 +97,7 @@ impl TradingCliServiceImpl {
             venue_label: "UNKNOWN".to_string(),
             environment: "UNKNOWN".to_string(),
             operator_results: Arc::new(Mutex::new(HashMap::new())),
+            submission_journal: None,
         }
     }
 
@@ -199,6 +201,14 @@ impl TradingCliServiceImpl {
         self
     }
 
+    pub fn with_submission_journal(
+        mut self,
+        journal: Arc<trading_engine::state::SubmissionJournal>,
+    ) -> Self {
+        self.submission_journal = Some(journal);
+        self
+    }
+
     fn clone_for_streaming(&self) -> Self {
         Self {
             level_manager: self.level_manager.clone(),
@@ -226,6 +236,7 @@ impl TradingCliServiceImpl {
             venue_label: self.venue_label.clone(),
             environment: self.environment.clone(),
             operator_results: self.operator_results.clone(),
+            submission_journal: self.submission_journal.clone(),
         }
     }
 
@@ -283,6 +294,7 @@ impl TradingCliServiceImpl {
             exchange_state_manager: self.exchange_state_manager.clone(),
             level_manager: self.level_manager.clone(),
             operator_results: self.operator_results.clone(),
+            submission_journal: self.submission_journal.clone(),
         }
     }
 

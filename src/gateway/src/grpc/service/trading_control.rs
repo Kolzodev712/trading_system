@@ -8,6 +8,9 @@ use tonic::{Request, Response, Status};
 use trading_core::grpc::TradingControl;
 use trading_engine::levels::LevelManager;
 use trading_engine::state::manager::TradingStateManager;
+use trading_engine::state::{
+    flatten_cancel_working_failed, submit_operator_reduce_only_exits, SubmissionJournal,
+};
 
 pub struct TradingControlService {
     pub trading_control: Arc<TradingControl>,
@@ -15,6 +18,7 @@ pub struct TradingControlService {
     pub exchange_state_manager: Arc<ExchangeStateManager>,
     pub level_manager: Arc<RwLock<LevelManager>>,
     pub operator_results: Arc<Mutex<HashMap<String, trading_cli::OperatorCommandResponse>>>,
+    pub submission_journal: Option<Arc<SubmissionJournal>>,
 }
 
 impl TradingControlService {
@@ -215,90 +219,81 @@ impl TradingControlService {
         }
         self.trading_control.latch_flatten_and_pause().await;
         let (order_ids, pairs) = self.collect_working().await;
-        let _ = self.trading_control.cancel_working(order_ids, pairs).await;
+        let cancel_err = match self.trading_control.cancel_working(order_ids, pairs).await {
+            Ok(_) => None,
+            Err(e) => Some(e.to_string()),
+        };
+        if let Some(err) = cancel_err {
+            let response = trading_cli::OperatorCommandResponse {
+                accepted: false,
+                state: "failed".into(),
+                message: flatten_cancel_working_failed(&err),
+                venue,
+                environment,
+                scope: scope_label(&req.symbol),
+                order_ids: vec![],
+            };
+            self.remember(&req.request_id, response.clone()).await;
+            return Ok(Response::new(response));
+        }
 
-        let flatten_result = self
-            .trading_control
-            .submit_reduce_only_flatten()
-            .await
-            .map_err(|err| err.to_string());
-        let mut flatten_ids = match flatten_result {
-            Ok(ids) => ids,
-            Err(message) => {
-                let response = trading_cli::OperatorCommandResponse {
-                    accepted: false,
-                    state: "failed".into(),
-                    message: format!("FlattenAndPause reduce-only failed: {message}"),
-                    venue,
-                    environment,
-                    scope: scope_label(&req.symbol),
-                    order_ids: vec![],
-                };
-                self.remember(&req.request_id, response.clone()).await;
-                return Ok(Response::new(response));
-            }
+        let Some(journal) = self.submission_journal.as_ref() else {
+            let response = trading_cli::OperatorCommandResponse {
+                accepted: false,
+                state: "failed".into(),
+                message:
+                    "FlattenAndPause: submission journal required; latch held; reduce-only not sent"
+                        .into(),
+                venue,
+                environment,
+                scope: scope_label(&req.symbol),
+                order_ids: vec![],
+            };
+            self.remember(&req.request_id, response.clone()).await;
+            return Ok(Response::new(response));
         };
 
-        if flatten_ids.is_empty() {
-            let to_close: Vec<(trading_core::types::common::Pair, rust_decimal::Decimal)> = {
-                let state = self.trading_state_manager.get_state();
-                let guard = state.read().await;
-                guard
-                    .positions
-                    .values()
-                    .filter(|p| p.quantity.abs() > rust_decimal::Decimal::new(1, 6))
-                    .map(|p| (p.symbol.clone(), p.quantity))
-                    .collect()
-            };
-            for (pair, qty) in to_close {
-                let side = if qty > rust_decimal::Decimal::ZERO {
-                    trading_core::types::common::Side::Sell
-                } else {
-                    trading_core::types::common::Side::Buy
-                };
-                let mut exchange_params = std::collections::HashMap::new();
-                exchange_params.insert(
-                    smol_str::SmolStr::new("reduceOnly"),
-                    smol_str::SmolStr::new("true"),
-                );
-                let request = trading_core::types::exchange::OrderRequest {
-                    instrument: trading_core::types::common::Instrument::new(
-                        instrument_type.clone(),
-                        pair,
-                    ),
-                    side,
-                    order_type: trading_core::types::common::OrderType::Market,
-                    price: rust_decimal::Decimal::ZERO,
-                    amount: qty.abs(),
-                    timestamp: None,
-                    exchange_params,
-                };
-                match self
-                    .trading_control
-                    .trading_client()
-                    .write()
-                    .await
-                    .open_order(request)
-                    .await
-                {
-                    Ok(order) => flatten_ids.push(order.order_id.as_str().to_string()),
-                    Err(e) => {
-                        let message = format!("FlattenAndPause TSM exit failed: {e}");
-                        let response = trading_cli::OperatorCommandResponse {
-                            accepted: false,
-                            state: "failed".into(),
-                            message,
-                            venue,
-                            environment,
-                            scope: scope_label(&req.symbol),
-                            order_ids: flatten_ids,
-                        };
-                        self.remember(&req.request_id, response.clone()).await;
-                        return Ok(Response::new(response));
-                    }
+        let tsm_positions: Vec<(trading_core::types::common::Pair, rust_decimal::Decimal)> = {
+            let state = self.trading_state_manager.get_state();
+            let guard = state.read().await;
+            guard
+                .positions
+                .values()
+                .map(|p| (p.symbol.clone(), p.quantity))
+                .collect()
+        };
+        let flatten_ids = {
+            let client = self.trading_control.trading_client();
+            let client = client.read().await;
+            let state_lock = self.trading_state_manager.get_state();
+            let mut state = state_lock.write().await;
+            match submit_operator_reduce_only_exits(
+                journal.as_ref(),
+                &*client,
+                &mut state,
+                instrument_type,
+                &tsm_positions,
+            )
+            .await
+            {
+                Ok(report) => report.exchange_order_ids,
+                Err(err) => {
+                    drop(state);
+                    drop(client);
+                    let response = trading_cli::OperatorCommandResponse {
+                        accepted: false,
+                        state: "failed".into(),
+                        message: format!("FlattenAndPause reduce-only failed: {err}"),
+                        venue,
+                        environment,
+                        scope: scope_label(&req.symbol),
+                        order_ids: vec![],
+                    };
+                    self.remember(&req.request_id, response.clone()).await;
+                    return Ok(Response::new(response));
                 }
             }
-        }
+        };
 
         let still_open: Vec<_> = {
             let state = self.trading_state_manager.get_state();
@@ -412,5 +407,161 @@ fn scope_label(symbol: &str) -> String {
         "account".into()
     } else {
         symbol.to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use async_trait::async_trait;
+    use rust_decimal::Decimal;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use trading_core::error::EngineError;
+    use trading_core::registry::symbol::SymbolRegistry;
+    use trading_core::types::common::{Exchange, OrderId, Pair};
+    use trading_core::types::exchange::{Balance, Order, OrderRequest, Trade};
+    use trading_core::venue::cex::channels::cex_venue_update_channel;
+    use trading_core::venue::cex::traits::TradingClient;
+    use trading_engine::state::Position;
+
+    #[derive(Debug)]
+    struct UnverifiedOpenOrdersClient {
+        placed: Arc<AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl TradingClient<OrderRequest> for UnverifiedOpenOrdersClient {
+        fn exchange_id(&self) -> Exchange {
+            Exchange::Paper
+        }
+
+        async fn test_open_order(&self, _req: OrderRequest) -> Result<(), EngineError> {
+            Ok(())
+        }
+
+        async fn open_order(&self, _req: OrderRequest) -> Result<Order, EngineError> {
+            self.placed.fetch_add(1, Ordering::SeqCst);
+            Err(EngineError::NotSupported("test".into()))
+        }
+
+        async fn cancel_order_by_id(&self, _order_id: OrderId) -> Result<(), EngineError> {
+            Ok(())
+        }
+
+        async fn cancel_all_orders(&self, _pair: &Pair) -> Result<(), EngineError> {
+            Err(EngineError::CustomError(anyhow::anyhow!(
+                "REST GET /open_orders: 503"
+            )))
+        }
+
+        async fn fetch_balance(&self) -> Result<Vec<Balance>, EngineError> {
+            Ok(vec![])
+        }
+
+        async fn fetch_open_orders(&self) -> Result<Vec<Order>, EngineError> {
+            Err(EngineError::CustomError(anyhow::anyhow!(
+                "REST GET /open_orders: 503"
+            )))
+        }
+
+        async fn fetch_trades(&self, _pair: Option<&Pair>) -> Result<Vec<Trade>, EngineError> {
+            Ok(vec![])
+        }
+
+        async fn fetch_market_data_snapshot(&self, _pair: &Pair) -> Result<(), EngineError> {
+            Ok(())
+        }
+
+        async fn amend_order(
+            &self,
+            _order_id: OrderId,
+            _new_request: OrderRequest,
+        ) -> Result<Order, EngineError> {
+            Err(EngineError::NotSupported("test".into()))
+        }
+
+        async fn bulk_open_orders(
+            &self,
+            _req: trading_core::types::exchange::BulkOrderRequest,
+        ) -> Result<trading_core::types::exchange::BulkOrderResponse, EngineError> {
+            Err(EngineError::NotSupported("test".into()))
+        }
+
+        async fn bulk_amend_orders(
+            &self,
+            _req: trading_core::types::exchange::BulkAmendRequest,
+        ) -> Result<trading_core::types::exchange::BulkAmendResponse, EngineError> {
+            Err(EngineError::NotSupported("test".into()))
+        }
+    }
+
+    fn flatten_service(
+        client: Arc<RwLock<dyn TradingClient<OrderRequest>>>,
+    ) -> TradingControlService {
+        let (tx, rx) = cex_venue_update_channel(8);
+        let exchange_state_manager = Arc::new(ExchangeStateManager::new(
+            tx,
+            Arc::new(SymbolRegistry::from_pairs(vec![Pair::new("BTC", "USDT")])),
+            client.clone(),
+            0,
+            false,
+        ));
+        let trading_state_manager =
+            Arc::new(TradingStateManager::new(rx, exchange_state_manager.clone()));
+        TradingControlService {
+            trading_control: Arc::new(TradingControl::new(client)),
+            trading_state_manager,
+            exchange_state_manager,
+            level_manager: Arc::new(RwLock::new(LevelManager::new())),
+            operator_results: Arc::new(Mutex::new(HashMap::new())),
+            submission_journal: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn flatten_and_pause_reports_unverified_cancel_working() {
+        let placed = Arc::new(AtomicUsize::new(0));
+        let client: Arc<RwLock<dyn TradingClient<OrderRequest>>> =
+            Arc::new(RwLock::new(UnverifiedOpenOrdersClient {
+                placed: placed.clone(),
+            }));
+        let service = flatten_service(client);
+        {
+            let state = service.trading_state_manager.get_state();
+            let mut guard = state.write().await;
+            guard.positions.insert(
+                Pair::new("BTC", "USDT"),
+                Position {
+                    symbol: Pair::new("BTC", "USDT"),
+                    quantity: Decimal::new(1, 3),
+                    avg_price: Decimal::ONE,
+                },
+            );
+        }
+        let response = service
+            .flatten_and_pause(
+                Request::new(trading_cli::OperatorCommandRequest {
+                    request_id: "cw-unverified".into(),
+                    symbol: String::new(),
+                }),
+                "PAPER".into(),
+                "LOCAL".into(),
+                trading_core::types::common::InstrumentType::Futures,
+            )
+            .await
+            .expect("rpc")
+            .into_inner();
+        assert!(!response.accepted);
+        assert_eq!(response.state, "failed");
+        assert!(
+            response.message.contains("CancelWorking unverified"),
+            "unexpected message: {}",
+            response.message
+        );
+        assert!(response.message.contains("not treated as cancelled"));
+        assert!(response.message.contains("Reduce-only exit was not sent"));
+        assert!(service.trading_control.flatten_latched().await);
+        assert!(service.trading_control.entries_paused().await);
+        assert_eq!(placed.load(Ordering::SeqCst), 0);
     }
 }

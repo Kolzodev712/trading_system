@@ -1,19 +1,17 @@
 # Runner Architecture
 
 **Version**: 0.1  
-**Last Updated**: December 2024
+**Last Updated**: 2026-09-29
 
-## Overview
-
-The Runner is the application orchestrator that initializes all services, wires them together, and exposes external interfaces (gRPC via the gateway crate, Zenoh event/command gateway). It supports both strategy-based and level-based trading modes.
+The Runner is the application orchestrator that initializes services, wires them together, and exposes gRPC via the gateway crate. Zenoh event/command export is **opt-in** (`ZENOH_ENABLED=1`); leave it unset on Paper/Demo qualification paths. Candidate #2 uses `btc_price_ma_app`, not the default `runner` binary. Current system status: [docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md).
 
 ## Key Principles
 
-- **Orchestration only**: Runner does not contain business logic; it coordinates services and provides the entry point.
+- **Orchestration only**: Runner does not contain strategy-model logic; Candidate #2 is injected by `btc_price_ma_app`.
 - **Single entry point in lib**: The main entry point is `runner::run()` in the library; it creates `ShutdownManager`, builds all services, and calls `strategy_runner()` or `level_runner()`.
 - **Thin binary**: The `runner` binary (`main.rs`) only parses args, loads config, initializes logging/tracing and MongoDB, then calls `runner::run()`.
 - **gRPC from gateway**: All gRPC (proto, server, service handlers) lives in the **gateway** crate; the runner depends on `gateway` and spawns the gRPC server in-process.
-- **Zenoh always on**: Event gateway (hot/cold events) and Zenoh command queryable start unconditionally when the runner starts (no feature flag).
+- **Zenoh opt-in**: Event gateway and command queryable start only when `ZENOH_ENABLED=1` (see [docs/PLATFORM_DATA_PLANE.md](../docs/PLATFORM_DATA_PLANE.md)).
 
 ## Architecture
 
@@ -171,8 +169,8 @@ main.rs
 
 ### External
 
-- **gRPC**: Provided by the gateway crate; runner spawns the server. TUI CLI (and optional standalone gateway proxy) use gRPC.
-- **Zenoh**: Events (hot/cold) published; commands handled via Zenoh queryable (always on).
+- **gRPC**: Provided by the gateway crate; runner spawns the server. `trading-system-ui` (gRPC-Web via Envoy) and the legacy TUI are clients.
+- **Zenoh**: Opt-in (`ZENOH_ENABLED=1`). Events (hot/cold) published; commands via queryable. Not required for Paper/Demo qualification.
 - **MongoDB**: Configuration persistence.
 
 ## Configuration

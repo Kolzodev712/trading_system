@@ -1,0 +1,76 @@
+Trading System — current architecture analysis
+As of 2026-09-29 (Increment 10 accepted)
+
+This file supersedes older Trading-System-Analysis drafts. Those described a single in-process
+monolith with TUI-first control, strategy logic mixed into trading_engine, and no accepted
+Paper/Demo qualifications. Do not treat an older copy as current.
+
+Canonical markdown: docs/ARCHITECTURE.md
+Increment record: docs/PROP_TRADING_RESEARCH_AND_PRODUCTION_PLAN.md (sections 6, 65, 67)
+
+
+WHAT IS COMPLETE (stated scope only)
+------------------------------------
+The architectural refactor is implemented: pure strategy, historical research, and live
+execution are separate crates. Candidate #2 is composed in-process by btc_price_ma_app; the
+generic runner and trading_engine do not depend on strategy_core or research crates.
+
+Three git repositories have distinct roles:
+  trading_system     — models, research, live runner, risk, journal, ledger, proto
+  k-paper            — local Paper exchange / deterministic fault lab
+  trading-system-ui  — browser operator UI (not exchange authority)
+
+Increment 9A is accepted locally as a Paper qualification (C2→Paper, frozen N=28, CancelWorking).
+Increment 10 is accepted as bounded Bybit Demo operational qualification: independently flat
+before enablement; one 0.001 BTC buy and one 0.001 BTC reduce-only sell matching ledger and
+Demo history; journal entry path on the buy; ended flat, entries paused, flatten latch held.
+Evidence: docs/inc10-evidence-measured-e923fa8/ (commit 042eac9). No further Demo run is
+needed to bring the docs up to date.
+
+The Demo run used a synthetic fresh-entry fixture. That is execution qualification, not
+strategy validation.
+
+
+WHAT IS NOT COMPLETE
+--------------------
+The system is not production complete and is not mainnet ready.
+
+Explicitly open:
+  1. Journal and recover FlattenAndPause’s reduce-only submission.
+  2. Propagate a CancelWorking failure from FlattenAndPause.
+  3. Validate Candidate #2 as a strategy (Demo tested execution with a synthetic signal).
+  4. Any separate mainnet readiness and approval work.
+
+Increment 11 (research-framework cleanup for Candidate #3) is not started until asked.
+
+
+DECOUPLING (implemented)
+------------------------
+strategy_core: ModelState + CompletedCandle -> decision. No exchange, runtime, or
+research accounting.
+
+research_engine / research_cli: historical evaluation. Do not link the live runner.
+
+btc_price_ma_app: Candidate #2 adapter injected into the generic runner in one process.
+Use this binary for Shadow/Paper/Demo Candidate #2. The default runner binary does not
+instantiate Candidate #2.
+
+runner + trading_engine: live orchestration, risk, orders, journal, ledger, reconciliation.
+No dependency on strategy_core, research_engine, research_cli, or btc_price_ma_app.
+
+Operator path: trading-system-ui -> Envoy gRPC-Web -> runner gateway. Mutating RPCs on
+non-Paper venues require TRADING_OPERATOR_TOKEN at the proxy/runner. The UI login is not
+that authorization. The legacy TUI is not the planned operator layer.
+
+Python strategy_dsl / architecture/10-strategy-engine.md is a separate proposed IR path,
+not the Candidate #2 model.
+
+
+QUALIFICATION PINS
+------------------
+Paper 9A:  trading_system 9dab54e, k-paper 590f3ad / 6d03acc, UI 10496e7
+Demo 10:   trading_system e923fa8 / pack 042eac9, UI 923dd30, k-paper 6d03acc
+           pack docs/inc10-evidence-measured-e923fa8/
+
+90 ms recorded on Demo fills is exchange timestamp to local receive, not full order
+execution latency.

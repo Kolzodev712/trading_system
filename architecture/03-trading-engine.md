@@ -1,7 +1,8 @@
 # Trading Engine Architecture
 
 **Version**: 0.1  
-**Last Updated**: December 2024
+**Last Updated**: December 2024  
+**Status:** In-process execution engine. Candidate #2 does **not** live here: pure model is `libs/strategy_core`, composition is `src/btc_price_ma_app`. Historical research is `research/research_engine`, not `strategies/backtest.rs` as a current research path. Current system status: [docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md).
 
 ## Overview
 

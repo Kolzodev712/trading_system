@@ -1,5 +1,7 @@
 # Python Workspace Architecture
 
+The Python packages here generate **indicator** JSON (and a proposed strategy IR). They are **not** the Candidate #2 live path (`libs/strategy_core` + `src/btc_price_ma_app`). Current architecture: [docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md).
+
 ## Overview
 
 This workspace contains Python tooling that integrates with the Rust trading system. The Python code runs at **build time** to generate configurations that Rust loads at runtime.

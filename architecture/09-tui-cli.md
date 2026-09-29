@@ -1,15 +1,16 @@
 # TUI CLI Architecture
 
 **Version**: 0.1  
-**Last Updated**: December 2024
+**Last Updated**: 2026-09-29  
+**Status:** Legacy terminal client. The planned operator layer is `trading-system-ui`. Current architecture: [docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md).
 
 ## Overview
 
-The TUI (Terminal User Interface) CLI is an external process that provides a terminal-based interface for trading operations and monitoring. It connects to the Trading System via gRPC and provides real-time monitoring, level management, and trading control.
+The TUI (Terminal User Interface) CLI is an external process that provides a terminal-based interface for trading operations and monitoring. It connects to the Trading System via gRPC.
 
 ## Key Principle
 
-**TUI IS the monitoring interface** - no separate monitoring service needed. It provides comprehensive real-time monitoring and level management capabilities.
+The TUI is **a** gRPC client, not the planned operator control layer and not exchange authority.
 
 ## Architecture
 

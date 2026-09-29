@@ -5,6 +5,9 @@
 # Bounded measured run (only if INC10_ENABLE=1): 0.001 BTC exposure, one working
 # order, five minutes from Resume, then pause/cancel/flatten to independently
 # verified flat. Interrupted or failed end-state is not success.
+# INC10_FRESH_ENTRY_FIXTURE=1 loads only scripts/inc10_demo_fresh_entry_candles.json
+# on the real clock (no TRADING_TEST_NOW_MS). Hold diagnostic candles are rejected.
+# That opt-in is required to carry the reviewed fresh signal into the measured path.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -15,6 +18,11 @@ JOURNAL="${WORKDIR}/submission-journal.jsonl"
 LEDGER="${WORKDIR}/execution-ledger.jsonl"
 TOKEN_FILE="${WORKDIR}/operator.token"
 SNAPSHOT_SRC="${ROOT}/config/cex/runtime-snapshot.json"
+REVIEWED_CANDLES="${ROOT}/scripts/inc10_demo_fresh_entry_candles.json"
+REVIEWED_SPEC="${ROOT}/scripts/inc10_demo_fresh_entry_fixture.json"
+HOLD_CANDLES="${ROOT}/scripts/inc10_demo_hold_candles.json"
+# Last completed bar ends 2026-09-29T00:00:00Z; stale at +86400s.
+FRESH_UNTIL_MS=1790726400000
 
 export TRADING_STRATEGY="${TRADING_STRATEGY:-BTCPriceMALongFlatV1}"
 export TRADING_SYMBOL="${TRADING_SYMBOL:-BTC/USDT}"
@@ -32,9 +40,57 @@ if [[ -n "${TRADING_TEST_NOW_MS:-}" ]]; then
   echo "FAILED: TRADING_TEST_NOW_MS is not authorized on Bybit Demo; use the real clock" >&2
   exit 1
 fi
-if [[ -n "${TRADING_TEST_CANDLES_PATH:-}" ]]; then
-  echo "FAILED: TRADING_TEST_CANDLES_PATH is not authorized for this Demo procedure. scripts/inc10_demo_hold_fixture.json is diagnostic-only; the fresh-entry fixture is not approved to Resume." >&2
-  exit 1
+if [[ "${INC10_FRESH_ENTRY_FIXTURE:-0}" == "1" ]]; then
+  if [[ ! -f "${REVIEWED_CANDLES}" || ! -f "${REVIEWED_SPEC}" ]]; then
+    echo "FAILED: reviewed fresh-entry fixture missing (${REVIEWED_CANDLES})" >&2
+    exit 1
+  fi
+  python3 - "${REVIEWED_CANDLES}" "${REVIEWED_SPEC}" "${FRESH_UNTIL_MS}" <<'PY'
+import json, sys, time
+from datetime import datetime, timezone
+candles_path, spec_path, until_ms = sys.argv[1], sys.argv[2], int(sys.argv[3])
+now_ms = int(time.time() * 1000)
+if now_ms >= until_ms:
+    until = datetime.fromtimestamp(until_ms / 1000, timezone.utc).isoformat()
+    raise SystemExit(
+        f"FAILED: fresh-entry window ended at {until}; this transition is stale under 86400s"
+    )
+spec = json.loads(open(spec_path).read())
+if spec.get("kind") != "fresh_entry":
+    raise SystemExit("FAILED: fixture spec kind must be fresh_entry")
+if "TRADING_TEST_NOW_MS" not in (spec.get("forbidden_env") or []):
+    raise SystemExit("FAILED: fixture spec must forbid TRADING_TEST_NOW_MS")
+candles = json.loads(open(candles_path).read())
+if len(candles) != 29:
+    raise SystemExit(f"FAILED: expected 29 completed dailies, got {len(candles)}")
+last = candles[-1]
+if str(last.get("close")) != "110":
+    raise SystemExit("FAILED: last completed close must be 110 (enter-long)")
+print(
+    f"reviewed fixture still fresh: now_ms={now_ms} until_ms={until_ms} "
+    f"last_start_ms={last.get('timestamp_ms')} n={len(candles)}"
+)
+PY
+  CANON="$(realpath "${REVIEWED_CANDLES}")"
+  HOLD_CANON="$(realpath "${HOLD_CANDLES}" 2>/dev/null || true)"
+  if [[ -n "${TRADING_TEST_CANDLES_PATH:-}" ]]; then
+    GOT="$(realpath "${TRADING_TEST_CANDLES_PATH}")"
+    if [[ "${GOT}" == "${HOLD_CANON}" ]]; then
+      echo "FAILED: Hold diagnostic candles are not accepted by this procedure" >&2
+      exit 1
+    fi
+    if [[ "${GOT}" != "${CANON}" ]]; then
+      echo "FAILED: TRADING_TEST_CANDLES_PATH must be the reviewed fixture ${CANON} (got ${GOT})" >&2
+      exit 1
+    fi
+  fi
+  export TRADING_TEST_CANDLES_PATH="${CANON}"
+  echo "INC10_FRESH_ENTRY_FIXTURE=1: synthetic fixture path=${TRADING_TEST_CANDLES_PATH} (real clock; Hold fixture rejected)"
+else
+  if [[ -n "${TRADING_TEST_CANDLES_PATH:-}" ]]; then
+    echo "FAILED: TRADING_TEST_CANDLES_PATH requires INC10_FRESH_ENTRY_FIXTURE=1 and the reviewed fresh-entry candles. The Hold fixture is diagnostic-only." >&2
+    exit 1
+  fi
 fi
 
 mkdir -p "${WORKDIR}/logs"
@@ -246,6 +302,33 @@ require_status() {
   if ! echo "${status}" | grep -qE "${pattern}"; then
     echo "FAILED: status missing /${pattern}/" >&2
     echo "${status}" >&2
+    exit 1
+  fi
+}
+
+require_fresh_entry_hold_gate() {
+  local status="$1"
+  require_status 'model_reconstructed=true' "${status}"
+  require_status 'fresh_entry_eligible=true' "${status}"
+  require_status 'entry_freshness=fresh' "${status}"
+  python3 - "${status}" <<'PY'
+import re, sys
+status = sys.argv[1]
+m = re.search(r"last_flat_to_long_age_secs=([0-9-]+)", status)
+if not m:
+    raise SystemExit("FAILED: status missing last_flat_to_long_age_secs")
+age = int(m.group(1))
+if age < 0 or age > 86400:
+    raise SystemExit(f"FAILED: last_flat_to_long_age_secs={age} is not a fresh 86400s window")
+print(f"hold gate fresh: last_flat_to_long_age_secs={age}")
+PY
+}
+
+require_synthetic_fixture_log() {
+  local log="$1"
+  if ! grep -q 'synthetic_candle_fixture' "${log}"; then
+    echo "FAILED: runner log missing synthetic_candle_fixture (${log})" >&2
+    grep -E 'candle|fixture|synthetic' "${log}" | tail -n 40 >&2 || true
     exit 1
   fi
 }
@@ -580,7 +663,11 @@ cleanup() {
 trap cleanup EXIT
 
 echo "== package fixtures =="
-echo "Hold fixture is diagnostic only; TRADING_TEST_CANDLES_PATH and TRADING_TEST_NOW_MS stay unset (live book + real clock)."
+if [[ "${INC10_FRESH_ENTRY_FIXTURE:-0}" == "1" ]]; then
+  echo "INC10_FRESH_ENTRY_FIXTURE=1: reviewed candles ${TRADING_TEST_CANDLES_PATH}; TRADING_TEST_NOW_MS unset; live book; real clock."
+else
+  echo "Hold fixture is diagnostic only; TRADING_TEST_CANDLES_PATH unset unless INC10_FRESH_ENTRY_FIXTURE=1 (live book + real clock)."
+fi
 (cd "${ROOT}" && cargo test -q -p btc_price_ma_app --lib app_factory_builds_shadow_paper_and_bybit_exchange)
 (cd "${ROOT}" && cargo test -q -p btc_price_ma_app --lib fresh_entry_fixture_last_completed_transitions_on_real_clock)
 (cd "${ROOT}" && cargo test -q -p btc_price_ma_app --lib fresh_entry_script_fixture_last_completed_transitions_on_real_clock)
@@ -599,6 +686,9 @@ fi
 echo "== start C2 on Bybit demo with entries paused =="
 start_runner "${LOG}"
 sleep 2
+if [[ "${INC10_FRESH_ENTRY_FIXTURE:-0}" == "1" ]]; then
+  require_synthetic_fixture_log "${LOG}"
+fi
 status="$("${CTL[@]}" status)"
 echo "${status}" | tee "${WORKDIR}/grpc_status_paused.txt"
 require_status 'venue=BYBIT' "${status}"
@@ -606,19 +696,26 @@ require_status 'environment=DEMO' "${status}"
 require_status 'execution_mode=exchange' "${status}"
 require_status 'entries_paused=true' "${status}"
 require_status "operator_id=${TRADING_OPERATOR_ID}" "${status}"
+if [[ "${INC10_FRESH_ENTRY_FIXTURE:-0}" == "1" ]]; then
+  require_fresh_entry_hold_gate "${status}"
+fi
 if grep -qE 'Bybit demo mode: placing order via REST' "${LOG}"; then
   echo "FAILED: runner placed while entries should be paused" >&2
   grep -E 'placing order' "${LOG}" >&2
   exit 1
 fi
-grep -E 'Bybit position mode|one-way|REST|private|gRPC server|entries start paused' "${LOG}" | tail -n 30 \
+grep -E 'synthetic_candle_fixture|Bybit position mode|one-way|REST|private|gRPC server|entries start paused' "${LOG}" | tail -n 40 \
   | tee "${WORKDIR}/connectivity_snippets.txt" || true
 
 echo "== runner paused REST open-order reconciliation =="
 require_open_order_rest_ok "${LOG}"
 
 echo "== independent demo account vs runner (paused) =="
-compare_demo_account paused "${status}"
+if [[ "${INC10_FRESH_ENTRY_FIXTURE:-0}" == "1" ]]; then
+  compare_demo_account paused "${status}" 1
+else
+  compare_demo_account paused "${status}"
+fi
 require_bounded_status "${status}"
 if ! grep -q '"total_max_position": "0.001"' "${WORKDIR}/strategies.json" \
   || ! grep -q '"max_total_orders": 1' "${WORKDIR}/strategies.json" \
@@ -666,7 +763,13 @@ if grep -qE 'Bybit demo mode: placing order via REST' "${WORKDIR}/runner-restart
   exit 1
 fi
 require_open_order_rest_ok "${WORKDIR}/runner-restart.log"
-compare_demo_account restart "${status}"
+if [[ "${INC10_FRESH_ENTRY_FIXTURE:-0}" == "1" ]]; then
+  require_synthetic_fixture_log "${WORKDIR}/runner-restart.log"
+  require_fresh_entry_hold_gate "${status}"
+  compare_demo_account restart "${status}" 1
+else
+  compare_demo_account restart "${status}"
+fi
 preserve_snapshot_copy
 
 echo "${status}"
@@ -675,7 +778,11 @@ echo "workdir=${WORKDIR}"
 echo "journal=${JOURNAL} ledger=${LEDGER} snapshot=${SNAPSHOT_SRC}"
 
 if [[ "${INC10_ENABLE:-0}" != "1" ]]; then
-  echo "INC10_ENABLE is not 1: leaving entries paused. Do not Resume until an authorized measured run."
+  if [[ "${INC10_FRESH_ENTRY_FIXTURE:-0}" == "1" ]]; then
+    echo "INC10_FRESH_ENTRY_FIXTURE=1 paused path passed. INC10_ENABLE is not 1: no Resume. The remaining decision is explicit approval to Resume the measured run."
+  else
+    echo "INC10_ENABLE is not 1: leaving entries paused. Do not Resume until an authorized measured run."
+  fi
   INC10_KEEP=1
   trap - EXIT
   echo "INC10_KEEP runner pid=${RUNNER_PID}"
@@ -709,7 +816,12 @@ trap on_measured_interrupt INT TERM
 
 echo "== independent demo account vs runner (before enable) =="
 status="$("${CTL[@]}" status)"
-compare_demo_account before_enable "${status}"
+if [[ "${INC10_FRESH_ENTRY_FIXTURE:-0}" == "1" ]]; then
+  require_fresh_entry_hold_gate "${status}"
+  compare_demo_account before_enable "${status}" 1
+else
+  compare_demo_account before_enable "${status}"
+fi
 require_bounded_status "${status}"
 
 echo "== enable trading + Resume for bounded demo run (${MEASURE_SECS}s) =="

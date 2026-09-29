@@ -1,0 +1,33 @@
+{
+  "purpose": "Controlled Demo candle fixture for Increment 10 Hold review. Do not Resume a live measured run with this until the owner authorizes.",
+  "candles_path": "scripts/inc10_demo_hold_candles.json",
+  "runner_env": {
+    "TRADING_TEST_CANDLES_PATH": "scripts/inc10_demo_hold_candles.json",
+    "TRADING_TEST_NOW_MS": "1790677103000"
+  },
+  "as_of": {
+    "resume_utc": "2026-09-29T10:18:23Z",
+    "now_ms": 1790677103000,
+    "max_entry_age_secs": 86400
+  },
+  "hold_gate": {
+    "now_ms": 1790677103000,
+    "accepted_completed": 59,
+    "model_reconstructed": true,
+    "fresh_entry_eligible": false,
+    "entry_freshness": "stale",
+    "last_flat_to_long_age_secs": 901103,
+    "model_direction": "long",
+    "previous_direction": "long",
+    "desired_target": "0.001",
+    "readiness_reason": "above geometric mean; retain long",
+    "last_completed_end_ms": 1790640000000,
+    "last_transition": {
+      "from": "Flat",
+      "to": "Long",
+      "start_time_ms": 1789689600000,
+      "candle_end_exclusive_ms": 1789776000000
+    },
+    "intent": "Hold { strategy_id: \"BTCPriceMALongFlatV1:BTC/USDT\" }"
+  }
+}

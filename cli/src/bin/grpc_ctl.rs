@@ -170,6 +170,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         s.strategy_id, s.readiness, s.readiness_reason
                     );
                 }
+                println!(
+                    "strategy {} model_reconstructed={} fresh_entry_eligible={} entry_freshness={} last_flat_to_long_age_secs={} previous_direction={} desired_target={} filled_position={}",
+                    s.strategy_id,
+                    s.model_reconstructed,
+                    s.fresh_entry_eligible,
+                    s.entry_freshness,
+                    s.last_flat_to_long_age_secs,
+                    s.previous_direction,
+                    s.desired_target,
+                    s.filled_position
+                );
             }
             for p in data.positions {
                 println!(

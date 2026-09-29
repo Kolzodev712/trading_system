@@ -657,6 +657,15 @@ impl MonitoringService {
                 .as_ref()
                 .map(|s| s.fresh_entry_eligible)
                 .unwrap_or(false),
+            last_flat_to_long_age_secs: snapshot
+                .as_ref()
+                .and_then(|s| s.last_flat_to_long_age_secs)
+                .map(|age| age as i64)
+                .unwrap_or(-1),
+            entry_freshness: snapshot
+                .as_ref()
+                .map(|s| s.entry_freshness.clone())
+                .unwrap_or_default(),
             unresolved_submission: trading_state.has_unresolved_submission(&strategy_info.symbol),
             research_disposition: snapshot
                 .as_ref()

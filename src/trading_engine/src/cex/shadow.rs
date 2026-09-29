@@ -41,6 +41,10 @@ pub struct StrategyRuntimeSnapshot {
     pub previous_direction: String,
     pub desired_target: String,
     pub fresh_entry_eligible: bool,
+    /// Seconds since the last reconstructed flat-to-long candle end. None if none.
+    pub last_flat_to_long_age_secs: Option<u64>,
+    /// `fresh`, `stale`, `no_live_transition`, or `unconfigured`.
+    pub entry_freshness: String,
     pub recovery: String,
     pub research_disposition: String,
     pub operational_role: String,
@@ -432,6 +436,8 @@ mod tests {
             previous_direction: "flat".into(),
             desired_target: "0".into(),
             fresh_entry_eligible: false,
+            last_flat_to_long_age_secs: None,
+            entry_freshness: "no_live_transition".into(),
             recovery: "clear".into(),
             research_disposition: "REJECTED AS VALIDATED ALPHA".into(),
             operational_role: OPERATIONAL_ROLE_BASELINE.to_string(),

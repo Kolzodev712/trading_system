@@ -474,6 +474,8 @@ message StrategyStatus {
     string reserved_qty = 26;
     string effective_qty = 27;
     bool fresh_entry_eligible = 28;
+    int64 last_flat_to_long_age_secs = 37; // -1 if no live flat-to-long transition
+    string entry_freshness = 38; // fresh | stale | no_live_transition | unconfigured
     bool unresolved_submission = 29;
     string research_disposition = 30;
     string operational_role = 31;

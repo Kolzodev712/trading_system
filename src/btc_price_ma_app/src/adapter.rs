@@ -186,6 +186,12 @@ impl BtcPriceMaLongFlatV1 {
         let decision = self.last_decision.as_ref();
         let last = self.last_processed.as_ref();
         let freshness = self.entry_freshness(now_ms);
+        let (fresh_entry_eligible, last_flat_to_long_age_secs, entry_freshness) = match freshness {
+            EntryFreshness::Fresh { age_secs } => (true, Some(age_secs), "fresh"),
+            EntryFreshness::Stale { age_secs } => (false, Some(age_secs), "stale"),
+            EntryFreshness::NoLiveTransition => (false, None, "no_live_transition"),
+            EntryFreshness::Unconfigured => (false, None, "unconfigured"),
+        };
         let desired = match decision.map(|d| d.target) {
             Some(RuntimeTarget::Quantity(qty)) => qty.to_string(),
             Some(RuntimeTarget::NoChange) => self.model.requested_qty.to_string(),
@@ -218,7 +224,9 @@ impl BtcPriceMaLongFlatV1 {
                 })
                 .unwrap_or_else(|| "flat".to_string()),
             desired_target: desired,
-            fresh_entry_eligible: matches!(freshness, EntryFreshness::Fresh { .. }),
+            fresh_entry_eligible,
+            last_flat_to_long_age_secs,
+            entry_freshness: entry_freshness.to_string(),
             recovery: match self.last_recovery {
                 RecoveryState::Clear => "clear".to_string(),
                 RecoveryState::UnexpectedShort => "recovery_required".to_string(),
@@ -594,6 +602,11 @@ mod tests {
             strat.entry_freshness(now),
             EntryFreshness::Stale { .. }
         ));
+        let snap = strat.build_snapshot(now);
+        assert!(!snap.fresh_entry_eligible);
+        assert_eq!(snap.entry_freshness, "stale");
+        assert!(snap.last_flat_to_long_age_secs.unwrap() > 86_400);
+        assert!(snap.model_reconstructed);
     }
 
     #[tokio::test]
@@ -942,5 +955,60 @@ mod tests {
         );
         strat.mark_model_reconstructed();
         assert!(strat.is_model_reconstructed());
+    }
+
+    #[tokio::test]
+    #[ignore = "set INC10_HOLD_CANDLES and INC10_HOLD_NOW_MS"]
+    async fn inc10_hold_gate_from_env_fixture() {
+        let path = std::env::var("INC10_HOLD_CANDLES").expect("INC10_HOLD_CANDLES");
+        let now_ms: u64 = std::env::var("INC10_HOLD_NOW_MS")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .expect("INC10_HOLD_NOW_MS");
+        let raw = std::fs::read_to_string(&path).unwrap();
+        let candles: Vec<trading_engine::cex::strategies::replay::Candle> =
+            serde_json::from_str(&raw).unwrap();
+        let pair = pair();
+        let mut source = runner::cex::DailyCompletedCandleSource::new(
+            trading_core::types::common::Exchange::Bybit,
+            InstrumentType::Futures,
+        );
+        let accepted = source.ingest_fetched(&pair, candles, now_ms);
+        let mut strat = adapter(28, Some(86_400));
+        for candle in &accepted {
+            strat.observe_completed_candle(candle).unwrap();
+        }
+        strat.mark_model_reconstructed();
+        let snap = strat.build_snapshot(now_ms);
+        let transition = strat.last_transition().cloned();
+        let account = TradingState::new();
+        let intent = evaluate_qty(&mut strat, &account, now_ms).await;
+        let report = serde_json::json!({
+            "now_ms": now_ms,
+            "accepted_completed": accepted.len(),
+            "model_reconstructed": snap.model_reconstructed,
+            "fresh_entry_eligible": snap.fresh_entry_eligible,
+            "entry_freshness": snap.entry_freshness,
+            "last_flat_to_long_age_secs": snap.last_flat_to_long_age_secs,
+            "model_direction": snap.model_direction,
+            "previous_direction": snap.previous_direction,
+            "desired_target": snap.desired_target,
+            "readiness_reason": snap.readiness_reason,
+            "last_completed_end_ms": snap.last_completed_end_ms,
+            "last_transition": transition.as_ref().map(|t| {
+                serde_json::json!({
+                    "from": format!("{:?}", t.from),
+                    "to": format!("{:?}", t.to),
+                    "start_time_ms": t.start_time_ms,
+                    "candle_end_exclusive_ms": t.candle_end_exclusive_ms,
+                })
+            }),
+            "intent": format!("{intent:?}"),
+        });
+        if let Ok(out) = std::env::var("INC10_HOLD_REPORT") {
+            std::fs::write(out, serde_json::to_string_pretty(&report).unwrap() + "\n").unwrap();
+        }
+        eprintln!("{}", serde_json::to_string_pretty(&report).unwrap());
+        assert!(snap.model_reconstructed);
     }
 }

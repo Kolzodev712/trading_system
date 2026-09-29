@@ -1,0 +1,10 @@
+global_trading=true
+entries_paused=false flatten_latched=false
+operator_id=inc10
+global_toggle_semantics=legacy SetTradingEnabled: disabling cancels working orders; not PauseEntries/FlattenAndPause
+runner_mode=strategies venue=BYBIT environment=DEMO execution_mode=exchange snapshot_unix_ms=1790684824391
+instrument=Futures exchange=Bybit orders=0 positions=1 orderbooks=1 indicators=2
+strategy BTCPriceMALongFlatV1:BTC/USDT enabled=true pos=0.001 cap=0.001 orders=0/1 signal=long
+strategy BTCPriceMALongFlatV1:BTC/USDT readiness=ready reason=above geometric mean; enter long
+strategy BTCPriceMALongFlatV1:BTC/USDT model_reconstructed=true fresh_entry_eligible=true entry_freshness=fresh last_flat_to_long_age_secs=44824 previous_direction=flat desired_target=0.001 filled_position=0.001
+position BTCUSDT qty=0.001 side=Long entry=84175.3 mark=84127.9 upnl=-0.0474

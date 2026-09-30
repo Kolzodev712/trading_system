@@ -1,0 +1,176 @@
+{
+  "levels": [
+    {
+      "id": "qual_rest_a",
+      "name": "Paper spot resting A",
+      "side": "Buy",
+      "order_type": "Limit",
+      "quantity": {
+        "type": "Fixed",
+        "value": "0.01"
+      },
+      "price": {
+        "Fixed": "1000"
+      },
+      "risk": {
+        "max_position": "0.02",
+        "max_orders": 1,
+        "max_order_qty": null,
+        "max_notional": null,
+        "daily_loss_limit": null
+      },
+      "lifecycle": {
+        "auto_repost": false,
+        "auto_repost_on_cancel": false,
+        "max_reposts": 0,
+        "repost_delay_secs": 1,
+        "repost_conditions": []
+      },
+      "enabled": false,
+      "group": "paper_ack_amend"
+    },
+    {
+      "id": "qual_rest_b",
+      "name": "Paper spot resting B",
+      "side": "Buy",
+      "order_type": "Limit",
+      "quantity": {
+        "type": "Fixed",
+        "value": "0.01"
+      },
+      "price": {
+        "Fixed": "1010"
+      },
+      "risk": {
+        "max_position": "0.02",
+        "max_orders": 1,
+        "max_order_qty": null,
+        "max_notional": null,
+        "daily_loss_limit": null
+      },
+      "lifecycle": {
+        "auto_repost": false,
+        "auto_repost_on_cancel": false,
+        "max_reposts": 0,
+        "repost_delay_secs": 1,
+        "repost_conditions": []
+      },
+      "enabled": false,
+      "group": "paper_ack_amend"
+    }
+  ],
+  "instances": [
+    {
+      "id": "qual_rest_b_BTCUSDT",
+      "template_id": "qual_rest_b",
+      "pair": {
+        "base": "BTC",
+        "quote": "USDT"
+      },
+      "config": {
+        "id": "qual_rest_b",
+        "name": "Paper spot resting B",
+        "side": "Buy",
+        "order_type": "Limit",
+        "quantity": {
+          "type": "Fixed",
+          "value": "0.01"
+        },
+        "price": {
+          "Fixed": "1010"
+        },
+        "risk": {
+          "max_position": "0.02",
+          "max_orders": 1,
+          "max_order_qty": null,
+          "max_notional": null,
+          "daily_loss_limit": null
+        },
+        "lifecycle": {
+          "auto_repost": false,
+          "auto_repost_on_cancel": false,
+          "max_reposts": 0,
+          "repost_delay_secs": 1,
+          "repost_conditions": []
+        },
+        "enabled": true,
+        "group": "paper_ack_amend"
+      },
+      "owned_client_ids": [
+        "5a867b0c-5477-4ca9-8738-fedc22efad28"
+      ],
+      "owned_exchange_ids": [
+        "304bde4b-cefb-4500-a354-412e238189bd"
+      ],
+      "filled_qty": "0",
+      "state": "Posted",
+      "repost_count": 0,
+      "last_filled_at": null,
+      "fill_count": 0,
+      "inflight_client_order_id": null,
+      "filled_by_order": {}
+    },
+    {
+      "id": "qual_rest_a_BTCUSDT",
+      "template_id": "qual_rest_a",
+      "pair": {
+        "base": "BTC",
+        "quote": "USDT"
+      },
+      "config": {
+        "id": "qual_rest_a",
+        "name": "Paper spot resting A",
+        "side": "Buy",
+        "order_type": "Limit",
+        "quantity": {
+          "type": "Fixed",
+          "value": "0.01"
+        },
+        "price": {
+          "Fixed": "1000"
+        },
+        "risk": {
+          "max_position": "0.02",
+          "max_orders": 1,
+          "max_order_qty": null,
+          "max_notional": null,
+          "daily_loss_limit": null
+        },
+        "lifecycle": {
+          "auto_repost": false,
+          "auto_repost_on_cancel": false,
+          "max_reposts": 0,
+          "repost_delay_secs": 1,
+          "repost_conditions": []
+        },
+        "enabled": true,
+        "group": "paper_ack_amend"
+      },
+      "owned_client_ids": [
+        "9c1c51cd-93fc-4026-bcda-feda9b0e9249"
+      ],
+      "owned_exchange_ids": [
+        "854868ef-89fa-4d45-9839-abed4ce3b6e5"
+      ],
+      "filled_qty": "0",
+      "state": "Posted",
+      "repost_count": 0,
+      "last_filled_at": null,
+      "fill_count": 0,
+      "inflight_client_order_id": null,
+      "filled_by_order": {}
+    }
+  ],
+  "tombstones": [],
+  "risk_limits": {
+    "total_max_position": "0.05",
+    "max_total_orders": 8,
+    "max_notional": "200",
+    "max_order_qty": "0.01",
+    "daily_loss_limit_all_pairs": null,
+    "daily_loss_limit_per_pair": {}
+  },
+  "venue": "Paper",
+  "instrument": "Spot",
+  "account": "paper_ack_amend"
+}

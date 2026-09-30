@@ -13,9 +13,7 @@ use tokio_tungstenite::tungstenite::Message;
 use tracing::{error, info, warn};
 use trading_core::channels::market_data::{MarketDataUpdate, MarketDataUpdateSender};
 use trading_core::error::EngineError;
-use trading_core::types::common::{
-    Exchange, Instrument, InstrumentType, OrderId, OrderStatus, Pair, Side,
-};
+use trading_core::types::common::{Exchange, InstrumentType, OrderId, OrderStatus, Pair};
 use trading_core::types::exchange::{
     Balance, BulkAmendRequest, BulkAmendResponse, BulkOrderRequest, BulkOrderResponse,
     ClientOrderLookup, Order, OrderRequest, Trade,
@@ -24,10 +22,10 @@ use trading_core::venue::cex::traits::{ConnectionState, TradingClient};
 
 use super::config::PaperConfig;
 use super::map::{
-    balance_to_core, cancel_all_after_rest, execution_ack_to_order,
-    execution_may_complete_pending_place, execution_to_order, execution_to_trade,
-    fill_trade_id_is_new, merge_fill_into_working_order, orderbook_to_structured, position_to_core,
-    public_trade_to_structured, to_instrument_id,
+    apply_amend_ack_to_order, balance_to_core, cancel_all_after_rest, execution_ack_to_order,
+    execution_client_order_id, execution_may_complete_pending_place, execution_to_order,
+    execution_to_trade, fill_trade_id_is_new, merge_fill_into_working_order,
+    orderbook_to_structured, position_to_core, public_trade_to_structured, to_instrument_id,
 };
 use super::messages::{KPaperCommand, KPaperMessage, KPaperPlaceOrderRequest};
 use super::rest::{
@@ -55,6 +53,13 @@ impl From<PaperConfig> for KPaperConfig {
     }
 }
 
+type PendingPlace = (oneshot::Sender<Result<Order, EngineError>>, OrderRequest);
+type PendingAmend = (
+    oneshot::Sender<Result<Order, EngineError>>,
+    OrderId,
+    OrderRequest,
+);
+
 /// Shared state for the recv loop and TradingClient.
 #[derive(Default)]
 pub struct KPaperState {
@@ -65,11 +70,12 @@ pub struct KPaperState {
     /// Fill trade ids already merged into `open_orders` filled_amount.
     applied_fill_ids: HashMap<OrderId, HashSet<String>>,
     /// Single in-flight place_order. Completed only by a correlated ack/reject, never by a fill.
-    pending_place: Option<(oneshot::Sender<Result<Order, EngineError>>, OrderRequest)>,
+    pending_place: Option<PendingPlace>,
     /// Single in-flight cancel: fulfilled when we get CancelAck.
     pending_cancel: Option<oneshot::Sender<Result<(), EngineError>>>,
-    /// Single in-flight amend: fulfilled when we get AmendAck.
-    pending_amend: Option<oneshot::Sender<Result<Order, EngineError>>>,
+    /// Single in-flight amend: fulfilled when we get AmendAck, carrying the
+    /// requested price/qty because Paper's AmendAck is order-id only.
+    pending_amend: Option<PendingAmend>,
 }
 
 /// k-paper client: implements TradingClient. Exchange updates are driven via run_websocket_loop (caller passes ExchangeStateManager).
@@ -101,7 +107,10 @@ impl KPaperClient {
             command_tx: command_tx.clone(),
             state: Arc::new(RwLock::new(KPaperState::default())),
             rest_base: rest_base.clone(),
-            http_client: HttpClient::new(),
+            http_client: HttpClient::builder()
+                .timeout(std::time::Duration::from_secs(3))
+                .build()
+                .unwrap_or_else(|_| HttpClient::new()),
         };
         (client, command_rx)
     }
@@ -121,6 +130,49 @@ impl KPaperClient {
         self.command_tx.send(cmd).map_err(|e| {
             EngineError::CustomError(anyhow::anyhow!("k-paper command channel closed: {}", e))
         })
+    }
+
+    /// Independent REST check: the ACK's exchange id must be the order Paper
+    /// currently associates with this client id. Missing or mismatched lookup
+    /// is unknown, not a place success.
+    async fn verify_place_ack_exchange_id(
+        &self,
+        order: Order,
+        req: &OrderRequest,
+    ) -> Result<Order, EngineError> {
+        let Some(cid) = req
+            .exchange_params
+            .get("orderLinkId")
+            .filter(|id| !id.is_empty())
+        else {
+            return Err(EngineError::CustomError(anyhow::anyhow!(
+                "k-paper: place ACK missing client-order-id correlation"
+            )));
+        };
+        info!(
+            client_id = %cid,
+            ack_exchange_id = %order.order_id.as_str(),
+            "k-paper: verifying place ACK via REST client-id lookup"
+        );
+        match self.fetch_order_by_client_id(cid).await {
+            Ok(ClientOrderLookup::Working(found) | ClientOrderLookup::Terminal(found)) => {
+                if found.order_id != order.order_id {
+                    return Err(EngineError::CustomError(anyhow::anyhow!(
+                        "k-paper: place ACK exchange id {} does not match REST lookup {} for client id {}",
+                        order.order_id.as_str(),
+                        found.order_id.as_str(),
+                        cid
+                    )));
+                }
+                Ok(order)
+            }
+            Ok(ClientOrderLookup::Inconclusive) => Err(EngineError::CustomError(anyhow::anyhow!(
+                "k-paper: place ACK client-id lookup inconclusive for {cid}"
+            ))),
+            Err(err) => Err(EngineError::CustomError(anyhow::anyhow!(
+                "k-paper: place ACK client-id lookup failed for {cid}: {err}"
+            ))),
+        }
     }
 }
 
@@ -185,7 +237,7 @@ impl TradingClient<OrderRequest> for KPaperClient {
 
         let timeout_dur = tokio::time::Duration::from_secs(15);
         match tokio::time::timeout(timeout_dur, rx).await {
-            Ok(Ok(Ok(order))) => Ok(order),
+            Ok(Ok(Ok(order))) => self.verify_place_ack_exchange_id(order, &req).await,
             Ok(Ok(Err(e))) => Err(e),
             Ok(Err(_)) => Err(EngineError::CustomError(anyhow::anyhow!(
                 "k-paper: pending place dropped"
@@ -489,7 +541,7 @@ impl TradingClient<OrderRequest> for KPaperClient {
                     "k-paper: only one in-flight amend supported"
                 )));
             }
-            state.pending_amend = Some(tx);
+            state.pending_amend = Some((tx, order_id.clone(), new_request.clone()));
         }
         self.send_command(KPaperCommand::AmendOrder {
             order_id: order_id.as_str().to_string(),
@@ -611,7 +663,7 @@ async fn fail_inflight(state: &Arc<RwLock<KPaperState>>, reason: &str) {
     if let Some(tx) = st.pending_cancel.take() {
         let _ = tx.send(Err(EngineError::CustomError(anyhow::anyhow!("{reason}"))));
     }
-    if let Some(tx) = st.pending_amend.take() {
+    if let Some((tx, _, _)) = st.pending_amend.take() {
         let _ = tx.send(Err(EngineError::CustomError(anyhow::anyhow!("{reason}"))));
     }
 }
@@ -829,6 +881,12 @@ async fn handle_message(
                 .map(|s| !s.is_empty())
                 .unwrap_or(false);
             let is_ack = !is_reject && exec_qty.is_zero();
+            info!(
+                client_order_id = ?execution_client_order_id(&exec),
+                qty = %exec_qty,
+                is_ack,
+                "k-paper: execution correlation fields"
+            );
 
             let mut st = state.write().await;
             let completes_place = st
@@ -978,24 +1036,38 @@ async fn handle_message(
         KPaperMessage::AmendAck(ack) => {
             let order_id = OrderId::new(ack.order_id.clone().into());
             let mut st = state.write().await;
-            let order = st.open_orders.get(&order_id).cloned().unwrap_or_else(|| {
-                // Placeholder if order not in state (e.g. already filled)
-                Order {
+            let Some((pending, expected_id, new_request)) = st.pending_amend.take() else {
+                return Ok(());
+            };
+            if expected_id != order_id {
+                let _ = pending.send(Err(EngineError::CustomError(anyhow::anyhow!(
+                    "k-paper: AmendAck order id {} does not match in-flight {}",
+                    order_id.as_str(),
+                    expected_id.as_str()
+                ))));
+                return Ok(());
+            }
+            let base = st
+                .open_orders
+                .get(&order_id)
+                .cloned()
+                .unwrap_or_else(|| Order {
                     order_id: order_id.clone(),
-                    client_order_id: None,
-                    instrument: Instrument::new(instrument_type.clone(), Pair::new("BTC", "USDT")),
-                    side: Side::Buy,
-                    price: Decimal::ZERO,
-                    amount: Decimal::ZERO,
+                    client_order_id: new_request.exchange_params.get("orderLinkId").cloned(),
+                    instrument: new_request.instrument.clone(),
+                    side: new_request.side.clone(),
+                    price: new_request.price,
+                    amount: new_request.amount,
                     internal_created_at: 0,
                     exchange_created_at: None,
                     status: trading_core::types::common::OrderStatus::New,
                     filled_amount: Decimal::ZERO,
-                }
-            });
-            if let Some(pending) = st.pending_amend.take() {
-                let _ = pending.send(Ok(order));
-            }
+                });
+            let order = apply_amend_ack_to_order(&base, &new_request);
+            st.open_orders.insert(order_id, order.clone());
+            let _ = pending.send(Ok(order.clone()));
+            drop(st);
+            let _ = exchange_state_manager.update_order(order).await;
         }
         KPaperMessage::Error(e) => {
             warn!("k-paper error: {}", e.message);
@@ -1010,7 +1082,7 @@ async fn handle_message(
                     "{}", e.message
                 ))));
             }
-            if let Some(pending) = st.pending_amend.take() {
+            if let Some((pending, _, _)) = st.pending_amend.take() {
                 let _ = pending.send(Err(EngineError::CustomError(anyhow::anyhow!(
                     "{}", e.message
                 ))));

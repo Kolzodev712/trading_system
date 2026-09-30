@@ -14,7 +14,7 @@ use tokio::sync::RwLock;
 use tracing::{error, warn};
 use trading_core::registry::symbol::SymbolRegistry;
 use trading_core::types::common::{Instrument, InstrumentType, Pair, Side};
-use trading_core::types::exchange::{Balance, OrderRequest};
+use trading_core::types::exchange::{Balance, Order, OrderRequest};
 
 /// Risk manager - orchestrates all risk checks
 pub struct RiskManager {
@@ -228,13 +228,19 @@ impl RiskManager {
         }
 
         let filled_qty = trading_state.position_qty(&order_request.instrument.pair);
-        self.check_pre_trade(
+        let replace_working = resolved_level
+            .level
+            .active_orders
+            .first()
+            .and_then(|oid| trading_state.active_orders.get(oid));
+        self.check_pre_trade_with_replace(
             &order_request,
             trading_state,
             balances,
             current_prices,
             filled_qty,
             None,
+            replace_working,
         )
         .await
     }
@@ -254,6 +260,31 @@ impl RiskManager {
         current_prices: Option<&HashMap<Pair, Decimal>>,
         position_qty: Decimal,
         leverage: Option<u32>,
+    ) -> RiskCheckResult {
+        self.check_pre_trade_with_replace(
+            order_request,
+            trading_state,
+            balances,
+            current_prices,
+            position_qty,
+            leverage,
+            None,
+        )
+        .await
+    }
+
+    /// Like [`Self::check_pre_trade`], but a working-order amend is not counted as
+    /// additional order-count or position exposure.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn check_pre_trade_with_replace(
+        &self,
+        order_request: &OrderRequest,
+        trading_state: &TradingState,
+        balances: &[Balance],
+        current_prices: Option<&HashMap<Pair, Decimal>>,
+        position_qty: Decimal,
+        leverage: Option<u32>,
+        replace_working: Option<&Order>,
     ) -> RiskCheckResult {
         // Check circuit breaker first (highest priority)
         if !self.circuit_breaker.is_allowed().await {
@@ -319,7 +350,8 @@ impl RiskManager {
             if !total_position_check.allowed {
                 return total_position_check;
             }
-            let order_count_check = self.check_order_count(trading_state);
+            let replace_count = usize::from(replace_working.is_some());
+            let order_count_check = self.check_order_count_replacing(trading_state, replace_count);
             if !order_count_check.allowed {
                 return order_count_check;
             }
@@ -352,7 +384,10 @@ impl RiskManager {
                 Side::Sell => -order_request.amount,
             };
             let pair = &order_request.instrument.pair;
-            let prospective = trading_state.effective_position_qty(pair) + signed;
+            let mut prospective = trading_state.effective_position_qty(pair) + signed;
+            if let Some(existing) = replace_working {
+                prospective -= remaining_signed(existing);
+            }
             if prospective.abs() > max_total_position {
                 return RiskCheckResult::blocked(SmolStr::new(format!(
                     "Prospective effective exposure {} exceeds max_position {}",
@@ -617,10 +652,20 @@ impl RiskManager {
 
     /// Check order count limits
     pub fn check_order_count(&self, state: &TradingState) -> RiskCheckResult {
-        // Check total order count
+        self.check_order_count_replacing(state, 0)
+    }
+
+    fn check_order_count_replacing(
+        &self,
+        state: &TradingState,
+        replace_count: usize,
+    ) -> RiskCheckResult {
         if let Some(max_total_orders) = self.limits.max_total_orders.filter(|n| *n > 0) {
-            let total_active_orders = state.active_orders.len() + state.pending_submissions().len();
-            // Block at or above the limit (order limit is stricter than position limit)
+            let total_active_orders = state
+                .active_orders
+                .len()
+                .saturating_add(state.pending_submissions().len())
+                .saturating_sub(replace_count);
             if total_active_orders >= max_total_orders {
                 return RiskCheckResult::blocked(SmolStr::new(format!(
                     "Total order limit reached: {} >= {}",
@@ -630,6 +675,14 @@ impl RiskManager {
         }
 
         RiskCheckResult::allowed()
+    }
+}
+
+fn remaining_signed(order: &Order) -> Decimal {
+    let remaining = (order.amount - order.filled_amount).max(Decimal::ZERO);
+    match order.side {
+        Side::Buy => remaining,
+        Side::Sell => -remaining,
     }
 }
 
@@ -1244,6 +1297,8 @@ mod balance_tests {
         let risk = RiskManager::new(
             RiskLimits {
                 max_order_qty: Some(dec!(1)),
+                max_total_orders: Some(1),
+                total_max_position: Some(dec!(0.01)),
                 ..RiskLimits::default()
             },
             Arc::new(trading_core::registry::symbol::SymbolRegistry::from_pairs(

@@ -233,15 +233,16 @@ mod tests {
     }
 
     #[test]
-    fn deserialize_execution_ack() {
-        let json = r#"{"type":"execution","order_id":"ord-1","instrument_id":"BTC-USDT","side":"Buy","price":50000,"quantity":0,"timestamp":"2026-01-01T00:00:00Z","reject_reason":null}"#;
+    fn deserialize_execution_ack_with_client_id() {
+        let json = r#"{"type":"execution","order_id":"ord-1","trade_id":"00000000-0000-0000-0000-000000000000","instrument_id":"BTC-USDT","side":"Buy","price":"1000","quantity":"0","fee":null,"timestamp":"2026-01-01T00:00:00Z","reject_reason":null,"client_order_id":"cid-1"}"#;
         let msg: KPaperMessage = serde_json::from_str(json).unwrap();
         match &msg {
             KPaperMessage::Execution(e) => {
                 assert_eq!(e.order_id, "ord-1");
-                assert_eq!(e.instrument_id, "BTC-USDT");
-                assert!(e.quantity.is_zero());
-                assert!(e.reject_reason.is_none());
+                assert_eq!(
+                    e.client_order_id,
+                    Some(serde_json::Value::String("cid-1".into()))
+                );
             }
             _ => panic!("expected Execution"),
         }

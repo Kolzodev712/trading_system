@@ -1,0 +1,2 @@
+trading enabled=true msg=Trading enabled
+strategy toggle skipped (levels mode or unavailable): Strategy manager not available (not in strategies mode)

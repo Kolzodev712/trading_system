@@ -685,7 +685,7 @@ impl LevelBasedEventLoop {
                             if existing_order.side == resolved.level.config.side {
                                 // Create order request for amendment
                                 let mut exchange_params = std::collections::HashMap::new();
-                                if let Some(cid) = current_level.owned_client_ids.first() {
+                                if let Some(cid) = existing_order.client_order_id.as_ref() {
                                     exchange_params
                                         .insert(smol_str::SmolStr::new("orderLinkId"), cid.clone());
                                 }

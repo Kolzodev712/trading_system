@@ -92,21 +92,44 @@ impl PaperClient {
             };
             let typ = v.get("type").and_then(|t| t.as_str());
             match typ {
-                Some("orderbook") => {
-                    if let Ok(ob) = serde_json::from_value::<KPaperOrderbook>(v) {
+                Some("orderbook") => match serde_json::from_value::<KPaperOrderbook>(v) {
+                    Ok(ob) => {
                         let Some(pair) = parse_instrument_id(ob.instrument_id.as_str()) else {
+                            warn!(
+                                instrument_id = %ob.instrument_id,
+                                "k-paper market data: dropped book, unparseable instrument_id"
+                            );
                             continue;
                         };
                         if !self.is_allowed(&pair) {
+                            info!(
+                                pair = %pair,
+                                "k-paper market data: dropped book, pair not configured"
+                            );
                             continue;
                         }
                         if let Some(book) = orderbook_to_structured(&ob) {
+                            info!(
+                                pair = %pair,
+                                ts_ms = book.timestamp,
+                                bids = book.bids.len(),
+                                asks = book.asks.len(),
+                                "k-paper market data: book received"
+                            );
                             if let Err(e) = handler.handle_orderbook(book).await {
                                 warn!("k-paper market data: handle_orderbook error: {}", e);
                             }
+                        } else {
+                            warn!(
+                                instrument_id = %ob.instrument_id,
+                                "k-paper market data: dropped book, structured map failed"
+                            );
                         }
                     }
-                }
+                    Err(e) => {
+                        warn!("k-paper market data: orderbook parse failed: {e}");
+                    }
+                },
                 Some("public_trade") => {
                     if let Ok(t) = serde_json::from_value::<KPaperPublicTrade>(v) {
                         let Some(pair) = parse_instrument_id(t.instrument_id.as_str()) else {

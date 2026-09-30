@@ -1273,7 +1273,13 @@ mod tests {
             .any(|record| record.id == level_id.as_str()
                 && record.owned_exchange_ids == ["ex-1".to_string()]));
 
-        let reloaded = reload(&path, &[pair.clone()], Exchange::Paper, "acct-a").await;
+        let reloaded = reload(
+            &path,
+            std::slice::from_ref(&pair),
+            Exchange::Paper,
+            "acct-a",
+        )
+        .await;
         let level = reloaded.get_level(&level_id).unwrap();
         assert_eq!(level.state, LevelState::Deleting);
         assert_eq!(level.active_orders[0].as_str(), "ex-1");
@@ -1283,7 +1289,13 @@ mod tests {
         };
         assert!(err.to_string().contains("owned orders"));
 
-        let mut reloaded = reload(&path, &[pair.clone()], Exchange::Paper, "acct-a").await;
+        let mut reloaded = reload(
+            &path,
+            std::slice::from_ref(&pair),
+            Exchange::Paper,
+            "acct-a",
+        )
+        .await;
         reloaded
             .handle_order_cancelled(&level_id, &OrderId::new("ex-1".into()), dec!(0))
             .await

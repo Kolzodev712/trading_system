@@ -15,7 +15,7 @@ mod submit;
 pub use cancellation::CancellationManager;
 pub use catalog::{LevelInstanceRecord, LevelsCatalog};
 pub use config::LevelConfig;
-pub use event_loop::LevelBasedEventLoop;
+pub use event_loop::{orderbook_is_stale, LevelBasedEventLoop};
 pub use executor::LevelExecutor;
 pub use identity::{expanded_level_id, LevelIdentity};
 pub use indicator_subscriber::IndicatorSubscriber;

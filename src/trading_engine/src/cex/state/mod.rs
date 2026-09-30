@@ -293,6 +293,30 @@ impl TradingState {
             .sum()
     }
 
+    /// Remaining working + reserved qty on `side` (adverse fill does not credit the opposite side).
+    pub fn unfilled_same_side_qty(&self, symbol: &Pair, side: Side) -> Decimal {
+        let working: Decimal = self
+            .active_orders
+            .values()
+            .filter(|order| {
+                order.instrument.pair == *symbol
+                    && order.side == side
+                    && matches!(
+                        order.status,
+                        OrderStatus::New | OrderStatus::PartiallyFilled
+                    )
+            })
+            .map(|order| (order.amount - order.filled_amount).max(Decimal::ZERO))
+            .sum();
+        let reserved: Decimal = self
+            .submissions
+            .values()
+            .filter(|submission| &submission.symbol == symbol && submission.side == side)
+            .map(|submission| submission.amount)
+            .sum();
+        working + reserved
+    }
+
     /// Position plus working quantity plus submissions whose ack is still unknown.
     pub fn effective_position_qty(&self, symbol: &Pair) -> Decimal {
         self.position_qty(symbol) + self.working_qty(symbol) + self.reserved_submission_qty(symbol)
@@ -808,5 +832,28 @@ mod tests {
         state.remove_order(&order.order_id);
         assert_eq!(state.working_qty(&pair), Decimal::ZERO);
         assert_eq!(state.effective_position_qty(&pair), Decimal::new(1, 3));
+    }
+
+    #[test]
+    fn unfilled_same_side_ignores_opposite_working() {
+        let mut state = TradingState::new();
+        let pair = Pair::new("BTC", "USDT");
+        state.add_order(Order {
+            order_id: OrderId::new("buy-1".into()),
+            client_order_id: None,
+            instrument: Instrument::new(InstrumentType::Futures, pair.clone()),
+            side: Side::Buy,
+            price: Decimal::new(100, 0),
+            amount: Decimal::ONE,
+            internal_created_at: 1,
+            exchange_created_at: Some(1),
+            status: OrderStatus::New,
+            filled_amount: Decimal::ZERO,
+        });
+        assert_eq!(state.unfilled_same_side_qty(&pair, Side::Buy), Decimal::ONE);
+        assert_eq!(
+            state.unfilled_same_side_qty(&pair, Side::Sell),
+            Decimal::ZERO
+        );
     }
 }

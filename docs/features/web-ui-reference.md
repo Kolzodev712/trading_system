@@ -554,7 +554,7 @@ Selection: click row in `DataTable`; double-click opens details (CEX only).
 | Dialog | RPC | Fields |
 |--------|-----|--------|
 | `CreateLevelDialog` | `CreateLevel` | id, base/quote, side, order type, enabled, price, qty, risk, max position, repost flags |
-| `EditLevelDialog` | `UpdateLevel` | enabled, price, qty, risk, max position, repost flags (partial update) |
+| `EditLevelDialog` | `UpdateLevel` | price, qty, max position, repost flags (partial update). Enable/disable stays on the toolbar `ToggleLevel`; `UpdateLevel.enabled` still runs that same lifecycle if a client sends a change. |
 | `LevelDetailsDialog` | `GetLevel` | Full level config + active orders |
 | `StrategyDetailsDialog` | — (cached) | Strategy fields from stream |
 | `DeleteLevelStub` | — | Disabled; documents server `UNIMPLEMENTED` |

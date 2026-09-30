@@ -34,6 +34,9 @@ pub struct LevelBasedEventLoop {
     /// Last seen prices for periodic risk checks (one per pair)
     last_prices: Arc<RwLock<HashMap<Pair, Decimal>>>,
     submission_journal: Option<Arc<crate::cex::state::SubmissionJournal>>,
+    /// Snapshot of the MD cache so enable can seed without waiting for a broadcast.
+    cached_books: Option<Arc<dyn Fn() -> Vec<StructuredOrderbook> + Send + Sync>>,
+    max_market_data_age_ms: Option<u64>,
 }
 
 impl LevelBasedEventLoop {
@@ -66,6 +69,8 @@ impl LevelBasedEventLoop {
             reconciliation_interval_secs,
             last_prices: Arc::new(RwLock::new(HashMap::new())),
             submission_journal: None,
+            cached_books: None,
+            max_market_data_age_ms: Some(120_000),
         }
     }
 
@@ -75,6 +80,59 @@ impl LevelBasedEventLoop {
     ) -> Self {
         self.submission_journal = Some(journal);
         self
+    }
+
+    pub fn with_cached_books(
+        mut self,
+        source: Arc<dyn Fn() -> Vec<StructuredOrderbook> + Send + Sync>,
+    ) -> Self {
+        self.cached_books = Some(source);
+        self
+    }
+
+    pub fn with_max_market_data_age_ms(mut self, max_age_ms: Option<u64>) -> Self {
+        self.max_market_data_age_ms = max_age_ms;
+        self
+    }
+
+    async fn log_control_snapshot(&self, at: &str) {
+        let trading = self.level_executor.is_trading_enabled().await;
+        let paused = self.level_executor.entries_paused().await;
+        let flatten = self.level_executor.flatten_latched().await;
+        let manager = self.level_manager.read().await;
+        let ready = manager
+            .get_all_levels()
+            .iter()
+            .filter(|level| level.is_ready_to_post())
+            .count();
+        tracing::info!(
+            at,
+            trading,
+            paused,
+            flatten,
+            ready_levels = ready,
+            total_levels = manager.get_all_levels().len(),
+            "levels loop control snapshot"
+        );
+    }
+
+    async fn seed_from_cached_books(
+        &self,
+        indicator_cache: &Arc<RwLock<HashMap<SmolStr, IndicatorValue>>>,
+    ) -> Result<(), EngineError> {
+        let Some(source) = &self.cached_books else {
+            tracing::info!("levels enable: no cached-book source configured");
+            return Ok(());
+        };
+        let books = source();
+        tracing::info!(
+            count = books.len(),
+            "levels enable: seeding from cached books"
+        );
+        for book in books {
+            self.handle_orderbook(&book, indicator_cache).await?;
+        }
+        Ok(())
     }
 
     /// Main event loop
@@ -145,6 +203,12 @@ impl LevelBasedEventLoop {
         tracing::info!(
             "[LEVELS EVENT LOOP] Starting event loop, waiting for market data and exchange updates..."
         );
+        let mut trading_was_enabled = self.level_executor.is_trading_enabled().await;
+        if trading_was_enabled {
+            self.log_control_snapshot("loop_start").await;
+            self.seed_from_cached_books(&subscriber_cache).await?;
+        }
+        let mut heartbeat: u64 = 0;
         loop {
             tokio::select! {
                 // Handle exchange order updates (fills, cancels) so levels clear active_orders
@@ -171,11 +235,11 @@ impl LevelBasedEventLoop {
                     tracing::debug!("[LEVELS EVENT LOOP] Received update from market_data_rx channel");
                     match update {
                         Ok(MarketDataUpdate::Orderbook { orderbook, .. }) => {
-                            tracing::debug!(
-                                "Received orderbook update for {}/{} (mid_price={:?})",
-                                orderbook.pair.base,
-                                orderbook.pair.quote,
-                                orderbook.mid_price()
+                            tracing::info!(
+                                pair = %format!("{}/{}", orderbook.pair.base, orderbook.pair.quote),
+                                ts_ms = orderbook.timestamp,
+                                mid = ?orderbook.mid_price(),
+                                "levels loop received book"
                             );
                             // Update last seen price for periodic risk checks
                             if let Some(price) = orderbook.mid_price() {
@@ -207,7 +271,18 @@ impl LevelBasedEventLoop {
 
                 // Periodic tasks
                 _ = periodic_timer.tick() => {
-                    // Handle reposting and cancellation checks
+                    let enabled = self.level_executor.is_trading_enabled().await;
+                    heartbeat = heartbeat.saturating_add(1);
+                    if heartbeat.is_multiple_of(10) {
+                        self.log_control_snapshot("heartbeat").await;
+                    }
+                    if enabled && !trading_was_enabled {
+                        self.log_control_snapshot("enable").await;
+                        if let Err(e) = self.seed_from_cached_books(&subscriber_cache).await {
+                            tracing::error!("Error seeding levels from cached books: {}", e);
+                        }
+                    }
+                    trading_was_enabled = enabled;
                     if let Err(e) = self.handle_periodic_tasks(&subscriber_cache).await {
                         tracing::error!("Error in periodic tasks: {}", e);
                     }
@@ -291,13 +366,40 @@ impl LevelBasedEventLoop {
         orderbook: &StructuredOrderbook,
         indicator_cache: &Arc<RwLock<HashMap<SmolStr, IndicatorValue>>>,
     ) -> Result<(), EngineError> {
-        // When trading is disabled, skip resolve/risk/post entirely (no "blocked by risk" spam)
-        if self.level_executor.flatten_latched().await || self.level_executor.entries_paused().await
-        {
+        let flatten = self.level_executor.flatten_latched().await;
+        let paused = self.level_executor.entries_paused().await;
+        let trading = self.level_executor.is_trading_enabled().await;
+        if flatten {
+            tracing::info!(
+                pair = %format!("{}/{}", orderbook.pair.base, orderbook.pair.quote),
+                "levels skip book: flatten latched"
+            );
             return Ok(());
         }
-        if !self.level_executor.is_trading_enabled().await {
+        if paused {
+            tracing::info!(
+                pair = %format!("{}/{}", orderbook.pair.base, orderbook.pair.quote),
+                "levels skip book: entries paused"
+            );
             return Ok(());
+        }
+        if !trading {
+            tracing::info!(
+                pair = %format!("{}/{}", orderbook.pair.base, orderbook.pair.quote),
+                "levels skip book: global trading disabled"
+            );
+            return Ok(());
+        }
+        if let Some(max_age_ms) = self.max_market_data_age_ms {
+            if orderbook_is_stale(orderbook.timestamp, max_age_ms) {
+                tracing::info!(
+                    pair = %format!("{}/{}", orderbook.pair.base, orderbook.pair.quote),
+                    ts_ms = orderbook.timestamp,
+                    max_age_ms,
+                    "levels skip book: stale market data blocks new exposure"
+                );
+                return Ok(());
+            }
         }
 
         // Get indicators from cache (read fresh each time to avoid stale data)
@@ -349,23 +451,21 @@ impl LevelBasedEventLoop {
                         .collect::<Vec<_>>()
                 );
             } else {
-                tracing::debug!(
-                    "No levels ready to post for {}/{} (checking level states...)",
-                    orderbook.pair.base,
-                    orderbook.pair.quote
+                tracing::info!(
+                    pair = %format!("{}/{}", orderbook.pair.base, orderbook.pair.quote),
+                    total = all_levels.len(),
+                    "levels skip book: no ready levels"
                 );
                 for level in all_levels.iter() {
                     if level.pair.base == orderbook.pair.base
                         && level.pair.quote == orderbook.pair.quote
                     {
-                        tracing::debug!(
-                            "Level {}: state={:?}, enabled={}, active_orders={}, pair={}/{}",
-                            level.config.id,
-                            level.state,
-                            level.config.enabled,
-                            level.active_orders.len(),
-                            level.pair.base,
-                            level.pair.quote
+                        tracing::info!(
+                            level = %level.config.id,
+                            state = ?level.state,
+                            enabled = level.config.enabled,
+                            active_orders = level.active_orders.len(),
+                            "levels skip book: level not ready to post"
                         );
                     }
                 }
@@ -469,12 +569,11 @@ impl LevelBasedEventLoop {
                     r
                 }
                 Err(e) => {
-                    tracing::debug!(
-                        "Failed to resolve level {} for {}/{}: {}",
-                        level.config.id,
-                        level.pair.base,
-                        level.pair.quote,
-                        e
+                    tracing::info!(
+                        level = %level.config.id,
+                        pair = %format!("{}/{}", level.pair.base, level.pair.quote),
+                        reason = %e,
+                        "levels skip book: resolve failed"
                     );
                     continue;
                 }
@@ -1137,5 +1236,42 @@ impl LevelBasedEventLoop {
         }
 
         Ok(())
+    }
+}
+
+/// `ts` is Unix ms when `> 10^10`, otherwise Unix seconds (legacy Paper adapter).
+pub fn orderbook_is_stale(ts: u64, max_age_ms: u64) -> bool {
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    let ts_ms = if ts > 10_000_000_000 {
+        ts
+    } else {
+        ts.saturating_mul(1000)
+    };
+    now_ms.saturating_sub(ts_ms) > max_age_ms
+}
+
+#[cfg(test)]
+mod stale_tests {
+    use super::orderbook_is_stale;
+
+    #[test]
+    fn fresh_millisecond_book_is_not_stale() {
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+        assert!(!orderbook_is_stale(now_ms, 120_000));
+    }
+
+    #[test]
+    fn aged_millisecond_book_is_stale() {
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+        assert!(orderbook_is_stale(now_ms.saturating_sub(180_000), 120_000));
     }
 }

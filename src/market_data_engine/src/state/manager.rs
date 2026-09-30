@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 use trading_core::{
     channels::market_data::MarketDataUpdateSender,
     error::EngineError,
@@ -133,9 +133,13 @@ impl MarketDataStateManager {
                 e
             );
             // Don't fail - state is still updated correctly
+        } else {
+            info!(
+                pair = %pair_for_log,
+                ts_ms = published.timestamp,
+                "market data: published orderbook to cache+channel"
+            );
         }
-
-        debug!("Updated and published orderbook for pair: {}", pair_for_log);
         Ok(())
     }
 

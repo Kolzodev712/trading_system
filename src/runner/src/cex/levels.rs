@@ -174,7 +174,8 @@ pub async fn level_runner(
     let (exec_mode, venue, environment) = crate::config::execution_status_from_bot(&bot_config);
     let grpc_service = grpc_service
         .with_execution_status(exec_mode, venue, environment)
-        .with_submission_journal(journal.clone());
+        .with_submission_journal(journal.clone())
+        .with_restart_flag_path(bot_config.restart_flag_path.clone());
     let grpc_service = if let Some(dex_sm) = services.venue.dex_state_manager() {
         grpc_service.with_dex_state_manager(dex_sm, format!("{:?}", services.venue.mode()))
     } else {
@@ -322,6 +323,7 @@ pub async fn level_runner(
     // Pass all pairs from bot config for reconciliation and exchange update rx so levels receive Order (e.g. Canceled) and clear active_orders
     let trading_reconciliation_interval_secs =
         bot_config.reconciliation.trading_level_interval_ms / 1000;
+    let md_for_seed = services.market_data_state_manager.clone();
     let event_loop = LevelBasedEventLoop::new(
         level_manager.clone(),
         level_executor,
@@ -338,7 +340,18 @@ pub async fn level_runner(
             .ok_or("Trading state requires venue.mode \"cex\"")?,
         trading_reconciliation_interval_secs,
     )
-    .with_submission_journal(journal.clone());
+    .with_submission_journal(journal.clone())
+    .with_cached_books(Arc::new(move || {
+        let state = md_for_seed.get_state();
+        let Ok(guard) = state.try_read() else {
+            return Vec::new();
+        };
+        guard
+            .get_pairs_with_orderbooks()
+            .into_iter()
+            .filter_map(|pair| guard.get_orderbook(&pair).cloned())
+            .collect()
+    }));
 
     // Note: TradingStateManager automatically handles execution reports via ExchangeStateManager subscription
     // Execution reports are published through the CEX venue update channel and handled by TradingStateManager

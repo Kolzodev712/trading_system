@@ -1,13 +1,7 @@
-74:2026-09-30T12:50:43.422376Z  INFO exchange_engine::exchanges::k_paper::client: k-paper: sent place_order instrument=BTC-USDT side=Buy qty=0.010
-76:2026-09-30T12:50:43.422940Z  INFO exchange_engine::exchanges::k_paper::client: k-paper: execution correlation fields client_order_id=Some("9c1c51cd-93fc-4026-bcda-feda9b0e9249") qty=0 is_ack=true
-77:2026-09-30T12:50:43.423150Z  INFO exchange_engine::exchanges::k_paper::client: k-paper: verifying place ACK via REST client-id lookup client_id=9c1c51cd-93fc-4026-bcda-feda9b0e9249 ack_exchange_id=854868ef-89fa-4d45-9839-abed4ce3b6e5
-78:2026-09-30T12:50:43.433771Z  INFO trading_engine::cex::levels::event_loop: [SUCCESS] Level posted order: 854868ef-89fa-4d45-9839-abed4ce3b6e5 for BTC/USDT
-80:2026-09-30T12:50:43.464627Z  INFO exchange_engine::exchanges::k_paper::client: k-paper: execution correlation fields client_order_id=Some("9c1c51cd-93fc-4026-bcda-feda9b0e9249") qty=0 is_ack=true
-87:2026-09-30T12:50:43.922067Z  INFO exchange_engine::exchanges::k_paper::client: k-paper: sent place_order instrument=BTC-USDT side=Buy qty=0.010
-89:2026-09-30T12:50:44.106794Z  INFO exchange_engine::exchanges::k_paper::client: k-paper: execution correlation fields client_order_id=None qty=0 is_ack=true
-93:2026-09-30T12:50:44.512417Z  INFO exchange_engine::exchanges::k_paper::client: k-paper: execution correlation fields client_order_id=Some("9c1c51cd-93fc-4026-bcda-feda9b0e9249") qty=0 is_ack=true
-97:2026-09-30T12:50:44.934378Z  INFO exchange_engine::exchanges::k_paper::client: k-paper: execution correlation fields client_order_id=Some("5a867b0c-5477-4ca9-8738-fedc22efad28") qty=0 is_ack=true
-98:2026-09-30T12:50:44.934654Z  INFO exchange_engine::exchanges::k_paper::client: k-paper: verifying place ACK via REST client-id lookup client_id=5a867b0c-5477-4ca9-8738-fedc22efad28 ack_exchange_id=304bde4b-cefb-4500-a354-412e238189bd
-99:2026-09-30T12:50:44.945640Z  INFO trading_engine::cex::levels::event_loop: [SUCCESS] Level posted order: 304bde4b-cefb-4500-a354-412e238189bd for BTC/USDT
-111:2026-09-30T12:50:45.229472Z  INFO exchange_engine::exchanges::k_paper::client: k-paper: execution correlation fields client_order_id=Some("9c1c51cd-93fc-4026-bcda-feda9b0e9249") qty=0.001 is_ack=false
-115:2026-09-30T12:50:45.261893Z  INFO exchange_engine::exchanges::k_paper::client: k-paper: execution correlation fields client_order_id=Some("9c1c51cd-93fc-4026-bcda-feda9b0e9249") qty=0.001 is_ack=false
+76:2026-09-30T13:58:38.328291Z  INFO exchange_engine::exchanges::k_paper::client: k-paper: execution correlation fields client_order_id=Some("5bab8655-696a-4fcc-a29c-32b8bb1b3387") qty=0 is_ack=true
+77:2026-09-30T13:58:38.328501Z  INFO exchange_engine::exchanges::k_paper::client: k-paper: verifying place ACK via REST client-id lookup client_id=5bab8655-696a-4fcc-a29c-32b8bb1b3387 ack_exchange_id=728e1ad7-3eaa-4ba0-9cc8-d984034345ba
+80:2026-09-30T13:58:38.368665Z  INFO exchange_engine::exchanges::k_paper::client: k-paper: execution correlation fields client_order_id=Some("5bab8655-696a-4fcc-a29c-32b8bb1b3387") qty=0 is_ack=true
+89:2026-09-30T13:58:39.014648Z  INFO exchange_engine::exchanges::k_paper::client: k-paper: execution correlation fields client_order_id=None qty=0 is_ack=true
+93:2026-09-30T13:58:39.420502Z  INFO exchange_engine::exchanges::k_paper::client: k-paper: execution correlation fields client_order_id=Some("5bab8655-696a-4fcc-a29c-32b8bb1b3387") qty=0 is_ack=true
+97:2026-09-30T13:58:39.843341Z  INFO exchange_engine::exchanges::k_paper::client: k-paper: execution correlation fields client_order_id=Some("baf55052-b0ee-425d-8de0-3dc45aaa96ba") qty=0 is_ack=true
+98:2026-09-30T13:58:39.843636Z  INFO exchange_engine::exchanges::k_paper::client: k-paper: verifying place ACK via REST client-id lookup client_id=baf55052-b0ee-425d-8de0-3dc45aaa96ba ack_exchange_id=5be28472-8fca-4e0e-8216-0455f44bd539

@@ -13,7 +13,7 @@
         "Fixed": "1010"
       },
       "risk": {
-        "max_position": "0.01",
+        "max_position": "0.02",
         "max_orders": 1,
         "max_order_qty": null,
         "max_notional": null,
@@ -51,7 +51,7 @@
           "Fixed": "1020"
         },
         "risk": {
-          "max_position": "0.01",
+          "max_position": "0.02",
           "max_orders": 1,
           "max_order_qty": null,
           "max_notional": null,
@@ -68,10 +68,10 @@
         "group": "paper_ack_amend"
       },
       "owned_client_ids": [
-        "d9bde905-f680-4619-9943-efbf542550bf"
+        "faaaefbb-b16a-487b-a176-2ddea4f375d5"
       ],
       "owned_exchange_ids": [
-        "1479df6e-027a-4a61-8a3e-8fd44325a04e"
+        "753ea65a-7b30-4e22-bf6e-3d4956489a69"
       ],
       "filled_qty": "0",
       "state": "Posted",
@@ -84,7 +84,7 @@
   ],
   "tombstones": [],
   "risk_limits": {
-    "total_max_position": "0.01",
+    "total_max_position": "0.02",
     "max_total_orders": 1,
     "max_notional": "200",
     "max_order_qty": "0.01",

@@ -179,9 +179,16 @@ impl MonitoringService {
                     })
                     .collect();
 
+                // Runner risk state is TradingState. ESM positions are a fallback
+                // when TSM has not yet recorded the pair (typical for Futures REST).
                 let mut all_positions = exchange_positions.clone();
                 for trading_pos in trading_positions.clone() {
-                    if !all_positions.iter().any(|p| p.symbol == trading_pos.symbol) {
+                    if let Some(existing) = all_positions
+                        .iter_mut()
+                        .find(|p| p.symbol == trading_pos.symbol)
+                    {
+                        *existing = trading_pos;
+                    } else {
                         all_positions.push(trading_pos);
                     }
                 }

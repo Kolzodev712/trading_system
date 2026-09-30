@@ -287,12 +287,12 @@ fn apply_lookup(
         ClientOrderLookup::Terminal(order) => {
             match order.status {
                 OrderStatus::Filled => {
-                    trading_state.apply_fill(&order);
+                    trading_state.apply_recovered_fill(&order);
                     trading_state.clear_submission(&record.client_order_id);
                     journal.append(&record.clone().with_state(SubmissionState::Terminal))?;
                 }
                 OrderStatus::Canceled | OrderStatus::Rejected | OrderStatus::Expired => {
-                    trading_state.apply_fill(&order);
+                    trading_state.apply_recovered_fill(&order);
                     trading_state.clear_submission(&record.client_order_id);
                     let state = if order.status == OrderStatus::Rejected {
                         SubmissionState::Rejected
@@ -302,7 +302,7 @@ fn apply_lookup(
                     journal.append(&record.clone().with_state(state))?;
                 }
                 _ => {
-                    trading_state.apply_fill(&order);
+                    trading_state.apply_recovered_fill(&order);
                     trading_state.clear_submission(&record.client_order_id);
                     journal.append(&record.clone().with_state(SubmissionState::Terminal))?;
                 }

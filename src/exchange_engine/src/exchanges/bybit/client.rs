@@ -1313,7 +1313,9 @@ impl TradingClient<OrderRequest> for BybitClient {
 
     async fn fetch_positions(&self) -> Result<Vec<Position>, EngineError> {
         if matches!(self.config.instrument_type, InstrumentType::Spot) {
-            return Ok(Vec::new());
+            return Err(EngineError::NotSupported(
+                "Spot has no REST positions; use the base wallet".into(),
+            ));
         }
         let response = self.fetch_position_list(None).await?;
         Ok(response.to_positions(self.symbol_registry.clone()))
@@ -1321,7 +1323,9 @@ impl TradingClient<OrderRequest> for BybitClient {
 
     async fn fetch_position(&self, pair: &Pair) -> Result<Option<Position>, EngineError> {
         if matches!(self.config.instrument_type, InstrumentType::Spot) {
-            return Ok(None);
+            return Err(EngineError::NotSupported(
+                "Spot has no REST positions; use the base wallet".into(),
+            ));
         }
         let response = self.fetch_position_list(Some(pair)).await?;
         Ok(response

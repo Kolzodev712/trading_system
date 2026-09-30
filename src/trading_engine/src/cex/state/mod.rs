@@ -11,7 +11,7 @@ use trading_core::{
     error::EngineError,
     types::{
         common::{InstrumentType, OrderId, OrderStatus, Pair, Side},
-        exchange::Order,
+        exchange::{Order, Trade},
     },
 };
 
@@ -66,6 +66,8 @@ pub struct TradingState {
     pub pending_orders: HashMap<OrderId, u64>, // order_id -> timestamp when order was placed
     /// Last applied fill qty per order (idempotent fill accounting).
     fill_applied: HashMap<OrderId, Decimal>,
+    /// Spot private-trade ids already applied to position (unique ledger key).
+    applied_trade_ids: HashSet<String>,
     /// Intended orders recorded before the exchange acknowledges them.
     submissions: HashMap<SmolStr, PendingSubmission>,
     /// Journal or recovery failure: block further sends until the process is repaired.
@@ -84,6 +86,7 @@ impl TradingState {
             active_orders: HashMap::new(),
             pending_orders: HashMap::new(),
             fill_applied: HashMap::new(),
+            applied_trade_ids: HashSet::new(),
             submissions: HashMap::new(),
             exposure_halt: None,
             instrument_type: InstrumentType::Spot,
@@ -335,6 +338,10 @@ impl TradingState {
     }
 
     /// Apply an incremental fill once per order id. Safe to call twice with the same fill.
+    ///
+    /// Spot position quantity is updated only by [`Self::apply_unique_trade`] so an
+    /// order update plus its trade cannot double-count. Futures quantity stays REST/WS
+    /// truth; this only advances the fill cursor.
     pub fn apply_fill(&mut self, order: &Order) {
         let prev = self
             .fill_applied
@@ -347,15 +354,63 @@ impl TradingState {
         }
         self.fill_applied
             .insert(order.order_id.clone(), order.filled_amount);
-        // Futures quantity is REST/WS position truth. Fills only update the ledger cursor.
+    }
+
+    /// Apply a private-stream trade once. Returns whether position quantity changed.
+    /// Uses the trade's execution price. Repeated messages with the same id are no-ops.
+    pub fn apply_unique_trade(&mut self, trade: &Trade) -> bool {
         if self.is_futures() {
+            return false;
+        }
+        if trade.quantity <= Decimal::ZERO {
+            return false;
+        }
+        let id = if trade.trade_id.is_empty() {
+            format!(
+                "order:{}:{}:{}",
+                trade.order_id.as_str(),
+                trade.quantity,
+                trade.timestamp
+            )
+        } else {
+            trade.trade_id.to_string()
+        };
+        if !self.applied_trade_ids.insert(id) {
+            return false;
+        }
+        let signed = match trade.side {
+            Side::Buy => trade.quantity,
+            Side::Sell => -trade.quantity,
+        };
+        self.update_position(trade.pair.clone(), signed, trade.price);
+        true
+    }
+
+    /// Restart recovery for a terminal order whose fills are not yet in position
+    /// and have no live trade id. No-op when wallet recon already seeded quantity.
+    pub fn apply_recovered_fill(&mut self, order: &Order) {
+        self.apply_fill(order);
+        if self.is_futures() || order.filled_amount <= Decimal::ZERO {
             return;
         }
-        let signed = match order.side {
-            Side::Buy => delta,
-            Side::Sell => -delta,
-        };
-        self.update_position(order.instrument.pair.clone(), signed, order.price);
+        if self.position_qty(&order.instrument.pair).abs() > Decimal::new(1, 6) {
+            return;
+        }
+        let _ = self.apply_unique_trade(&Trade {
+            trade_id: format!("recover:{}", order.order_id.as_str()).into(),
+            order_id: order.order_id.clone(),
+            pair: order.instrument.pair.clone(),
+            price: order.price,
+            quantity: order.filled_amount,
+            side: order.side.clone(),
+            timestamp: order
+                .exchange_created_at
+                .unwrap_or(order.internal_created_at),
+            fee: Decimal::ZERO,
+            fee_currency: trading_core::types::common::Symbol::from(
+                order.instrument.pair.quote.as_str(),
+            ),
+        });
     }
 
     /// Record an intended order before calling the exchange.
@@ -380,7 +435,7 @@ impl TradingState {
     /// Cumulative `filled_amount` is applied before the reservation is released so a missed
     /// private fill cannot disappear from effective exposure.
     pub fn import_working_order(&mut self, order: Order) {
-        self.apply_fill(&order);
+        self.apply_recovered_fill(&order);
         self.clear_submission_for_order(&order);
         self.add_order(order);
     }
@@ -476,7 +531,8 @@ pub trait Strategy: Send + Sync {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use trading_core::types::common::{Instrument, InstrumentType, Side};
+    use trading_core::types::common::{Instrument, InstrumentType, Side, Symbol};
+    use trading_core::types::exchange::Trade;
 
     #[test]
     fn test_trading_state_new() {
@@ -745,6 +801,19 @@ mod tests {
         filled.filled_amount = Decimal::new(2, 3);
         state.apply_fill(&filled);
         state.apply_fill(&filled);
+        let trade = Trade {
+            trade_id: "t-1".into(),
+            order_id: filled.order_id.clone(),
+            pair: pair.clone(),
+            price: Decimal::new(77000, 0),
+            quantity: Decimal::new(2, 3),
+            side: Side::Buy,
+            timestamp: 1,
+            fee: Decimal::ZERO,
+            fee_currency: Symbol::from("USDT"),
+        };
+        state.apply_unique_trade(&trade);
+        state.apply_unique_trade(&trade);
         state.remove_order(&filled.order_id);
         assert_eq!(state.position_qty(&pair), Decimal::new(2, 3));
         assert_eq!(state.working_qty(&pair), Decimal::ZERO);
@@ -854,6 +923,68 @@ mod tests {
         assert_eq!(
             state.unfilled_same_side_qty(&pair, Side::Sell),
             Decimal::ZERO
+        );
+    }
+
+    fn spot_trade(id: &str, order_id: &str, qty: Decimal, price: Decimal) -> Trade {
+        Trade {
+            trade_id: id.into(),
+            order_id: OrderId::new(order_id.into()),
+            pair: Pair::new("BTC", "USDT"),
+            price,
+            quantity: qty,
+            side: Side::Buy,
+            timestamp: 1,
+            fee: Decimal::ZERO,
+            fee_currency: Symbol::from("USDT"),
+        }
+    }
+
+    fn spot_order(filled: Decimal) -> Order {
+        Order {
+            order_id: OrderId::new("ord-a".into()),
+            client_order_id: Some(smol_str::SmolStr::new("cid-a")),
+            instrument: Instrument::new(InstrumentType::Spot, Pair::new("BTC", "USDT")),
+            side: Side::Buy,
+            price: Decimal::new(1000, 0),
+            amount: Decimal::new(1, 2),
+            internal_created_at: 1,
+            exchange_created_at: Some(1),
+            status: if filled > Decimal::ZERO {
+                OrderStatus::PartiallyFilled
+            } else {
+                OrderStatus::New
+            },
+            filled_amount: filled,
+        }
+    }
+
+    #[test]
+    fn spot_order_plus_trade_changes_position_once() {
+        let mut state = TradingState::new();
+        let pair = Pair::new("BTC", "USDT");
+        let mut order = spot_order(Decimal::new(1, 3));
+        state.add_order(order.clone());
+        state.apply_fill(&order);
+        let trade = spot_trade("fill-1", "ord-a", Decimal::new(1, 3), Decimal::new(1000, 0));
+        assert!(state.apply_unique_trade(&trade));
+        state.apply_fill(&order);
+        assert!(!state.apply_unique_trade(&trade));
+        assert_eq!(state.position_qty(&pair), Decimal::new(1, 3));
+        assert_eq!(
+            state.get_position(&pair).unwrap().avg_price,
+            Decimal::new(1000, 0)
+        );
+
+        order.filled_amount = Decimal::new(2, 3);
+        state.apply_fill(&order);
+        let trade2 = spot_trade("fill-2", "ord-a", Decimal::new(1, 3), Decimal::new(1020, 0));
+        assert!(state.apply_unique_trade(&trade2));
+        assert!(!state.apply_unique_trade(&trade2));
+        assert_eq!(state.position_qty(&pair), Decimal::new(2, 3));
+        assert_eq!(
+            state.get_position(&pair).unwrap().avg_price,
+            Decimal::new(1010, 0)
         );
     }
 }

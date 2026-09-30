@@ -124,6 +124,7 @@ impl PositionReconciler {
                             } else {
                                 exchange_avg
                             };
+                            // Zero ESM avg is unknown cost basis, not a $0 entry.
                             trading_state.set_position(pair.clone(), exchange_qty, reconcile_price);
                             reconciled = true;
                         } else {

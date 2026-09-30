@@ -1,0 +1,1 @@
+level so_fut_buy_BTCUSDT enabled=false status=Paused filled=1 orders=

@@ -15,6 +15,16 @@ use trading_engine::strategies::strategy_manager::StrategyManager;
 
 use super::converters;
 
+fn display_avg_price(quantity: rust_decimal::Decimal, avg_price: rust_decimal::Decimal) -> String {
+    if quantity.abs() > rust_decimal::Decimal::new(1, 6)
+        && avg_price.abs() <= rust_decimal::Decimal::new(1, 6)
+    {
+        "?".into()
+    } else {
+        avg_price.to_string()
+    }
+}
+
 pub struct MonitoringService {
     pub level_manager: Arc<RwLock<LevelManager>>,
     pub trading_state_manager: Arc<TradingStateManager>,
@@ -134,7 +144,7 @@ impl MonitoringService {
                         trading_cli::Position {
                             symbol: pos.instrument.symbol().to_string(),
                             quantity: pos.quantity.to_string(),
-                            avg_price: pos.avg_price.to_string(),
+                            avg_price: display_avg_price(pos.quantity, pos.avg_price),
                             side: side.to_string(),
                             mark_price: pos.mark_price.map(|p| p.to_string()).unwrap_or_default(),
                             unrealized_pnl: pos.unrealized_pnl.to_string(),
@@ -167,7 +177,10 @@ impl MonitoringService {
                     .map(|pos| trading_cli::Position {
                         symbol: pos.symbol.convert_to_smolstr().to_string(),
                         quantity: pos.quantity.to_string(),
-                        avg_price: pos.avg_price.to_string(),
+                        avg_price: pos
+                            .cost_basis()
+                            .map(|p| p.to_string())
+                            .unwrap_or_else(|| "?".into()),
                         side: String::new(),
                         mark_price: String::new(),
                         unrealized_pnl: String::new(),

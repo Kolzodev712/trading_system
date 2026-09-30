@@ -199,11 +199,10 @@ impl RiskMetricsCalculator {
         positions
             .iter()
             .filter_map(|(pair, position)| {
-                current_prices.get(pair).map(|current_price| {
-                    // P&L = (current_price - avg_price) * quantity
-                    let price_diff = *current_price - position.avg_price;
-                    price_diff * position.quantity
-                })
+                let avg = position.cost_basis()?;
+                current_prices
+                    .get(pair)
+                    .map(|current_price| (*current_price - avg) * position.quantity)
             })
             .sum()
     }
@@ -303,6 +302,27 @@ mod tests {
 
         let pnl = calc.calculate_unrealized_pnl(&positions, &prices);
         assert_eq!(pnl, dec!(1000)); // (51000 - 50000) * 1
+    }
+
+    #[test]
+    fn unknown_cost_basis_is_not_zero_entry_pnl() {
+        let calc = RiskMetricsCalculator::new();
+        let mut positions = HashMap::new();
+        let mut prices = HashMap::new();
+        let pair = Pair::new("BTC", "USDT");
+        positions.insert(
+            pair.clone(),
+            Position {
+                symbol: pair.clone(),
+                quantity: dec!(0.002),
+                avg_price: Decimal::ZERO,
+            },
+        );
+        prices.insert(pair, dec!(50000));
+        assert_eq!(
+            calc.calculate_unrealized_pnl(&positions, &prices),
+            Decimal::ZERO
+        );
     }
 
     #[test]

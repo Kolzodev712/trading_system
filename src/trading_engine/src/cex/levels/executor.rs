@@ -13,6 +13,7 @@ use trading_core::types::common::{Exchange, InstrumentType};
 use trading_core::types::exchange::BulkCancelRequest;
 use trading_core::types::exchange::OrderRequest;
 use trading_core::types::market_data::Orderbook;
+use trading_core::types::ExecutionMode;
 use trading_core::venue::cex::traits::TradingClient;
 
 /// Executes levels by resolving indicator values and placing orders
@@ -32,6 +33,7 @@ pub struct LevelExecutor {
     trading_enabled: Option<Arc<tokio::sync::RwLock<bool>>>,
     entries_paused: Option<Arc<tokio::sync::RwLock<bool>>>,
     flatten_latched: Option<Arc<tokio::sync::RwLock<bool>>>,
+    execution_mode: ExecutionMode,
 }
 
 impl LevelExecutor {
@@ -68,7 +70,13 @@ impl LevelExecutor {
             trading_enabled: None,
             entries_paused: None,
             flatten_latched: None,
+            execution_mode: ExecutionMode::Shadow,
         }
+    }
+
+    pub fn with_execution_mode(mut self, execution_mode: ExecutionMode) -> Self {
+        self.execution_mode = execution_mode;
+        self
     }
 
     /// Set trading enabled flag (for TUI control)
@@ -136,23 +144,29 @@ impl LevelExecutor {
             )));
         };
 
-        // Get balance for quantity calculations
-        let balance = match level.config.side {
-            trading_core::types::common::Side::Buy => {
-                // Need quote currency balance
-                balances
+        let is_futures = matches!(
+            self.instrument_type,
+            trading_core::types::common::InstrumentType::Futures
+                | trading_core::types::common::InstrumentType::Derivitives
+        );
+        let balance = if is_futures {
+            balances
+                .iter()
+                .find(|b| b.symbol.as_ref() == level.pair.quote.as_str())
+                .map(|b| b.free)
+                .unwrap_or(rust_decimal::Decimal::ZERO)
+        } else {
+            match level.config.side {
+                trading_core::types::common::Side::Buy => balances
                     .iter()
                     .find(|b| b.symbol.as_ref() == level.pair.quote.as_str())
                     .map(|b| b.free)
-                    .unwrap_or(rust_decimal::Decimal::ZERO)
-            }
-            trading_core::types::common::Side::Sell => {
-                // Need base currency balance
-                balances
+                    .unwrap_or(rust_decimal::Decimal::ZERO),
+                trading_core::types::common::Side::Sell => balances
                     .iter()
                     .find(|b| b.symbol.as_ref() == level.pair.base.as_str())
                     .map(|b| b.free)
-                    .unwrap_or(rust_decimal::Decimal::ZERO)
+                    .unwrap_or(rust_decimal::Decimal::ZERO),
             }
         };
 
@@ -177,8 +191,28 @@ impl LevelExecutor {
                 balance,
                 current_price,
                 &level.pair,
+                level.config.side.clone(),
+                &self.instrument_type,
             )
             .await?;
+
+        if self.execution_mode == ExecutionMode::Exchange && self.exchange != Exchange::Paper {
+            let Some(asset_service) = &self.asset_service else {
+                return Err(EngineError::CustomError(anyhow::anyhow!(
+                    "Exchange mode requires venue trading rules; AssetService is missing"
+                )));
+            };
+            if asset_service
+                .get_trading_rules(self.exchange.clone(), &level.pair)
+                .await
+                .is_none()
+            {
+                return Err(EngineError::CustomError(anyhow::anyhow!(
+                    "Exchange mode missing venue trading rules for {}",
+                    level.pair
+                )));
+            }
+        }
 
         // Validate order against trading rules (Asset Engine or config fallback)
         let rules = get_trading_rules(

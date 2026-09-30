@@ -1,17 +1,22 @@
 mod cancellation;
+pub mod catalog;
 pub mod config;
 mod event_loop;
 mod executor;
+pub mod identity;
 mod indicator_subscriber;
 pub mod level;
 mod manager;
 pub mod persistence;
 mod resolver;
+mod submit;
 
 pub use cancellation::CancellationManager;
+pub use catalog::{LevelInstanceRecord, LevelsCatalog};
 pub use config::LevelConfig;
 pub use event_loop::LevelBasedEventLoop;
 pub use executor::LevelExecutor;
+pub use identity::{expanded_level_id, LevelIdentity};
 pub use indicator_subscriber::IndicatorSubscriber;
 pub(crate) use level::ResolvedLevel;
 pub use level::{Level, LevelState};

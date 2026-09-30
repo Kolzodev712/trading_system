@@ -8,8 +8,8 @@ pub mod state;
 pub mod strategies;
 
 pub use levels::{
-    CancellationManager, IndicatorSubscriber, Level, LevelBasedEventLoop, LevelConfig,
-    LevelExecutor, LevelManager, LevelState,
+    expanded_level_id, CancellationManager, IndicatorSubscriber, Level, LevelBasedEventLoop,
+    LevelConfig, LevelExecutor, LevelIdentity, LevelManager, LevelState, LevelsCatalog,
 };
 pub use state::manager::TradingStateManager;
 pub use state::{Strategy, TradingState};

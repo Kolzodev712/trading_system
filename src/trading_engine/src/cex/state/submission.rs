@@ -48,6 +48,8 @@ pub struct SubmissionRecord {
     pub client_order_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub strategy_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub level_id: Option<String>,
     pub symbol_base: String,
     pub symbol_quote: String,
     pub side: String,
@@ -64,6 +66,7 @@ impl SubmissionRecord {
         Self {
             client_order_id: pending.client_order_id.to_string(),
             strategy_id: pending.strategy_id.clone(),
+            level_id: pending.level_id.clone(),
             symbol_base: pending.symbol.base.to_string(),
             symbol_quote: pending.symbol.quote.to_string(),
             side: format!("{:?}", pending.side),
@@ -100,6 +103,7 @@ impl SubmissionRecord {
             amount,
             price,
             strategy_id: self.strategy_id.clone(),
+            level_id: self.level_id.clone(),
         })
     }
 
@@ -442,6 +446,7 @@ mod tests {
             amount: Decimal::new(1, 3),
             price: Decimal::new(50000, 0),
             strategy_id: Some("s1".into()),
+            level_id: None,
         }
     }
 

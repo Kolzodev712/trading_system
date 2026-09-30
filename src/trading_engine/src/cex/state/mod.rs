@@ -53,6 +53,8 @@ pub struct PendingSubmission {
     pub amount: Decimal,
     pub price: Decimal,
     pub strategy_id: Option<String>,
+    /// Expanded level instance id when this submission belongs to a level.
+    pub level_id: Option<String>,
 }
 
 /// Manages active orders and positions

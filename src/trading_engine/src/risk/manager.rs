@@ -115,9 +115,12 @@ impl RiskManager {
             )));
         }
 
-        // Construct OrderRequest from ResolvedLevel for balance check
+        // Construct OrderRequest from ResolvedLevel using the level's instrument
         let order_request = OrderRequest {
-            instrument: Instrument::new(InstrumentType::Spot, resolved_level.level.pair.clone()),
+            instrument: Instrument::new(
+                resolved_level.level.identity.instrument.clone(),
+                resolved_level.level.pair.clone(),
+            ),
             side: resolved_level.level.config.side.clone(),
             order_type: resolved_level.resolved_order_type.clone(),
             amount: resolved_level.resolved_quantity,
@@ -126,37 +129,78 @@ impl RiskManager {
             exchange_params: std::collections::HashMap::new(),
         };
 
-        let daily_loss_check = self
-            .enforce_daily_loss_limits(
-                trading_state,
-                Some(&order_request.instrument.pair),
-                current_prices,
-            )
-            .await;
-        if !daily_loss_check.allowed {
-            return daily_loss_check;
+        if resolved_level.resolved_price <= Decimal::ZERO
+            || resolved_level.resolved_quantity <= Decimal::ZERO
+        {
+            return RiskCheckResult::blocked(SmolStr::new(
+                "price and quantity must be strictly positive",
+            ));
         }
 
-        // Check balance
-        let balance_check = self.check_balance(&order_request, balances);
-        if !balance_check.allowed {
-            return balance_check;
+        let risk = &resolved_level.level.config.risk;
+        if risk.daily_loss_limit.is_some() {
+            tracing::debug!(
+                "ignoring per-level daily_loss_limit on {}; PnL attribution is not implemented",
+                resolved_level.level.identity.instance_id
+            );
+        }
+        if let Some(max_qty) = risk.max_order_qty.filter(|v| *v > Decimal::ZERO) {
+            if order_request.amount > max_qty {
+                return RiskCheckResult::blocked(SmolStr::new(format!(
+                    "Level order qty {} exceeds per-level max_order_qty {}",
+                    order_request.amount, max_qty
+                )));
+            }
+        }
+        if let Some(max_notional) = risk.max_notional.filter(|v| *v > Decimal::ZERO) {
+            let notional = order_request.price * order_request.amount;
+            if notional > max_notional {
+                return RiskCheckResult::blocked(SmolStr::new(format!(
+                    "Level order notional {} exceeds per-level max_notional {}",
+                    notional, max_notional
+                )));
+            }
+        }
+        if let Some(max_orders) = risk.max_orders.filter(|n| *n > 0) {
+            if resolved_level.level.active_orders.len() >= max_orders {
+                return RiskCheckResult::blocked(SmolStr::new(format!(
+                    "Level working order count {} exceeds per-level max_orders {}",
+                    resolved_level.level.active_orders.len(),
+                    max_orders
+                )));
+            }
+        }
+        if let Some(max_position) = risk.max_position.filter(|v| *v > Decimal::ZERO) {
+            let signed = match order_request.side {
+                Side::Buy => order_request.amount,
+                Side::Sell => -order_request.amount,
+            };
+            let owned_working: Decimal = resolved_level
+                .level
+                .active_orders
+                .iter()
+                .filter_map(|oid| trading_state.active_orders.get(oid))
+                .map(|order| order.amount - order.filled_amount)
+                .sum();
+            let prospective = owned_working + order_request.amount;
+            if prospective.abs() > max_position || signed.abs() > max_position {
+                return RiskCheckResult::blocked(SmolStr::new(format!(
+                    "Level exposure {} exceeds per-level max_position {}",
+                    prospective, max_position
+                )));
+            }
         }
 
-        // Check total position limits
-        let total_position_check = self.check_total_position_limits(trading_state);
-        if !total_position_check.allowed {
-            return total_position_check;
-        }
-
-        // Check total order count
-        let order_count_check = self.check_order_count(trading_state);
-        if !order_count_check.allowed {
-            return order_count_check;
-        }
-
-        // All checks passed
-        RiskCheckResult::allowed()
+        let position_qty = trading_state.effective_position_qty(&order_request.instrument.pair);
+        self.check_pre_trade(
+            &order_request,
+            trading_state,
+            balances,
+            current_prices,
+            position_qty,
+            None,
+        )
+        .await
     }
 
     /// Pre-trade risk check (for any order request).
@@ -216,7 +260,7 @@ impl RiskManager {
             }
         }
 
-        if let Some(max_qty) = self.limits.max_order_qty {
+        if let Some(max_qty) = self.limits.max_order_qty.filter(|v| *v > Decimal::ZERO) {
             if order_request.amount > max_qty {
                 return RiskCheckResult::blocked(SmolStr::new(format!(
                     "Order qty {} exceeds max_order_qty {}",
@@ -224,7 +268,7 @@ impl RiskManager {
                 )));
             }
         }
-        if let Some(max_notional) = self.limits.max_notional {
+        if let Some(max_notional) = self.limits.max_notional.filter(|v| *v > Decimal::ZERO) {
             let notional = order_request.price * order_request.amount;
             if notional > max_notional {
                 return RiskCheckResult::blocked(SmolStr::new(format!(
@@ -233,7 +277,11 @@ impl RiskManager {
                 )));
             }
         }
-        if let Some(max_total_position) = self.limits.total_max_position {
+        if let Some(max_total_position) = self
+            .limits
+            .total_max_position
+            .filter(|v| *v > Decimal::ZERO)
+        {
             let signed = match order_request.side {
                 Side::Buy => order_request.amount,
                 Side::Sell => -order_request.amount,
@@ -471,18 +519,32 @@ impl RiskManager {
         RiskCheckResult::allowed()
     }
 
-    /// Check total position limits
+    /// Check total position limits per pair. Never sums BTC and ETH base quantities.
     pub fn check_total_position_limits(&self, state: &TradingState) -> RiskCheckResult {
-        if let Some(max_total_position) = self.limits.total_max_position {
-            // Calculate total position across all pairs
-            let total_position: Decimal = state.positions.values().map(|p| p.quantity.abs()).sum();
-
-            // Block only if position exceeds the limit (not at exactly the limit)
-            if total_position > max_total_position {
-                return RiskCheckResult::blocked(SmolStr::new(format!(
-                    "Total position limit exceeded: {} > {}",
-                    total_position, max_total_position
-                )));
+        if let Some(max_total_position) = self
+            .limits
+            .total_max_position
+            .filter(|v| *v > Decimal::ZERO)
+        {
+            let mut pairs: Vec<Pair> = state.positions.keys().cloned().collect();
+            for order in state.active_orders.values() {
+                if !pairs.contains(&order.instrument.pair) {
+                    pairs.push(order.instrument.pair.clone());
+                }
+            }
+            for submission in state.pending_submissions().values() {
+                if !pairs.contains(&submission.symbol) {
+                    pairs.push(submission.symbol.clone());
+                }
+            }
+            for pair in pairs {
+                let qty = state.effective_position_qty(&pair).abs();
+                if qty > max_total_position {
+                    return RiskCheckResult::blocked(SmolStr::new(format!(
+                        "Per-pair position limit exceeded for {}: {} > {}",
+                        pair, qty, max_total_position
+                    )));
+                }
             }
         }
         RiskCheckResult::allowed()
@@ -788,5 +850,100 @@ mod balance_tests {
             .reason
             .unwrap()
             .contains("Daily loss limit exceeded"));
+    }
+
+    #[test]
+    fn btc_and_eth_are_not_summed_as_one_qty_cap() {
+        let limits = RiskLimits {
+            total_max_position: Some(dec!(0.1)),
+            ..RiskLimits::default()
+        };
+        let risk = RiskManager::new(
+            limits,
+            Arc::new(trading_core::registry::symbol::SymbolRegistry::from_pairs(
+                vec![Pair::new("BTC", "USDT"), Pair::new("ETH", "USDT")],
+            )),
+        );
+        let mut state = TradingState::new();
+        state.set_position(Pair::new("BTC", "USDT"), dec!(0.08), dec!(50000));
+        state.set_position(Pair::new("ETH", "USDT"), dec!(0.08), dec!(3000));
+        assert!(risk.check_total_position_limits(&state).allowed);
+    }
+
+    #[tokio::test]
+    async fn two_orders_pass_alone_but_combined_exceed_per_pair_cap() {
+        let limits = RiskLimits {
+            total_max_position: Some(dec!(0.0015)),
+            max_order_qty: Some(dec!(0.001)),
+            ..RiskLimits::default()
+        };
+        let risk = RiskManager::new(
+            limits,
+            Arc::new(trading_core::registry::symbol::SymbolRegistry::from_pairs(
+                vec![Pair::new("BTC", "USDT")],
+            )),
+        );
+        let mut order = req(InstrumentType::Spot, Side::Buy);
+        order.amount = dec!(0.001);
+        order.price = dec!(50000);
+        let mut state = TradingState::new();
+        let first = risk
+            .check_pre_trade(
+                &order,
+                &state,
+                &[usdt(dec!(1000))],
+                None,
+                Decimal::ZERO,
+                None,
+            )
+            .await;
+        assert!(first.allowed);
+        state.begin_submission(crate::cex::state::PendingSubmission {
+            client_order_id: smol_str::SmolStr::new("a"),
+            symbol: Pair::new("BTC", "USDT"),
+            side: Side::Buy,
+            amount: dec!(0.001),
+            price: dec!(50000),
+            strategy_id: None,
+            level_id: Some("buy_level_1_BTCUSDT".into()),
+        });
+        let second = risk
+            .check_pre_trade(
+                &order,
+                &state,
+                &[usdt(dec!(1000))],
+                None,
+                state.effective_position_qty(&Pair::new("BTC", "USDT")),
+                None,
+            )
+            .await;
+        assert!(!second.allowed);
+    }
+
+    #[tokio::test]
+    async fn zero_configured_caps_are_not_enforced() {
+        let limits = RiskLimits {
+            total_max_position: Some(Decimal::ZERO),
+            max_notional: Some(Decimal::ZERO),
+            max_order_qty: Some(Decimal::ZERO),
+            ..RiskLimits::default()
+        };
+        let risk = RiskManager::new(
+            limits,
+            Arc::new(trading_core::registry::symbol::SymbolRegistry::from_pairs(
+                vec![Pair::new("BTC", "USDT")],
+            )),
+        );
+        let allowed = risk
+            .check_pre_trade(
+                &req(InstrumentType::Spot, Side::Buy),
+                &TradingState::new(),
+                &[usdt(dec!(1000))],
+                None,
+                Decimal::ZERO,
+                None,
+            )
+            .await;
+        assert!(allowed.allowed);
     }
 }

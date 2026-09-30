@@ -10,6 +10,7 @@ pub fn level_state_to_string(state: &LevelState) -> &'static str {
         LevelState::Cancelled => "Cancelled",
         LevelState::Paused => "Paused",
         LevelState::Removed => "Removed",
+        LevelState::Submitting => "Submitting",
     }
 }
 

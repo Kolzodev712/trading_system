@@ -898,6 +898,7 @@ impl<S: Strategy> StrategyExecutor<S> {
                             amount: req.amount,
                             price: req.price,
                             strategy_id: None,
+                            level_id: None,
                         };
                         if !self
                             .persist_or_halt(&pending, crate::cex::state::SubmissionState::Prepared)
@@ -954,6 +955,7 @@ impl<S: Strategy> StrategyExecutor<S> {
                                             amount: req.amount,
                                             price: req.price,
                                             strategy_id: None,
+                                            level_id: None,
                                         }
                                     });
                                     if idx >= results.len() {
@@ -1057,6 +1059,7 @@ impl<S: Strategy> StrategyExecutor<S> {
                                             amount: req.amount,
                                             price: req.price,
                                             strategy_id: None,
+                                            level_id: None,
                                         };
                                         let _ = self
                                             .persist_or_halt(

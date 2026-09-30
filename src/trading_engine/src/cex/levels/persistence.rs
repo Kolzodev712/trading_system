@@ -337,6 +337,8 @@ impl LevelPersistence {
             risk: LevelRiskConfig {
                 max_position: doc.risk.max_position,
                 max_orders: doc.risk.max_orders,
+                max_order_qty: None,
+                max_notional: None,
                 daily_loss_limit: doc.risk.daily_loss_limit,
             },
             lifecycle: LifecycleConfig {

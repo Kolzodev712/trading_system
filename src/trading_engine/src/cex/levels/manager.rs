@@ -1,18 +1,27 @@
 //! Level manager - manages level lifecycle and state transitions
+use super::catalog::{LevelInstanceRecord, LevelsCatalog};
+use super::identity::LevelIdentity;
 use super::{Level, LevelConfig, LevelState};
+use crate::risk::RiskLimits;
 use smol_str::SmolStr;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use tokio::fs;
 use trading_core::error::EngineError;
-use trading_core::types::common::OrderId;
+use trading_core::types::common::{Exchange, InstrumentType, OrderId, Pair};
 
 /// Manages level lifecycle and state transitions
 pub struct LevelManager {
     levels: HashMap<SmolStr, Level>,
+    templates: Vec<LevelConfig>,
+    tombstones: HashSet<String>,
+    risk_limits: RiskLimits,
     config_path: Option<PathBuf>,
     persistence: Option<Arc<super::persistence::LevelPersistence>>,
+    venue: Exchange,
+    instrument: InstrumentType,
+    account: SmolStr,
+    external_order_ids: HashSet<OrderId>,
 }
 
 impl LevelManager {
@@ -20,9 +29,28 @@ impl LevelManager {
     pub fn new() -> Self {
         Self {
             levels: HashMap::new(),
+            templates: Vec::new(),
+            tombstones: HashSet::new(),
+            risk_limits: RiskLimits::default(),
             config_path: None,
             persistence: None,
+            venue: Exchange::Paper,
+            instrument: InstrumentType::Spot,
+            account: SmolStr::new("test"),
+            external_order_ids: HashSet::new(),
         }
+    }
+
+    pub fn with_identity_scope(
+        mut self,
+        venue: Exchange,
+        instrument: InstrumentType,
+        account: impl Into<SmolStr>,
+    ) -> Self {
+        self.venue = venue;
+        self.instrument = instrument;
+        self.account = account.into();
+        self
     }
 
     /// Set persistence for level manager
@@ -34,190 +62,208 @@ impl LevelManager {
         self
     }
 
+    fn identity_for(&self, template_id: impl Into<SmolStr>, pair: Pair) -> LevelIdentity {
+        LevelIdentity::new(
+            self.venue.clone(),
+            self.instrument.clone(),
+            self.account.clone(),
+            pair,
+            template_id,
+        )
+    }
+
+    fn catalog_snapshot(&self) -> LevelsCatalog {
+        let instances = self
+            .levels
+            .iter()
+            .map(|(id, level)| LevelInstanceRecord {
+                id: id.to_string(),
+                template_id: level.identity.template_id.to_string(),
+                pair: level.pair.clone(),
+                config: level.config.clone(),
+                owned_client_ids: level
+                    .owned_client_ids
+                    .iter()
+                    .map(|s| s.to_string())
+                    .collect(),
+                owned_exchange_ids: level
+                    .active_orders
+                    .iter()
+                    .map(|oid| oid.as_str().to_string())
+                    .collect(),
+            })
+            .collect();
+        let mut tombstones: Vec<String> = self.tombstones.iter().cloned().collect();
+        tombstones.sort();
+        LevelsCatalog {
+            levels: self.templates.clone(),
+            instances,
+            tombstones,
+            risk_limits: self.risk_limits.clone(),
+        }
+    }
+
+    fn persist_canonical(&self) -> Result<(), EngineError> {
+        let catalog = self.catalog_snapshot();
+        if let Some(path) = &self.config_path {
+            catalog.save_atomic(path)?;
+        }
+        Ok(())
+    }
+
+    fn mirror_mongo(&self, configured_pairs: &[Pair]) {
+        if self.persistence.is_none() {
+            return;
+        }
+        let catalog = self.catalog_snapshot();
+        let persistence = self.persistence.clone();
+        let pairs = configured_pairs.to_vec();
+        tokio::spawn(async move {
+            let Some(persistence) = persistence else {
+                return;
+            };
+            if let Err(e) = persistence
+                .save_levels(&catalog.levels, &catalog.risk_limits, &pairs)
+                .await
+            {
+                tracing::warn!("Mongo mirror of levels catalog failed (file is canonical): {e}");
+            }
+        });
+    }
+
     /// Load levels from configuration file
     /// Expands pair-agnostic level configs to create Level instances for each pair
     pub async fn load_from_config(
         &mut self,
         path: &Path,
-        pairs: &[trading_core::types::common::Pair],
+        pairs: &[Pair],
     ) -> Result<(), EngineError> {
-        if pairs.is_empty() {
-            return Err(EngineError::CustomError(anyhow::anyhow!(
-                "No pairs provided - cannot expand levels"
-            )));
-        }
-
-        let content = fs::read_to_string(path).await.map_err(|e| {
-            EngineError::CustomError(anyhow::anyhow!("Failed to read config file: {}", e))
-        })?;
-
-        #[derive(serde::Deserialize)]
-        struct LevelsConfig {
-            levels: Vec<LevelConfig>,
-        }
-
-        let config: LevelsConfig = serde_json::from_str(&content).map_err(|e| {
-            EngineError::CustomError(anyhow::anyhow!("Failed to parse config: {}", e))
-        })?;
-
-        // Expand each level config for each pair
-        for level_config in config.levels {
-            for pair in pairs {
-                // Generate pair-specific level ID: "buy_level_1" -> "buy_level_1_ETHUSDC"
-                let pair_str = pair.convert_to_smolstr();
-                let level_id = SmolStr::new(format!("{}_{}", level_config.id, pair_str));
-
-                // Create level instance for this pair
-                let level = Level::new(level_config.clone(), pair.clone());
-                self.levels.insert(level_id, level);
-            }
-        }
-
-        self.config_path = Some(path.to_path_buf());
-        Ok(())
+        self.load_from_config_with_risk_limits(path, pairs)
+            .await
+            .map(|_| ())
     }
 
-    /// Load levels and risk limits from configuration file
-    /// Expands pair-agnostic level configs to create Level instances for each pair
+    /// Load levels and risk limits from the file catalog.
+    /// Mongo is never used as the restart source of truth.
     pub async fn load_from_config_with_risk_limits(
         &mut self,
         path: &Path,
-        pairs: &[trading_core::types::common::Pair],
-    ) -> Result<crate::risk::RiskLimits, EngineError> {
-        if pairs.is_empty() {
-            return Err(EngineError::CustomError(anyhow::anyhow!(
-                "No pairs provided - cannot expand levels"
-            )));
-        }
-
-        let content = fs::read_to_string(path).await.map_err(|e| {
-            EngineError::CustomError(anyhow::anyhow!("Failed to read config file: {}", e))
-        })?;
-
-        #[derive(serde::Deserialize)]
-        struct LevelsConfigFile {
-            levels: Vec<LevelConfig>,
-            #[serde(default)]
-            risk_limits: crate::risk::RiskLimits,
-        }
-
-        let config: LevelsConfigFile = serde_json::from_str(&content).map_err(|e| {
-            EngineError::CustomError(anyhow::anyhow!("Failed to parse config: {}", e))
-        })?;
-
-        // Expand each level config for each pair
-        for level_config in config.levels {
-            for pair in pairs {
-                // Generate pair-specific level ID: "buy_level_1" -> "buy_level_1_ETHUSDC"
-                let pair_str = pair.convert_to_smolstr();
-                let level_id = SmolStr::new(format!("{}_{}", level_config.id, pair_str));
-
-                // Create level instance for this pair
-                let level = Level::new(level_config.clone(), pair.clone());
-                self.levels.insert(level_id, level);
-            }
-        }
-
+        pairs: &[Pair],
+    ) -> Result<RiskLimits, EngineError> {
+        let catalog = LevelsCatalog::load_from_path(path)?;
+        self.templates = catalog.levels.clone();
+        self.tombstones = catalog.tombstone_set();
+        self.risk_limits = catalog.risk_limits.clone();
+        self.levels = catalog.materialize(
+            pairs,
+            self.venue.clone(),
+            self.instrument.clone(),
+            self.account.as_str(),
+        )?;
         self.config_path = Some(path.to_path_buf());
-        Ok(config.risk_limits)
+        Ok(self.risk_limits.clone())
     }
 
-    /// Add a new level for a specific pair
+    /// Add a new level for a specific pair. Returns the expanded instance id.
     pub async fn add_level(
         &mut self,
         config: LevelConfig,
-        pair: trading_core::types::common::Pair,
-    ) -> Result<(), EngineError> {
-        // Generate pair-specific level ID
-        let pair_str = pair.convert_to_smolstr();
-        let level_id = SmolStr::new(format!("{}_{}", config.id, pair_str));
+        pair: Pair,
+    ) -> Result<SmolStr, EngineError> {
+        let identity = self.identity_for(config.id.clone(), pair.clone());
+        let level_id = identity.instance_id.clone();
 
         if self.levels.contains_key(&level_id) {
             return Err(EngineError::CustomError(anyhow::anyhow!(
                 "Level with ID {} already exists for pair {}",
                 config.id,
-                pair_str
+                pair.convert_to_smolstr()
             )));
         }
 
-        let level = Level::new(config.clone(), pair);
-        self.levels.insert(level_id, level);
-
-        // Persist to MongoDB if enabled
-        if let Some(persistence) = &self.persistence {
-            if let Err(e) = persistence.update_level(&config).await {
-                tracing::warn!("Failed to persist level to MongoDB: {}", e);
+        let cleared_tombstone = self.tombstones.remove(level_id.as_str());
+        let level = Level::from_identity(config, identity);
+        self.levels.insert(level_id.clone(), level);
+        if let Err(err) = self.persist_canonical() {
+            self.levels.remove(&level_id);
+            if cleared_tombstone {
+                self.tombstones.insert(level_id.to_string());
             }
+            return Err(err);
         }
-
-        Ok(())
+        self.mirror_mongo(&[pair]);
+        Ok(level_id)
     }
 
-    /// Remove a level
+    /// Remove a level instance. Tombstone so a template cannot recreate it on restart.
     pub async fn remove_level(&mut self, level_id: &SmolStr) -> Result<(), EngineError> {
-        if let Some(mut level) = self.levels.remove(level_id) {
-            level.state = LevelState::Removed;
-
-            // Persist deletion to MongoDB if enabled
-            if let Some(persistence) = &self.persistence {
-                if let Err(e) = persistence.delete_level(level_id.as_str()).await {
-                    tracing::warn!("Failed to persist level deletion to MongoDB: {}", e);
-                }
-            }
-
-            Ok(())
-        } else {
-            Err(EngineError::CustomError(anyhow::anyhow!(
+        if self.tombstones.contains(level_id.as_str()) && !self.levels.contains_key(level_id) {
+            return Ok(());
+        }
+        let Some(mut level) = self.levels.remove(level_id) else {
+            return Err(EngineError::CustomError(anyhow::anyhow!(
                 "Level {} not found",
                 level_id
-            )))
+            )));
+        };
+        level.generation = level.generation.saturating_add(1);
+        self.tombstones.insert(level_id.to_string());
+        if let Err(err) = self.persist_canonical() {
+            self.tombstones.remove(level_id.as_str());
+            self.levels.insert(level_id.clone(), level);
+            return Err(err);
         }
+        self.mirror_mongo(&[level.pair.clone()]);
+        Ok(())
     }
 
     /// Enable a level
     pub async fn enable_level(&mut self, level_id: &SmolStr) -> Result<(), EngineError> {
-        if let Some(level) = self.levels.get_mut(level_id) {
+        let (pair, prev_enabled, prev_state) = {
+            let level = self.levels.get_mut(level_id).ok_or_else(|| {
+                EngineError::CustomError(anyhow::anyhow!("Level {} not found", level_id))
+            })?;
+            let prev_enabled = level.config.enabled;
+            let prev_state = level.state.clone();
             level.config.enabled = true;
             if matches!(level.state, LevelState::Paused) {
                 level.state = LevelState::Created;
             }
-
-            // Persist to MongoDB if enabled
-            if let Some(persistence) = &self.persistence {
-                if let Err(e) = persistence.update_level(&level.config).await {
-                    tracing::warn!("Failed to persist level update to MongoDB: {}", e);
-                }
+            (level.pair.clone(), prev_enabled, prev_state)
+        };
+        if let Err(err) = self.persist_canonical() {
+            if let Some(level) = self.levels.get_mut(level_id) {
+                level.config.enabled = prev_enabled;
+                level.state = prev_state;
             }
-
-            Ok(())
-        } else {
-            Err(EngineError::CustomError(anyhow::anyhow!(
-                "Level {} not found",
-                level_id
-            )))
+            return Err(err);
         }
+        self.mirror_mongo(&[pair]);
+        Ok(())
     }
 
     /// Disable/pause a level
     pub async fn disable_level(&mut self, level_id: &SmolStr) -> Result<(), EngineError> {
-        if let Some(level) = self.levels.get_mut(level_id) {
+        let (pair, prev_enabled, prev_state) = {
+            let level = self.levels.get_mut(level_id).ok_or_else(|| {
+                EngineError::CustomError(anyhow::anyhow!("Level {} not found", level_id))
+            })?;
+            let prev_enabled = level.config.enabled;
+            let prev_state = level.state.clone();
             level.config.enabled = false;
             level.state = LevelState::Paused;
-
-            // Persist to MongoDB if enabled
-            if let Some(persistence) = &self.persistence {
-                if let Err(e) = persistence.update_level(&level.config).await {
-                    tracing::warn!("Failed to persist level update to MongoDB: {}", e);
-                }
+            level.generation = level.generation.saturating_add(1);
+            (level.pair.clone(), prev_enabled, prev_state)
+        };
+        if let Err(err) = self.persist_canonical() {
+            if let Some(level) = self.levels.get_mut(level_id) {
+                level.config.enabled = prev_enabled;
+                level.state = prev_state;
             }
-
-            Ok(())
-        } else {
-            Err(EngineError::CustomError(anyhow::anyhow!(
-                "Level {} not found",
-                level_id
-            )))
+            return Err(err);
         }
+        self.mirror_mongo(&[pair]);
+        Ok(())
     }
 
     /// Update level configuration and persist
@@ -226,25 +272,114 @@ impl LevelManager {
         level_id: &SmolStr,
         config: LevelConfig,
     ) -> Result<(), EngineError> {
-        if let Some(level) = self.levels.get_mut(level_id) {
-            // Clone config for persistence before moving
-            let config_for_persistence = config.clone();
-            level.config = config;
-
-            // Persist to MongoDB if enabled
-            if let Some(persistence) = &self.persistence {
-                if let Err(e) = persistence.update_level(&config_for_persistence).await {
-                    tracing::warn!("Failed to persist level update to MongoDB: {}", e);
-                }
+        let (pair, prev_config) = {
+            let level = self.levels.get_mut(level_id).ok_or_else(|| {
+                EngineError::CustomError(anyhow::anyhow!("Level {} not found", level_id))
+            })?;
+            let prev_config = std::mem::replace(&mut level.config, config);
+            (level.pair.clone(), prev_config)
+        };
+        if let Err(err) = self.persist_canonical() {
+            if let Some(level) = self.levels.get_mut(level_id) {
+                level.config = prev_config;
             }
-
-            Ok(())
-        } else {
-            Err(EngineError::CustomError(anyhow::anyhow!(
-                "Level {} not found",
-                level_id
-            )))
+            return Err(err);
         }
+        self.mirror_mongo(&[pair]);
+        Ok(())
+    }
+
+    /// Latch submitting before persist-before-send. Returns the generation to recheck.
+    pub fn begin_submit(&mut self, level_id: &SmolStr) -> Result<u64, EngineError> {
+        let level = self.levels.get_mut(level_id).ok_or_else(|| {
+            EngineError::CustomError(anyhow::anyhow!("Level {} not found", level_id))
+        })?;
+        if !level.config.enabled {
+            return Err(EngineError::CustomError(anyhow::anyhow!(
+                "Level {level_id} is disabled"
+            )));
+        }
+        if !matches!(level.state, LevelState::Created) || !level.active_orders.is_empty() {
+            return Err(EngineError::CustomError(anyhow::anyhow!(
+                "Level {level_id} is not ready to submit"
+            )));
+        }
+        level.state = LevelState::Submitting;
+        Ok(level.generation)
+    }
+
+    pub fn submit_still_allowed(&self, level_id: &SmolStr, generation: u64) -> bool {
+        self.levels.get(level_id).is_some_and(|level| {
+            level.config.enabled
+                && level.generation == generation
+                && matches!(level.state, LevelState::Submitting)
+                && !matches!(level.state, LevelState::Paused | LevelState::Removed)
+        })
+    }
+
+    pub fn abort_submit(&mut self, level_id: &SmolStr, generation: u64) {
+        if let Some(level) = self.levels.get_mut(level_id) {
+            if level.generation == generation && matches!(level.state, LevelState::Submitting) {
+                level.state = LevelState::Created;
+            }
+        }
+    }
+
+    pub fn confirm_posted(
+        &mut self,
+        level_id: &SmolStr,
+        client_order_id: &SmolStr,
+        order_id: &OrderId,
+    ) -> Result<(), EngineError> {
+        let pair = {
+            let level = self.levels.get_mut(level_id).ok_or_else(|| {
+                EngineError::CustomError(anyhow::anyhow!("Level {} not found", level_id))
+            })?;
+            if !level
+                .owned_client_ids
+                .iter()
+                .any(|id| id == client_order_id)
+            {
+                level.owned_client_ids.push(client_order_id.clone());
+            }
+            if !level.active_orders.iter().any(|id| id == order_id) {
+                level.active_orders.push(order_id.clone());
+            }
+            level.state = LevelState::Posted;
+            level.last_posted_at = Some(trading_core::utils::current_timestamp());
+            level.pair.clone()
+        };
+        self.persist_canonical()?;
+        self.mirror_mongo(&[pair]);
+        Ok(())
+    }
+
+    pub fn mark_external_order(&mut self, order_id: OrderId) {
+        self.external_order_ids.insert(order_id);
+    }
+
+    pub fn is_external_order(&self, order_id: &OrderId) -> bool {
+        self.external_order_ids.contains(order_id)
+    }
+
+    pub fn owns_client_id(&self, client_order_id: &str) -> Option<SmolStr> {
+        self.levels.iter().find_map(|(id, level)| {
+            level
+                .owned_client_ids
+                .iter()
+                .any(|owned| owned.as_str() == client_order_id)
+                .then(|| id.clone())
+        })
+    }
+
+    pub fn owns_exchange_id(&self, order_id: &OrderId) -> Option<SmolStr> {
+        self.levels.iter().find_map(|(id, level)| {
+            level
+                .active_orders
+                .iter()
+                .any(|owned| owned == order_id)
+                .then(|| id.clone())
+        })
     }
 
     /// Get level by ID
@@ -343,48 +478,15 @@ impl LevelManager {
         }
     }
 
-    /// Save all levels and risk limits to MongoDB
+    /// Save all levels and risk limits to MongoDB (mirror only).
     pub async fn save_all_levels(
         &self,
-        risk_limits: &crate::risk::RiskLimits,
-        configured_pairs: &[trading_core::types::common::Pair],
+        risk_limits: &RiskLimits,
+        configured_pairs: &[Pair],
     ) -> Result<(), EngineError> {
         if let Some(persistence) = &self.persistence {
-            // Extract unique level configs (deduplicate by config ID since we have multiple instances per pair)
-            let mut seen_configs = std::collections::HashSet::new();
-            let levels: Vec<LevelConfig> = self
-                .levels
-                .values()
-                .filter_map(|l| {
-                    // Only include each unique config once (remove pair suffix from ID)
-                    let base_id = l.config.id.as_str();
-                    // Extract base ID by removing pair suffix (format: "level_id_PAIR")
-                    let base_id = if let Some(underscore_pos) = base_id.rfind('_') {
-                        // Check if the part after last underscore looks like a pair (e.g., "ETHUSDC")
-                        let potential_pair = &base_id[underscore_pos + 1..];
-                        if potential_pair.len() >= 4
-                            && potential_pair
-                                .chars()
-                                .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
-                        {
-                            &base_id[..underscore_pos]
-                        } else {
-                            base_id
-                        }
-                    } else {
-                        base_id
-                    };
-
-                    if seen_configs.insert(base_id.to_string()) {
-                        Some(l.config.clone())
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-
             persistence
-                .save_levels(&levels, risk_limits, configured_pairs)
+                .save_levels(&self.templates, risk_limits, configured_pairs)
                 .await
                 .map_err(|e| {
                     EngineError::CustomError(anyhow::anyhow!(
@@ -396,76 +498,14 @@ impl LevelManager {
         Ok(())
     }
 
-    /// Load levels from MongoDB (if available)
-    /// Expands pair-agnostic level configs to create Level instances for each pair
+    /// Mongo load is not used at restart. File catalog is canonical.
     pub async fn load_from_mongo(
         &mut self,
-        pairs: &[trading_core::types::common::Pair],
-    ) -> Result<Option<crate::risk::RiskLimits>, EngineError> {
-        if pairs.is_empty() {
-            return Err(EngineError::CustomError(anyhow::anyhow!(
-                "No pairs provided - cannot expand levels"
-            )));
-        }
-        if let Some(persistence) = &self.persistence {
-            if let Some(bot_config) = persistence.load_levels().await.map_err(|e| {
-                EngineError::CustomError(anyhow::anyhow!(
-                    "Failed to load levels from MongoDB: {}",
-                    e
-                ))
-            })? {
-                // Convert document levels to LevelConfig and add them
-                let mut loaded_count = 0;
-                let mut error_count = 0;
-
-                for level_doc in &bot_config.levels {
-                    match persistence.document_to_level_config(level_doc) {
-                        Ok(level_config) => {
-                            // Expand level config for each pair
-                            for pair in pairs {
-                                let pair_str = pair.convert_to_smolstr();
-                                let level_id =
-                                    SmolStr::new(format!("{}_{}", level_config.id, pair_str));
-                                let level = Level::new(level_config.clone(), pair.clone());
-                                self.levels.insert(level_id, level);
-                                loaded_count += 1;
-                            }
-                        }
-                        Err(e) => {
-                            tracing::warn!(
-                                "Failed to convert level document {} to LevelConfig: {}",
-                                level_doc.id,
-                                e
-                            );
-                            error_count += 1;
-                        }
-                    }
-                }
-
-                tracing::info!(
-                    "Loaded {} levels from MongoDB ({} successful, {} errors)",
-                    bot_config.levels.len(),
-                    loaded_count,
-                    error_count
-                );
-
-                // Convert risk limits
-                let risk_limits = crate::risk::RiskLimits {
-                    total_max_position: bot_config.risk_limits.total_max_position,
-                    max_total_orders: bot_config.risk_limits.max_total_orders,
-                    max_notional: bot_config.risk_limits.max_notional,
-                    max_order_qty: bot_config.risk_limits.max_order_qty,
-                    daily_loss_limit_all_pairs: bot_config.risk_limits.daily_loss_limit_all_pairs,
-                    daily_loss_limit_per_pair: bot_config
-                        .risk_limits
-                        .daily_loss_limit_per_pair
-                        .into_iter()
-                        .map(|(k, v)| (SmolStr::new(&k), v))
-                        .collect(),
-                };
-                return Ok(Some(risk_limits));
-            }
-        }
+        _pairs: &[Pair],
+    ) -> Result<Option<RiskLimits>, EngineError> {
+        tracing::warn!(
+            "load_from_mongo is not applied at restart; levels file is the canonical source"
+        );
         Ok(None)
     }
 }
@@ -513,8 +553,8 @@ mod tests {
         let config = create_test_level_config("test_level");
 
         let pair = Pair::new("BTC", "USDT");
-        let result = manager.add_level(config.clone(), pair).await;
-        assert!(result.is_ok());
+        let instance_id = manager.add_level(config.clone(), pair).await.unwrap();
+        assert_eq!(instance_id.as_str(), "test_level_BTCUSDT");
 
         let level_id = SmolStr::new("test_level_BTCUSDT");
         let level = manager.get_level(&level_id);
@@ -549,7 +589,13 @@ mod tests {
             .await;
 
         assert!(result.is_ok());
-        assert!(manager.get_level(&SmolStr::new("test_level")).is_none());
+        assert!(manager
+            .get_level(&SmolStr::new("test_level_BTCUSDT"))
+            .is_none());
+        let again = manager
+            .remove_level(&SmolStr::new("test_level_BTCUSDT"))
+            .await;
+        assert!(again.is_ok());
     }
 
     #[tokio::test]
@@ -704,5 +750,108 @@ mod tests {
 
         let level = manager.get_level(&level_id).unwrap();
         assert!(!level.config.enabled);
+    }
+
+    fn unique_temp_dir() -> std::path::PathBuf {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static SEQ: AtomicU64 = AtomicU64::new(0);
+        let dir = std::env::temp_dir().join(format!(
+            "levels_gate1_{}_{}",
+            std::process::id(),
+            SEQ.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&dir).expect("temp levels dir");
+        dir
+    }
+
+    async fn reload(path: &Path, pairs: &[Pair], venue: Exchange, account: &str) -> LevelManager {
+        let mut manager = LevelManager::new().with_identity_scope(
+            venue,
+            InstrumentType::Spot,
+            SmolStr::new(account),
+        );
+        manager.load_from_config(path, pairs).await.unwrap();
+        manager
+    }
+
+    #[tokio::test]
+    async fn create_edit_disable_delete_survive_restart_and_multi_pair_template() {
+        let dir = unique_temp_dir();
+        let path = dir.join("levels.json");
+        let btc = Pair::new("BTC", "USDT");
+        let eth = Pair::new("ETH", "USDT");
+        let pairs = [btc.clone(), eth.clone()];
+
+        LevelsCatalog {
+            levels: vec![create_test_level_config("buy_level_1")],
+            instances: vec![],
+            tombstones: vec![],
+            risk_limits: RiskLimits::default(),
+        }
+        .save_atomic(&path)
+        .unwrap();
+
+        let mut manager = reload(&path, &pairs, Exchange::Paper, "acct-a").await;
+        assert_eq!(manager.get_all_levels().len(), 2);
+        let btc_id = SmolStr::new("buy_level_1_BTCUSDT");
+        let eth_id = SmolStr::new("buy_level_1_ETHUSDT");
+        assert_eq!(
+            manager
+                .get_level(&btc_id)
+                .unwrap()
+                .identity
+                .account
+                .as_str(),
+            "acct-a"
+        );
+        assert_eq!(
+            manager.get_level(&btc_id).unwrap().identity.instance_id,
+            btc_id
+        );
+
+        let created = manager
+            .add_level(create_test_level_config("extra_level"), btc.clone())
+            .await
+            .unwrap();
+        assert_eq!(created.as_str(), "extra_level_BTCUSDT");
+
+        let mut edited = create_test_level_config("buy_level_1");
+        edited.name = Some(SmolStr::new("eth only"));
+        manager.update_level_config(&eth_id, edited).await.unwrap();
+        manager.disable_level(&eth_id).await.unwrap();
+        manager.remove_level(&btc_id).await.unwrap();
+
+        let manager = reload(&path, &pairs, Exchange::Paper, "acct-a").await;
+        assert!(manager.get_level(&btc_id).is_none());
+        let eth_level = manager.get_level(&eth_id).unwrap();
+        assert!(!eth_level.config.enabled);
+        assert!(!eth_level.is_ready_to_post());
+        assert_eq!(eth_level.config.name.as_deref(), Some("eth only"));
+        let extra = manager
+            .get_level(&SmolStr::new("extra_level_BTCUSDT"))
+            .unwrap();
+        assert_eq!(extra.config.id.as_str(), "extra_level");
+        let mut mongo_probe = reload(&path, &pairs, Exchange::Paper, "acct-a").await;
+        assert!(mongo_probe.load_from_mongo(&pairs).await.unwrap().is_none());
+        assert!(mongo_probe.get_level(&btc_id).is_none());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn persist_failure_is_reported_and_rolls_back_create() {
+        let dir = unique_temp_dir();
+        let blocker = dir.join("not_a_directory");
+        std::fs::write(&blocker, b"x").unwrap();
+        let mut manager = LevelManager::new();
+        manager.config_path = Some(blocker.join("levels.json"));
+        let err = manager
+            .add_level(
+                create_test_level_config("buy_level_1"),
+                Pair::new("BTC", "USDT"),
+            )
+            .await;
+        assert!(err.is_err());
+        assert!(manager.get_all_levels().is_empty());
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

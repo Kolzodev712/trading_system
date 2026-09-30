@@ -432,6 +432,14 @@ impl LevelManager {
         order_id: &OrderId,
         keep_posted: bool,
     ) -> Result<(), EngineError> {
+        if let Some(owner) = self.owns_exchange_id(order_id) {
+            if owner != *level_id {
+                return Err(EngineError::CustomError(anyhow::anyhow!(
+                    "duplicate exchange-id ownership: {} already owned by {owner}, not {level_id}",
+                    order_id.as_str()
+                )));
+            }
+        }
         let pair = {
             let level = self.levels.get_mut(level_id).ok_or_else(|| {
                 EngineError::CustomError(anyhow::anyhow!("Level {} not found", level_id))
@@ -451,6 +459,55 @@ impl LevelManager {
                 level.state = LevelState::Posted;
                 level.last_posted_at = Some(trading_core::utils::current_timestamp());
             }
+            level.pair.clone()
+        };
+        self.persist_canonical()?;
+        self.mirror_mongo(&[pair]);
+        Ok(())
+    }
+
+    pub fn assert_unique_exchange_ownership(&self) -> Result<(), EngineError> {
+        let mut seen: HashMap<OrderId, SmolStr> = HashMap::new();
+        for (level_id, level) in &self.levels {
+            for order_id in &level.active_orders {
+                if let Some(other) = seen.insert(order_id.clone(), level_id.clone()) {
+                    if other != *level_id {
+                        return Err(EngineError::CustomError(anyhow::anyhow!(
+                            "duplicate exchange-id ownership: {} owned by {other} and {level_id}",
+                            order_id.as_str()
+                        )));
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub fn replace_owned_exchange_id(
+        &mut self,
+        level_id: &SmolStr,
+        previous: &OrderId,
+        next: &OrderId,
+    ) -> Result<(), EngineError> {
+        if previous != next {
+            if let Some(owner) = self.owns_exchange_id(next) {
+                if owner != *level_id {
+                    return Err(EngineError::CustomError(anyhow::anyhow!(
+                        "amend would assign {} already owned by {owner}",
+                        next.as_str()
+                    )));
+                }
+            }
+        }
+        let pair = {
+            let level = self.levels.get_mut(level_id).ok_or_else(|| {
+                EngineError::CustomError(anyhow::anyhow!("Level {} not found", level_id))
+            })?;
+            level
+                .active_orders
+                .retain(|id| id != previous && id != next);
+            level.active_orders.push(next.clone());
+            level.last_posted_at = Some(trading_core::utils::current_timestamp());
             level.pair.clone()
         };
         self.persist_canonical()?;
@@ -537,7 +594,7 @@ impl LevelManager {
             let level = self.levels.get_mut(level_id).ok_or_else(|| {
                 EngineError::CustomError(anyhow::anyhow!("Level {} not found", level_id))
             })?;
-            let delta = level.apply_reported_fill(order_id, filled_qty, true);
+            let delta = level.apply_reported_fill(order_id, filled_qty, true, true);
             if delta > rust_decimal::Decimal::ZERO {
                 level.last_filled_at = Some(trading_core::utils::current_timestamp());
             }
@@ -545,6 +602,28 @@ impl LevelManager {
                 && !matches!(level.state, LevelState::Paused | LevelState::Deleting)
             {
                 level.state = LevelState::Filled;
+            }
+            level.pair.clone()
+        };
+        self.persist_canonical()?;
+        self.mirror_mongo(&[pair]);
+        Ok(())
+    }
+
+    /// Account a working remainder. Does not retire the order or mark the level Filled.
+    pub async fn handle_order_partially_filled(
+        &mut self,
+        level_id: &SmolStr,
+        order_id: &OrderId,
+        filled_qty: rust_decimal::Decimal,
+    ) -> Result<(), EngineError> {
+        let pair = {
+            let level = self.levels.get_mut(level_id).ok_or_else(|| {
+                EngineError::CustomError(anyhow::anyhow!("Level {} not found", level_id))
+            })?;
+            let delta = level.apply_reported_fill(order_id, filled_qty, true, false);
+            if delta > rust_decimal::Decimal::ZERO {
+                level.last_filled_at = Some(trading_core::utils::current_timestamp());
             }
             level.pair.clone()
         };
@@ -564,7 +643,7 @@ impl LevelManager {
             let level = self.levels.get_mut(level_id).ok_or_else(|| {
                 EngineError::CustomError(anyhow::anyhow!("Level {} not found", level_id))
             })?;
-            level.apply_reported_fill(order_id, filled_qty, false);
+            level.apply_reported_fill(order_id, filled_qty, false, true);
             if level.config.enabled
                 && !matches!(level.state, LevelState::Paused | LevelState::Deleting)
             {
@@ -1433,6 +1512,70 @@ mod tests {
             .unwrap();
         reloaded.complete_ready_deletes().unwrap();
         assert!(reloaded.get_level(&level_id).is_none());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn attach_rejects_duplicate_exchange_id() {
+        let mut manager = LevelManager::new();
+        let pair = Pair::new("BTC", "USDT");
+        let a = manager
+            .add_level(create_test_level_config("buy_level_1"), pair.clone())
+            .await
+            .unwrap();
+        let b = manager
+            .add_level(create_test_level_config("buy_level_2"), pair)
+            .await
+            .unwrap();
+        manager
+            .confirm_posted(&a, &SmolStr::new("cid-a"), &OrderId::new("ex-1".into()))
+            .unwrap();
+        let err = manager.attach_owned_order(
+            &b,
+            &SmolStr::new("cid-b"),
+            &OrderId::new("ex-1".into()),
+            true,
+        );
+        assert!(err.unwrap_err().to_string().contains("duplicate"));
+    }
+
+    #[tokio::test]
+    async fn partial_fill_persists_qty_and_keeps_working_id() {
+        let dir = unique_temp_dir();
+        let path = dir.join("levels.json");
+        let pair = Pair::new("BTC", "USDT");
+        let mut manager = LevelManager::new();
+        manager.config_path = Some(path.clone());
+        let level_id = manager
+            .add_level(create_test_level_config("buy_level_1"), pair.clone())
+            .await
+            .unwrap();
+        manager
+            .confirm_posted(
+                &level_id,
+                &SmolStr::new("cid-1"),
+                &OrderId::new("ex-1".into()),
+            )
+            .unwrap();
+        manager
+            .handle_order_partially_filled(&level_id, &OrderId::new("ex-1".into()), dec!(0.004))
+            .await
+            .unwrap();
+        let level = manager.get_level(&level_id).unwrap();
+        assert_eq!(level.filled_qty, dec!(0.004));
+        assert_eq!(level.fill_count, 1);
+        assert_eq!(level.active_orders[0].as_str(), "ex-1");
+        assert_eq!(level.state, LevelState::Posted);
+        manager
+            .replace_owned_exchange_id(
+                &level_id,
+                &OrderId::new("ex-1".into()),
+                &OrderId::new("ex-2".into()),
+            )
+            .unwrap();
+        let reloaded = reload(&path, &[pair], Exchange::Paper, "test").await;
+        let level = reloaded.get_level(&level_id).unwrap();
+        assert_eq!(level.active_orders[0].as_str(), "ex-2");
         std::fs::remove_dir_all(&dir).ok();
     }
 }

@@ -24,9 +24,10 @@ use trading_core::venue::cex::traits::{ConnectionState, TradingClient};
 
 use super::config::PaperConfig;
 use super::map::{
-    balance_to_core, cancel_all_after_rest, execution_ack_to_order, execution_to_order,
-    execution_to_trade, fill_trade_id_is_new, merge_fill_into_working_order,
-    orderbook_to_structured, position_to_core, public_trade_to_structured, to_instrument_id,
+    balance_to_core, cancel_all_after_rest, execution_ack_to_order,
+    execution_may_complete_pending_place, execution_to_order, execution_to_trade,
+    fill_trade_id_is_new, merge_fill_into_working_order, orderbook_to_structured, position_to_core,
+    public_trade_to_structured, to_instrument_id,
 };
 use super::messages::{KPaperCommand, KPaperMessage, KPaperPlaceOrderRequest};
 use super::rest::{
@@ -63,7 +64,7 @@ pub struct KPaperState {
     trades: Vec<Trade>,
     /// Fill trade ids already merged into `open_orders` filled_amount.
     applied_fill_ids: HashMap<OrderId, HashSet<String>>,
-    /// Single in-flight place_order: fulfilled when we get the next execution (ack has quantity=0).
+    /// Single in-flight place_order. Completed only by a correlated ack/reject, never by a fill.
     pending_place: Option<(oneshot::Sender<Result<Order, EngineError>>, OrderRequest)>,
     /// Single in-flight cancel: fulfilled when we get CancelAck.
     pending_cancel: Option<oneshot::Sender<Result<(), EngineError>>>,
@@ -830,11 +831,19 @@ async fn handle_message(
             let is_ack = !is_reject && exec_qty.is_zero();
 
             let mut st = state.write().await;
+            let completes_place = st
+                .pending_place
+                .as_ref()
+                .is_some_and(|(_, req)| execution_may_complete_pending_place(&exec, req));
             let (order, pending_tx) = if is_ack {
                 // Order accepted (quantity=0): build Order from ack + stored request
-                if let Some((tx, req)) = st.pending_place.take() {
-                    let order = execution_ack_to_order(&exec, &req, instrument_type.clone());
-                    (order, Some(tx))
+                if completes_place {
+                    if let Some((tx, req)) = st.pending_place.take() {
+                        let order = execution_ack_to_order(&exec, &req, instrument_type.clone());
+                        (order, Some(tx))
+                    } else {
+                        (None, None)
+                    }
                 } else {
                     (None, None)
                 }
@@ -868,7 +877,17 @@ async fn handle_message(
                         other => other,
                     }
                 };
-                let pending_tx = st.pending_place.take().map(|(tx, _)| tx);
+                let pending_tx = if completes_place {
+                    st.pending_place.take().map(|(tx, _)| tx)
+                } else {
+                    if st.pending_place.is_some() && !is_reject && exec_qty > Decimal::ZERO {
+                        info!(
+                            "k-paper: fill does not complete in-flight place order_id={}",
+                            exec.order_id
+                        );
+                    }
+                    None
+                };
                 (order, pending_tx)
             };
 

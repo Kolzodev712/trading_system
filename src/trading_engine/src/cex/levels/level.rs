@@ -88,14 +88,24 @@ impl Level {
             && self.active_orders.is_empty()
     }
 
+    /// Created (new post) or Posted with a working order (amend).
+    pub fn needs_book_tick(&self) -> bool {
+        self.is_ready_to_post()
+            || (self.config.enabled
+                && matches!(self.state, LevelState::Posted)
+                && !self.active_orders.is_empty())
+    }
+
     /// Apply a venue fill report once. Replays at the same or lower qty are no-ops.
     /// `count_fill` increments `fill_count` the first time this order reports a positive fill.
+    /// `retire` drops the order from `active_orders` (terminal fill/cancel only).
     /// Returns the newly accounted quantity.
     pub fn apply_reported_fill(
         &mut self,
         order_id: &OrderId,
         reported: Decimal,
         count_fill: bool,
+        retire: bool,
     ) -> Decimal {
         let reported = reported.max(Decimal::ZERO);
         let key = smol_str::SmolStr::new(order_id.as_str());
@@ -114,7 +124,9 @@ impl Level {
                 self.fill_count = self.fill_count.saturating_add(1);
             }
         }
-        self.active_orders.retain(|id| id != order_id);
+        if retire {
+            self.active_orders.retain(|id| id != order_id);
+        }
         delta
     }
 }
@@ -216,5 +228,33 @@ mod tests {
         let mut disabled_level = level.clone();
         disabled_level.config.enabled = false;
         assert!(!disabled_level.is_ready_to_post());
+    }
+
+    #[test]
+    fn partial_fill_counts_qty_without_retiring() {
+        let config = LevelConfig {
+            id: SmolStr::new("test"),
+            name: None,
+            side: Side::Buy,
+            order_type: OrderTypeConfig::Limit,
+            quantity: QuantityConfig::Fixed(dec!(0.01)),
+            price: PriceConfig::Fixed(dec!(1000)),
+            risk: LevelRiskConfig::default(),
+            lifecycle: LifecycleConfig::default(),
+            enabled: true,
+            group: None,
+        };
+        let mut level = Level::new(config, Pair::new("BTC", "USDT"));
+        let order_id = OrderId::new("ex-1".into());
+        level.active_orders.push(order_id.clone());
+        let delta = level.apply_reported_fill(&order_id, dec!(0.004), true, false);
+        assert_eq!(delta, dec!(0.004));
+        assert_eq!(level.filled_qty, dec!(0.004));
+        assert_eq!(level.fill_count, 1);
+        assert_eq!(level.active_orders.len(), 1);
+        let replay = level.apply_reported_fill(&order_id, dec!(0.004), true, false);
+        assert_eq!(replay, dec!(0));
+        assert_eq!(level.fill_count, 1);
+        assert_eq!(level.active_orders.len(), 1);
     }
 }

@@ -171,7 +171,13 @@ impl RiskManager {
                 })
                 .count();
             let working = resolved_level.level.active_orders.len() + pending_for_level;
-            if working >= max_orders {
+            let replacing = !resolved_level.level.active_orders.is_empty();
+            let counted = if replacing {
+                working.saturating_sub(1)
+            } else {
+                working
+            };
+            if counted >= max_orders {
                 return RiskCheckResult::blocked(SmolStr::new(format!(
                     "Level working order count {} exceeds per-level max_orders {}",
                     working, max_orders
@@ -199,8 +205,18 @@ impl RiskManager {
                 })
                 .map(|pending| pending.amount)
                 .sum();
-            let prospective = resolved_level.level.filled_qty
-                + owned_working
+            let replaced_qty = if !resolved_level.level.active_orders.is_empty() {
+                resolved_level
+                    .level
+                    .active_orders
+                    .first()
+                    .and_then(|oid| trading_state.active_orders.get(oid))
+                    .map(|order| order.amount)
+                    .unwrap_or(Decimal::ZERO)
+            } else {
+                Decimal::ZERO
+            };
+            let prospective = resolved_level.level.filled_qty + owned_working - replaced_qty
                 + pending_qty
                 + order_request.amount;
             if prospective.abs() > max_position || signed.abs() > max_position {
@@ -1221,5 +1237,40 @@ mod balance_tests {
             .await;
         assert!(!blocked.allowed);
         assert!(blocked.reason.unwrap().contains("max_position"));
+    }
+
+    #[tokio::test]
+    async fn amend_of_working_order_is_not_blocked_by_max_orders() {
+        let risk = RiskManager::new(
+            RiskLimits {
+                max_order_qty: Some(dec!(1)),
+                ..RiskLimits::default()
+            },
+            Arc::new(trading_core::registry::symbol::SymbolRegistry::from_pairs(
+                vec![Pair::new("BTC", "USDT")],
+            )),
+        );
+        let mut resolved = resolved("buy_level_1", dec!(0.01), Some(1), Some(dec!(0.01)));
+        let order_id = trading_core::types::common::OrderId::new("ex-1".into());
+        resolved.level.state = crate::cex::levels::LevelState::Posted;
+        resolved.level.active_orders.push(order_id.clone());
+        let mut state = TradingState::new();
+        state.import_working_order(trading_core::types::exchange::Order {
+            order_id,
+            client_order_id: Some(smol_str::SmolStr::new("cid-1")),
+            instrument: Instrument::new(InstrumentType::Spot, Pair::new("BTC", "USDT")),
+            side: Side::Buy,
+            price: dec!(1010),
+            amount: dec!(0.01),
+            internal_created_at: 1,
+            exchange_created_at: Some(1),
+            status: trading_core::types::common::OrderStatus::New,
+            filled_amount: Decimal::ZERO,
+        });
+        resolved.resolved_price = dec!(1020);
+        let ok = risk
+            .check_level(&resolved, &state, &[usdt(dec!(100000))], None)
+            .await;
+        assert!(ok.allowed, "{:?}", ok.reason);
     }
 }

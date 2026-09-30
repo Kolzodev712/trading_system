@@ -172,6 +172,8 @@ impl LevelService {
             risk: trading_engine::levels::config::LevelRiskConfig {
                 max_position,
                 max_orders: None,
+                max_order_qty: None,
+                max_notional: None,
                 daily_loss_limit,
             },
             lifecycle: trading_engine::levels::config::LifecycleConfig {
@@ -191,15 +193,15 @@ impl LevelService {
         };
 
         let mut level_manager = self.level_manager.write().await;
-        level_manager
-            .add_level(level_config.clone(), pair)
+        let instance_id = level_manager
+            .add_level(level_config, pair)
             .await
             .map_err(|e| Status::internal(format!("Failed to create level: {}", e)))?;
 
-        tracing::info!("[gRPC] Level {} created", config.id);
+        tracing::info!("[gRPC] Level {} created", instance_id);
 
         Ok(Response::new(trading_cli::CreateLevelResponse {
-            level_id: config.id,
+            level_id: instance_id.to_string(),
         }))
     }
 

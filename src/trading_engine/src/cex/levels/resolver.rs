@@ -128,6 +128,7 @@ impl IndicatorResolver {
     }
 
     /// Resolve quantity from QuantityConfig and round to step size
+    #[allow(clippy::too_many_arguments)]
     pub async fn resolve_quantity(
         &self,
         config: &QuantityConfig,
@@ -135,16 +136,24 @@ impl IndicatorResolver {
         balance: Decimal,
         current_price: Decimal,
         pair: &trading_core::types::common::Pair,
+        side: trading_core::types::common::Side,
+        instrument: &trading_core::types::common::InstrumentType,
     ) -> Result<Decimal, EngineError> {
-        let _ = pair;
         let resolved_qty = match config {
             QuantityConfig::Fixed(qty) => *qty,
 
             QuantityConfig::BalancePercent(percent) => {
-                balance * percent / Decimal::from(100) / current_price.max(Decimal::ONE)
+                balance_percent_quantity(*percent, balance, current_price, side, instrument)?
             }
 
-            QuantityConfig::Notional(notional) => notional / current_price.max(Decimal::ONE),
+            QuantityConfig::Notional(notional) => {
+                if current_price <= Decimal::ZERO {
+                    return Err(EngineError::CustomError(anyhow::anyhow!(
+                        "Notional sizing requires a valid price"
+                    )));
+                }
+                notional / current_price
+            }
         };
 
         // Round quantity to step size (Asset Engine or config fallback)
@@ -215,4 +224,87 @@ fn resolve_indicator_price(
             base_price * (Decimal::ONE + offset_value / Decimal::from(100))
         }
     })
+}
+
+pub(crate) fn balance_percent_quantity(
+    percent: Decimal,
+    balance: Decimal,
+    current_price: Decimal,
+    side: trading_core::types::common::Side,
+    instrument: &trading_core::types::common::InstrumentType,
+) -> Result<Decimal, EngineError> {
+    if percent <= Decimal::ZERO {
+        return Err(EngineError::CustomError(anyhow::anyhow!(
+            "BalancePercent must be strictly positive"
+        )));
+    }
+    let fraction = percent / Decimal::from(100);
+    match instrument {
+        trading_core::types::common::InstrumentType::Futures
+        | trading_core::types::common::InstrumentType::Derivitives => {
+            if current_price <= Decimal::ZERO {
+                return Err(EngineError::CustomError(anyhow::anyhow!(
+                    "Futures BalancePercent requires a valid price"
+                )));
+            }
+            Ok((balance * fraction) / current_price)
+        }
+        _ => match side {
+            trading_core::types::common::Side::Sell => Ok(balance * fraction),
+            trading_core::types::common::Side::Buy => {
+                if current_price <= Decimal::ZERO {
+                    return Err(EngineError::CustomError(anyhow::anyhow!(
+                        "Spot buy BalancePercent requires a valid price"
+                    )));
+                }
+                Ok((balance * fraction) / current_price)
+            }
+        },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rust_decimal_macros::dec;
+    use trading_core::types::common::{InstrumentType, Side};
+
+    #[test]
+    fn spot_sell_balance_percent_does_not_divide_by_price() {
+        let qty = balance_percent_quantity(
+            dec!(50),
+            dec!(2),
+            dec!(50000),
+            Side::Sell,
+            &InstrumentType::Spot,
+        )
+        .unwrap();
+        assert_eq!(qty, dec!(1));
+    }
+
+    #[test]
+    fn spot_buy_balance_percent_converts_quote() {
+        let qty = balance_percent_quantity(
+            dec!(100),
+            dec!(1000),
+            dec!(50000),
+            Side::Buy,
+            &InstrumentType::Spot,
+        )
+        .unwrap();
+        assert_eq!(qty, dec!(1000) / dec!(50000));
+    }
+
+    #[test]
+    fn futures_balance_percent_uses_collateral_over_price() {
+        let qty = balance_percent_quantity(
+            dec!(10),
+            dec!(1000),
+            dec!(50000),
+            Side::Sell,
+            &InstrumentType::Futures,
+        )
+        .unwrap();
+        assert_eq!(qty, dec!(1000) * dec!(10) / dec!(100) / dec!(50000));
+    }
 }

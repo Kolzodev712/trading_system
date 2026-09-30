@@ -12,7 +12,7 @@ use tokio::time::{interval, Duration};
 use trading_core::channels::market_data::{MarketDataUpdate, MarketDataUpdateReceiver};
 use trading_core::error::EngineError;
 use trading_core::types::common::{OrderId, Pair};
-use trading_core::types::exchange::{BulkAmendItem, BulkAmendRequest, BulkOrderRequest};
+use trading_core::types::exchange::{BulkAmendItem, BulkAmendRequest};
 use trading_core::types::exchange::{Order, OrderRequest};
 use trading_core::types::market_data::StructuredOrderbook;
 use trading_core::venue::cex::channels::{CexVenueUpdate, CexVenueUpdateReceiver};
@@ -22,7 +22,7 @@ use trading_core::venue::cex::traits::TradingClient;
 pub struct LevelBasedEventLoop {
     level_manager: Arc<RwLock<LevelManager>>,
     level_executor: Arc<LevelExecutor>,
-    risk_manager: Arc<RiskManager>,
+    risk_manager: Arc<RwLock<RiskManager>>,
     cancellation_manager: Arc<CancellationManager>,
     indicator_subscriber: Arc<RwLock<IndicatorSubscriber>>,
     trading_client: Arc<RwLock<dyn TradingClient<OrderRequest>>>,
@@ -33,6 +33,7 @@ pub struct LevelBasedEventLoop {
     reconciliation_interval_secs: u64,
     /// Last seen prices for periodic risk checks (one per pair)
     last_prices: Arc<RwLock<HashMap<Pair, Decimal>>>,
+    submission_journal: Option<Arc<crate::cex::state::SubmissionJournal>>,
 }
 
 impl LevelBasedEventLoop {
@@ -41,7 +42,7 @@ impl LevelBasedEventLoop {
     pub fn new(
         level_manager: Arc<RwLock<LevelManager>>,
         level_executor: Arc<LevelExecutor>,
-        risk_manager: Arc<RiskManager>,
+        risk_manager: Arc<RwLock<RiskManager>>,
         cancellation_manager: Arc<CancellationManager>,
         indicator_subscriber: Arc<RwLock<IndicatorSubscriber>>,
         trading_client: Arc<RwLock<dyn TradingClient<OrderRequest>>>,
@@ -64,12 +65,22 @@ impl LevelBasedEventLoop {
             pairs,
             reconciliation_interval_secs,
             last_prices: Arc::new(RwLock::new(HashMap::new())),
+            submission_journal: None,
         }
+    }
+
+    pub fn with_submission_journal(
+        mut self,
+        journal: Arc<crate::cex::state::SubmissionJournal>,
+    ) -> Self {
+        self.submission_journal = Some(journal);
+        self
     }
 
     /// Main event loop
     pub async fn run(&self) -> Result<(), EngineError> {
         tracing::debug!("[LEVELS EVENT LOOP] ========== run() method ENTERED ==========");
+        self.recover_level_submissions().await?;
         // Start periodic reconciliation using TradingStateManager for all pairs
         let trading_state_manager_for_recon = Arc::clone(&self.trading_state_manager);
         let pairs_for_recon = self.pairs.clone();
@@ -205,6 +216,69 @@ impl LevelBasedEventLoop {
         }
     }
 
+    async fn recover_level_submissions(&self) -> Result<(), EngineError> {
+        let Some(journal) = &self.submission_journal else {
+            tracing::error!("submission journal is required for levels");
+            self.trading_state_manager
+                .get_state()
+                .write()
+                .await
+                .halt_new_exposure("submission journal is required for levels");
+            return Err(EngineError::CustomError(anyhow::anyhow!(
+                "submission journal is required for levels"
+            )));
+        };
+        let client = self.trading_client.read().await;
+        {
+            let state_lock = self.trading_state_manager.get_state();
+            let mut state = state_lock.write().await;
+            match crate::cex::state::recover_unknown_submissions(
+                journal.as_ref(),
+                &*client,
+                &mut state,
+            )
+            .await
+            {
+                Ok(report) => {
+                    tracing::info!(
+                        imported_working = report.imported_working,
+                        resolved_terminal = report.resolved_terminal,
+                        still_ambiguous = report.still_ambiguous,
+                        "level submission recovery finished"
+                    );
+                }
+                Err(err) => {
+                    state.halt_new_exposure(format!("level submission recovery failed: {err}"));
+                    return Err(err);
+                }
+            }
+        }
+        {
+            let mut manager = self.level_manager.write().await;
+            let state_lock = self.trading_state_manager.get_state();
+            let state = state_lock.read().await;
+            super::submit::attach_recovered_level_orders(journal.as_ref(), &state, &mut manager)?;
+        }
+        match client.fetch_open_orders().await {
+            Ok(open) => {
+                let mut manager = self.level_manager.write().await;
+                let state_lock = self.trading_state_manager.get_state();
+                let mut state = state_lock.write().await;
+                super::submit::classify_open_orders(&open, &mut manager, &mut state);
+            }
+            Err(err) => {
+                tracing::error!("REST open-order reconcile failed: {err}");
+                self.trading_state_manager
+                    .get_state()
+                    .write()
+                    .await
+                    .halt_new_exposure(format!("REST open-order reconcile failed: {err}"));
+                return Err(err);
+            }
+        }
+        Ok(())
+    }
+
     async fn handle_orderbook(
         &self,
         orderbook: &StructuredOrderbook,
@@ -295,10 +369,7 @@ impl LevelBasedEventLoop {
             // For now, let's get levels by iterating and matching
             let mut matching_level_ids = Vec::new();
             for level in ready_levels {
-                // Reconstruct the expanded ID: "buy_level_1" -> "buy_level_1_ETHUSDC"
-                let pair_str = level.pair.convert_to_smolstr();
-                let expanded_id = SmolStr::new(format!("{}_{}", level.config.id, pair_str));
-                matching_level_ids.push(expanded_id);
+                matching_level_ids.push(level.identity.instance_id.clone());
             }
             matching_level_ids
         };
@@ -317,7 +388,7 @@ impl LevelBasedEventLoop {
 
         // Get trading state once
         let trading_state = self.trading_state_manager.get_state();
-        let state = {
+        let mut batch_state = {
             let state_guard = trading_state.read().await;
             state_guard.clone()
         };
@@ -413,7 +484,9 @@ impl LevelBasedEventLoop {
 
             let risk_result = self
                 .risk_manager
-                .check_level(&resolved, &state, &balances, current_prices.as_ref())
+                .read()
+                .await
+                .check_level(&resolved, &batch_state, &balances, current_prices.as_ref())
                 .await;
 
             if !risk_result.allowed {
@@ -450,10 +523,7 @@ impl LevelBasedEventLoop {
             // CRITICAL: Check state again right before posting/amending to prevent race condition
             // Another orderbook update might have already posted this level
             // Use expanded ID to look up the level (matching how it's stored in HashMap)
-            let expanded_id = {
-                let pair_str = level.pair.convert_to_smolstr();
-                SmolStr::new(format!("{}_{}", level.config.id, pair_str))
-            };
+            let expanded_id = level.identity.instance_id.clone();
             let current_level = {
                 let manager = self.level_manager.read().await;
                 manager.get_level(&expanded_id).cloned()
@@ -543,7 +613,7 @@ impl LevelBasedEventLoop {
             // Create order request for posting
             let order_request = OrderRequest {
                 instrument: trading_core::types::common::Instrument::new(
-                    self.level_executor.instrument_type().clone(),
+                    current_level.identity.instrument.clone(),
                     current_level.pair.clone(),
                 ),
                 side: resolved.level.config.side.clone(),
@@ -553,6 +623,15 @@ impl LevelBasedEventLoop {
                 timestamp: Some(trading_core::utils::current_timestamp()),
                 exchange_params: std::collections::HashMap::new(),
             };
+            batch_state.begin_submission(crate::cex::state::PendingSubmission {
+                client_order_id: SmolStr::new(format!("batch-reserve-{expanded_id}")),
+                symbol: current_level.pair.clone(),
+                side: order_request.side.clone(),
+                amount: order_request.amount,
+                price: order_request.price,
+                strategy_id: None,
+                level_id: Some(expanded_id.to_string()),
+            });
 
             to_post.push((expanded_id, order_request));
         }
@@ -573,101 +652,134 @@ impl LevelBasedEventLoop {
             return Ok(());
         }
 
-        // Second pass: Batch process posts and amendments
-        let trading_client = self.trading_client.write().await;
-
-        // Batch process posts
+        // Individual persist-before-send (no bulk zip). Recheck pause/generation before each send.
         if !to_post.is_empty() {
+            let Some(journal) = &self.submission_journal else {
+                self.trading_state_manager
+                    .get_state()
+                    .write()
+                    .await
+                    .halt_new_exposure("submission journal is required for levels");
+                return Err(EngineError::CustomError(anyhow::anyhow!(
+                    "submission journal is required for levels"
+                )));
+            };
             tracing::info!(
-                "Batch posting {} level(s) for {}/{}",
+                "Submitting {} level(s) individually for {}/{}",
                 to_post.len(),
                 orderbook.pair.base,
                 orderbook.pair.quote
             );
-
-            let requests: Vec<OrderRequest> = to_post.iter().map(|(_, req)| req.clone()).collect();
-            let bulk_request = BulkOrderRequest { requests };
-            let bulk_response = trading_client.bulk_open_orders(bulk_request).await;
-
-            // Process results and update state
-            match bulk_response {
-                Ok(response) => {
-                    let results = response.results;
-                    for ((expanded_id, _), result) in to_post.iter().zip(results.iter()) {
-                        let order_result = if result.success {
-                            result.data.clone().ok_or_else(|| {
-                                EngineError::CustomError(anyhow::anyhow!(
-                                    "Bulk operation succeeded but no data returned"
-                                ))
-                            })
-                        } else {
-                            let error_msg = result
-                                .error
-                                .clone()
-                                .unwrap_or_else(|| "Unknown error".to_string());
-                            Err(EngineError::CustomError(anyhow::anyhow!(error_msg)))
-                        };
-
-                        match order_result {
-                            Ok(order) => {
-                                tracing::info!(
-                                    "[SUCCESS] Level posted order: {} for {}/{}",
+            for (expanded_id, order_request) in to_post {
+                let prepared = {
+                    let mut manager = self.level_manager.write().await;
+                    let state_lock = self.trading_state_manager.get_state();
+                    let mut state = state_lock.write().await;
+                    match super::submit::prepare_level_submission(
+                        &mut manager,
+                        journal.as_ref(),
+                        &mut state,
+                        &expanded_id,
+                        order_request,
+                    ) {
+                        Ok(prepared) => prepared,
+                        Err(err) => {
+                            tracing::warn!(
+                                "Level {} persist-before-send failed: {}",
+                                expanded_id,
+                                err
+                            );
+                            continue;
+                        }
+                    }
+                };
+                if self.level_executor.flatten_latched().await
+                    || self.level_executor.entries_paused().await
+                    || !self.level_executor.is_trading_enabled().await
+                    || !{
+                        let manager = self.level_manager.read().await;
+                        manager.submit_still_allowed(&expanded_id, prepared.generation)
+                    }
+                {
+                    let mut manager = self.level_manager.write().await;
+                    let state_lock = self.trading_state_manager.get_state();
+                    let mut state = state_lock.write().await;
+                    if let Err(err) = super::submit::abort_unsent_submission(
+                        &mut manager,
+                        journal.as_ref(),
+                        &mut state,
+                        &prepared,
+                        &expanded_id,
+                    ) {
+                        tracing::error!("Failed to abort unsent level {}: {}", expanded_id, err);
+                    }
+                    continue;
+                }
+                let send_result = {
+                    let client = self.trading_client.write().await;
+                    super::submit::send_prepared_level_order(&*client, &prepared).await
+                };
+                let apply = {
+                    let mut manager = self.level_manager.write().await;
+                    let state_lock = self.trading_state_manager.get_state();
+                    let mut state = state_lock.write().await;
+                    super::submit::apply_level_submit_result(
+                        &mut manager,
+                        journal.as_ref(),
+                        &mut state,
+                        &prepared,
+                        &expanded_id,
+                        send_result,
+                    )
+                };
+                match apply {
+                    Ok(super::submit::LevelSubmitResult::Posted(order)) => {
+                        tracing::info!(
+                            "[SUCCESS] Level posted order: {} for {}/{}",
+                            order.order_id.as_str(),
+                            orderbook.pair.base,
+                            orderbook.pair.quote
+                        );
+                        if let Some(price) = current_price {
+                            let mut current_prices = HashMap::new();
+                            current_prices.insert(orderbook.pair.clone(), price);
+                            let trading_state = self.trading_state_manager.get_state();
+                            let state_after_trade = {
+                                let state_guard = trading_state.read().await;
+                                state_guard.clone()
+                            };
+                            let post_trade_result = self
+                                .risk_manager
+                                .read()
+                                .await
+                                .check_post_trade(&state_after_trade, &current_prices)
+                                .await;
+                            if !post_trade_result.allowed {
+                                tracing::warn!(
+                                    "Post-trade risk check failed for order {}: {}",
                                     order.order_id.as_str(),
-                                    orderbook.pair.base,
-                                    orderbook.pair.quote
+                                    post_trade_result
+                                        .reason
+                                        .as_ref()
+                                        .map(|r| r.as_str())
+                                        .unwrap_or("unknown")
                                 );
-
-                                // Update level state
-                                {
-                                    let mut manager = self.level_manager.write().await;
-                                    if let Some(level_mut) = manager.get_level_mut(expanded_id) {
-                                        level_mut.state = super::LevelState::Posted;
-                                        level_mut.active_orders.push(order.order_id.clone());
-                                        level_mut.last_posted_at =
-                                            Some(trading_core::utils::current_timestamp());
-                                    }
-                                }
-
-                                // Add order to TradingStateManager
-                                self.trading_state_manager.add_order(order.clone()).await;
-
-                                // Post-trade risk check
-                                if let Some(price) = current_price {
-                                    let mut current_prices = HashMap::new();
-                                    current_prices.insert(orderbook.pair.clone(), price);
-
-                                    let trading_state = self.trading_state_manager.get_state();
-                                    let state_after_trade = {
-                                        let state_guard = trading_state.read().await;
-                                        state_guard.clone()
-                                    };
-
-                                    let post_trade_result = self
-                                        .risk_manager
-                                        .check_post_trade(&state_after_trade, &current_prices)
-                                        .await;
-
-                                    if !post_trade_result.allowed {
-                                        tracing::warn!(
-                                            "Post-trade risk check failed for order {}: {}",
-                                            order.order_id.as_str(),
-                                            post_trade_result
-                                                .reason
-                                                .as_ref()
-                                                .map(|r| r.as_str())
-                                                .unwrap_or("unknown")
-                                        );
-                                    }
-                                }
-                            }
-                            Err(e) => {
-                                tracing::warn!("Failed to post level in batch: {}", e);
                             }
                         }
                     }
-                }
-                Err(e) => {
-                    tracing::error!("Bulk open orders failed: {}", e);
+                    Ok(super::submit::LevelSubmitResult::Unknown) => {
+                        tracing::warn!(
+                            "Level {} submit outcome unknown; reservation retained",
+                            expanded_id
+                        );
+                        break;
+                    }
+                    Ok(other) => {
+                        tracing::warn!("Level {} submit result: {:?}", expanded_id, other);
+                    }
+                    Err(err) => {
+                        tracing::error!("Level {} submit apply failed: {}", expanded_id, err);
+                    }
                 }
             }
         }
@@ -689,15 +801,23 @@ impl LevelBasedEventLoop {
                 })
                 .collect();
             let bulk_request = BulkAmendRequest { amendments };
+            let trading_client = self.trading_client.write().await;
             let bulk_response = trading_client.bulk_amend_orders(bulk_request).await;
 
-            // Process results and update state
+            // Process results by request index (never zip truncated batches).
             match bulk_response {
                 Ok(response) => {
                     let results = response.results;
-                    for ((expanded_id, original_order_id, _), result) in
-                        to_amend.iter().zip(results.iter())
-                    {
+                    for (idx, (expanded_id, original_order_id, _)) in to_amend.iter().enumerate() {
+                        if idx >= results.len() {
+                            tracing::warn!(
+                                "Bulk amend response missing result for index {} (level {})",
+                                idx,
+                                expanded_id
+                            );
+                            continue;
+                        }
+                        let result = &results[idx];
                         let amended_order_result = if result.success {
                             result.data.clone().ok_or_else(|| {
                                 EngineError::CustomError(anyhow::anyhow!(
@@ -811,6 +931,8 @@ impl LevelBasedEventLoop {
 
             let periodic_result = self
                 .risk_manager
+                .read()
+                .await
                 .check_periodic(&state, &current_prices)
                 .await;
 
@@ -878,11 +1000,13 @@ impl LevelBasedEventLoop {
             manager
                 .get_all_levels()
                 .iter()
-                .find(|level| level.active_orders.contains(&order.order_id))
-                .map(|level| {
-                    let pair_str = level.pair.convert_to_smolstr();
-                    smol_str::SmolStr::new(format!("{}_{}", level.config.id, pair_str))
+                .find(|level| {
+                    level.active_orders.contains(&order.order_id)
+                        || order.client_order_id.as_ref().is_some_and(|cid| {
+                            level.owned_client_ids.iter().any(|owned| owned == cid)
+                        })
                 })
+                .map(|level| level.identity.instance_id.clone())
         };
 
         if let Some(level_id) = level_id {

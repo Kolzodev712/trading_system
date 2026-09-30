@@ -1,5 +1,6 @@
 //! Level runtime types
 use super::config::LevelConfig;
+use super::identity::LevelIdentity;
 use rust_decimal::Decimal;
 use trading_core::types::common::{OrderId, OrderType, Pair};
 
@@ -11,11 +12,19 @@ pub struct Level {
     /// Trading pair this level instance is for
     pub pair: Pair,
 
+    pub identity: LevelIdentity,
+
     /// Current state
     pub state: LevelState,
 
     /// Active orders for this level
     pub active_orders: Vec<OrderId>,
+
+    /// Client order IDs owned by this instance (durable with catalog instances).
+    pub owned_client_ids: Vec<smol_str::SmolStr>,
+
+    /// Bumped on disable/delete so an in-flight submit can refuse to send.
+    pub generation: u64,
 
     /// Repost count
     pub repost_count: usize,
@@ -28,13 +37,21 @@ pub struct Level {
 }
 
 impl Level {
-    /// Create a new level from config and pair
+    /// Create a new level from config and pair (test / Paper-spot identity).
     pub fn new(config: LevelConfig, pair: Pair) -> Self {
+        let identity = LevelIdentity::for_tests(pair.clone(), config.id.clone());
+        Self::from_identity(config, identity)
+    }
+
+    pub fn from_identity(config: LevelConfig, identity: LevelIdentity) -> Self {
         Self {
             config,
-            pair,
+            pair: identity.pair.clone(),
+            identity,
             state: LevelState::Created,
             active_orders: Vec::new(),
+            owned_client_ids: Vec::new(),
+            generation: 0,
             repost_count: 0,
             last_posted_at: None,
             last_filled_at: None,
@@ -62,6 +79,9 @@ pub enum LevelState {
 
     /// Order posted, waiting for fill
     Posted,
+
+    /// Persist-before-send in progress; not eligible to post another order
+    Submitting,
 
     /// Order filled, waiting to repost
     Filled,

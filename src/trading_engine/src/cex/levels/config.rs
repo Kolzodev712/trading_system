@@ -115,13 +115,21 @@ pub enum PriceOffsetType {
 /// Level risk configuration
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct LevelRiskConfig {
-    /// Maximum position size for this level
+    /// Maximum position exposure for this level (base qty). Zero/negative is ignored.
     pub max_position: Option<Decimal>,
 
-    /// Maximum number of orders for this level
+    /// Maximum working orders for this level. Zero is ignored.
     pub max_orders: Option<usize>,
 
-    /// Daily loss limit for this level
+    /// Maximum single-order quantity. Zero/negative is ignored.
+    #[serde(default)]
+    pub max_order_qty: Option<Decimal>,
+
+    /// Maximum single-order notional (price * qty). Zero/negative is ignored.
+    #[serde(default)]
+    pub max_notional: Option<Decimal>,
+
+    /// Not enforced until per-level PnL attribution exists. Ignored at submit.
     pub daily_loss_limit: Option<Decimal>,
 }
 

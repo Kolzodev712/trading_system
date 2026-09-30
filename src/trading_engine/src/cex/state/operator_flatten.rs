@@ -94,6 +94,7 @@ pub async fn submit_operator_reduce_only_exits(
             amount,
             price: Decimal::ZERO,
             strategy_id: Some(OPERATOR_FLATTEN_INTENT.to_string()),
+            level_id: None,
         };
         persist(journal, trading_state, &pending, SubmissionState::Prepared)?;
         persist(journal, trading_state, &pending, SubmissionState::Submitted)?;
@@ -611,6 +612,7 @@ mod tests {
             amount: Decimal::new(1, 3),
             price: Decimal::ZERO,
             strategy_id: Some(OPERATOR_FLATTEN_INTENT.to_string()),
+            level_id: None,
         }
     }
 

@@ -37,6 +37,14 @@ pub async fn level_runner(
     } else {
         LevelManager::new()
     };
+    let instrument_type = bot_config
+        .get_instrument_type()
+        .unwrap_or(trading_core::types::common::InstrumentType::Spot);
+    level_manager = level_manager.with_identity_scope(
+        bot_config.exchange_engine.exchange.clone(),
+        instrument_type.clone(),
+        bot_config.mongo.bot_id.clone(),
+    );
 
     // Get pairs from exchange config (needed for expanding levels)
     let configured_pairs = bot_config.get_pairs()?;
@@ -94,11 +102,6 @@ pub async fn level_runner(
         info!("entries start paused until authenticated Resume (non-Paper venue)");
     }
 
-    // Get instrument type from config (defaults to Spot if not specified)
-    let instrument_type = bot_config
-        .get_instrument_type()
-        .unwrap_or(trading_core::types::common::InstrumentType::Spot);
-
     let level_executor = Arc::new(
         LevelExecutor::new(
             services.trading_client()?.clone(),
@@ -115,11 +118,12 @@ pub async fn level_runner(
         .with_operator_flags(
             trading_control.entries_paused_flag(),
             trading_control.flatten_latched_flag(),
-        ),
+        )
+        .with_execution_mode(bot_config.execution_mode),
     );
 
-    // Create risk manager with symbol registry
-    let risk_manager = Arc::new(
+    // Share the executor risk manager so live updates hit the same state.
+    let risk_manager = Arc::new(RwLock::new(
         RiskManager::new(risk_limits, symbol_registry.clone()).with_execution_ledger(
             services
                 .trading_state_manager
@@ -127,7 +131,7 @@ pub async fn level_runner(
                 .and_then(|tsm| tsm.execution_ledger())
                 .ok_or("execution ledger is required")?,
         ),
-    );
+    ));
 
     // Wrap level_manager in Arc<RwLock<>> for sharing with LiveConfig and event loop
     let level_manager = Arc::new(RwLock::new(level_manager));
@@ -162,7 +166,7 @@ pub async fn level_runner(
     let (exec_mode, venue, environment) = crate::config::execution_status_from_bot(&bot_config);
     let grpc_service = grpc_service
         .with_execution_status(exec_mode, venue, environment)
-        .with_submission_journal(journal);
+        .with_submission_journal(journal.clone());
     let grpc_service = if let Some(dex_sm) = services.venue.dex_state_manager() {
         grpc_service.with_dex_state_manager(dex_sm, format!("{:?}", services.venue.mode()))
     } else {
@@ -207,19 +211,6 @@ pub async fn level_runner(
     });
     maybe_start_zenoh_gateway(bridge.hot_rx, bridge.cold_bus, bridge.dex_bus, router).await;
 
-    // Wrap risk_manager in Arc<RwLock<>> for LiveConfig service
-    let risk_limits_for_live_config = risk_manager.get_limits().clone();
-    let mut live_risk = RiskManager::new(risk_limits_for_live_config, symbol_registry.clone());
-    if let Some(ledger) = services
-        .trading_state_manager
-        .as_ref()
-        .and_then(|tsm| tsm.execution_ledger())
-    {
-        live_risk = live_risk.with_execution_ledger(ledger);
-    }
-    let risk_manager_for_live_config = Arc::new(RwLock::new(live_risk));
-
-    // Create LiveConfig service for runtime configuration updates
     let audit_log_file = format!(
         "logs/live_config_audit_{}.jsonl",
         chrono::Utc::now().timestamp()
@@ -227,7 +218,7 @@ pub async fn level_runner(
 
     let live_config_service = LiveConfigService::new(
         level_manager.clone(),
-        risk_manager_for_live_config.clone(),
+        risk_manager.clone(),
         level_persistence.clone(),
         audit_log_file,
     );
@@ -338,7 +329,8 @@ pub async fn level_runner(
             .clone()
             .ok_or("Trading state requires venue.mode \"cex\"")?,
         trading_reconciliation_interval_secs,
-    );
+    )
+    .with_submission_journal(journal.clone());
 
     // Note: TradingStateManager automatically handles execution reports via ExchangeStateManager subscription
     // Execution reports are published through the CEX venue update channel and handled by TradingStateManager

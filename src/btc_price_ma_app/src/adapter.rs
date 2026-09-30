@@ -1104,11 +1104,16 @@ mod tests {
             serde_json::from_str(&raw).expect("fresh-entry candles json");
         assert_eq!(candles.len(), 29);
         assert_eq!(candles.last().unwrap().close, Decimal::new(110, 0));
+        let spacing_ok = candles.windows(2).all(|pair| {
+            pair[1].timestamp_ms.saturating_sub(pair[0].timestamp_ms) == DAILY_PERIOD_MS
+        });
+        assert!(spacing_ok, "script fixture must be consecutive UTC dailies");
+        let candles = runner::cex::align_daily_replay_to_previous_utc_day(candles, now_ms);
         let last_completed_start = utc_day_start_ms(now_ms).saturating_sub(DAILY_PERIOD_MS);
         assert_eq!(
             candles.last().unwrap().timestamp_ms,
             last_completed_start,
-            "script fixture last completed bar must be yesterday UTC on the real clock"
+            "script fixture last completed bar must be yesterday UTC after alignment"
         );
         assert_fresh_flat_to_long_on_wall_clock(candles, now_ms).await;
     }

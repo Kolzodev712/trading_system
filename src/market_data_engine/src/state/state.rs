@@ -3,7 +3,7 @@
 //! This module defines `MarketDataState` which holds the latest market data
 //! (orderbooks, public trades) received from WebSocket streams.
 
-use std::collections::HashMap;
+use std::collections::{hash_map::Entry, HashMap};
 use trading_core::types::{
     common::Pair,
     market_data::{OrderbookUpdateKind, StructuredOrderbook, StructuredPublicTrade},
@@ -75,16 +75,21 @@ impl MarketDataState {
                 }
             }
             self.last_sequence.insert(pair.clone(), seq);
-        } else if !self.orderbooks.contains_key(&pair) {
-            self.orderbooks.insert(pair, delta);
-            return true;
         }
 
-        if let Some(existing) = self.orderbooks.get_mut(&pair) {
-            Self::merge_orderbook_delta(existing, &delta);
-            true
-        } else {
-            false
+        match self.orderbooks.entry(pair) {
+            Entry::Occupied(mut occupied) => {
+                Self::merge_orderbook_delta(occupied.get_mut(), &delta);
+                true
+            }
+            Entry::Vacant(vacant) => {
+                if delta.sequence.is_some() {
+                    false
+                } else {
+                    vacant.insert(delta);
+                    true
+                }
+            }
         }
     }
 

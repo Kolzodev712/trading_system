@@ -10,7 +10,7 @@
 //! paper_exchange_url (e.g. ws://127.0.0.1:19999/ws).
 
 use exchange_engine::exchanges::k_paper::{
-    client::{run_websocket_loop, KPaperClient, KPaperConfig},
+    client::{run_websocket_loop, KPaperClient, KPaperConfig, KPaperWebsocketLoop},
     PaperConfig,
 };
 use std::{fs, sync::Arc};
@@ -81,16 +81,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("Connecting to k-paper at {}...", kpaper_config.url);
 
     let loop_handle = tokio::spawn(async move {
-        run_websocket_loop(
-            kpaper_config,
+        run_websocket_loop(KPaperWebsocketLoop {
+            config: kpaper_config,
             command_rx,
             state,
-            None,
-            state_manager,
+            market_data_tx: None,
+            exchange_state_manager: state_manager,
             shutdown_rx,
             balance_ready,
-            None,
-        )
+            connection_state: None,
+        })
         .await
     });
 

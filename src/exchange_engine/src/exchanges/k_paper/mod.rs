@@ -11,7 +11,7 @@ pub mod map;
 pub mod messages;
 pub mod rest;
 
-pub use client::{run_websocket_loop, KPaperClient, KPaperConfig};
+pub use client::{run_websocket_loop, KPaperClient, KPaperConfig, KPaperWebsocketLoop};
 pub use config::PaperConfig;
 pub use driver::PaperDriver;
 pub use map::{parse_instrument_id, to_instrument_id};

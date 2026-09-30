@@ -624,17 +624,32 @@ async fn set_connection_state(
     }
 }
 
+/// Inputs for the k-paper trading WebSocket reconnect loop.
+pub struct KPaperWebsocketLoop {
+    pub config: KPaperConfig,
+    pub command_rx: mpsc::UnboundedReceiver<KPaperCommand>,
+    pub state: Arc<RwLock<KPaperState>>,
+    pub market_data_tx: Option<MarketDataUpdateSender>,
+    pub exchange_state_manager: Arc<crate::state::manager::ExchangeStateManager>,
+    pub shutdown_rx: tokio::sync::broadcast::Receiver<()>,
+    pub balance_ready: BalanceReadySender,
+    pub connection_state: Option<Arc<RwLock<ConnectionState>>>,
+}
+
 /// Trading WS loop. Reconnects after a drop so a lab disconnect cannot leave a stale Connected state.
 pub async fn run_websocket_loop(
-    config: KPaperConfig,
-    mut command_rx: mpsc::UnboundedReceiver<KPaperCommand>,
-    state: Arc<RwLock<KPaperState>>,
-    market_data_tx: Option<MarketDataUpdateSender>,
-    exchange_state_manager: Arc<crate::state::manager::ExchangeStateManager>,
-    mut shutdown_rx: tokio::sync::broadcast::Receiver<()>,
-    balance_ready: BalanceReadySender,
-    connection_state: Option<Arc<RwLock<ConnectionState>>>,
+    args: KPaperWebsocketLoop,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let KPaperWebsocketLoop {
+        config,
+        mut command_rx,
+        state,
+        market_data_tx,
+        exchange_state_manager,
+        mut shutdown_rx,
+        balance_ready,
+        connection_state,
+    } = args;
     let snapshot_cmd = serde_json::to_string(&KPaperCommand::GetAccountSnapshot)
         .map_err(|e| format!("serialize get_account_snapshot: {}", e))?;
     let instrument_type = config.instrument_type.clone();

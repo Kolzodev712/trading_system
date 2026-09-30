@@ -3,6 +3,7 @@ use super::config::LevelConfig;
 use super::identity::LevelIdentity;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use trading_core::types::common::{OrderId, OrderType, Pair};
 
 /// Runtime level representation with resolved values
@@ -26,6 +27,9 @@ pub struct Level {
 
     /// Completed fill quantity owned by this instance (survives working-order retirement).
     pub filled_qty: Decimal,
+
+    /// Highest accounted fill qty per exchange order id (replay-safe).
+    pub filled_by_order: HashMap<smol_str::SmolStr, Decimal>,
 
     /// Terminal fills observed for this instance (not repost_count).
     pub fill_count: usize,
@@ -62,6 +66,7 @@ impl Level {
             active_orders: Vec::new(),
             owned_client_ids: Vec::new(),
             filled_qty: Decimal::ZERO,
+            filled_by_order: HashMap::new(),
             fill_count: 0,
             generation: 0,
             inflight_client_order_id: None,
@@ -81,6 +86,36 @@ impl Level {
         self.config.enabled
             && matches!(self.state, LevelState::Created)
             && self.active_orders.is_empty()
+    }
+
+    /// Apply a venue fill report once. Replays at the same or lower qty are no-ops.
+    /// `count_fill` increments `fill_count` the first time this order reports a positive fill.
+    /// Returns the newly accounted quantity.
+    pub fn apply_reported_fill(
+        &mut self,
+        order_id: &OrderId,
+        reported: Decimal,
+        count_fill: bool,
+    ) -> Decimal {
+        let reported = reported.max(Decimal::ZERO);
+        let key = smol_str::SmolStr::new(order_id.as_str());
+        let already = self
+            .filled_by_order
+            .get(&key)
+            .copied()
+            .unwrap_or(Decimal::ZERO);
+        let mut delta = Decimal::ZERO;
+        if reported > already {
+            delta = reported - already;
+            let first_positive = already == Decimal::ZERO && delta > Decimal::ZERO;
+            self.filled_by_order.insert(key, reported);
+            self.filled_qty += delta;
+            if count_fill && first_positive {
+                self.fill_count = self.fill_count.saturating_add(1);
+            }
+        }
+        self.active_orders.retain(|id| id != order_id);
+        delta
     }
 }
 

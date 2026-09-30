@@ -100,6 +100,11 @@ impl LevelManager {
                     .inflight_client_order_id
                     .as_ref()
                     .map(|id| id.to_string()),
+                filled_by_order: level
+                    .filled_by_order
+                    .iter()
+                    .map(|(id, qty)| (id.to_string(), *qty))
+                    .collect(),
             })
             .collect();
         let mut tombstones: Vec<String> = self.tombstones.iter().cloned().collect();
@@ -532,10 +537,10 @@ impl LevelManager {
             let level = self.levels.get_mut(level_id).ok_or_else(|| {
                 EngineError::CustomError(anyhow::anyhow!("Level {} not found", level_id))
             })?;
-            level.active_orders.retain(|id| id != order_id);
-            level.filled_qty += filled_qty.max(rust_decimal::Decimal::ZERO);
-            level.fill_count = level.fill_count.saturating_add(1);
-            level.last_filled_at = Some(trading_core::utils::current_timestamp());
+            let delta = level.apply_reported_fill(order_id, filled_qty, true);
+            if delta > rust_decimal::Decimal::ZERO {
+                level.last_filled_at = Some(trading_core::utils::current_timestamp());
+            }
             if level.config.enabled
                 && !matches!(level.state, LevelState::Paused | LevelState::Deleting)
             {
@@ -559,8 +564,7 @@ impl LevelManager {
             let level = self.levels.get_mut(level_id).ok_or_else(|| {
                 EngineError::CustomError(anyhow::anyhow!("Level {} not found", level_id))
             })?;
-            level.active_orders.retain(|id| id != order_id);
-            level.filled_qty += filled_qty.max(rust_decimal::Decimal::ZERO);
+            level.apply_reported_fill(order_id, filled_qty, false);
             if level.config.enabled
                 && !matches!(level.state, LevelState::Paused | LevelState::Deleting)
             {
@@ -697,6 +701,70 @@ impl LevelManager {
             self.levels.insert(level_id.clone(), level);
             self.tombstones.remove(level_id.as_str());
             return Err(err);
+        }
+        Ok(())
+    }
+
+    /// REST proof that these IDs are gone: drop them from `active_orders` without waiting for WS.
+    pub fn retire_verified_order_ids(
+        &mut self,
+        level_id: &SmolStr,
+        order_ids: &[OrderId],
+    ) -> Result<(), EngineError> {
+        let pair = {
+            let level = self.levels.get_mut(level_id).ok_or_else(|| {
+                EngineError::CustomError(anyhow::anyhow!("Level {} not found", level_id))
+            })?;
+            for order_id in order_ids {
+                level.active_orders.retain(|id| id != order_id);
+            }
+            level.pair.clone()
+        };
+        self.persist_canonical()?;
+        self.mirror_mongo(&[pair]);
+        Ok(())
+    }
+
+    /// Drop owned IDs on Deleting levels that REST no longer shows as working.
+    pub fn retire_absent_owned_orders(
+        &mut self,
+        rest_working: &std::collections::HashSet<OrderId>,
+    ) -> Result<(), EngineError> {
+        let mut changed = false;
+        let mut pairs = Vec::new();
+        for level in self.levels.values_mut() {
+            if !matches!(level.state, LevelState::Deleting) {
+                continue;
+            }
+            let before = level.active_orders.len();
+            level.active_orders.retain(|id| rest_working.contains(id));
+            if level.active_orders.len() != before {
+                changed = true;
+                pairs.push(level.pair.clone());
+            }
+        }
+        if changed {
+            self.persist_canonical()?;
+            for pair in pairs {
+                self.mirror_mongo(&[pair]);
+            }
+        }
+        Ok(())
+    }
+
+    pub fn complete_ready_deletes(&mut self) -> Result<(), EngineError> {
+        let ready: Vec<SmolStr> = self
+            .levels
+            .iter()
+            .filter(|(_, level)| {
+                matches!(level.state, LevelState::Deleting)
+                    && level.inflight_client_order_id.is_none()
+                    && level.active_orders.is_empty()
+            })
+            .map(|(id, _)| id.clone())
+            .collect();
+        for level_id in ready {
+            self.complete_delete(&level_id)?;
         }
         Ok(())
     }
@@ -1258,6 +1326,101 @@ mod tests {
         assert_eq!(level.repost_count, 2);
         assert!(level.last_filled_at.is_some());
         assert!(!reloaded.should_repost(&level_id).unwrap());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn rest_verify_without_ws_completes_delete() {
+        let dir = unique_temp_dir();
+        let path = dir.join("levels.json");
+        let pair = Pair::new("BTC", "USDT");
+        let mut manager = LevelManager::new().with_identity_scope(
+            Exchange::Paper,
+            InstrumentType::Spot,
+            SmolStr::new("acct-a"),
+        );
+        manager.config_path = Some(path.clone());
+        let level_id = manager
+            .add_level(create_test_level_config("buy_level_1"), pair.clone())
+            .await
+            .unwrap();
+        manager
+            .confirm_posted(
+                &level_id,
+                &SmolStr::new("cid-1"),
+                &OrderId::new("ex-1".into()),
+            )
+            .unwrap();
+        manager.begin_delete(&level_id).unwrap();
+        manager
+            .retire_verified_order_ids(&level_id, &[OrderId::new("ex-1".into())])
+            .unwrap();
+        manager.complete_delete(&level_id).unwrap();
+        let reloaded = reload(&path, &[pair], Exchange::Paper, "acct-a").await;
+        assert!(reloaded.get_level(&level_id).is_none());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn replayed_fill_does_not_inflate_totals() {
+        let mut manager = LevelManager::new();
+        let level_id = manager
+            .add_level(
+                create_test_level_config("buy_level_1"),
+                Pair::new("BTC", "USDT"),
+            )
+            .await
+            .unwrap();
+        let order_id = OrderId::new("ex-1".into());
+        manager
+            .confirm_posted(&level_id, &SmolStr::new("cid-1"), &order_id)
+            .unwrap();
+        manager
+            .handle_order_filled(&level_id, &order_id, dec!(0.001))
+            .await
+            .unwrap();
+        manager
+            .handle_order_filled(&level_id, &order_id, dec!(0.001))
+            .await
+            .unwrap();
+        let level = manager.get_level(&level_id).unwrap();
+        assert_eq!(level.filled_qty, dec!(0.001));
+        assert_eq!(level.fill_count, 1);
+    }
+
+    #[tokio::test]
+    async fn restart_after_rest_gone_keeps_deleting_not_posted() {
+        let dir = unique_temp_dir();
+        let path = dir.join("levels.json");
+        let pair = Pair::new("BTC", "USDT");
+        let mut manager = LevelManager::new().with_identity_scope(
+            Exchange::Paper,
+            InstrumentType::Spot,
+            SmolStr::new("acct-a"),
+        );
+        manager.config_path = Some(path.clone());
+        let level_id = manager
+            .add_level(create_test_level_config("buy_level_1"), pair.clone())
+            .await
+            .unwrap();
+        manager
+            .confirm_posted(
+                &level_id,
+                &SmolStr::new("cid-1"),
+                &OrderId::new("ex-1".into()),
+            )
+            .unwrap();
+        manager.begin_delete(&level_id).unwrap();
+        let mut reloaded = reload(&path, &[pair], Exchange::Paper, "acct-a").await;
+        assert_eq!(
+            reloaded.get_level(&level_id).unwrap().state,
+            LevelState::Deleting
+        );
+        reloaded
+            .retire_absent_owned_orders(&std::collections::HashSet::new())
+            .unwrap();
+        reloaded.complete_ready_deletes().unwrap();
+        assert!(reloaded.get_level(&level_id).is_none());
         std::fs::remove_dir_all(&dir).ok();
     }
 }

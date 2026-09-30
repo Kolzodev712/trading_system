@@ -1,6 +1,6 @@
 # Local development: k-paper + trading system + legacy CLI smoke
 
-This guide runs the existing **Spot/levels connectivity smoke test**: the **k-paper** exchange, the **trading system runner**, and the old **TUI CLI**. It does not qualify the Candidate #2 futures or fault-injection stages.
+This guide runs the existing **Spot/levels connectivity smoke test**: the **k-paper** exchange, the **trading system runner**, and the old **TUI CLI**. It does not qualify Bybit Demo or live levels. See [LEVELS_GUIDE.md](LEVELS_GUIDE.md) Paper/Bybit capability table.
 
 Architecture: [ARCHITECTURE.md](ARCHITECTURE.md). Increment status: [PROGRESSION.md](PROGRESSION.md). Paper server: [K-paper integration guide](https://github.com/Kolzodev712/k-paper/blob/master/docs/PROP_TRADING_INTEGRATION_GUIDE.md). Browser UI: [Trading System UI control-plane guide](https://github.com/Kolzodev712/trading-system-ui/blob/main/docs/PROP_TRADING_CONTROL_PLANE_GUIDE.md).
 

@@ -162,11 +162,19 @@ impl RiskManager {
             }
         }
         if let Some(max_orders) = risk.max_orders.filter(|n| *n > 0) {
-            if resolved_level.level.active_orders.len() >= max_orders {
+            let pending_for_level = trading_state
+                .pending_submissions()
+                .values()
+                .filter(|pending| {
+                    pending.level_id.as_deref()
+                        == Some(resolved_level.level.identity.instance_id.as_str())
+                })
+                .count();
+            let working = resolved_level.level.active_orders.len() + pending_for_level;
+            if working >= max_orders {
                 return RiskCheckResult::blocked(SmolStr::new(format!(
                     "Level working order count {} exceeds per-level max_orders {}",
-                    resolved_level.level.active_orders.len(),
-                    max_orders
+                    working, max_orders
                 )));
             }
         }
@@ -180,9 +188,21 @@ impl RiskManager {
                 .active_orders
                 .iter()
                 .filter_map(|oid| trading_state.active_orders.get(oid))
-                .map(|order| order.amount - order.filled_amount)
+                .map(|order| order.amount)
                 .sum();
-            let prospective = owned_working + order_request.amount;
+            let pending_qty: Decimal = trading_state
+                .pending_submissions()
+                .values()
+                .filter(|pending| {
+                    pending.level_id.as_deref()
+                        == Some(resolved_level.level.identity.instance_id.as_str())
+                })
+                .map(|pending| pending.amount)
+                .sum();
+            let prospective = resolved_level.level.filled_qty
+                + owned_working
+                + pending_qty
+                + order_request.amount;
             if prospective.abs() > max_position || signed.abs() > max_position {
                 return RiskCheckResult::blocked(SmolStr::new(format!(
                     "Level exposure {} exceeds per-level max_position {}",
@@ -553,8 +573,8 @@ impl RiskManager {
     /// Check order count limits
     pub fn check_order_count(&self, state: &TradingState) -> RiskCheckResult {
         // Check total order count
-        if let Some(max_total_orders) = self.limits.max_total_orders {
-            let total_active_orders = state.active_orders.len();
+        if let Some(max_total_orders) = self.limits.max_total_orders.filter(|n| *n > 0) {
+            let total_active_orders = state.active_orders.len() + state.pending_submissions().len();
             // Block at or above the limit (order limit is stricter than position limit)
             if total_active_orders >= max_total_orders {
                 return RiskCheckResult::blocked(SmolStr::new(format!(
@@ -945,5 +965,94 @@ mod balance_tests {
             )
             .await;
         assert!(allowed.allowed);
+    }
+
+    fn resolved(
+        id: &str,
+        qty: Decimal,
+        max_orders: Option<usize>,
+        max_position: Option<Decimal>,
+    ) -> crate::cex::levels::ResolvedLevel {
+        use crate::cex::levels::config::{
+            LevelConfig, LevelRiskConfig, LifecycleConfig, OrderTypeConfig, PriceConfig,
+            QuantityConfig,
+        };
+        use crate::cex::levels::{Level, ResolvedLevel};
+        let risk = LevelRiskConfig {
+            max_orders,
+            max_position,
+            ..LevelRiskConfig::default()
+        };
+        let config = LevelConfig {
+            id: smol_str::SmolStr::new(id),
+            name: None,
+            side: Side::Buy,
+            order_type: OrderTypeConfig::Limit,
+            quantity: QuantityConfig::Fixed(qty),
+            price: PriceConfig::Fixed(dec!(50000)),
+            risk,
+            lifecycle: LifecycleConfig::default(),
+            enabled: true,
+            group: None,
+        };
+        ResolvedLevel {
+            level: Level::new(config, Pair::new("BTC", "USDT")),
+            resolved_price: dec!(50000),
+            resolved_quantity: qty,
+            resolved_order_type: OrderType::Limit,
+        }
+    }
+
+    #[tokio::test]
+    async fn two_levels_blocked_by_one_order_cap() {
+        let limits = RiskLimits {
+            max_total_orders: Some(1),
+            max_order_qty: Some(dec!(1)),
+            ..RiskLimits::default()
+        };
+        let risk = RiskManager::new(
+            limits,
+            Arc::new(trading_core::registry::symbol::SymbolRegistry::from_pairs(
+                vec![Pair::new("BTC", "USDT")],
+            )),
+        );
+        let first = resolved("buy_level_1", dec!(0.001), None, None);
+        let second = resolved("buy_level_2", dec!(0.001), None, None);
+        let mut state = TradingState::new();
+        let balances = [usdt(dec!(1000))];
+        let ok = risk.check_level(&first, &state, &balances, None).await;
+        assert!(ok.allowed);
+        state.begin_submission(crate::cex::state::PendingSubmission {
+            client_order_id: smol_str::SmolStr::new("a"),
+            symbol: Pair::new("BTC", "USDT"),
+            side: Side::Buy,
+            amount: dec!(0.001),
+            price: dec!(50000),
+            strategy_id: None,
+            level_id: Some(first.level.identity.instance_id.to_string()),
+        });
+        let blocked = risk.check_level(&second, &state, &balances, None).await;
+        assert!(!blocked.allowed);
+        assert!(blocked.reason.unwrap().contains("Total order limit"));
+    }
+
+    #[tokio::test]
+    async fn fill_then_repost_exceeds_per_level_max_position() {
+        let risk = RiskManager::new(
+            RiskLimits {
+                max_order_qty: Some(dec!(1)),
+                ..RiskLimits::default()
+            },
+            Arc::new(trading_core::registry::symbol::SymbolRegistry::from_pairs(
+                vec![Pair::new("BTC", "USDT")],
+            )),
+        );
+        let mut resolved = resolved("buy_level_1", dec!(0.001), None, Some(dec!(0.001)));
+        resolved.level.filled_qty = dec!(0.001);
+        let blocked = risk
+            .check_level(&resolved, &TradingState::new(), &[usdt(dec!(1000))], None)
+            .await;
+        assert!(!blocked.allowed);
+        assert!(blocked.reason.unwrap().contains("max_position"));
     }
 }

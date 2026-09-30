@@ -24,6 +24,12 @@ pub struct LevelsCatalog {
     pub tombstones: Vec<String>,
     #[serde(default)]
     pub risk_limits: RiskLimits,
+    #[serde(default)]
+    pub venue: Option<Exchange>,
+    #[serde(default)]
+    pub instrument: Option<InstrumentType>,
+    #[serde(default)]
+    pub account: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -36,6 +42,8 @@ pub struct LevelInstanceRecord {
     pub owned_client_ids: Vec<String>,
     #[serde(default)]
     pub owned_exchange_ids: Vec<String>,
+    #[serde(default)]
+    pub filled_qty: rust_decimal::Decimal,
 }
 
 impl LevelsCatalog {
@@ -88,6 +96,41 @@ impl LevelsCatalog {
         self.tombstones.iter().cloned().collect()
     }
 
+    /// Reject a catalog reused under a different venue/account/instrument.
+    pub fn ensure_scope(
+        &self,
+        venue: &Exchange,
+        instrument: &InstrumentType,
+        account: &str,
+    ) -> Result<(), EngineError> {
+        if let Some(stored) = &self.venue {
+            if stored != venue {
+                return Err(EngineError::CustomError(anyhow::anyhow!(
+                    "levels catalog venue {:?} does not match runtime {:?}",
+                    stored,
+                    venue
+                )));
+            }
+        }
+        if let Some(stored) = &self.instrument {
+            if stored != instrument {
+                return Err(EngineError::CustomError(anyhow::anyhow!(
+                    "levels catalog instrument {:?} does not match runtime {:?}",
+                    stored,
+                    instrument
+                )));
+            }
+        }
+        if let Some(stored) = &self.account {
+            if stored != account {
+                return Err(EngineError::CustomError(anyhow::anyhow!(
+                    "levels catalog account {stored} does not match runtime {account}"
+                )));
+            }
+        }
+        Ok(())
+    }
+
     pub fn materialize(
         &self,
         pairs: &[Pair],
@@ -124,6 +167,7 @@ impl LevelsCatalog {
             }
             let mut level = Level::from_identity(record.config.clone(), identity);
             level.owned_client_ids = record.owned_client_ids.iter().map(SmolStr::new).collect();
+            level.filled_qty = record.filled_qty;
             level.active_orders = record
                 .owned_exchange_ids
                 .iter()
@@ -194,6 +238,7 @@ mod tests {
             instances: vec![],
             tombstones: vec!["buy_level_1_BTCUSDT".into()],
             risk_limits: RiskLimits::default(),
+            ..Default::default()
         };
         let levels = catalog
             .materialize(&[btc, eth], Exchange::Paper, InstrumentType::Spot, "test")
@@ -217,9 +262,11 @@ mod tests {
                 config: cfg,
                 owned_client_ids: vec![],
                 owned_exchange_ids: vec![],
+                filled_qty: rust_decimal::Decimal::ZERO,
             }],
             tombstones: vec![],
             risk_limits: RiskLimits::default(),
+            ..Default::default()
         };
         let levels = catalog
             .materialize(&[btc, eth], Exchange::Paper, InstrumentType::Spot, "test")
@@ -239,11 +286,37 @@ mod tests {
             instances: vec![],
             tombstones: vec!["buy_level_1_BTCUSDT".into()],
             risk_limits: RiskLimits::default(),
+            ..Default::default()
         };
         catalog.save_atomic(&path).unwrap();
         let loaded = LevelsCatalog::load_from_path(&path).unwrap();
         assert_eq!(loaded.tombstones, catalog.tombstones);
         assert_eq!(loaded.levels.len(), 1);
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn reused_catalog_rejects_scope_mismatch() {
+        let catalog = LevelsCatalog {
+            venue: Some(Exchange::Paper),
+            instrument: Some(InstrumentType::Spot),
+            account: Some("acct-a".into()),
+            ..Default::default()
+        };
+        catalog
+            .ensure_scope(&Exchange::Paper, &InstrumentType::Spot, "acct-a")
+            .unwrap();
+        let err = catalog
+            .ensure_scope(&Exchange::Bybit, &InstrumentType::Spot, "acct-a")
+            .unwrap_err();
+        assert!(err.to_string().contains("venue"));
+        let err = catalog
+            .ensure_scope(&Exchange::Paper, &InstrumentType::Futures, "acct-a")
+            .unwrap_err();
+        assert!(err.to_string().contains("instrument"));
+        let err = catalog
+            .ensure_scope(&Exchange::Paper, &InstrumentType::Spot, "acct-b")
+            .unwrap_err();
+        assert!(err.to_string().contains("account"));
     }
 }

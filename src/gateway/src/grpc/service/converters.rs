@@ -11,6 +11,7 @@ pub fn level_state_to_string(state: &LevelState) -> &'static str {
         LevelState::Paused => "Paused",
         LevelState::Removed => "Removed",
         LevelState::Submitting => "Submitting",
+        LevelState::Deleting => "Deleting",
     }
 }
 
@@ -78,12 +79,7 @@ pub fn level_to_proto(level: &Level) -> trading_cli::Level {
         price: price_str,
         quantity: quantity_str,
         enabled: level.config.enabled,
-        risk_limit: level
-            .config
-            .risk
-            .daily_loss_limit
-            .map(|d| d.to_string())
-            .unwrap_or_default(),
+        risk_limit: String::new(),
         max_position_size: level
             .config
             .risk
@@ -106,6 +102,6 @@ pub fn level_to_proto(level: &Level) -> trading_cli::Level {
         enabled: level.config.enabled,
         config: Some(level_config),
         active_orders: active_order_ids,
-        filled_count: level.repost_count as i32,
+        filled_count: level.fill_count as i32,
     }
 }

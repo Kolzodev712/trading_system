@@ -413,7 +413,7 @@ impl TradingCliService for TradingCliServiceImpl {
         request: Request<trading_cli::DeleteLevelRequest>,
     ) -> Result<Response<trading_cli::DeleteLevelResponse>, Status> {
         self.require_mutating(&request)?;
-        Err(Status::unimplemented("Not yet implemented"))
+        self.level_service().delete_level(request).await
     }
 
     async fn toggle_level(

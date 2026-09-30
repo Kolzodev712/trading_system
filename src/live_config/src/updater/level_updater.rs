@@ -78,30 +78,16 @@ impl LevelUpdater {
                     "Quantity update requires full implementation".to_string(),
                 ));
             }
-            LevelField::StopLoss => {
-                if let Some(decimal) = value.as_decimal() {
-                    level.config.risk.daily_loss_limit = Some(decimal);
-                } else {
-                    return Err(UpdateError::InvalidValue(
-                        "StopLoss requires decimal".to_string(),
-                    ));
-                }
+            LevelField::StopLoss | LevelField::RiskLimit => {
+                return Err(UpdateError::InvalidField(
+                    "per-level daily_loss_limit is not enforceable until PnL attribution exists"
+                        .to_string(),
+                ));
             }
             LevelField::TakeProfit => {
-                // Take profit would need to be added to LevelConfig if not already present
-                tracing::warn!("TakeProfit field not yet supported in LevelConfig");
                 return Err(UpdateError::InvalidField(
                     "TakeProfit not yet implemented".to_string(),
                 ));
-            }
-            LevelField::RiskLimit => {
-                if let Some(decimal) = value.as_decimal() {
-                    level.config.risk.daily_loss_limit = Some(decimal);
-                } else {
-                    return Err(UpdateError::InvalidValue(
-                        "RiskLimit requires decimal".to_string(),
-                    ));
-                }
             }
             LevelField::MaxPositionSize => {
                 if let Some(decimal) = value.as_decimal() {
@@ -257,11 +243,6 @@ mod tests {
                 LevelValue::Decimal(dec!(1000)),
             )
             .await;
-        assert!(result.is_ok());
-
-        // Verify update - use pair-suffixed ID
-        let lm = level_manager.read().await;
-        let level = lm.get_level(&SmolStr::new(&level_id)).unwrap();
-        assert_eq!(level.config.risk.daily_loss_limit, Some(dec!(1000)));
+        assert!(result.is_err());
     }
 }

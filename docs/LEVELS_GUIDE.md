@@ -645,11 +645,22 @@ Groups can be used for:
 
 ### Persistence
 
-Levels are persisted to MongoDB (if configured):
+The file catalog is canonical. Mongo may mirror it and must not override it at restart. Catalog load rejects a venue/account/instrument scope mismatch. Terminal filled/cancelled exchange IDs are retired so restart does not restore `Posted`.
 
-- **Save**: Levels are saved automatically when configuration changes
-- **Load**: Levels are loaded from MongoDB on startup
-- **Expansion**: Pair-agnostic level configs are expanded to create instances for each pair
+## Paper / Bybit capability (levels)
+
+| Capability | Paper | Bybit Demo | Bybit mainnet |
+|---|---|---|---|
+| Durable pair-specific identity + tombstones | Implemented | Implemented, not qualified | Not qualified |
+| Persist-before-send + client-ID recovery | Implemented | Implemented, not qualified | Not qualified |
+| Per-pair / per-level caps including pending + fills | Implemented | Implemented, not qualified | Not qualified |
+| Disable/DeleteLevel owned-ID cancel + REST verify | Implemented | Implemented, not qualified | Not qualified |
+| Shadow guard on levels mutation/shutdown | Implemented | n/a (Exchange mode) | n/a |
+| Spot flatten | Unavailable (no pair-wide sale) | Unavailable | Unavailable |
+| Futures flatten | Journaled reduce-only (strategies path) | Not qualified for levels | Not qualified |
+| Per-level daily-loss | Hidden until PnL attribution | Hidden | Hidden |
+
+**GO/NO-GO:** Paper library tests cover the gates above. **NO-GO** for Bybit Demo and live levels until an independent operator run on current `master` with no Demo/mainnet orders from this change. UI repo remains at `d2237ba` (DeleteLevel/gRPC is in `trading_system`; hide daily-loss in UI separately). k-paper remains at `25e1268`.
 
 ## See Also
 

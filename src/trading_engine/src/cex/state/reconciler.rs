@@ -15,19 +15,20 @@ use trading_core::{
 };
 
 /// Choose the authoritative quantity for target-vs-current.
-/// Futures: signed ESM position, or 0 if flat. Spot: base-wallet heuristic.
+///
+/// Futures: signed ESM/REST position, or `Some(0)` if the venue reported flat.
+/// Spot: base-wallet only. `None` means the wallet is not available yet — not
+/// a flat book. A REST `/positions=[]` qty is ignored for Spot.
 pub fn authoritative_position_qty(
     instrument_type: InstrumentType,
     esm_position_qty: Option<Decimal>,
     spot_base_balance: Option<Decimal>,
-) -> Decimal {
+) -> Option<Decimal> {
     match instrument_type {
         InstrumentType::Futures | InstrumentType::Derivitives => {
-            esm_position_qty.unwrap_or(Decimal::ZERO)
+            Some(esm_position_qty.unwrap_or(Decimal::ZERO))
         }
-        InstrumentType::Spot => esm_position_qty
-            .or(spot_base_balance)
-            .unwrap_or(Decimal::ZERO),
+        InstrumentType::Spot => spot_base_balance,
     }
 }
 
@@ -79,16 +80,16 @@ impl PositionReconciler {
         let exchange_state_arc = self.exchange_state_manager.get_state();
         let exchange_state = exchange_state_arc.read().await;
 
-        // Reconcile positions. Futures use signed ESM positions (design log 008).
-        // REST snapshot, when present, is the verification source; a WS-only jump
-        // must not clear disagreement.
+        // Reconcile positions. Futures use signed REST/ESM positions (design log 008).
+        // Spot uses the base wallet. An empty REST /positions list is unsupported, not flat.
         let base_currency = pair.base.as_str();
         let esm_qty = exchange_state.get_position(pair).map(|p| p.quantity);
         let rest_qty = exchange_state.rest_position_qty(pair);
-        let exchange_qty = authoritative_position_qty(
+        let spot_base = exchange_state.get_balance(base_currency).map(|b| b.total);
+        let exchange_qty_opt = authoritative_position_qty(
             self.instrument_type.clone(),
             rest_qty.or(esm_qty),
-            exchange_state.get_balance(base_currency).map(|b| b.total),
+            spot_base,
         );
         let exchange_avg = exchange_state
             .get_position(pair)
@@ -99,11 +100,48 @@ impl PositionReconciler {
             .get_position(pair)
             .map(|p| p.quantity)
             .unwrap_or(Decimal::ZERO);
-        let discrepancy = exchange_qty - trading_position_qty;
 
         let mut reconciled = false;
+        let mut exchange_qty = trading_position_qty;
+        let mut discrepancy = Decimal::ZERO;
 
-        if let Some(rest) = rest_qty {
+        if matches!(self.instrument_type, InstrumentType::Spot) {
+            match exchange_qty_opt {
+                None => {
+                    tracing::debug!("Spot wallet unavailable for {}; not treating as flat", pair);
+                }
+                Some(wallet) => {
+                    exchange_qty = wallet;
+                    discrepancy = exchange_qty - trading_position_qty;
+                    tracing::debug!(
+                        "Trading-level spot reconciliation for {}: TradingState={}, wallet={}, discrepancy={}",
+                        pair, trading_position_qty, exchange_qty, discrepancy
+                    );
+                    if discrepancy.abs() > Decimal::new(1, 6) {
+                        if trading_position_qty.abs() <= Decimal::new(1, 6) {
+                            let reconcile_price = if exchange_avg.is_zero() {
+                                _current_price.unwrap_or(Decimal::ZERO)
+                            } else {
+                                exchange_avg
+                            };
+                            trading_state.set_position(pair.clone(), exchange_qty, reconcile_price);
+                            reconciled = true;
+                        } else {
+                            warn!(
+                                "Spot position disagrees with base wallet for {}: internal={}, wallet={}",
+                                pair, trading_position_qty, exchange_qty
+                            );
+                            trading_state.halt_new_exposure(format!(
+                                "spot position disagrees with base balance: internal={trading_position_qty} wallet={exchange_qty}"
+                            ));
+                            trading_state.note_position_disagreement(pair.clone());
+                        }
+                    }
+                }
+            }
+        } else if let Some(rest) = rest_qty {
+            exchange_qty = rest;
+            discrepancy = rest - trading_position_qty;
             let stream = esm_qty.unwrap_or(Decimal::ZERO);
             if (rest - stream).abs() > Decimal::new(1, 6) {
                 warn!(
@@ -123,6 +161,8 @@ impl PositionReconciler {
                 }
             }
         } else {
+            exchange_qty = exchange_qty_opt.unwrap_or(Decimal::ZERO);
+            discrepancy = exchange_qty - trading_position_qty;
             tracing::debug!(
                 "Trading-level reconciliation for {}: TradingState={}, ExchangeStateManager={}, discrepancy={}",
                 pair, trading_position_qty, exchange_qty, discrepancy
@@ -241,7 +281,7 @@ mod tests {
     fn futures_flat_is_zero_not_wallet() {
         let qty =
             authoritative_position_qty(InstrumentType::Futures, None, Some(Decimal::new(2, 0)));
-        assert_eq!(qty, Decimal::ZERO);
+        assert_eq!(qty, Some(Decimal::ZERO));
     }
 
     #[test]
@@ -251,12 +291,28 @@ mod tests {
             Some(Decimal::new(-15, 1)),
             Some(Decimal::new(100, 0)),
         );
-        assert_eq!(qty, Decimal::new(-15, 1));
+        assert_eq!(qty, Some(Decimal::new(-15, 1)));
     }
 
     #[test]
     fn spot_falls_back_to_base_balance() {
         let qty = authoritative_position_qty(InstrumentType::Spot, None, Some(Decimal::new(3, 0)));
-        assert_eq!(qty, Decimal::new(3, 0));
+        assert_eq!(qty, Some(Decimal::new(3, 0)));
+    }
+
+    #[test]
+    fn spot_empty_rest_positions_are_not_flat() {
+        let qty = authoritative_position_qty(
+            InstrumentType::Spot,
+            Some(Decimal::ZERO),
+            Some(Decimal::new(2, 3)),
+        );
+        assert_eq!(qty, Some(Decimal::new(2, 3)));
+    }
+
+    #[test]
+    fn spot_missing_wallet_is_unsupported() {
+        let qty = authoritative_position_qty(InstrumentType::Spot, Some(Decimal::ZERO), None);
+        assert_eq!(qty, None);
     }
 }

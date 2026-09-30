@@ -2,7 +2,8 @@ global_trading=true
 entries_paused=false flatten_latched=false
 operator_id=lab
 global_toggle_semantics=legacy SetTradingEnabled: disabling cancels working orders; not PauseEntries/FlattenAndPause
-runner_mode=levels venue=PAPER environment=LOCAL execution_mode=exchange snapshot_unix_ms=1790772654746
-instrument=Spot exchange=Paper orders=1 positions=0 orderbooks=1 indicators=0
-order 1479df6e-027a-4a61-8a3e-8fd44325a04e BTCUSDT Buy px=1020.00 qty=0.010 status=New level=qual_amend
-level qual_amend_BTCUSDT enabled=true status=Posted filled=0 orders=1479df6e-027a-4a61-8a3e-8fd44325a04e
+runner_mode=levels venue=PAPER environment=LOCAL execution_mode=exchange snapshot_unix_ms=1790776729477
+instrument=Spot exchange=Paper orders=1 positions=1 orderbooks=1 indicators=0
+position BTCUSDT qty=0.002 side= entry=0 mark= upnl=
+order 753ea65a-7b30-4e22-bf6e-3d4956489a69 BTCUSDT Buy px=1020.00 qty=0.010 status=New level=qual_amend
+level qual_amend_BTCUSDT enabled=true status=Posted filled=0 orders=753ea65a-7b30-4e22-bf6e-3d4956489a69

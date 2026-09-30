@@ -1,50 +1,50 @@
-2026-09-30T12:50:40.904646Z  INFO paper_exchange_server::runtime: paper exchange listening on 127.0.0.1:19994
-2026-09-30T12:50:40.904692Z  INFO paper_exchange_server::runtime: profile=Lab scenario=None market_engine=true instruments=1
-2026-09-30T12:50:40.904701Z  INFO paper_exchange_server::runtime: fill_model=ImmediateCross max_trade_history=10000
-2026-09-30T12:50:40.904709Z  INFO paper_exchange_server::runtime: Paper exchange URL: ws://127.0.0.1:19994/ws/trade
-2026-09-30T12:50:40.904718Z  INFO paper_exchange_server::runtime: REST: http://127.0.0.1:19994/balances
-2026-09-30T12:50:40.958275Z  INFO paper_exchange_server::transport: trading endpoint: client connected
-2026-09-30T12:50:40.958324Z  INFO paper_exchange_server::transport: new trading connection: account snapshot requested (broadcast)
-2026-09-30T12:50:40.958343Z  INFO paper_exchange_server::session: account snapshot emitted (broadcast to all connections)
-2026-09-30T12:50:40.958652Z  INFO paper_exchange_server::transport: trading: incoming frame len=31 body={"type":"get_account_snapshot"}
-2026-09-30T12:50:40.958691Z  INFO paper_exchange_server::transport: trading: command received: get_account_snapshot
-2026-09-30T12:50:40.958746Z  INFO paper_exchange_server::session: account snapshot sent (direct reply to connection)
-2026-09-30T12:50:40.958783Z  INFO paper_exchange_server::transport: trading: sending account snapshot (1 balances, 0 positions)
-2026-09-30T12:50:42.959432Z  INFO paper_exchange_server::transport: market endpoint: client connected
-2026-09-30T12:50:43.422516Z  INFO paper_exchange_server::transport: trading: incoming frame len=197 body={"type":"place_order","request":{"instrument_id":"BTC-USDT","side":"Buy","order_type":"Limit","quantity":"0.010","limit_price":"1000.00","client_order_id":["9c1c51cd-93fc-4026-bcda-feda9b0e9249"]}}
-2026-09-30T12:50:43.422617Z  INFO paper_exchange_server::transport: trading: command received: place_order instrument_id=BTC-USDT side=Buy quantity=0.010
-2026-09-30T12:50:43.422746Z  INFO paper_exchange_server::transport: trading: sending execution report order_id=854868ef-89fa-4d45-9839-abed4ce3b6e5 instrument_id=BTC-USDT
-2026-09-30T12:50:43.922202Z  INFO paper_exchange_server::transport: trading: incoming frame len=197 body={"type":"place_order","request":{"instrument_id":"BTC-USDT","side":"Buy","order_type":"Limit","quantity":"0.010","limit_price":"1010.00","client_order_id":["5a867b0c-5477-4ca9-8738-fedc22efad28"]}}
-2026-09-30T12:50:43.922285Z  INFO paper_exchange_server::transport: trading: command received: place_order instrument_id=BTC-USDT side=Buy quantity=0.010
-2026-09-30T12:50:45.291062Z  INFO paper_exchange_server::transport: WebSocket client disconnected
-2026-09-30T12:50:45.291063Z  INFO paper_exchange_server::transport: WebSocket client disconnected
-2026-09-30T12:50:45.749443Z  INFO paper_exchange_server::transport: trading endpoint: client connected
-2026-09-30T12:50:45.749502Z  INFO paper_exchange_server::transport: new trading connection: account snapshot requested (broadcast)
-2026-09-30T12:50:45.749519Z  INFO paper_exchange_server::session: account snapshot emitted (broadcast to all connections)
-2026-09-30T12:50:45.749757Z  INFO paper_exchange_server::transport: trading: incoming frame len=31 body={"type":"get_account_snapshot"}
-2026-09-30T12:50:45.749782Z  INFO paper_exchange_server::transport: trading: command received: get_account_snapshot
-2026-09-30T12:50:45.749816Z  INFO paper_exchange_server::session: account snapshot sent (direct reply to connection)
-2026-09-30T12:50:45.749836Z  INFO paper_exchange_server::transport: trading: sending account snapshot (2 balances, 0 positions)
-2026-09-30T12:50:47.750998Z  INFO paper_exchange_server::transport: market endpoint: client connected
-2026-09-30T12:50:49.035508Z  INFO paper_exchange_server::transport: trading: incoming frame len=73 body={"type":"cancel_order","order_id":"854868ef-89fa-4d45-9839-abed4ce3b6e5"}
-2026-09-30T12:50:49.035578Z  INFO paper_exchange_server::transport: trading: command received: cancel_order order_id=854868ef-89fa-4d45-9839-abed4ce3b6e5
-2026-09-30T12:50:49.035659Z  INFO paper_exchange_server::transport: trading: sending CancelAck order_id=854868ef-89fa-4d45-9839-abed4ce3b6e5
-2026-09-30T12:50:49.036063Z  INFO paper_exchange_server::transport: trading: incoming frame len=73 body={"type":"cancel_order","order_id":"304bde4b-cefb-4500-a354-412e238189bd"}
-2026-09-30T12:50:49.036080Z  INFO paper_exchange_server::transport: trading: command received: cancel_order order_id=304bde4b-cefb-4500-a354-412e238189bd
-2026-09-30T12:50:49.036121Z  INFO paper_exchange_server::transport: trading: sending CancelAck order_id=304bde4b-cefb-4500-a354-412e238189bd
-2026-09-30T12:50:49.060748Z  INFO paper_exchange_server::transport: WebSocket client disconnected
-2026-09-30T12:50:49.060799Z  INFO paper_exchange_server::transport: WebSocket client disconnected
-2026-09-30T12:50:49.519194Z  INFO paper_exchange_server::transport: trading endpoint: client connected
-2026-09-30T12:50:49.519245Z  INFO paper_exchange_server::transport: new trading connection: account snapshot requested (broadcast)
-2026-09-30T12:50:49.519266Z  INFO paper_exchange_server::session: account snapshot emitted (broadcast to all connections)
-2026-09-30T12:50:49.519541Z  INFO paper_exchange_server::transport: trading: incoming frame len=31 body={"type":"get_account_snapshot"}
-2026-09-30T12:50:49.519572Z  INFO paper_exchange_server::transport: trading: command received: get_account_snapshot
-2026-09-30T12:50:49.519608Z  INFO paper_exchange_server::session: account snapshot sent (direct reply to connection)
-2026-09-30T12:50:49.519625Z  INFO paper_exchange_server::transport: trading: sending account snapshot (2 balances, 0 positions)
-2026-09-30T12:50:51.521826Z  INFO paper_exchange_server::transport: market endpoint: client connected
-2026-09-30T12:50:51.924615Z  INFO paper_exchange_server::transport: trading: incoming frame len=197 body={"type":"place_order","request":{"instrument_id":"BTC-USDT","side":"Buy","order_type":"Limit","quantity":"0.010","limit_price":"1010.00","client_order_id":["d9bde905-f680-4619-9943-efbf542550bf"]}}
-2026-09-30T12:50:51.924695Z  INFO paper_exchange_server::transport: trading: command received: place_order instrument_id=BTC-USDT side=Buy quantity=0.010
-2026-09-30T12:50:51.924796Z  INFO paper_exchange_server::transport: trading: sending execution report order_id=1479df6e-027a-4a61-8a3e-8fd44325a04e instrument_id=BTC-USDT
-2026-09-30T12:50:52.406876Z  INFO paper_exchange_server::transport: trading: incoming frame len=115 body={"type":"amend_order","order_id":"1479df6e-027a-4a61-8a3e-8fd44325a04e","quantity":"0.010","limit_price":"1020.00"}
-2026-09-30T12:50:52.406944Z  INFO paper_exchange_server::transport: trading: command received: amend_order order_id=1479df6e-027a-4a61-8a3e-8fd44325a04e quantity=Some("0.010") limit_price=Some("1020.00")
-2026-09-30T12:50:52.407017Z  INFO paper_exchange_server::transport: trading: sending AmendAck order_id=1479df6e-027a-4a61-8a3e-8fd44325a04e
+2026-09-30T13:58:35.810009Z  INFO paper_exchange_server::runtime: paper exchange listening on 127.0.0.1:19994
+2026-09-30T13:58:35.810043Z  INFO paper_exchange_server::runtime: profile=Lab scenario=None market_engine=true instruments=1
+2026-09-30T13:58:35.810049Z  INFO paper_exchange_server::runtime: fill_model=ImmediateCross max_trade_history=10000
+2026-09-30T13:58:35.810057Z  INFO paper_exchange_server::runtime: Paper exchange URL: ws://127.0.0.1:19994/ws/trade
+2026-09-30T13:58:35.810062Z  INFO paper_exchange_server::runtime: REST: http://127.0.0.1:19994/balances
+2026-09-30T13:58:35.862372Z  INFO paper_exchange_server::transport: trading endpoint: client connected
+2026-09-30T13:58:35.862418Z  INFO paper_exchange_server::transport: new trading connection: account snapshot requested (broadcast)
+2026-09-30T13:58:35.862437Z  INFO paper_exchange_server::session: account snapshot emitted (broadcast to all connections)
+2026-09-30T13:58:35.862675Z  INFO paper_exchange_server::transport: trading: incoming frame len=31 body={"type":"get_account_snapshot"}
+2026-09-30T13:58:35.862703Z  INFO paper_exchange_server::transport: trading: command received: get_account_snapshot
+2026-09-30T13:58:35.862753Z  INFO paper_exchange_server::session: account snapshot sent (direct reply to connection)
+2026-09-30T13:58:35.862777Z  INFO paper_exchange_server::transport: trading: sending account snapshot (1 balances, 0 positions)
+2026-09-30T13:58:37.864565Z  INFO paper_exchange_server::transport: market endpoint: client connected
+2026-09-30T13:58:38.327805Z  INFO paper_exchange_server::transport: trading: incoming frame len=197 body={"type":"place_order","request":{"instrument_id":"BTC-USDT","side":"Buy","order_type":"Limit","quantity":"0.010","limit_price":"1000.00","client_order_id":["5bab8655-696a-4fcc-a29c-32b8bb1b3387"]}}
+2026-09-30T13:58:38.327917Z  INFO paper_exchange_server::transport: trading: command received: place_order instrument_id=BTC-USDT side=Buy quantity=0.010
+2026-09-30T13:58:38.328044Z  INFO paper_exchange_server::transport: trading: sending execution report order_id=728e1ad7-3eaa-4ba0-9cc8-d984034345ba instrument_id=BTC-USDT
+2026-09-30T13:58:38.827841Z  INFO paper_exchange_server::transport: trading: incoming frame len=197 body={"type":"place_order","request":{"instrument_id":"BTC-USDT","side":"Buy","order_type":"Limit","quantity":"0.010","limit_price":"1010.00","client_order_id":["baf55052-b0ee-425d-8de0-3dc45aaa96ba"]}}
+2026-09-30T13:58:38.827930Z  INFO paper_exchange_server::transport: trading: command received: place_order instrument_id=BTC-USDT side=Buy quantity=0.010
+2026-09-30T13:58:40.259708Z  INFO paper_exchange_server::transport: WebSocket client disconnected
+2026-09-30T13:58:40.259708Z  INFO paper_exchange_server::transport: WebSocket client disconnected
+2026-09-30T13:58:40.717568Z  INFO paper_exchange_server::transport: trading endpoint: client connected
+2026-09-30T13:58:40.717627Z  INFO paper_exchange_server::transport: new trading connection: account snapshot requested (broadcast)
+2026-09-30T13:58:40.717648Z  INFO paper_exchange_server::session: account snapshot emitted (broadcast to all connections)
+2026-09-30T13:58:40.717812Z  INFO paper_exchange_server::transport: trading: incoming frame len=31 body={"type":"get_account_snapshot"}
+2026-09-30T13:58:40.717841Z  INFO paper_exchange_server::transport: trading: command received: get_account_snapshot
+2026-09-30T13:58:40.717867Z  INFO paper_exchange_server::session: account snapshot sent (direct reply to connection)
+2026-09-30T13:58:40.717879Z  INFO paper_exchange_server::transport: trading: sending account snapshot (2 balances, 0 positions)
+2026-09-30T13:58:42.720038Z  INFO paper_exchange_server::transport: market endpoint: client connected
+2026-09-30T13:58:44.038683Z  INFO paper_exchange_server::transport: trading: incoming frame len=73 body={"type":"cancel_order","order_id":"5be28472-8fca-4e0e-8216-0455f44bd539"}
+2026-09-30T13:58:44.038747Z  INFO paper_exchange_server::transport: trading: command received: cancel_order order_id=5be28472-8fca-4e0e-8216-0455f44bd539
+2026-09-30T13:58:44.038824Z  INFO paper_exchange_server::transport: trading: sending CancelAck order_id=5be28472-8fca-4e0e-8216-0455f44bd539
+2026-09-30T13:58:44.039181Z  INFO paper_exchange_server::transport: trading: incoming frame len=73 body={"type":"cancel_order","order_id":"728e1ad7-3eaa-4ba0-9cc8-d984034345ba"}
+2026-09-30T13:58:44.039194Z  INFO paper_exchange_server::transport: trading: command received: cancel_order order_id=728e1ad7-3eaa-4ba0-9cc8-d984034345ba
+2026-09-30T13:58:44.039232Z  INFO paper_exchange_server::transport: trading: sending CancelAck order_id=728e1ad7-3eaa-4ba0-9cc8-d984034345ba
+2026-09-30T13:58:44.063949Z  INFO paper_exchange_server::transport: WebSocket client disconnected
+2026-09-30T13:58:44.064004Z  INFO paper_exchange_server::transport: WebSocket client disconnected
+2026-09-30T13:58:44.521401Z  INFO paper_exchange_server::transport: trading endpoint: client connected
+2026-09-30T13:58:44.521454Z  INFO paper_exchange_server::transport: new trading connection: account snapshot requested (broadcast)
+2026-09-30T13:58:44.521479Z  INFO paper_exchange_server::session: account snapshot emitted (broadcast to all connections)
+2026-09-30T13:58:44.521793Z  INFO paper_exchange_server::transport: trading: incoming frame len=31 body={"type":"get_account_snapshot"}
+2026-09-30T13:58:44.521825Z  INFO paper_exchange_server::transport: trading: command received: get_account_snapshot
+2026-09-30T13:58:44.521864Z  INFO paper_exchange_server::session: account snapshot sent (direct reply to connection)
+2026-09-30T13:58:44.521884Z  INFO paper_exchange_server::transport: trading: sending account snapshot (2 balances, 0 positions)
+2026-09-30T13:58:46.523087Z  INFO paper_exchange_server::transport: market endpoint: client connected
+2026-09-30T13:58:46.827127Z  INFO paper_exchange_server::transport: trading: incoming frame len=197 body={"type":"place_order","request":{"instrument_id":"BTC-USDT","side":"Buy","order_type":"Limit","quantity":"0.010","limit_price":"1010.00","client_order_id":["faaaefbb-b16a-487b-a176-2ddea4f375d5"]}}
+2026-09-30T13:58:46.827212Z  INFO paper_exchange_server::transport: trading: command received: place_order instrument_id=BTC-USDT side=Buy quantity=0.010
+2026-09-30T13:58:46.827317Z  INFO paper_exchange_server::transport: trading: sending execution report order_id=753ea65a-7b30-4e22-bf6e-3d4956489a69 instrument_id=BTC-USDT
+2026-09-30T13:58:47.312444Z  INFO paper_exchange_server::transport: trading: incoming frame len=115 body={"type":"amend_order","order_id":"753ea65a-7b30-4e22-bf6e-3d4956489a69","quantity":"0.010","limit_price":"1020.00"}
+2026-09-30T13:58:47.312525Z  INFO paper_exchange_server::transport: trading: command received: amend_order order_id=753ea65a-7b30-4e22-bf6e-3d4956489a69 quantity=Some("0.010") limit_price=Some("1020.00")
+2026-09-30T13:58:47.312599Z  INFO paper_exchange_server::transport: trading: sending AmendAck order_id=753ea65a-7b30-4e22-bf6e-3d4956489a69

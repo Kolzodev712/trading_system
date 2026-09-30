@@ -10,7 +10,7 @@ use reqwest::Client as HttpClient;
 use rust_decimal::Decimal;
 use tokio::sync::{mpsc, oneshot, RwLock};
 use tokio_tungstenite::tungstenite::Message;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 use trading_core::channels::market_data::{MarketDataUpdate, MarketDataUpdateSender};
 use trading_core::error::EngineError;
 use trading_core::types::common::{Exchange, InstrumentType, OrderId, OrderStatus, Pair};
@@ -460,6 +460,11 @@ impl TradingClient<OrderRequest> for KPaperClient {
     async fn fetch_positions(
         &self,
     ) -> Result<Vec<trading_core::types::exchange::Position>, EngineError> {
+        if matches!(self.config.instrument_type, InstrumentType::Spot) {
+            return Err(EngineError::NotSupported(
+                "Spot has no REST positions; use the base wallet".into(),
+            ));
+        }
         let url = format!("{}/positions", self.rest_base);
         let res =
             self.http_client.get(&url).send().await.map_err(|e| {
@@ -1005,7 +1010,9 @@ async fn handle_message(
             }
         }
         KPaperMessage::Position(pos) => {
-            if let Some(p) = position_to_core(&pos, instrument_type.clone()) {
+            if matches!(instrument_type, InstrumentType::Spot) {
+                debug!("k-paper: ignoring Spot WS position; wallet is source of truth");
+            } else if let Some(p) = position_to_core(&pos, instrument_type.clone()) {
                 let _ = exchange_state_manager.update_position(p.clone()).await;
                 let mut st = state.write().await;
                 let key = p.instrument.pair.clone();

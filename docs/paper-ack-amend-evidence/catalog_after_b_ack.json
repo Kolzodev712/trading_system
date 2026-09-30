@@ -61,56 +61,6 @@
   ],
   "instances": [
     {
-      "id": "qual_rest_b_BTCUSDT",
-      "template_id": "qual_rest_b",
-      "pair": {
-        "base": "BTC",
-        "quote": "USDT"
-      },
-      "config": {
-        "id": "qual_rest_b",
-        "name": "Paper spot resting B",
-        "side": "Buy",
-        "order_type": "Limit",
-        "quantity": {
-          "type": "Fixed",
-          "value": "0.01"
-        },
-        "price": {
-          "Fixed": "1010"
-        },
-        "risk": {
-          "max_position": "0.02",
-          "max_orders": 1,
-          "max_order_qty": null,
-          "max_notional": null,
-          "daily_loss_limit": null
-        },
-        "lifecycle": {
-          "auto_repost": false,
-          "auto_repost_on_cancel": false,
-          "max_reposts": 0,
-          "repost_delay_secs": 1,
-          "repost_conditions": []
-        },
-        "enabled": true,
-        "group": "paper_ack_amend"
-      },
-      "owned_client_ids": [
-        "5a867b0c-5477-4ca9-8738-fedc22efad28"
-      ],
-      "owned_exchange_ids": [
-        "304bde4b-cefb-4500-a354-412e238189bd"
-      ],
-      "filled_qty": "0",
-      "state": "Posted",
-      "repost_count": 0,
-      "last_filled_at": null,
-      "fill_count": 0,
-      "inflight_client_order_id": null,
-      "filled_by_order": {}
-    },
-    {
       "id": "qual_rest_a_BTCUSDT",
       "template_id": "qual_rest_a",
       "pair": {
@@ -147,10 +97,60 @@
         "group": "paper_ack_amend"
       },
       "owned_client_ids": [
-        "9c1c51cd-93fc-4026-bcda-feda9b0e9249"
+        "5bab8655-696a-4fcc-a29c-32b8bb1b3387"
       ],
       "owned_exchange_ids": [
-        "854868ef-89fa-4d45-9839-abed4ce3b6e5"
+        "728e1ad7-3eaa-4ba0-9cc8-d984034345ba"
+      ],
+      "filled_qty": "0",
+      "state": "Posted",
+      "repost_count": 0,
+      "last_filled_at": null,
+      "fill_count": 0,
+      "inflight_client_order_id": null,
+      "filled_by_order": {}
+    },
+    {
+      "id": "qual_rest_b_BTCUSDT",
+      "template_id": "qual_rest_b",
+      "pair": {
+        "base": "BTC",
+        "quote": "USDT"
+      },
+      "config": {
+        "id": "qual_rest_b",
+        "name": "Paper spot resting B",
+        "side": "Buy",
+        "order_type": "Limit",
+        "quantity": {
+          "type": "Fixed",
+          "value": "0.01"
+        },
+        "price": {
+          "Fixed": "1010"
+        },
+        "risk": {
+          "max_position": "0.02",
+          "max_orders": 1,
+          "max_order_qty": null,
+          "max_notional": null,
+          "daily_loss_limit": null
+        },
+        "lifecycle": {
+          "auto_repost": false,
+          "auto_repost_on_cancel": false,
+          "max_reposts": 0,
+          "repost_delay_secs": 1,
+          "repost_conditions": []
+        },
+        "enabled": true,
+        "group": "paper_ack_amend"
+      },
+      "owned_client_ids": [
+        "baf55052-b0ee-425d-8de0-3dc45aaa96ba"
+      ],
+      "owned_exchange_ids": [
+        "5be28472-8fca-4e0e-8216-0455f44bd539"
       ],
       "filled_qty": "0",
       "state": "Posted",

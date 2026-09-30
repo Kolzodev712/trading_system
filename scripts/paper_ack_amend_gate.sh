@@ -25,6 +25,87 @@ rm -f "$WORK"/runner*.log "$WORK"/k-paper.log "$WORK"/*.jsonl "$WORK"/runtime-sn
 
 fail() { echo "FAILED: $*" >&2; exit 1; }
 
+# Paper BTC, runner position, catalog filled_qty, unique ledger qty must match.
+assert_fill_agreement() {
+  local expect=$1
+  local tag=$2
+  local ok=0
+  local i
+  for i in $(seq 1 40); do
+    paper_get balances >"$EV/balances_${tag}.json" || true
+    cp "$WORK/levels.json" "$EV/catalog_${tag}.json"
+    "$GRPC" status >"$EV/grpc_status_${tag}.txt" 2>/dev/null || true
+    if [[ -f "$WORK/execution-ledger.jsonl" ]]; then
+      cp "$WORK/execution-ledger.jsonl" "$EV/execution-ledger.jsonl"
+    fi
+    if python3 - "$expect" "$tag" <<'PY'
+import json,sys,re
+from pathlib import Path
+expect=float(sys.argv[1])
+tag=sys.argv[2]
+ev=Path("/tmp/paper-ack-amend/evidence")
+eps=1e-6
+
+def fnum(v):
+    try:
+        return float(v)
+    except Exception:
+        return None
+
+paper_btc=0.0
+bp=ev/f"balances_{tag}.json"
+if bp.exists() and bp.stat().st_size>0:
+    raw=json.loads(bp.read_text() or "[]")
+    rows=raw if isinstance(raw,list) else raw.get("balances",[])
+    for b in rows:
+        asset=str(b.get("asset") or b.get("symbol") or "")
+        if asset.upper() in ("BTC","XBT"):
+            paper_btc=float(b.get("total") or b.get("available") or 0)
+            break
+
+status=(ev/f"grpc_status_{tag}.txt").read_text() if (ev/f"grpc_status_{tag}.txt").exists() else ""
+m=re.search(r"position BTCUSDT qty=([0-9.]+)", status)
+runner=float(m.group(1)) if m else 0.0
+
+catalog_qty=0.0
+cat=json.loads((ev/f"catalog_{tag}.json").read_text())
+for inst in cat.get("instances") or []:
+    catalog_qty += float(inst.get("filled_qty") or 0)
+
+ledger_qty=0.0
+seen=set()
+lp=ev/"execution-ledger.jsonl"
+if lp.exists():
+    for line in lp.read_text().splitlines():
+        if not line.strip():
+            continue
+        rec=json.loads(line)
+        fill=rec.get("Fill") or (rec if rec.get("kind")=="fill" else None)
+        if not fill:
+            continue
+        eid=str(fill.get("execution_id") or "")
+        if not eid or eid in seen:
+            continue
+        seen.add(eid)
+        ledger_qty += float(fill.get("quantity") or 0)
+
+vals={"paper_btc":paper_btc,"runner":runner,"catalog":catalog_qty,"ledger":ledger_qty}
+print(f"fill-agree {tag}", vals, "expect", expect)
+for k,v in vals.items():
+    if abs(v-expect)>eps:
+        sys.exit(2)
+if "spot position disagrees" in status.lower():
+    sys.exit(3)
+PY
+    then
+      ok=1
+      break
+    fi
+    sleep 0.25
+  done
+  [[ $ok -eq 1 ]] || fail "position agreement failed after ${tag} (want ${expect})"
+}
+
 wait_http() {
   local url=$1
   local n=${2:-40}
@@ -205,7 +286,7 @@ write_capped_amend_catalog() {
       "order_type": "Limit",
       "quantity": { "type": "Fixed", "value": "0.01" },
       "price": { "Fixed": "1010" },
-      "risk": { "max_position": "0.01", "max_orders": 1 },
+      "risk": { "max_position": "0.02", "max_orders": 1 },
       "lifecycle": {
         "auto_repost": false,
         "auto_repost_on_cancel": false,
@@ -220,7 +301,7 @@ write_capped_amend_catalog() {
   "instances": [],
   "tombstones": [],
   "risk_limits": {
-    "total_max_position": "0.01",
+    "total_max_position": "0.02",
     "max_total_orders": 1,
     "max_notional": "200",
     "max_order_qty": "0.01",
@@ -410,6 +491,7 @@ done
 [[ $ok -eq 1 ]] || fail "REST did not show PartiallyFilled 0.001"
 "$GRPC" status | tee "$EV/grpc_status_after_partial.txt"
 grep -q "PartiallyFilled" "$EV/grpc_status_after_partial.txt" || fail "grpc status missing PartiallyFilled"
+assert_fill_agreement 0.001 partial
 
 DUP=$(paper_post test/lab_fill_open "{\"qty\":\"0.001\",\"order_id\":\"$A_ID\"}")
 echo "$DUP" | tee "$EV/lab_partial_replay.json"
@@ -428,6 +510,7 @@ if filled > 0.0020001:
 PY
 cp "$WORK/levels.json" "$EV/catalog_after_partial.json"
 "$GRPC" status | tee "$EV/grpc_status_after_replay.txt"
+assert_fill_agreement 0.002 replay
 
 kill_pidfile "$WORK/runner.pid"
 sleep 0.3
@@ -465,6 +548,7 @@ if "$A_ID" in owned_b or "$B_ID" in owned_a:
     sys.exit("restart mixed A/B ownership")
 PY
 grep -q "PartiallyFilled" "$EV/grpc_status_after_restart.txt" || fail "grpc after restart missing partial"
+assert_fill_agreement 0.002 restart
 
 echo "== cancel leftover working orders =="
 "$GRPC" cancel paper-ack-amend-cancel | tee "$EV/grpc_cancel.txt" || true

@@ -108,7 +108,7 @@ impl ExchangeStateSubscriber {
     ///
     /// Only updates TradingState if this is an order we placed (tracked in active_orders).
     /// Terminal statuses (Filled, Canceled, Rejected, Expired) remove the order from active_orders.
-    async fn handle_order_update(&self, order: Order) {
+    pub(crate) async fn handle_order_update(&self, order: Order) {
         let journal = self
             .submission_journal
             .lock()
@@ -216,9 +216,10 @@ impl ExchangeStateSubscriber {
     /// Handle trade update from ExchangeStateManager
     ///
     /// Economic fills go to the execution ledger for every instrument type.
-    /// Spot still derives position from trades; futures position is REST/WS truth.
-    async fn handle_trade_update(&self, trade: Trade) {
-        self.record_ledger_trade(&trade).await;
+    /// Spot position quantity changes once per unique trade, using the execution price.
+    /// Futures position is REST/WS truth.
+    pub(crate) async fn handle_trade_update(&self, trade: Trade) {
+        let ledger_new = self.record_ledger_trade(&trade).await;
 
         if matches!(
             self.instrument_type,
@@ -229,40 +230,102 @@ impl ExchangeStateSubscriber {
             );
             return;
         }
+        if !ledger_new {
+            return;
+        }
         let mut state = self.trading_state.write().await;
-
-        // Check if this trade is for an order we placed
-        if state.active_orders.contains_key(&trade.order_id) {
-            // Update position based on trade
-            let quantity = if trade.side == trading_core::types::common::Side::Buy {
-                trade.quantity
-            } else {
-                -trade.quantity // Negative for sells
-            };
-
-            state.update_position(trade.pair.clone(), quantity, trade.price);
+        if state.apply_unique_trade(&trade) {
             debug!(
-                "Updated position from trade: {} {} @ {}",
-                trade.pair, quantity, trade.price
+                "Updated position from unique trade: {} {} @ {}",
+                trade.pair, trade.quantity, trade.price
             );
-        } else {
-            debug!("Ignoring trade update (not our order): {}", trade.trade_id);
         }
     }
 
-    async fn record_ledger_trade(&self, trade: &Trade) {
+    async fn record_ledger_trade(&self, trade: &Trade) -> bool {
         let ledger = self
             .execution_ledger
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .clone();
         let Some(ledger) = ledger else {
-            return;
+            return true;
         };
-        if let Err(err) = ledger.record_trade(trade) {
-            warn!("execution ledger write failed: {err}");
-            let mut state = self.trading_state.write().await;
-            state.halt_new_exposure(format!("execution ledger write failed: {err}"));
+        match ledger.record_trade(trade) {
+            Ok(newly) => newly,
+            Err(err) => {
+                warn!("execution ledger write failed: {err}");
+                let mut state = self.trading_state.write().await;
+                state.halt_new_exposure(format!("execution ledger write failed: {err}"));
+                false
+            }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rust_decimal::Decimal;
+    use trading_core::types::common::{Instrument, OrderId, Pair, Side, Symbol};
+    use trading_core::venue::cex::channels::cex_venue_update_channel;
+
+    fn order(filled: Decimal) -> Order {
+        Order {
+            order_id: OrderId::new("ord-a".into()),
+            client_order_id: Some(smol_str::SmolStr::new("cid-a")),
+            instrument: Instrument::new(InstrumentType::Spot, Pair::new("BTC", "USDT")),
+            side: Side::Buy,
+            price: Decimal::new(1000, 0),
+            amount: Decimal::new(1, 2),
+            internal_created_at: 1,
+            exchange_created_at: Some(1),
+            status: OrderStatus::PartiallyFilled,
+            filled_amount: filled,
+        }
+    }
+
+    fn trade(id: &str, qty: Decimal, price: Decimal) -> Trade {
+        Trade {
+            trade_id: id.into(),
+            order_id: OrderId::new("ord-a".into()),
+            pair: Pair::new("BTC", "USDT"),
+            price,
+            quantity: qty,
+            side: Side::Buy,
+            timestamp: 1,
+            fee: Decimal::ZERO,
+            fee_currency: Symbol::from("USDT"),
+        }
+    }
+
+    #[tokio::test]
+    async fn order_plus_trade_repeats_and_two_partials() {
+        let (_tx, rx) = cex_venue_update_channel(8);
+        let state = Arc::new(RwLock::new(TradingState::new()));
+        let sub = ExchangeStateSubscriber::new(rx, state.clone());
+        let pair = Pair::new("BTC", "USDT");
+
+        sub.handle_order_update(order(Decimal::new(1, 3))).await;
+        sub.handle_trade_update(trade("t1", Decimal::new(1, 3), Decimal::new(1000, 0)))
+            .await;
+        sub.handle_order_update(order(Decimal::new(1, 3))).await;
+        sub.handle_trade_update(trade("t1", Decimal::new(1, 3), Decimal::new(1000, 0)))
+            .await;
+        {
+            let st = state.read().await;
+            assert_eq!(st.position_qty(&pair), Decimal::new(1, 3));
+            assert!(!st.blocks_new_exposure(&pair));
+        }
+
+        sub.handle_order_update(order(Decimal::new(2, 3))).await;
+        sub.handle_trade_update(trade("t2", Decimal::new(1, 3), Decimal::new(1020, 0)))
+            .await;
+        let st = state.read().await;
+        assert_eq!(st.position_qty(&pair), Decimal::new(2, 3));
+        assert_eq!(
+            st.get_position(&pair).unwrap().avg_price,
+            Decimal::new(1010, 0)
+        );
     }
 }

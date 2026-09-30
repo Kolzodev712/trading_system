@@ -361,6 +361,11 @@ pub async fn level_runner(
         .trading_state_manager
         .clone()
         .ok_or("Trading state requires venue.mode \"cex\"")?;
+    for pair in &configured_pairs {
+        if let Err(e) = trading_state.reconcile(pair, None).await {
+            warn!("Startup position reconcile failed for {pair}: {e}");
+        }
+    }
     let readiness = PlatformReadiness {
         venue_mode: bot_config.venue.mode,
         started_at: std::time::SystemTime::now(),

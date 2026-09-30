@@ -1,0 +1,11 @@
+global_trading=true
+entries_paused=false flatten_latched=false
+operator_id=lab
+global_toggle_semantics=legacy SetTradingEnabled: disabling cancels working orders; not PauseEntries/FlattenAndPause
+runner_mode=levels venue=PAPER environment=LOCAL execution_mode=exchange snapshot_unix_ms=1790776720175
+instrument=Spot exchange=Paper orders=2 positions=1 orderbooks=1 indicators=0
+position BTCUSDT qty=0.001 side= entry=49733.1718601966 mark= upnl=
+order 728e1ad7-3eaa-4ba0-9cc8-d984034345ba BTCUSDT Buy px=1000.00 qty=0.010 status=PartiallyFilled level=qual_rest_a
+order 5be28472-8fca-4e0e-8216-0455f44bd539 BTCUSDT Buy px=1010.00 qty=0.010 status=New level=qual_rest_b
+level qual_rest_a_BTCUSDT enabled=true status=Posted filled=1 orders=728e1ad7-3eaa-4ba0-9cc8-d984034345ba
+level qual_rest_b_BTCUSDT enabled=true status=Posted filled=0 orders=5be28472-8fca-4e0e-8216-0455f44bd539

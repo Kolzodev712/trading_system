@@ -22,7 +22,7 @@ use trading_core::{
 };
 
 use exchange_engine::exchanges::k_paper::{
-    client::{run_websocket_loop, KPaperClient, KPaperConfig},
+    client::{run_websocket_loop, KPaperClient, KPaperConfig, KPaperWebsocketLoop},
     PaperConfig,
 };
 
@@ -62,16 +62,16 @@ async fn spawn_paper_client(
     let (_shutdown_tx, shutdown_rx) = broadcast::channel(1);
 
     let loop_handle = tokio::spawn(async move {
-        run_websocket_loop(
-            kpaper_config,
+        run_websocket_loop(KPaperWebsocketLoop {
+            config: kpaper_config,
             command_rx,
             state,
-            None,
-            state_manager,
+            market_data_tx: None,
+            exchange_state_manager: state_manager,
             shutdown_rx,
             balance_ready,
-            None,
-        )
+            connection_state: None,
+        })
         .await
     });
 

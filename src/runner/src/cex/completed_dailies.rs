@@ -65,6 +65,35 @@ fn load_fixture_candles(
     serde_json::from_str(&raw).map_err(|err| format!("candle fixture parse: {err}"))
 }
 
+fn is_fresh_entry_candle_fixture(path: &str) -> bool {
+    std::path::Path::new(path)
+        .file_name()
+        .is_some_and(|name| name == "inc10_demo_fresh_entry_candles.json")
+}
+
+/// Shift completed daily fixture bars so the last bar starts at yesterday UTC relative to `now_ms`.
+///
+/// OHLC values and bar spacing are unchanged. No-op when the series is empty or already aligned.
+pub fn align_daily_replay_to_previous_utc_day(
+    mut candles: Vec<trading_engine::cex::strategies::replay::Candle>,
+    now_ms: u64,
+) -> Vec<trading_engine::cex::strategies::replay::Candle> {
+    let Some(last) = candles.last() else {
+        return candles;
+    };
+    let today_start = now_ms - (now_ms % DAILY_PERIOD_MS);
+    let target_last_start = today_start.saturating_sub(DAILY_PERIOD_MS);
+    let shift = target_last_start as i128 - last.timestamp_ms as i128;
+    if shift == 0 {
+        return candles;
+    }
+    for candle in &mut candles {
+        let aligned = candle.timestamp_ms as i128 + shift;
+        candle.timestamp_ms = u64::try_from(aligned).unwrap_or(0);
+    }
+    candles
+}
+
 impl DailyCompletedCandleSource {
     pub async fn poll_pair(
         &mut self,
@@ -87,6 +116,12 @@ impl DailyCompletedCandleSource {
             candles_path.as_deref(),
             now_override.is_some(),
         )?;
+        let as_of = match now_override.as_deref() {
+            Some(raw) => raw
+                .parse()
+                .map_err(|err| format!("TRADING_TEST_NOW_MS: {err}"))?,
+            None => now_ms,
+        };
         let candles = if let Some(path) = candles_path.as_deref() {
             tracing::info!(
                 path,
@@ -96,15 +131,14 @@ impl DailyCompletedCandleSource {
                 synthetic_candle_fixture = true,
                 "loading synthetic completed-candle fixture; this is not live market data"
             );
-            load_fixture_candles(path)?
+            let loaded = load_fixture_candles(path)?;
+            if is_fresh_entry_candle_fixture(path) {
+                align_daily_replay_to_previous_utc_day(loaded, as_of)
+            } else {
+                loaded
+            }
         } else {
             fetch_bybit_klines(pair, "D", DAILY_BOOTSTRAP_LIMIT).await?
-        };
-        let as_of = match now_override.as_deref() {
-            Some(raw) => raw
-                .parse()
-                .map_err(|err| format!("TRADING_TEST_NOW_MS: {err}"))?,
-            None => now_ms,
         };
         let accepted = self.ingest_fetched(pair, candles, as_of);
         let n = accepted.len();
@@ -208,5 +242,26 @@ mod tests {
         let accepted = source.ingest_fetched(&pair, bars, now);
         assert_eq!(accepted.len(), 2);
         assert_eq!(accepted[1].start_time_ms, DAILY_PERIOD_MS);
+    }
+
+    #[test]
+    fn align_shifts_stale_last_bar_to_yesterday_utc() {
+        let now = DAILY_PERIOD_MS * 10 + 12 * 3_600_000;
+        let bars = vec![
+            candle(DAILY_PERIOD_MS * 7, 100),
+            candle(DAILY_PERIOD_MS * 8, 110),
+        ];
+        let aligned = align_daily_replay_to_previous_utc_day(bars, now);
+        assert_eq!(aligned[0].timestamp_ms, DAILY_PERIOD_MS * 8);
+        assert_eq!(aligned[1].timestamp_ms, DAILY_PERIOD_MS * 9);
+        assert_eq!(aligned[1].close, Decimal::new(110, 0));
+    }
+
+    #[test]
+    fn align_is_noop_when_last_bar_is_already_yesterday() {
+        let now = DAILY_PERIOD_MS * 10 + 1;
+        let bars = vec![candle(DAILY_PERIOD_MS * 9, 110)];
+        let aligned = align_daily_replay_to_previous_utc_day(bars.clone(), now);
+        assert_eq!(aligned[0].timestamp_ms, bars[0].timestamp_ms);
     }
 }

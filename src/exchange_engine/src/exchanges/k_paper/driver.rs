@@ -1,6 +1,8 @@
 //! k-paper exchange driver: runs the WebSocket loop and drives ExchangeStateManager.
 
-use crate::exchanges::k_paper::client::{run_websocket_loop, BalanceReadySender, KPaperConfig};
+use crate::exchanges::k_paper::client::{
+    run_websocket_loop, BalanceReadySender, KPaperConfig, KPaperWebsocketLoop,
+};
 use crate::state::manager::ExchangeStateManager;
 use async_trait::async_trait;
 use std::sync::Arc;
@@ -71,16 +73,16 @@ impl ExchangeDriver for PaperDriver {
 
         let connection_state = self.connection_state.clone();
         let loop_handle = tokio::spawn(async move {
-            run_websocket_loop(
+            run_websocket_loop(KPaperWebsocketLoop {
                 config,
                 command_rx,
                 state,
-                None,
-                state_manager,
-                shutdown_for_loop,
+                market_data_tx: None,
+                exchange_state_manager: state_manager,
+                shutdown_rx: shutdown_for_loop,
                 balance_ready,
-                Some(connection_state),
-            )
+                connection_state: Some(connection_state),
+            })
             .await
         });
 

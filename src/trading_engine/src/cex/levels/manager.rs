@@ -92,6 +92,14 @@ impl LevelManager {
                     .map(|oid| oid.as_str().to_string())
                     .collect(),
                 filled_qty: level.filled_qty,
+                state: Some(level.state.clone()),
+                repost_count: level.repost_count,
+                last_filled_at: level.last_filled_at,
+                fill_count: level.fill_count,
+                inflight_client_order_id: level
+                    .inflight_client_order_id
+                    .as_ref()
+                    .map(|id| id.to_string()),
             })
             .collect();
         let mut tombstones: Vec<String> = self.tombstones.iter().cloned().collect();
@@ -165,6 +173,8 @@ impl LevelManager {
             self.instrument.clone(),
             self.account.as_str(),
         )?;
+        self.tombstones
+            .retain(|id| !self.levels.contains_key(id.as_str()));
         self.config_path = Some(path.to_path_buf());
         Ok(self.risk_limits.clone())
     }
@@ -230,6 +240,11 @@ impl LevelManager {
             })?;
             let prev_enabled = level.config.enabled;
             let prev_state = level.state.clone();
+            if matches!(level.state, LevelState::Deleting) {
+                return Err(EngineError::CustomError(anyhow::anyhow!(
+                    "Level {level_id} is deleting"
+                )));
+            }
             level.config.enabled = true;
             if matches!(level.state, LevelState::Paused) {
                 level.state = LevelState::Created;
@@ -256,6 +271,9 @@ impl LevelManager {
             let prev_enabled = level.config.enabled;
             let prev_state = level.state.clone();
             let prev_generation = level.generation;
+            if matches!(level.state, LevelState::Deleting) {
+                return Ok(());
+            }
             level.config.enabled = false;
             level.state = LevelState::Paused;
             level.generation = level.generation.saturating_add(1);
@@ -306,7 +324,7 @@ impl LevelManager {
         let level = self.levels.get_mut(level_id).ok_or_else(|| {
             EngineError::CustomError(anyhow::anyhow!("Level {} not found", level_id))
         })?;
-        if !level.config.enabled {
+        if !level.config.enabled || matches!(level.state, LevelState::Deleting) {
             return Err(EngineError::CustomError(anyhow::anyhow!(
                 "Level {level_id} is disabled"
             )));
@@ -335,6 +353,61 @@ impl LevelManager {
                 level.state = LevelState::Created;
             }
         }
+    }
+
+    pub fn record_inflight_client_id(
+        &mut self,
+        level_id: &SmolStr,
+        client_order_id: &SmolStr,
+    ) -> Result<(), EngineError> {
+        let (pair, prev_inflight, prev_owned) = {
+            let level = self.levels.get_mut(level_id).ok_or_else(|| {
+                EngineError::CustomError(anyhow::anyhow!("Level {} not found", level_id))
+            })?;
+            let prev_inflight = level.inflight_client_order_id.clone();
+            let prev_owned = level.owned_client_ids.clone();
+            level.inflight_client_order_id = Some(client_order_id.clone());
+            if !level
+                .owned_client_ids
+                .iter()
+                .any(|id| id == client_order_id)
+            {
+                level.owned_client_ids.push(client_order_id.clone());
+            }
+            (level.pair.clone(), prev_inflight, prev_owned)
+        };
+        if let Err(err) = self.persist_canonical() {
+            if let Some(level) = self.levels.get_mut(level_id) {
+                level.inflight_client_order_id = prev_inflight;
+                level.owned_client_ids = prev_owned;
+            }
+            return Err(err);
+        }
+        self.mirror_mongo(&[pair]);
+        Ok(())
+    }
+
+    pub fn clear_inflight_client_id(&mut self, level_id: &SmolStr) -> Result<(), EngineError> {
+        let Some(level) = self.levels.get_mut(level_id) else {
+            return Ok(());
+        };
+        if level.inflight_client_order_id.is_none() {
+            return Ok(());
+        }
+        let prev = level.inflight_client_order_id.take();
+        let pair = level.pair.clone();
+        if let Err(err) = self.persist_canonical() {
+            if let Some(level) = self.levels.get_mut(level_id) {
+                level.inflight_client_order_id = prev;
+            }
+            return Err(err);
+        }
+        self.mirror_mongo(&[pair]);
+        Ok(())
+    }
+
+    pub fn persist_runtime_state(&self) -> Result<(), EngineError> {
+        self.persist_canonical()
     }
 
     pub fn confirm_posted(
@@ -368,6 +441,7 @@ impl LevelManager {
             if !level.active_orders.iter().any(|id| id == order_id) {
                 level.active_orders.push(order_id.clone());
             }
+            level.inflight_client_order_id = None;
             if keep_posted {
                 level.state = LevelState::Posted;
                 level.last_posted_at = Some(trading_core::utils::current_timestamp());
@@ -553,25 +627,45 @@ impl LevelManager {
     }
 
     /// Latch delete before any cancel. Keeps the instance until REST verifies owned IDs are gone.
+    /// Tombstone is written only in `complete_delete` after verification.
     pub fn begin_delete(&mut self, level_id: &SmolStr) -> Result<Vec<OrderId>, EngineError> {
         if self.tombstones.contains(level_id.as_str()) && !self.levels.contains_key(level_id) {
             return Ok(Vec::new());
         }
-        let owned = {
+        if self
+            .levels
+            .get(level_id)
+            .is_some_and(|level| matches!(level.state, LevelState::Deleting))
+        {
+            return Ok(self
+                .levels
+                .get(level_id)
+                .map(|level| level.active_orders.clone())
+                .unwrap_or_default());
+        }
+        let (owned, prev_enabled, prev_state, prev_generation) = {
             let level = self.levels.get_mut(level_id).ok_or_else(|| {
                 EngineError::CustomError(anyhow::anyhow!("Level {} not found", level_id))
             })?;
+            let prev_enabled = level.config.enabled;
+            let prev_state = level.state.clone();
+            let prev_generation = level.generation;
             level.config.enabled = false;
             level.state = LevelState::Deleting;
             level.generation = level.generation.saturating_add(1);
-            self.tombstones.insert(level_id.to_string());
-            level.active_orders.clone()
+            (
+                level.active_orders.clone(),
+                prev_enabled,
+                prev_state,
+                prev_generation,
+            )
         };
         if let Err(err) = self.persist_canonical() {
             if let Some(level) = self.levels.get_mut(level_id) {
-                level.state = LevelState::Paused;
+                level.config.enabled = prev_enabled;
+                level.state = prev_state;
+                level.generation = prev_generation;
             }
-            self.tombstones.remove(level_id.as_str());
             return Err(err);
         }
         Ok(owned)
@@ -581,6 +675,18 @@ impl LevelManager {
         if self.tombstones.contains(level_id.as_str()) && !self.levels.contains_key(level_id) {
             return Ok(());
         }
+        if let Some(level) = self.levels.get(level_id) {
+            if level.inflight_client_order_id.is_some() {
+                return Err(EngineError::CustomError(anyhow::anyhow!(
+                    "delete latched; pending submission unresolved"
+                )));
+            }
+            if !level.active_orders.is_empty() {
+                return Err(EngineError::CustomError(anyhow::anyhow!(
+                    "delete latched; owned orders not REST-verified gone"
+                )));
+            }
+        }
         let Some(level) = self.levels.remove(level_id) else {
             self.tombstones.insert(level_id.to_string());
             self.persist_canonical()?;
@@ -589,6 +695,7 @@ impl LevelManager {
         self.tombstones.insert(level_id.to_string());
         if let Err(err) = self.persist_canonical() {
             self.levels.insert(level_id.clone(), level);
+            self.tombstones.remove(level_id.as_str());
             return Err(err);
         }
         Ok(())
@@ -1037,9 +1144,11 @@ mod tests {
             .unwrap();
         let reloaded = reload(&path, &[pair], Exchange::Paper, "acct-a").await;
         let level = reloaded.get_level(&level_id).unwrap();
-        assert_ne!(level.state, LevelState::Posted);
+        assert_eq!(level.state, LevelState::Filled);
         assert!(level.active_orders.is_empty());
         assert_eq!(level.filled_qty, dec!(0.001));
+        assert_eq!(level.fill_count, 1);
+        assert!(level.last_filled_at.is_some());
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -1058,5 +1167,97 @@ mod tests {
             .unwrap();
         manager.disable_level(&level_id).await.unwrap();
         assert!(!manager.should_repost(&level_id).unwrap());
+    }
+
+    #[tokio::test]
+    async fn pending_delete_survives_restart_with_owned_ids() {
+        let dir = unique_temp_dir();
+        let path = dir.join("levels.json");
+        let pair = Pair::new("BTC", "USDT");
+        let mut manager = LevelManager::new().with_identity_scope(
+            Exchange::Paper,
+            InstrumentType::Spot,
+            SmolStr::new("acct-a"),
+        );
+        manager.config_path = Some(path.clone());
+        let level_id = manager
+            .add_level(create_test_level_config("buy_level_1"), pair.clone())
+            .await
+            .unwrap();
+        manager
+            .confirm_posted(
+                &level_id,
+                &SmolStr::new("cid-1"),
+                &OrderId::new("ex-1".into()),
+            )
+            .unwrap();
+        let owned = manager.begin_delete(&level_id).unwrap();
+        assert_eq!(owned[0].as_str(), "ex-1");
+        assert_eq!(
+            manager.get_level(&level_id).unwrap().state,
+            LevelState::Deleting
+        );
+        let catalog = LevelsCatalog::load_from_path(&path).unwrap();
+        assert!(!catalog.tombstones.iter().any(|id| id == level_id.as_str()));
+        assert!(catalog
+            .instances
+            .iter()
+            .any(|record| record.id == level_id.as_str()
+                && record.owned_exchange_ids == ["ex-1".to_string()]));
+
+        let reloaded = reload(&path, &[pair.clone()], Exchange::Paper, "acct-a").await;
+        let level = reloaded.get_level(&level_id).unwrap();
+        assert_eq!(level.state, LevelState::Deleting);
+        assert_eq!(level.active_orders[0].as_str(), "ex-1");
+        let err = {
+            let mut reloaded = reloaded;
+            reloaded.complete_delete(&level_id).unwrap_err()
+        };
+        assert!(err.to_string().contains("owned orders"));
+
+        let mut reloaded = reload(&path, &[pair.clone()], Exchange::Paper, "acct-a").await;
+        reloaded
+            .handle_order_cancelled(&level_id, &OrderId::new("ex-1".into()), dec!(0))
+            .await
+            .unwrap();
+        reloaded.complete_delete(&level_id).unwrap();
+        let after = reload(&path, &[pair], Exchange::Paper, "acct-a").await;
+        assert!(after.get_level(&level_id).is_none());
+        let catalog = LevelsCatalog::load_from_path(&path).unwrap();
+        assert!(catalog.tombstones.iter().any(|id| id == level_id.as_str()));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn restart_restores_repost_count_and_last_filled_at() {
+        let dir = unique_temp_dir();
+        let path = dir.join("levels.json");
+        let pair = Pair::new("BTC", "USDT");
+        let mut config = create_test_level_config("buy_level_1");
+        config.lifecycle.max_reposts = Some(2);
+        config.lifecycle.repost_delay_secs = Some(60);
+        let mut manager = LevelManager::new().with_identity_scope(
+            Exchange::Paper,
+            InstrumentType::Spot,
+            SmolStr::new("acct-a"),
+        );
+        manager.config_path = Some(path.clone());
+        let level_id = manager.add_level(config, pair.clone()).await.unwrap();
+        manager
+            .handle_order_filled(&level_id, &OrderId::new("ex-1".into()), dec!(0.001))
+            .await
+            .unwrap();
+        {
+            let level = manager.get_level_mut(&level_id).unwrap();
+            level.repost_count = 2;
+        }
+        manager.persist_runtime_state().unwrap();
+
+        let reloaded = reload(&path, &[pair], Exchange::Paper, "acct-a").await;
+        let level = reloaded.get_level(&level_id).unwrap();
+        assert_eq!(level.repost_count, 2);
+        assert!(level.last_filled_at.is_some());
+        assert!(!reloaded.should_repost(&level_id).unwrap());
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

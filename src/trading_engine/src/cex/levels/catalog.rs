@@ -1,7 +1,7 @@
 //! File-canonical levels catalog: templates, pair-specific instances, tombstones.
 use super::config::LevelConfig;
 use super::identity::{expanded_level_id, LevelIdentity};
-use super::level::Level;
+use super::level::{Level, LevelState};
 use crate::risk::RiskLimits;
 use serde::{Deserialize, Serialize};
 use smol_str::SmolStr;
@@ -44,6 +44,16 @@ pub struct LevelInstanceRecord {
     pub owned_exchange_ids: Vec<String>,
     #[serde(default)]
     pub filled_qty: rust_decimal::Decimal,
+    #[serde(default)]
+    pub state: Option<LevelState>,
+    #[serde(default)]
+    pub repost_count: usize,
+    #[serde(default)]
+    pub last_filled_at: Option<u64>,
+    #[serde(default)]
+    pub fill_count: usize,
+    #[serde(default)]
+    pub inflight_client_order_id: Option<String>,
 }
 
 impl LevelsCatalog {
@@ -147,9 +157,6 @@ impl LevelsCatalog {
         let mut out: HashMap<SmolStr, Level> = HashMap::new();
 
         for record in &self.instances {
-            if tombstones.contains(&record.id) {
-                continue;
-            }
             let identity = LevelIdentity::new(
                 venue.clone(),
                 instrument.clone(),
@@ -167,14 +174,28 @@ impl LevelsCatalog {
             }
             let mut level = Level::from_identity(record.config.clone(), identity);
             level.owned_client_ids = record.owned_client_ids.iter().map(SmolStr::new).collect();
+            if let Some(cid) = &record.inflight_client_order_id {
+                let cid = SmolStr::new(cid);
+                if !level.owned_client_ids.iter().any(|owned| owned == &cid) {
+                    level.owned_client_ids.push(cid.clone());
+                }
+                level.inflight_client_order_id = Some(cid);
+            }
             level.filled_qty = record.filled_qty;
+            level.fill_count = record.fill_count;
+            level.repost_count = record.repost_count;
+            level.last_filled_at = record.last_filled_at;
             level.active_orders = record
                 .owned_exchange_ids
                 .iter()
                 .map(|id| trading_core::types::common::OrderId::new(SmolStr::new(id)))
                 .collect();
-            if !level.active_orders.is_empty() {
-                level.state = super::level::LevelState::Posted;
+            match record.state.clone() {
+                Some(state) => level.state = state,
+                None if !level.active_orders.is_empty() => {
+                    level.state = LevelState::Posted;
+                }
+                None => {}
             }
             out.insert(level.identity.instance_id.clone(), level);
         }
@@ -263,6 +284,11 @@ mod tests {
                 owned_client_ids: vec![],
                 owned_exchange_ids: vec![],
                 filled_qty: rust_decimal::Decimal::ZERO,
+                state: None,
+                repost_count: 0,
+                last_filled_at: None,
+                fill_count: 0,
+                inflight_client_order_id: None,
             }],
             tombstones: vec![],
             risk_limits: RiskLimits::default(),
@@ -318,5 +344,71 @@ mod tests {
             .ensure_scope(&Exchange::Paper, &InstrumentType::Spot, "acct-b")
             .unwrap_err();
         assert!(err.to_string().contains("account"));
+    }
+
+    #[test]
+    fn pending_delete_instance_loads_despite_stale_tombstone() {
+        let btc = Pair::new("BTC", "USDT");
+        let mut cfg = template("buy_level_1");
+        cfg.enabled = false;
+        let catalog = LevelsCatalog {
+            levels: vec![template("buy_level_1")],
+            instances: vec![LevelInstanceRecord {
+                id: "buy_level_1_BTCUSDT".into(),
+                template_id: "buy_level_1".into(),
+                pair: btc.clone(),
+                config: cfg,
+                owned_client_ids: vec!["cid-1".into()],
+                owned_exchange_ids: vec!["ex-1".into()],
+                filled_qty: rust_decimal::Decimal::ZERO,
+                state: Some(LevelState::Deleting),
+                repost_count: 0,
+                last_filled_at: None,
+                fill_count: 0,
+                inflight_client_order_id: None,
+            }],
+            tombstones: vec!["buy_level_1_BTCUSDT".into()],
+            risk_limits: RiskLimits::default(),
+            ..Default::default()
+        };
+        let levels = catalog
+            .materialize(&[btc], Exchange::Paper, InstrumentType::Spot, "test")
+            .unwrap();
+        let level = &levels[&SmolStr::new("buy_level_1_BTCUSDT")];
+        assert_eq!(level.state, LevelState::Deleting);
+        assert_eq!(level.active_orders[0].as_str(), "ex-1");
+    }
+
+    #[test]
+    fn materialize_restores_repost_lifecycle_fields() {
+        let btc = Pair::new("BTC", "USDT");
+        let catalog = LevelsCatalog {
+            levels: vec![template("buy_level_1")],
+            instances: vec![LevelInstanceRecord {
+                id: "buy_level_1_BTCUSDT".into(),
+                template_id: "buy_level_1".into(),
+                pair: btc.clone(),
+                config: template("buy_level_1"),
+                owned_client_ids: vec![],
+                owned_exchange_ids: vec![],
+                filled_qty: rust_decimal::Decimal::ZERO,
+                state: Some(LevelState::Filled),
+                repost_count: 3,
+                last_filled_at: Some(1_700_000_000_000),
+                fill_count: 3,
+                inflight_client_order_id: None,
+            }],
+            tombstones: vec![],
+            risk_limits: RiskLimits::default(),
+            ..Default::default()
+        };
+        let levels = catalog
+            .materialize(&[btc], Exchange::Paper, InstrumentType::Spot, "test")
+            .unwrap();
+        let level = &levels[&SmolStr::new("buy_level_1_BTCUSDT")];
+        assert_eq!(level.state, LevelState::Filled);
+        assert_eq!(level.repost_count, 3);
+        assert_eq!(level.last_filled_at, Some(1_700_000_000_000));
+        assert_eq!(level.fill_count, 3);
     }
 }

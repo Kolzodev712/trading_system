@@ -57,6 +57,7 @@ pub struct TradingCliServiceImpl {
     environment: String,
     operator_results: Arc<Mutex<HashMap<String, trading_cli::OperatorCommandResponse>>>,
     submission_journal: Option<Arc<trading_engine::state::SubmissionJournal>>,
+    restart_flag_path: Option<String>,
 }
 
 impl TradingCliServiceImpl {
@@ -98,6 +99,7 @@ impl TradingCliServiceImpl {
             environment: "UNKNOWN".to_string(),
             operator_results: Arc::new(Mutex::new(HashMap::new())),
             submission_journal: None,
+            restart_flag_path: None,
         }
     }
 
@@ -209,6 +211,11 @@ impl TradingCliServiceImpl {
         self
     }
 
+    pub fn with_restart_flag_path(mut self, path: impl Into<String>) -> Self {
+        self.restart_flag_path = Some(path.into());
+        self
+    }
+
     fn clone_for_streaming(&self) -> Self {
         Self {
             level_manager: self.level_manager.clone(),
@@ -237,6 +244,7 @@ impl TradingCliServiceImpl {
             environment: self.environment.clone(),
             operator_results: self.operator_results.clone(),
             submission_journal: self.submission_journal.clone(),
+            restart_flag_path: self.restart_flag_path.clone(),
         }
     }
 
@@ -741,17 +749,36 @@ impl TradingCliService for TradingCliServiceImpl {
     ) -> Result<Response<trading_cli::RequestRestartResponse>, Status> {
         self.require_mutating(&request)?;
         let req = request.into_inner();
-        let op = self.strategy_operator.as_ref().ok_or_else(|| {
-            Status::failed_precondition("Strategy config not available (not in strategies mode)")
-        })?;
         let on_stop = if req.on_stop.is_empty() {
             "cancel_working"
         } else {
             req.on_stop.as_str()
         };
-        op.request_restart(on_stop)
-            .await
-            .map_err(Status::failed_precondition)?;
+        match on_stop {
+            "cancel_working" | "flatten" | "keep_working" => {}
+            other => {
+                return Err(Status::invalid_argument(format!(
+                    "on_stop={other} is not implemented; use cancel_working, flatten, or keep_working"
+                )));
+            }
+        }
+        if let Some(op) = self.strategy_operator.as_ref() {
+            op.request_restart(on_stop)
+                .await
+                .map_err(Status::failed_precondition)?;
+        } else {
+            let path = self.restart_flag_path.as_ref().ok_or_else(|| {
+                Status::failed_precondition("Restart flag path is not configured")
+            })?;
+            if let Some(parent) = std::path::Path::new(path).parent() {
+                std::fs::create_dir_all(parent).map_err(|e| {
+                    Status::failed_precondition(format!("create restart flag dir: {e}"))
+                })?;
+            }
+            std::fs::write(path, "1\n")
+                .map_err(|e| Status::failed_precondition(format!("write restart flag: {e}")))?;
+            *self.trading_control.enabled_flag().write().await = false;
+        }
         Ok(Response::new(trading_cli::RequestRestartResponse {
             success: true,
             message: "Restart requested. Supervisor script will relaunch.".to_string(),

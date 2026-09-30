@@ -198,16 +198,17 @@ impl LevelService {
     ) -> Result<Response<trading_cli::UpdateLevelResponse>, Status> {
         let req = request.into_inner();
         let level_id = SmolStr::new(&req.level_id);
+        let requested_enabled = req.config.as_ref().map(|c| c.enabled);
 
         let mut level_manager = self.level_manager.write().await;
         let current = level_manager
             .get_level(&level_id)
             .ok_or_else(|| Status::not_found(format!("Level {} not found", req.level_id)))?;
+        let current_enabled = current.config.enabled;
         let mut draft = current.config.clone();
 
         if let Some(config) = req.config {
             reject_daily_loss_field(&config.risk_limit)?;
-            draft.enabled = config.enabled;
             if let Some(max_position) = parse_optional_positive_decimal(&config.max_position_size)?
             {
                 draft.risk.max_position = Some(max_position);
@@ -246,10 +247,20 @@ impl LevelService {
             }
         }
 
+        // Persist other fields with the current enabled flag. Enable/disable uses
+        // set_level_enabled (same latch + REST-verify path as ToggleLevel).
+        draft.enabled = current_enabled;
         level_manager
             .update_level_config(&level_id, draft)
             .await
             .map_err(|e| Status::internal(format!("Failed to update level: {}", e)))?;
+        drop(level_manager);
+
+        if let Some(want_enabled) = requested_enabled {
+            if want_enabled != current_enabled {
+                self.set_level_enabled(&level_id, want_enabled).await?;
+            }
+        }
 
         tracing::info!("[gRPC] Level {} updated", req.level_id);
 
@@ -264,60 +275,64 @@ impl LevelService {
     ) -> Result<Response<trading_cli::ToggleLevelResponse>, Status> {
         let req = request.into_inner();
         let level_id = SmolStr::new(&req.level_id);
+        self.set_level_enabled(&level_id, req.enabled).await?;
+        Ok(Response::new(trading_cli::ToggleLevelResponse {
+            success: true,
+        }))
+    }
 
+    /// Latch enable/disable, and on disable REST-verify owned orders are gone.
+    async fn set_level_enabled(&self, level_id: &SmolStr, enabled: bool) -> Result<(), Status> {
         let mut level_manager = self.level_manager.write().await;
 
         let current_enabled = level_manager
-            .get_level(&level_id)
+            .get_level(level_id)
             .map(|l| l.config.enabled)
-            .ok_or_else(|| Status::not_found(format!("Level {} not found", req.level_id)))?;
+            .ok_or_else(|| Status::not_found(format!("Level {level_id} not found")))?;
 
         let global_trading_enabled = self.trading_control.is_enabled().await;
-        if !global_trading_enabled && req.enabled {
+        if !global_trading_enabled && enabled {
             return Err(Status::failed_precondition(
                 "Cannot enable individual level when global trading is disabled. Enable global trading first.",
             ));
         }
 
-        if current_enabled != req.enabled {
-            if req.enabled {
-                level_manager
-                    .enable_level(&level_id)
-                    .await
-                    .map_err(|e| Status::internal(format!("Failed to enable level: {}", e)))?;
-            } else {
-                level_manager
-                    .disable_level(&level_id)
-                    .await
-                    .map_err(|e| Status::internal(format!("Failed to disable level: {}", e)))?;
-                let owned = level_manager
-                    .get_level(&level_id)
-                    .map(|level| level.active_orders.clone())
-                    .unwrap_or_default();
-                drop(level_manager);
-                if !owned.is_empty() {
-                    let client = self.trading_client.write().await;
-                    if let Err(err) =
-                        trading_engine::levels::cancel_owned_order_ids(&*client, &owned).await
-                    {
-                        return Err(Status::failed_precondition(format!(
-                            "disable latched but owned-order cancel unverified: {err}"
-                        )));
-                    }
-                    drop(client);
-                    let mut level_manager = self.level_manager.write().await;
-                    level_manager
-                        .retire_verified_order_ids(&level_id, &owned)
-                        .map_err(|e| {
-                            Status::internal(format!("Failed to retire owned ids: {e}"))
-                        })?;
-                }
-            }
+        if current_enabled == enabled {
+            return Ok(());
         }
 
-        Ok(Response::new(trading_cli::ToggleLevelResponse {
-            success: true,
-        }))
+        if enabled {
+            level_manager
+                .enable_level(level_id)
+                .await
+                .map_err(|e| Status::internal(format!("Failed to enable level: {e}")))?;
+            return Ok(());
+        }
+
+        level_manager
+            .disable_level(level_id)
+            .await
+            .map_err(|e| Status::internal(format!("Failed to disable level: {e}")))?;
+        let owned = level_manager
+            .get_level(level_id)
+            .map(|level| level.active_orders.clone())
+            .unwrap_or_default();
+        drop(level_manager);
+        if !owned.is_empty() {
+            let client = self.trading_client.write().await;
+            if let Err(err) = trading_engine::levels::cancel_owned_order_ids(&*client, &owned).await
+            {
+                return Err(Status::failed_precondition(format!(
+                    "disable latched but owned-order cancel unverified: {err}"
+                )));
+            }
+            drop(client);
+            let mut level_manager = self.level_manager.write().await;
+            level_manager
+                .retire_verified_order_ids(level_id, &owned)
+                .map_err(|e| Status::internal(format!("Failed to retire owned ids: {e}")))?;
+        }
+        Ok(())
     }
 
     pub async fn delete_level(
@@ -363,8 +378,13 @@ fn parse_optional_positive_decimal(raw: &str) -> Result<Option<rust_decimal::Dec
     }
     let value = rust_decimal::Decimal::from_str_exact(trimmed)
         .map_err(|e| Status::invalid_argument(format!("Invalid decimal: {e}")))?;
-    if value <= rust_decimal::Decimal::ZERO {
+    if value.is_zero() {
         return Ok(None);
+    }
+    if value < rust_decimal::Decimal::ZERO {
+        return Err(Status::invalid_argument(
+            "decimal must be strictly positive (zero unsets the cap)",
+        ));
     }
     Ok(Some(value))
 }
@@ -382,9 +402,13 @@ fn reject_daily_loss_field(raw: &str) -> Result<(), Status> {
 mod tests {
     use super::*;
     use async_trait::async_trait;
+    use rust_decimal::Decimal;
+    use std::sync::Mutex;
     use trading_core::error::EngineError;
     use trading_core::registry::symbol::SymbolRegistry;
-    use trading_core::types::common::{Exchange, OrderId, Pair};
+    use trading_core::types::common::{
+        Exchange, Instrument, InstrumentType, OrderId, OrderStatus, Pair, Side,
+    };
     use trading_core::types::exchange::{Balance, Order, Trade};
     use trading_core::venue::cex::channels::cex_venue_update_channel;
 
@@ -441,9 +465,72 @@ mod tests {
         }
     }
 
+    #[derive(Debug)]
+    struct RestingOrderClient {
+        open: Arc<Mutex<Vec<Order>>>,
+    }
+
+    #[async_trait]
+    impl TradingClient<OrderRequest> for RestingOrderClient {
+        fn exchange_id(&self) -> Exchange {
+            Exchange::Paper
+        }
+        async fn test_open_order(&self, _req: OrderRequest) -> Result<(), EngineError> {
+            Ok(())
+        }
+        async fn open_order(&self, _req: OrderRequest) -> Result<Order, EngineError> {
+            Err(EngineError::NotSupported("test".into()))
+        }
+        async fn cancel_order_by_id(&self, order_id: OrderId) -> Result<(), EngineError> {
+            self.open
+                .lock()
+                .unwrap()
+                .retain(|order| order.order_id != order_id);
+            Ok(())
+        }
+        async fn cancel_all_orders(&self, _pair: &Pair) -> Result<(), EngineError> {
+            panic!("must not cancel_all");
+        }
+        async fn fetch_balance(&self) -> Result<Vec<Balance>, EngineError> {
+            Ok(vec![])
+        }
+        async fn fetch_open_orders(&self) -> Result<Vec<Order>, EngineError> {
+            Ok(self.open.lock().unwrap().clone())
+        }
+        async fn fetch_trades(&self, _pair: Option<&Pair>) -> Result<Vec<Trade>, EngineError> {
+            Ok(vec![])
+        }
+        async fn fetch_market_data_snapshot(&self, _pair: &Pair) -> Result<(), EngineError> {
+            Ok(())
+        }
+        async fn amend_order(
+            &self,
+            _order_id: OrderId,
+            _new_request: OrderRequest,
+        ) -> Result<Order, EngineError> {
+            Err(EngineError::NotSupported("test".into()))
+        }
+        async fn bulk_open_orders(
+            &self,
+            _req: trading_core::types::exchange::BulkOrderRequest,
+        ) -> Result<trading_core::types::exchange::BulkOrderResponse, EngineError> {
+            Err(EngineError::NotSupported("test".into()))
+        }
+        async fn bulk_amend_orders(
+            &self,
+            _req: trading_core::types::exchange::BulkAmendRequest,
+        ) -> Result<trading_core::types::exchange::BulkAmendResponse, EngineError> {
+            Err(EngineError::NotSupported("test".into()))
+        }
+    }
+
     fn level_service() -> LevelService {
-        let client: Arc<RwLock<dyn TradingClient<OrderRequest>>> =
-            Arc::new(RwLock::new(EmptyRestClient));
+        level_service_from_client(Arc::new(RwLock::new(EmptyRestClient)))
+    }
+
+    fn level_service_from_client(
+        client: Arc<RwLock<dyn TradingClient<OrderRequest>>>,
+    ) -> LevelService {
         let (tx, _rx) = cex_venue_update_channel(8);
         let exchange_state_manager = Arc::new(ExchangeStateManager::new(
             tx,
@@ -564,7 +651,131 @@ mod tests {
         assert!(parse_optional_positive_decimal("0.0").unwrap().is_none());
         assert!(parse_optional_positive_decimal("").unwrap().is_none());
         assert!(parse_optional_positive_decimal("1.5").unwrap().is_some());
+        assert!(parse_optional_positive_decimal("-1").is_err());
+        assert!(parse_optional_positive_decimal("-0.01").is_err());
         reject_daily_loss_field("0").unwrap();
         assert!(reject_daily_loss_field("10").is_err());
+        assert!(reject_daily_loss_field("-5").is_err());
+    }
+
+    fn working_rest_order(id: &str) -> Order {
+        Order {
+            order_id: OrderId::new(id.into()),
+            client_order_id: Some(SmolStr::new("cid-1")),
+            instrument: Instrument::new(InstrumentType::Spot, Pair::new("BTC", "USDT")),
+            side: Side::Buy,
+            price: Decimal::new(50000, 0),
+            amount: Decimal::new(1, 3),
+            internal_created_at: 1,
+            exchange_created_at: Some(1),
+            status: OrderStatus::New,
+            filled_amount: Decimal::ZERO,
+        }
+    }
+
+    async fn posted_level_with_resting_order(open: Arc<Mutex<Vec<Order>>>) -> LevelService {
+        let service = level_service_from_client(Arc::new(RwLock::new(RestingOrderClient {
+            open: open.clone(),
+        })));
+        service
+            .create_level(Request::new(trading_cli::CreateLevelRequest {
+                config: Some(ui_create_config()),
+            }))
+            .await
+            .unwrap();
+        {
+            let mut manager = service.level_manager.write().await;
+            manager
+                .confirm_posted(
+                    &SmolStr::new("buy_level_1_BTCUSDT"),
+                    &SmolStr::new("cid-1"),
+                    &OrderId::new("ex-1".into()),
+                )
+                .unwrap();
+        }
+        open.lock().unwrap().push(working_rest_order("ex-1"));
+        service
+    }
+
+    #[tokio::test]
+    async fn update_disable_cancels_resting_order() {
+        let open = Arc::new(Mutex::new(Vec::new()));
+        let service = posted_level_with_resting_order(open.clone()).await;
+        let mut disable = ui_create_config();
+        disable.enabled = false;
+        service
+            .update_level(Request::new(trading_cli::UpdateLevelRequest {
+                level_id: "buy_level_1_BTCUSDT".into(),
+                config: Some(disable),
+            }))
+            .await
+            .unwrap();
+        assert!(open.lock().unwrap().is_empty());
+        let level = service
+            .get_level(Request::new(trading_cli::GetLevelRequest {
+                level_id: "buy_level_1_BTCUSDT".into(),
+            }))
+            .await
+            .unwrap()
+            .into_inner()
+            .level
+            .unwrap();
+        assert!(!level.enabled);
+        assert_eq!(level.status, "Paused");
+        assert!(level.active_orders.is_empty());
+    }
+
+    #[tokio::test]
+    async fn update_enable_unsticks_paused_level() {
+        let open = Arc::new(Mutex::new(Vec::new()));
+        let service = posted_level_with_resting_order(open.clone()).await;
+        let mut disable = ui_create_config();
+        disable.enabled = false;
+        service
+            .update_level(Request::new(trading_cli::UpdateLevelRequest {
+                level_id: "buy_level_1_BTCUSDT".into(),
+                config: Some(disable),
+            }))
+            .await
+            .unwrap();
+        service
+            .trading_control
+            .set_enabled(true, vec![], vec![])
+            .await
+            .unwrap();
+        let mut enable = ui_create_config();
+        enable.enabled = true;
+        service
+            .update_level(Request::new(trading_cli::UpdateLevelRequest {
+                level_id: "buy_level_1_BTCUSDT".into(),
+                config: Some(enable),
+            }))
+            .await
+            .unwrap();
+        let level = service
+            .get_level(Request::new(trading_cli::GetLevelRequest {
+                level_id: "buy_level_1_BTCUSDT".into(),
+            }))
+            .await
+            .unwrap()
+            .into_inner()
+            .level
+            .unwrap();
+        assert!(level.enabled);
+        assert_eq!(level.status, "Created");
+    }
+
+    #[tokio::test]
+    async fn negative_max_position_is_rejected() {
+        let service = level_service();
+        let mut bad = ui_create_config();
+        bad.max_position_size = "-1".into();
+        let err = service
+            .create_level(Request::new(trading_cli::CreateLevelRequest {
+                config: Some(bad),
+            }))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::InvalidArgument);
     }
 }

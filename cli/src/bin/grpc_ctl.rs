@@ -12,14 +12,15 @@ mod trading_cli {
 
 use trading_cli::trading_cli_service_client::TradingCliServiceClient;
 use trading_cli::{
-    GetMonitoringDataRequest, GetStrategyConfigRequest, GetTradingStatusRequest,
-    OperatorCommandRequest, RequestRestartRequest, SetTradingEnabledRequest, ToggleStrategyRequest,
+    DeleteLevelRequest, GetLevelsRequest, GetMonitoringDataRequest, GetStrategyConfigRequest,
+    GetTradingStatusRequest, OperatorCommandRequest, RequestRestartRequest,
+    SetTradingEnabledRequest, ToggleLevelRequest, ToggleStrategyRequest, UpdateLevelRequest,
     UpdateStrategyCapRequest,
 };
 
 fn usage() -> ! {
     eprintln!(
-        "usage: grpc_ctl <enable|disable|status|cap|config|restart|pause|cancel|flatten|resume> [args]
+        "usage: grpc_ctl <enable|disable|status|cap|config|restart|pause|cancel|flatten|resume|levels|toggle-level|delete-level|update-level> [args]
   enable [StrategyName]
   disable [StrategyName]
   status
@@ -30,6 +31,10 @@ fn usage() -> ! {
   cancel [request_id] [symbol]
   flatten [request_id] [symbol]
   resume [request_id] [symbol]
+  levels
+  toggle-level <level_id> <true|false>
+  delete-level <level_id>
+  update-level <level_id> price=Fixed(N)
 
 env: TRADING_GRPC (default http://127.0.0.1:50051)
      TRADING_STRATEGY (default PropHold)
@@ -90,15 +95,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .await?
                 .into_inner();
             println!("trading enabled={} msg={}", resp.success, resp.message);
-            let resp = client
+            match client
                 .toggle_strategy(ToggleStrategyRequest {
                     strategy_name,
                     symbol,
                     enabled: true,
                 })
-                .await?
-                .into_inner();
-            println!("strategy enabled={} msg={}", resp.success, resp.message);
+                .await
+            {
+                Ok(resp) => {
+                    let resp = resp.into_inner();
+                    println!("strategy enabled={} msg={}", resp.success, resp.message);
+                }
+                Err(status) => {
+                    println!(
+                        "strategy toggle skipped (levels mode or unavailable): {}",
+                        status.message()
+                    );
+                }
+            }
         }
         "disable" => {
             let strategy_name = args.next().unwrap_or(default_name);
@@ -190,10 +205,100 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             for o in data.orders {
                 println!(
-                    "order {} {} {} px={} qty={} status={}",
-                    o.order_id, o.symbol, o.side, o.price, o.quantity, o.status
+                    "order {} {} {} px={} qty={} status={} level={}",
+                    o.order_id, o.symbol, o.side, o.price, o.quantity, o.status, o.level_id
                 );
             }
+            if let Ok(levels) = client.get_levels(GetLevelsRequest {}).await {
+                for level in levels.into_inner().levels {
+                    println!(
+                        "level {} enabled={} status={} filled={} orders={}",
+                        level.id,
+                        level.enabled,
+                        level.status,
+                        level.filled_count,
+                        level.active_orders.join(",")
+                    );
+                }
+            }
+        }
+        "levels" => {
+            let resp = client.get_levels(GetLevelsRequest {}).await?.into_inner();
+            if resp.levels.is_empty() {
+                println!("levels=0");
+            }
+            for level in resp.levels {
+                println!(
+                    "level {} enabled={} status={} filled={} orders={}",
+                    level.id,
+                    level.enabled,
+                    level.status,
+                    level.filled_count,
+                    level.active_orders.join(",")
+                );
+            }
+        }
+        "toggle-level" => {
+            let level_id = args.next().unwrap_or_else(|| usage());
+            let enabled = match args.next().unwrap_or_else(|| usage()).as_str() {
+                "true" | "on" | "1" | "enable" => true,
+                "false" | "off" | "0" | "disable" => false,
+                _ => usage(),
+            };
+            let resp = client
+                .toggle_level(ToggleLevelRequest { level_id, enabled })
+                .await?
+                .into_inner();
+            println!("toggle-level success={}", resp.success);
+        }
+        "delete-level" => {
+            let level_id = args.next().unwrap_or_else(|| usage());
+            let resp = client
+                .delete_level(DeleteLevelRequest { level_id })
+                .await?
+                .into_inner();
+            println!("delete-level success={}", resp.success);
+        }
+        "update-level" => {
+            let level_id = args.next().unwrap_or_else(|| usage());
+            let mut price_override = None;
+            let mut qty_override = None;
+            for raw in args {
+                if let Some(v) = raw.strip_prefix("price=") {
+                    price_override = Some(v.to_string());
+                } else if let Some(v) = raw.strip_prefix("qty=") {
+                    qty_override = Some(v.to_string());
+                } else {
+                    usage();
+                }
+            }
+            if price_override.is_none() && qty_override.is_none() {
+                usage();
+            }
+            let current = client
+                .get_level(trading_cli::GetLevelRequest {
+                    level_id: level_id.clone(),
+                })
+                .await?
+                .into_inner()
+                .level
+                .and_then(|l| l.config)
+                .ok_or("level config missing")?;
+            let mut config = current;
+            if let Some(price) = price_override {
+                config.price = price;
+            }
+            if let Some(quantity) = qty_override {
+                config.quantity = quantity;
+            }
+            let resp = client
+                .update_level(UpdateLevelRequest {
+                    level_id,
+                    config: Some(config),
+                })
+                .await?
+                .into_inner();
+            println!("update-level success={}", resp.success);
         }
         "cap" => {
             let strategy_name = args.next().unwrap_or_else(|| usage());

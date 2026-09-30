@@ -211,13 +211,13 @@ impl RiskManager {
             }
         }
 
-        let position_qty = trading_state.effective_position_qty(&order_request.instrument.pair);
+        let filled_qty = trading_state.position_qty(&order_request.instrument.pair);
         self.check_pre_trade(
             &order_request,
             trading_state,
             balances,
             current_prices,
-            position_qty,
+            filled_qty,
             None,
         )
         .await
@@ -225,9 +225,11 @@ impl RiskManager {
 
     /// Pre-trade risk check (for any order request).
     ///
-    /// `position_qty` is the filled position. Futures orders that reduce it are not
-    /// blocked for lack of the base asset. `leverage` scales the quote margin
-    /// required to increase a futures position.
+    /// `position_qty` is the **filled** position. Working/reserved qty is read from
+    /// `trading_state` and applied in adverse fill order (same-side unfilled adds
+    /// to opening; opposite-side unfilled does not reduce it). Futures reductions
+    /// are not blocked for lack of the base asset. `leverage` scales the quote
+    /// margin required to increase a futures position.
     pub async fn check_pre_trade(
         &self,
         order_request: &OrderRequest,
@@ -262,13 +264,40 @@ impl RiskManager {
             return daily_loss_check;
         }
 
+        let same_side_unfilled = trading_state
+            .unfilled_same_side_qty(&order_request.instrument.pair, order_request.side.clone());
+        let futures = matches!(
+            order_request.instrument.instrument_type(),
+            InstrumentType::Futures | InstrumentType::Derivitives
+        );
+        let opening = if futures {
+            futures_adverse_opening_qty(
+                order_request.side.clone(),
+                position_qty,
+                same_side_unfilled,
+                order_request.amount,
+            )
+        } else {
+            Decimal::ZERO
+        };
+
         // Check balance. Futures reductions are allowed through; increases use quote margin.
-        let balance_check = check_order_balance(order_request, balances, position_qty, leverage);
+        let balance_check = check_order_balance_adverse(
+            order_request,
+            balances,
+            position_qty,
+            same_side_unfilled,
+            leverage,
+        );
         if !balance_check.allowed {
             return balance_check;
         }
 
-        let increasing = order_increases_exposure(order_request.side.clone(), position_qty);
+        let increasing = if futures {
+            opening > Decimal::ZERO
+        } else {
+            order_increases_exposure(order_request.side.clone(), position_qty)
+        };
         if increasing {
             let total_position_check = self.check_total_position_limits(trading_state);
             if !total_position_check.allowed {
@@ -596,19 +625,26 @@ pub fn order_increases_exposure(side: Side, position_qty: Decimal) -> bool {
     }
 }
 
-/// Qty of a futures order that opens or adds to exposure after reducing any opposite position.
-pub fn futures_opening_qty(side: Side, position_qty: Decimal, amount: Decimal) -> Decimal {
-    let order_sign = match side {
-        Side::Buy => Decimal::ONE,
-        Side::Sell => -Decimal::ONE,
+/// Qty of a futures order that opens or adds to exposure after reducing any opposite **filled** position.
+/// Same-side working/reserved qty is assumed to fill first (adverse); opposite-side working is ignored.
+pub fn futures_adverse_opening_qty(
+    side: Side,
+    filled_qty: Decimal,
+    same_side_unfilled: Decimal,
+    amount: Decimal,
+) -> Decimal {
+    let gross = amount.max(Decimal::ZERO) + same_side_unfilled.max(Decimal::ZERO);
+    let reducible = match side {
+        Side::Sell if filled_qty > Decimal::ZERO => filled_qty,
+        Side::Buy if filled_qty < Decimal::ZERO => filled_qty.abs(),
+        _ => Decimal::ZERO,
     };
-    if position_qty.is_zero()
-        || (order_sign > Decimal::ZERO && position_qty > Decimal::ZERO)
-        || (order_sign < Decimal::ZERO && position_qty < Decimal::ZERO)
-    {
-        return amount.max(Decimal::ZERO);
-    }
-    (amount - position_qty.abs()).max(Decimal::ZERO)
+    (gross - reducible).max(Decimal::ZERO)
+}
+
+/// Qty of a futures order that opens or adds to exposure after reducing any opposite filled position.
+pub fn futures_opening_qty(side: Side, position_qty: Decimal, amount: Decimal) -> Decimal {
+    futures_adverse_opening_qty(side, position_qty, Decimal::ZERO, amount)
 }
 
 /// Spot checks inventory. Futures increases require quote margin. Futures reductions do not
@@ -619,14 +655,31 @@ pub fn check_order_balance(
     position_qty: Decimal,
     leverage: Option<u32>,
 ) -> RiskCheckResult {
+    check_order_balance_adverse(
+        order_request,
+        balances,
+        position_qty,
+        Decimal::ZERO,
+        leverage,
+    )
+}
+
+fn check_order_balance_adverse(
+    order_request: &OrderRequest,
+    balances: &[Balance],
+    filled_qty: Decimal,
+    same_side_unfilled: Decimal,
+    leverage: Option<u32>,
+) -> RiskCheckResult {
     let pair = order_request.instrument.pair.clone();
     if matches!(
         order_request.instrument.instrument_type(),
         InstrumentType::Futures | InstrumentType::Derivitives
     ) {
-        let opening = futures_opening_qty(
+        let opening = futures_adverse_opening_qty(
             order_request.side.clone(),
-            position_qty,
+            filled_qty,
+            same_side_unfilled,
             order_request.amount,
         );
         if opening <= Decimal::ZERO {
@@ -765,6 +818,83 @@ mod balance_tests {
             Some(5),
         );
         assert!(close_only.allowed);
+    }
+
+    fn working_futures_buy(qty: Decimal) -> trading_core::types::exchange::Order {
+        trading_core::types::exchange::Order {
+            order_id: trading_core::types::common::OrderId::new("working-buy".into()),
+            client_order_id: None,
+            instrument: Instrument::new(InstrumentType::Futures, Pair::new("BTC", "USDT")),
+            side: Side::Buy,
+            price: dec!(100),
+            amount: qty,
+            internal_created_at: 1,
+            exchange_created_at: Some(1),
+            status: trading_core::types::common::OrderStatus::New,
+            filled_amount: Decimal::ZERO,
+        }
+    }
+
+    #[test]
+    fn adverse_opening_ignores_opposite_working_and_adds_same_side() {
+        assert_eq!(
+            futures_adverse_opening_qty(Side::Sell, dec!(1), Decimal::ZERO, dec!(3)),
+            dec!(2)
+        );
+        assert_eq!(
+            futures_adverse_opening_qty(Side::Sell, dec!(1), dec!(1), dec!(3)),
+            dec!(3)
+        );
+    }
+
+    #[tokio::test]
+    async fn futures_sell_margin_uses_filled_not_working_buy() {
+        let risk = RiskManager::new(
+            RiskLimits {
+                max_order_qty: Some(dec!(10)),
+                ..RiskLimits::default()
+            },
+            Arc::new(trading_core::registry::symbol::SymbolRegistry::from_pairs(
+                vec![Pair::new("BTC", "USDT")],
+            )),
+        );
+        let mut state = TradingState::new();
+        state.set_position(Pair::new("BTC", "USDT"), dec!(1), dec!(100));
+        state.add_order(working_futures_buy(dec!(1)));
+        let mut sell = req(InstrumentType::Futures, Side::Sell);
+        sell.amount = dec!(3);
+        let blocked = risk
+            .check_pre_trade(&sell, &state, &[usdt(dec!(30))], None, dec!(1), Some(5))
+            .await;
+        assert!(!blocked.allowed, "{:?}", blocked.reason);
+        let allowed = risk
+            .check_pre_trade(&sell, &state, &[usdt(dec!(40))], None, dec!(1), Some(5))
+            .await;
+        assert!(allowed.allowed, "{:?}", allowed.reason);
+    }
+
+    #[tokio::test]
+    async fn futures_flip_counts_against_global_order_cap() {
+        let risk = RiskManager::new(
+            RiskLimits {
+                max_total_orders: Some(1),
+                max_order_qty: Some(dec!(10)),
+                ..RiskLimits::default()
+            },
+            Arc::new(trading_core::registry::symbol::SymbolRegistry::from_pairs(
+                vec![Pair::new("BTC", "USDT")],
+            )),
+        );
+        let mut state = TradingState::new();
+        state.set_position(Pair::new("BTC", "USDT"), dec!(1), dec!(100));
+        state.add_order(working_futures_buy(dec!(1)));
+        let mut sell = req(InstrumentType::Futures, Side::Sell);
+        sell.amount = dec!(3);
+        let blocked = risk
+            .check_pre_trade(&sell, &state, &[usdt(dec!(1000))], None, dec!(1), Some(5))
+            .await;
+        assert!(!blocked.allowed);
+        assert!(blocked.reason.unwrap().contains("Total order limit"));
     }
 
     #[tokio::test]

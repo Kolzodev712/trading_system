@@ -398,7 +398,7 @@ The TUI CLI displays a **Levels panel** showing:
 **Per-Level Enable/Disable**:
 - Press `T` in the Spot Monitor to toggle the **selected** level
 - Each level can be enabled/disabled independently
-- When disabled, the level won't post new orders (existing orders remain active)
+- When disabled, the level latches `Paused`, cancels owned orders, and REST-verifies they are gone before they are retired. Enable/disable from **Edit** uses the same path as **ToggleLevel**.
 - Level panel shows status: "●" (green, enabled) or "⏸" (red, disabled) for each level
 
 **How It Works**:

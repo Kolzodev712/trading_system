@@ -93,18 +93,26 @@ pub async fn level_runner(
     let config_tick_size = rust_decimal::Decimal::new(1, 2); // 0.01
     let config_min_notional = rust_decimal::Decimal::new(5, 0); // 5.0
 
+    let trading_client = {
+        let inner = services.trading_client()?.clone();
+        if bot_config.execution_mode == trading_core::types::ExecutionMode::Shadow {
+            trading_engine::cex::shadow::ShadowGuardClient::wrap(inner)
+        } else {
+            inner
+        }
+    };
+
     let start_paused =
         bot_config.exchange_engine.exchange != trading_core::types::common::Exchange::Paper;
-    let trading_control = Arc::new(
-        TradingControl::new(services.trading_client()?.clone()).with_entries_paused(start_paused),
-    );
+    let trading_control =
+        Arc::new(TradingControl::new(trading_client.clone()).with_entries_paused(start_paused));
     if start_paused {
         info!("entries start paused until authenticated Resume (non-Paper venue)");
     }
 
     let level_executor = Arc::new(
         LevelExecutor::new(
-            services.trading_client()?.clone(),
+            trading_client.clone(),
             services.asset_service.clone(),
             bot_config.exchange_engine.exchange.clone(),
             instrument_type.clone(),
@@ -150,7 +158,7 @@ pub async fn level_runner(
             .trading_state_manager
             .clone()
             .ok_or("Trading state requires venue.mode \"cex\"")?,
-        services.trading_client()?.clone(),
+        trading_client.clone(),
         services.exchange_state_manager()?.clone(),
         services.market_data_state_manager.clone(),
         services.indicator_service.clone(),
@@ -320,7 +328,7 @@ pub async fn level_runner(
         risk_manager,
         cancellation_manager,
         indicator_subscriber,
-        services.trading_client()?.clone(),
+        trading_client.clone(),
         services.market_data_rx.resubscribe(),
         services.exec_report_rx()?.resubscribe(),
         configured_pairs.clone(),
@@ -404,16 +412,19 @@ pub async fn level_runner(
     services.shutdown_manager.wait_for_shutdown().await;
 
     info!("Shutting down gracefully...");
-    if let Ok(trading_client) = services.trading_client() {
-        for pair in configured_pairs {
-            info!("Cancelling all open orders for {}...", pair);
-            match trading_client.write().await.cancel_all_orders(&pair).await {
-                Ok(_) => info!("All orders cancelled successfully for {}", pair),
-                Err(e) => warn!(
-                    "Failed to cancel all orders for {}: {error}",
-                    pair,
-                    error = e
-                ),
+    if bot_config.execution_mode == trading_core::types::ExecutionMode::Shadow {
+        info!("Shadow mode: skipping owned-order cancel on shutdown");
+    } else {
+        let owned = level_manager.read().await.owned_order_ids();
+        if !owned.is_empty() {
+            info!(
+                "Cancelling {} owned level order(s) on shutdown",
+                owned.len()
+            );
+            let client = trading_client.write().await;
+            if let Err(err) = trading_engine::levels::cancel_owned_order_ids(&*client, &owned).await
+            {
+                warn!("shutdown owned-order cancel unverified: {err}");
             }
         }
     }

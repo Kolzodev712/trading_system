@@ -23,6 +23,12 @@ pub struct Level {
     /// Client order IDs owned by this instance (durable with catalog instances).
     pub owned_client_ids: Vec<smol_str::SmolStr>,
 
+    /// Completed fill quantity owned by this instance (survives working-order retirement).
+    pub filled_qty: Decimal,
+
+    /// Terminal fills observed for this instance (not repost_count).
+    pub fill_count: usize,
+
     /// Bumped on disable/delete so an in-flight submit can refuse to send.
     pub generation: u64,
 
@@ -51,6 +57,8 @@ impl Level {
             state: LevelState::Created,
             active_orders: Vec::new(),
             owned_client_ids: Vec::new(),
+            filled_qty: Decimal::ZERO,
+            fill_count: 0,
             generation: 0,
             repost_count: 0,
             last_posted_at: None,
@@ -91,6 +99,9 @@ pub enum LevelState {
 
     /// Level paused (manual or condition)
     Paused,
+
+    /// Delete latched; owned orders not REST-verified gone yet.
+    Deleting,
 
     /// Level removed
     Removed,

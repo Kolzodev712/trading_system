@@ -645,6 +645,16 @@ impl LevelBasedEventLoop {
             static SKIP_COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
             let skip_count = SKIP_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             if skip_count.is_multiple_of(100) {
+                if self.level_executor.flatten_latched().await
+                    && matches!(
+                        self.level_executor.instrument_type(),
+                        trading_core::types::common::InstrumentType::Spot
+                    )
+                {
+                    tracing::warn!(
+                        "Spot flatten is unavailable; Pause/Cancel owned orders only (no pair-wide sale)"
+                    );
+                }
                 tracing::debug!(
                     "Trading is disabled - skipping batch operations (skipped {skip_count} so far)"
                 );
@@ -671,6 +681,39 @@ impl LevelBasedEventLoop {
                 orderbook.pair.quote
             );
             for (expanded_id, order_request) in to_post {
+                let (level_snapshot, live_state) = {
+                    let manager = self.level_manager.read().await;
+                    let state_lock = self.trading_state_manager.get_state();
+                    let state = state_lock.read().await;
+                    (manager.get_level(&expanded_id).cloned(), state.clone())
+                };
+                let Some(level) = level_snapshot else {
+                    continue;
+                };
+                let resolved = super::ResolvedLevel {
+                    level,
+                    resolved_price: order_request.price,
+                    resolved_quantity: order_request.amount,
+                    resolved_order_type: order_request.order_type.clone(),
+                };
+                let risk_result = self
+                    .risk_manager
+                    .read()
+                    .await
+                    .check_level(&resolved, &live_state, &balances, current_prices.as_ref())
+                    .await;
+                if !risk_result.allowed {
+                    tracing::info!(
+                        "Level {} blocked by prepare-time risk check: {}",
+                        expanded_id,
+                        risk_result
+                            .reason
+                            .as_ref()
+                            .map(|r| r.as_str())
+                            .unwrap_or("unknown")
+                    );
+                    continue;
+                }
                 let prepared = {
                     let mut manager = self.level_manager.write().await;
                     let state_lock = self.trading_state_manager.get_state();
@@ -712,6 +755,8 @@ impl LevelBasedEventLoop {
                         &expanded_id,
                     ) {
                         tracing::error!("Failed to abort unsent level {}: {}", expanded_id, err);
+                        state.halt_new_exposure(format!("level abort journal write failed: {err}"));
+                        return Err(err);
                     }
                     continue;
                 }
@@ -765,6 +810,30 @@ impl LevelBasedEventLoop {
                                         .unwrap_or("unknown")
                                 );
                             }
+                        }
+                    }
+                    Ok(super::submit::LevelSubmitResult::MustCancel(order)) => {
+                        tracing::warn!(
+                            "Level {} was disabled during send; cancelling owned order {}",
+                            expanded_id,
+                            order.order_id.as_str()
+                        );
+                        let client = self.trading_client.write().await;
+                        if let Err(err) = super::cancel_owned_order_ids(
+                            &*client,
+                            std::slice::from_ref(&order.order_id),
+                        )
+                        .await
+                        {
+                            drop(client);
+                            self.trading_state_manager
+                                .get_state()
+                                .write()
+                                .await
+                                .halt_new_exposure(format!(
+                                    "disable/send race cancel unverified: {err}"
+                                ));
+                            return Err(err);
                         }
                     }
                     Ok(super::submit::LevelSubmitResult::Unknown) => {
@@ -962,8 +1031,11 @@ impl LevelBasedEventLoop {
                 .iter()
                 .filter_map(|level| match level.state {
                     super::LevelState::Filled | super::LevelState::Cancelled => {
-                        if manager.should_repost(&level.config.id).unwrap_or(false) {
-                            Some(level.config.id.clone())
+                        if manager
+                            .should_repost(&level.identity.instance_id)
+                            .unwrap_or(false)
+                        {
+                            Some(level.identity.instance_id.clone())
                         } else {
                             None
                         }
@@ -1015,7 +1087,7 @@ impl LevelBasedEventLoop {
             match order.status {
                 trading_core::types::common::OrderStatus::Filled => {
                     manager
-                        .handle_order_filled(&level_id, &order.order_id)
+                        .handle_order_filled(&level_id, &order.order_id, order.filled_amount)
                         .await?;
 
                     // TradingStateManager automatically handles order updates via ExchangeStateManager
@@ -1025,7 +1097,7 @@ impl LevelBasedEventLoop {
                 | trading_core::types::common::OrderStatus::Rejected
                 | trading_core::types::common::OrderStatus::Expired => {
                     manager
-                        .handle_order_cancelled(&level_id, &order.order_id)
+                        .handle_order_cancelled(&level_id, &order.order_id, order.filled_amount)
                         .await?;
 
                     // Remove order from TradingStateManager

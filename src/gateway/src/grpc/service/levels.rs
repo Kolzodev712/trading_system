@@ -8,7 +8,7 @@ use tonic::{Request, Response, Status};
 use trading_core::grpc::TradingControl;
 use trading_core::types::exchange::OrderRequest;
 use trading_core::venue::cex::traits::TradingClient;
-use trading_engine::levels::{LevelExecutor, LevelManager};
+use trading_engine::levels::LevelManager;
 
 use super::converters;
 
@@ -16,6 +16,7 @@ pub struct LevelService {
     pub level_manager: Arc<RwLock<LevelManager>>,
     pub trading_client: Arc<RwLock<dyn TradingClient<OrderRequest>>>,
     pub trading_control: Arc<TradingControl>,
+    #[allow(dead_code)]
     pub exchange_state_manager: Arc<ExchangeStateManager>,
 }
 
@@ -143,14 +144,12 @@ impl LevelService {
             }
         };
 
-        let daily_loss_limit = if !config.risk_limit.is_empty() {
-            Some(
-                rust_decimal::Decimal::from_str_exact(&config.risk_limit)
-                    .map_err(|e| Status::invalid_argument(format!("Invalid risk_limit: {}", e)))?,
-            )
-        } else {
-            None
-        };
+        if !config.risk_limit.is_empty() {
+            return Err(Status::invalid_argument(
+                "per-level daily_loss_limit is not enforceable until PnL attribution exists",
+            ));
+        }
+        let daily_loss_limit = None;
 
         let max_position = if !config.max_position_size.is_empty() {
             Some(
@@ -222,15 +221,9 @@ impl LevelService {
             level.config.enabled = config.enabled;
 
             if !config.risk_limit.is_empty() {
-                match rust_decimal::Decimal::from_str_exact(&config.risk_limit) {
-                    Ok(decimal) => level.config.risk.daily_loss_limit = Some(decimal),
-                    Err(e) => {
-                        return Err(Status::invalid_argument(format!(
-                            "Invalid risk_limit format: {}",
-                            e
-                        )));
-                    }
-                }
+                return Err(Status::invalid_argument(
+                    "per-level daily_loss_limit is not enforceable until PnL attribution exists",
+                ));
             }
 
             if !config.max_position_size.is_empty() {
@@ -332,156 +325,59 @@ impl LevelService {
                     .await
                     .map_err(|e| Status::internal(format!("Failed to enable level: {}", e)))?;
             } else {
-                let level_for_cancel = level_manager
-                    .get_level(&level_id)
-                    .cloned()
-                    .ok_or_else(|| Status::not_found(format!("Level {} not found", level_id)))?;
-
-                let orders_in_level = level_for_cancel.active_orders.len();
-                let orders_on_exchange = self
-                    .exchange_state_manager
-                    .get_open_orders_for_pair(&level_for_cancel.pair)
-                    .await
-                    .len();
-
-                if orders_in_level > 0 || orders_on_exchange > 0 {
-                    tracing::info!(
-                        "[gRPC] Disabling level {} ({}/{}), cancelling orders (level has {}, exchange has {})...",
-                        level_id,
-                        level_for_cancel.pair.base,
-                        level_for_cancel.pair.quote,
-                        orders_in_level,
-                        orders_on_exchange
-                    );
-
-                    if orders_in_level > 0 {
-                        let executor = LevelExecutor::new(
-                            self.trading_client.clone(),
-                            None,
-                            trading_core::types::common::Exchange::Binance,
-                            trading_core::types::common::InstrumentType::Spot,
-                            Arc::new(parking_lot::RwLock::new(
-                                indicator_engine::LevelPricingRegistry::new(),
-                            )),
-                            rust_decimal::Decimal::new(1, 5),
-                            rust_decimal::Decimal::new(1, 5),
-                            rust_decimal::Decimal::new(1, 2),
-                            rust_decimal::Decimal::new(5, 0),
-                        );
-
-                        match tokio::time::timeout(
-                            tokio::time::Duration::from_secs(5),
-                            executor.cancel_level_orders(&level_for_cancel),
-                        )
-                        .await
-                        {
-                            Ok(Ok(_)) => {
-                                tracing::info!(
-                                    "[gRPC] Successfully cancelled orders for level {}",
-                                    level_id
-                                );
-                            }
-                            Ok(Err(e)) => {
-                                tracing::warn!(
-                                    "[gRPC] Failed to cancel some orders for level {}: {}",
-                                    level_id,
-                                    e
-                                );
-                            }
-                            Err(_) => {
-                                tracing::error!(
-                                    "[gRPC] Timeout cancelling orders for level {} (5s timeout)",
-                                    level_id
-                                );
-                            }
-                        }
-                    }
-
-                    if orders_on_exchange > 0 && orders_in_level == 0 {
-                        tracing::info!(
-                            "[gRPC] Level {} has {} open order(s) on exchange but not in active_orders, using cancel_all_orders as fallback (WARNING: will cancel ALL orders for {}/{})",
-                            level_id,
-                            orders_on_exchange,
-                            level_for_cancel.pair.base,
-                            level_for_cancel.pair.quote
-                        );
-                        let pair_to_cancel = level_for_cancel.pair.clone();
-                        drop(level_for_cancel);
-
-                        tracing::info!(
-                            "[gRPC] Calling cancel_all_orders for {}/{}...",
-                            pair_to_cancel.base,
-                            pair_to_cancel.quote
-                        );
-
-                        let trading_client_arc = Arc::clone(&self.trading_client);
-                        let pair_clone = pair_to_cancel.clone();
-                        let cancel_result = async move {
-                            let trading_client = trading_client_arc.read().await;
-                            trading_client.cancel_all_orders(&pair_clone).await
-                        }
-                        .await;
-
-                        match cancel_result {
-                            Ok(_) => {
-                                tracing::info!(
-                                    "[gRPC] Successfully cancelled all orders for {}/{} (fallback)",
-                                    pair_to_cancel.base,
-                                    pair_to_cancel.quote
-                                );
-                            }
-                            Err(e) => {
-                                let error_msg = format!("{}", e);
-                                if error_msg.contains("Unknown order")
-                                    || error_msg.contains("-2011")
-                                {
-                                    tracing::info!(
-                                        "[gRPC] Orders for {}/{} were already cancelled (likely by global disable or another level)",
-                                        pair_to_cancel.base,
-                                        pair_to_cancel.quote
-                                    );
-                                } else if error_msg.contains("Timeout acquiring RPC channel")
-                                    || error_msg.contains("RPC channel not ready")
-                                    || error_msg.contains("RPC channel closed")
-                                {
-                                    tracing::error!(
-                                        "[gRPC] RPC channel unavailable when cancelling orders for {}/{}: {} - connection may be down",
-                                        pair_to_cancel.base,
-                                        pair_to_cancel.quote,
-                                        e
-                                    );
-                                } else {
-                                    tracing::warn!(
-                                        "[gRPC] Failed to cancel all orders for {}/{} (fallback): {}",
-                                        pair_to_cancel.base,
-                                        pair_to_cancel.quote,
-                                        e
-                                    );
-                                }
-                            }
-                        }
-                    }
-
-                    if let Some(level) = level_manager.get_level_mut(&level_id) {
-                        level.active_orders.clear();
-                    }
-                } else {
-                    tracing::info!(
-                        "[gRPC] Disabling level {} ({}/{}), no orders to cancel",
-                        level_id,
-                        level_for_cancel.pair.base,
-                        level_for_cancel.pair.quote
-                    );
-                }
-
                 level_manager
                     .disable_level(&level_id)
                     .await
                     .map_err(|e| Status::internal(format!("Failed to disable level: {}", e)))?;
+                let owned = level_manager
+                    .get_level(&level_id)
+                    .map(|level| level.active_orders.clone())
+                    .unwrap_or_default();
+                drop(level_manager);
+                if !owned.is_empty() {
+                    let client = self.trading_client.write().await;
+                    if let Err(err) =
+                        trading_engine::levels::cancel_owned_order_ids(&*client, &owned).await
+                    {
+                        return Err(Status::failed_precondition(format!(
+                            "disable latched but owned-order cancel unverified: {err}"
+                        )));
+                    }
+                }
             }
         }
 
         Ok(Response::new(trading_cli::ToggleLevelResponse {
+            success: true,
+        }))
+    }
+
+    pub async fn delete_level(
+        &self,
+        request: Request<trading_cli::DeleteLevelRequest>,
+    ) -> Result<Response<trading_cli::DeleteLevelResponse>, Status> {
+        let req = request.into_inner();
+        let level_id = SmolStr::new(&req.level_id);
+        let owned = {
+            let mut level_manager = self.level_manager.write().await;
+            level_manager
+                .begin_delete(&level_id)
+                .map_err(|e| Status::internal(format!("Failed to latch delete: {e}")))?
+        };
+        if !owned.is_empty() {
+            let client = self.trading_client.write().await;
+            if let Err(err) = trading_engine::levels::cancel_owned_order_ids(&*client, &owned).await
+            {
+                return Err(Status::failed_precondition(format!(
+                    "delete latched; owned-order cancel unverified: {err}"
+                )));
+            }
+        }
+        let mut level_manager = self.level_manager.write().await;
+        level_manager
+            .complete_delete(&level_id)
+            .map_err(|e| Status::internal(format!("Failed to complete delete: {e}")))?;
+        Ok(Response::new(trading_cli::DeleteLevelResponse {
             success: true,
         }))
     }

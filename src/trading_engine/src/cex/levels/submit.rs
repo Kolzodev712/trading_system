@@ -15,6 +15,7 @@ pub enum LevelSubmitResult {
     Rejected,
     Unknown,
     Aborted,
+    MustCancel(Order),
 }
 
 pub struct PreparedLevelSubmit {
@@ -96,8 +97,11 @@ pub fn abort_unsent_submission(
     prepared: &PreparedLevelSubmit,
     level_id: &SmolStr,
 ) -> Result<LevelSubmitResult, EngineError> {
+    if let Err(err) = persist(journal, &prepared.pending, SubmissionState::Rejected) {
+        trading_state.halt_new_exposure(format!("level journal write failed: {err}"));
+        return Err(err);
+    }
     trading_state.clear_submission(prepared.pending.client_order_id.as_str());
-    persist(journal, &prepared.pending, SubmissionState::Rejected)?;
     manager.abort_submit(level_id, prepared.generation);
     Ok(LevelSubmitResult::Aborted)
 }
@@ -117,12 +121,27 @@ pub fn apply_level_submit_result(
             }
             persist(journal, &prepared.pending, SubmissionState::Acknowledged)?;
             trading_state.import_working_order(order.clone());
-            manager.confirm_posted(level_id, &prepared.pending.client_order_id, &order.order_id)?;
-            Ok(LevelSubmitResult::Posted(order))
+            let keep = manager.submit_still_allowed(level_id, prepared.generation);
+            manager.attach_owned_order(
+                level_id,
+                &prepared.pending.client_order_id,
+                &order.order_id,
+                keep,
+            )?;
+            if keep {
+                Ok(LevelSubmitResult::Posted(order))
+            } else {
+                Ok(LevelSubmitResult::MustCancel(order))
+            }
         }
         Err(err) if place_error_is_known_reject(&err) => {
+            if let Err(persist_err) = persist(journal, &prepared.pending, SubmissionState::Rejected)
+            {
+                trading_state
+                    .halt_new_exposure(format!("level journal write failed: {persist_err}"));
+                return Err(persist_err);
+            }
             trading_state.clear_submission(prepared.pending.client_order_id.as_str());
-            persist(journal, &prepared.pending, SubmissionState::Rejected)?;
             manager.abort_submit(level_id, prepared.generation);
             Ok(LevelSubmitResult::Rejected)
         }
@@ -601,5 +620,57 @@ mod tests {
         state.apply_fill(&order);
         state.apply_fill(&order);
         assert_eq!(state.position_qty(&pair()), dec!(0.001));
+    }
+
+    #[tokio::test]
+    async fn abort_journal_write_failure_keeps_reservation_and_halts() {
+        let path = journal_path("abort-fail");
+        let journal = SubmissionJournal::open(&path).unwrap();
+        let mut manager = LevelManager::new();
+        let level_id = manager.add_level(cfg("buy_level_1"), pair()).await.unwrap();
+        let mut state = TradingState::new();
+        let prepared =
+            prepare_level_submission(&mut manager, &journal, &mut state, &level_id, request())
+                .unwrap();
+        std::fs::remove_file(&path).unwrap();
+        std::fs::create_dir(&path).unwrap();
+        let err = abort_unsent_submission(&mut manager, &journal, &mut state, &prepared, &level_id);
+        assert!(err.is_err());
+        assert!(state.has_unresolved_submission(&pair()));
+        assert!(state.blocks_new_exposure(&pair()));
+        let _ = std::fs::remove_dir_all(&path);
+    }
+
+    #[tokio::test]
+    async fn concurrent_disable_after_prepare_requires_cancel_on_ack() {
+        let path = journal_path("race");
+        let journal = SubmissionJournal::open(&path).unwrap();
+        let mut manager = LevelManager::new();
+        let level_id = manager.add_level(cfg("buy_level_1"), pair()).await.unwrap();
+        let mut state = TradingState::new();
+        let prepared =
+            prepare_level_submission(&mut manager, &journal, &mut state, &level_id, request())
+                .unwrap();
+        manager.disable_level(&level_id).await.unwrap();
+        let mut placed = working("x", "ex-race");
+        placed.client_order_id = Some(prepared.pending.client_order_id.clone());
+        let result = apply_level_submit_result(
+            &mut manager,
+            &journal,
+            &mut state,
+            &prepared,
+            &level_id,
+            Ok(placed),
+        )
+        .unwrap();
+        assert!(matches!(result, LevelSubmitResult::MustCancel(_)));
+        let level = manager.get_level(&level_id).unwrap();
+        assert_ne!(level.state, LevelState::Posted);
+        assert!(!level.config.enabled);
+        assert!(level
+            .active_orders
+            .iter()
+            .any(|id| id.as_str() == "ex-race"));
+        let _ = std::fs::remove_file(&path);
     }
 }

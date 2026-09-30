@@ -1,0 +1,117 @@
+2026-09-30T12:50:40.913262Z  INFO runner::launch: === Starting Trading System ===
+2026-09-30T12:50:40.913298Z  INFO runner::launch: Mode: levels
+2026-09-30T12:50:40.913303Z  INFO runner::launch: Venue mode: Cex
+2026-09-30T12:50:40.913307Z  INFO runner::launch: Exchange: Paper
+2026-09-30T12:50:40.913316Z  INFO runner::launch: MongoDB persistence: enabled (mongodb://localhost:27017/trading_system_paper_ack_amend)
+2026-09-30T12:50:40.913328Z  INFO runner::platform::init: Connecting to MongoDB at mongodb://localhost:27017/trading_system_paper_ack_amend...
+2026-09-30T12:50:40.913597Z  INFO runner::platform::init: MongoDB: Connected to mongodb://localhost:27017/trading_system_paper_ack_amend
+2026-09-30T12:50:40.913780Z  INFO runner::platform::init: Initializing Asset Engine...
+2026-09-30T12:50:40.934411Z  INFO runner::platform::init: Fetching asset data for 1 configured pair(s): [Pair { base: "BTC", quote: "USDT" }]
+2026-09-30T12:50:40.934568Z  INFO asset_engine::exchanges::k_paper::client: Fetching k-paper exchange info from http://127.0.0.1:19994/exchange_info
+2026-09-30T12:50:40.935373Z  INFO asset_engine::exchanges::k_paper::client: Fetched k-paper exchange info: 1 symbols
+2026-09-30T12:50:40.935467Z  INFO asset_engine::service: Fetched market data: 1 symbols, 1 trading rules
+2026-09-30T12:50:40.935479Z  INFO runner::platform::init: Asset data fetched: 1 symbols, 1 trading rules
+2026-09-30T12:50:40.935492Z  INFO runner::platform::init: Starting Exchange Engine (exchange: Paper, reconciliation: enabled (interval: 180s))...
+2026-09-30T12:50:40.956698Z  INFO exchange_engine::state::manager: Bootstrap: Updated ExchangeStateManager with 1 balances
+2026-09-30T12:50:40.957257Z  INFO exchange_engine::state::manager: Bootstrap: Applied 0 REST futures positions
+2026-09-30T12:50:40.957545Z  INFO exchange_engine::state::manager: Bootstrap: Replaced open orders from REST (0)
+2026-09-30T12:50:40.957560Z  INFO exchange_engine::state::reconciler: Starting bootstrap reconciliation (exchange-level: WS vs REST)
+2026-09-30T12:50:40.957572Z  INFO exchange_engine::state::reconciler: Bootstrap reconciliation completed: 1 balances, 0 orders, 0 trades fetched, no discrepancies
+2026-09-30T12:50:40.957579Z  INFO exchange_engine::run: Bootstrap reconciliation: 1 balances, 0 orders, 0 trades fetched, no discrepancies
+2026-09-30T12:50:40.957611Z  INFO exchange_engine::run: Waiting for WebSocket connection to be ready...
+2026-09-30T12:50:40.957615Z  INFO exchange_engine::run: Paper driver starting, waiting for initial balance snapshot...
+2026-09-30T12:50:40.957646Z  INFO exchange_engine::exchanges::k_paper::driver: Starting k-paper exchange driver...
+2026-09-30T12:50:40.957749Z  INFO exchange_engine::exchanges::k_paper::client: k-paper: connecting to ws://127.0.0.1:19994/ws/trade
+2026-09-30T12:50:40.958333Z  INFO exchange_engine::exchanges::k_paper::client: k-paper: connected to ws://127.0.0.1:19994/ws/trade
+2026-09-30T12:50:40.958494Z  INFO exchange_engine::exchanges::k_paper::client: k-paper exchange: first message received (type=balance), read loop active
+2026-09-30T12:50:40.958539Z  INFO exchange_engine::exchanges::k_paper::client: k-paper: balance update USDT free=10000000 used=0 total=10000000
+2026-09-30T12:50:40.958620Z  INFO exchange_engine::exchanges::k_paper::client: k-paper: sent get_account_snapshot (after first read)
+2026-09-30T12:50:40.958646Z  INFO exchange_engine::exchanges::k_paper::client: k-paper: received connected (WebSocket live)
+2026-09-30T12:50:40.959018Z  INFO exchange_engine::exchanges::k_paper::client: k-paper: balance update USDT free=10000000 used=0 total=10000000
+2026-09-30T12:50:42.958276Z  INFO exchange_engine::run: Paper: received initial balance snapshot, proceeding
+2026-09-30T12:50:42.958327Z  INFO runner::platform::init: Exchange Engine: Bootstrap reconciliation completed
+2026-09-30T12:50:42.958338Z  INFO runner::platform::init: Starting Market Data Engine (exchange: Paper)...
+2026-09-30T12:50:42.958702Z  INFO market_data_engine::exchanges::k_paper::client: k-paper market data: forwarding 1 configured pair(s): BTC/USDT
+2026-09-30T12:50:42.958839Z  INFO market_data_engine::exchanges::k_paper::client: k-paper market data: connecting to ws://127.0.0.1:19994/ws/market
+2026-09-30T12:50:42.958891Z  INFO runner::platform::init: Initializing Indicator Service (MongoDB persistence: enabled)...
+2026-09-30T12:50:42.959556Z  INFO market_data_engine::exchanges::k_paper::client: k-paper market data: connected to ws://127.0.0.1:19994/ws/market
+2026-09-30T12:50:42.960239Z  INFO indicator_engine::service: Loaded 0 simple indicator(s) from MongoDB (0 registered)
+2026-09-30T12:50:42.960534Z  INFO indicator_engine::service: Loaded 0 composite indicator(s) from MongoDB (0 registered)
+2026-09-30T12:50:42.960809Z  INFO indicator_engine::service: Loaded 0 level pricing binding(s) from MongoDB
+2026-09-30T12:50:42.960821Z  INFO runner::platform::init: Loaded 0 indicator(s) from MongoDB
+2026-09-30T12:50:42.960948Z  INFO runner::platform::init: Loaded 4 indicator(s) and level pricing from config/indicators.json
+2026-09-30T12:50:42.960960Z  INFO runner::platform::init: Total indicators registered: 4 (across 1 pair(s))
+2026-09-30T12:50:42.961115Z  INFO runner::cex::levels: === Running in LEVELS mode ===
+2026-09-30T12:50:42.961139Z  INFO runner::cex::levels: Loading levels configuration from /tmp/paper-ack-amend/levels.json...
+2026-09-30T12:50:42.961880Z  INFO runner::cex::levels: Updated levels configuration in MongoDB with file-based config
+2026-09-30T12:50:42.961899Z  INFO runner::cex::levels: Loaded 2 levels (expanded for 1 pairs)
+2026-09-30T12:50:42.961961Z  INFO runner::cex::levels: gRPC server started on [::]:50051
+2026-09-30T12:50:42.961979Z  INFO gateway::grpc::server: [gateway/grpc] Starting server on [::]:50051
+2026-09-30T12:50:42.962072Z  INFO runner::cex::levels: LiveConfig service initialized and running
+2026-09-30T12:50:42.962090Z  INFO runner::cex::levels: [INDICATOR SUBSCRIBER] Task started, waiting for indicator updates...
+2026-09-30T12:50:42.962097Z  INFO runner::cex::levels: === All systems ready! ===
+2026-09-30T12:50:42.962115Z  INFO runner::cex::levels: Starting level-based trading for 1 pair(s): [Pair { base: "BTC", quote: "USDT" }]
+2026-09-30T12:50:42.962178Z  INFO trading_engine::cex::levels::event_loop: level submission recovery finished imported_working=0 resolved_terminal=0 still_ambiguous=0
+2026-09-30T12:50:42.962239Z  INFO trading_engine::health: Health check server listening on 127.0.0.1:18086
+2026-09-30T12:50:42.962728Z  INFO trading_engine::cex::levels::event_loop: [LEVELS EVENT LOOP] Getting subscriber cache...
+2026-09-30T12:50:42.962746Z  INFO trading_engine::cex::levels::event_loop: [LEVELS EVENT LOOP] Subscriber cache obtained
+2026-09-30T12:50:42.962751Z  INFO trading_engine::cex::levels::event_loop: [LEVELS EVENT LOOP] Resubscribing to market_data_rx...
+2026-09-30T12:50:42.962756Z  INFO trading_engine::cex::levels::event_loop: [LEVELS EVENT LOOP] Market data resubscribe complete
+2026-09-30T12:50:42.962761Z  INFO trading_engine::cex::levels::event_loop: [LEVELS EVENT LOOP] Periodic timer created
+2026-09-30T12:50:42.962765Z  INFO trading_engine::cex::levels::event_loop: [LEVELS EVENT LOOP] Starting event loop, waiting for market data and exchange updates...
+2026-09-30T12:50:42.962792Z  INFO trading_engine::cex::levels::event_loop: Starting periodic trading-level reconciliation for 1 pair(s) (interval: 180 seconds)
+2026-09-30T12:50:42.964260Z  INFO trading_engine::cex::levels::event_loop: Trading-level reconciliation for BTC/USDT: no discrepancies found
+2026-09-30T12:50:43.219339Z  INFO gateway::grpc::service::trading_control: [gRPC] set_trading_enabled called with enabled=true
+2026-09-30T12:50:43.219386Z  INFO gateway::grpc::service::trading_control: [gRPC] Collected 0 unique order IDs and 0 unique pairs for cancellation (TradingState: 0, ExchangeState: 0, LevelManager: 2)
+2026-09-30T12:50:43.219400Z  INFO trading_core::grpc::trading_control: [TradingControl] set_enabled called: enabled=true, current_state=false, pairs=0, orders=0
+2026-09-30T12:50:43.219406Z  INFO trading_core::grpc::trading_control: [TradingControl] Trading enabled
+2026-09-30T12:50:43.219416Z  INFO gateway::grpc::service::trading_control: [gRPC] set_trading_enabled succeeded, cancelled 0 orders
+2026-09-30T12:50:43.405868Z  INFO market_data_engine::exchanges::k_paper::client: k-paper market data: book received pair=BTC/USDT ts_ms=1790772643405 bids=5 asks=5
+2026-09-30T12:50:43.405977Z  INFO market_data_engine::state::manager: market data: published orderbook to cache+channel pair=BTC/USDT ts_ms=1790772643405
+2026-09-30T12:50:43.406099Z  INFO trading_engine::cex::levels::event_loop: levels loop received book pair=BTC/USDT ts_ms=1790772643405 mid=Some(49779.3114543891)
+2026-09-30T12:50:43.406980Z  INFO trading_engine::cex::levels::event_loop: Level qual_rest_a resolved: price=1000.00, quantity=0.010, order_type=Limit
+2026-09-30T12:50:43.407053Z  INFO trading_engine::cex::levels::event_loop: Submitting 1 level(s) individually for BTC/USDT
+2026-09-30T12:50:43.422376Z  INFO exchange_engine::exchanges::k_paper::client: k-paper: sent place_order instrument=BTC-USDT side=Buy qty=0.010
+2026-09-30T12:50:43.422924Z  INFO exchange_engine::exchanges::k_paper::client: k-paper: received Execution order_id=854868ef-89fa-4d45-9839-abed4ce3b6e5 instrument_id=BTC-USDT
+2026-09-30T12:50:43.422940Z  INFO exchange_engine::exchanges::k_paper::client: k-paper: execution correlation fields client_order_id=Some("9c1c51cd-93fc-4026-bcda-feda9b0e9249") qty=0 is_ack=true
+2026-09-30T12:50:43.423150Z  INFO exchange_engine::exchanges::k_paper::client: k-paper: verifying place ACK via REST client-id lookup client_id=9c1c51cd-93fc-4026-bcda-feda9b0e9249 ack_exchange_id=854868ef-89fa-4d45-9839-abed4ce3b6e5
+2026-09-30T12:50:43.433771Z  INFO trading_engine::cex::levels::event_loop: [SUCCESS] Level posted order: 854868ef-89fa-4d45-9839-abed4ce3b6e5 for BTC/USDT
+2026-09-30T12:50:43.464612Z  INFO exchange_engine::exchanges::k_paper::client: k-paper: received Execution order_id=854868ef-89fa-4d45-9839-abed4ce3b6e5 instrument_id=BTC-USDT
+2026-09-30T12:50:43.464627Z  INFO exchange_engine::exchanges::k_paper::client: k-paper: execution correlation fields client_order_id=Some("9c1c51cd-93fc-4026-bcda-feda9b0e9249") qty=0 is_ack=true
+2026-09-30T12:50:43.905889Z  INFO market_data_engine::exchanges::k_paper::client: k-paper market data: book received pair=BTC/USDT ts_ms=1790772643905 bids=5 asks=5
+2026-09-30T12:50:43.905990Z  INFO market_data_engine::state::manager: market data: published orderbook to cache+channel pair=BTC/USDT ts_ms=1790772643905
+2026-09-30T12:50:43.906117Z  INFO trading_engine::cex::levels::event_loop: levels loop received book pair=BTC/USDT ts_ms=1790772643905 mid=Some(49766.78819119)
+2026-09-30T12:50:43.906855Z  INFO trading_engine::cex::levels::event_loop: Level qual_rest_b resolved: price=1010.00, quantity=0.010, order_type=Limit
+2026-09-30T12:50:43.906933Z  INFO trading_engine::cex::levels::event_loop: Level qual_rest_a resolved: price=1000.00, quantity=0.010, order_type=Limit
+2026-09-30T12:50:43.906963Z  INFO trading_engine::cex::levels::event_loop: Submitting 1 level(s) individually for BTC/USDT
+2026-09-30T12:50:43.922067Z  INFO exchange_engine::exchanges::k_paper::client: k-paper: sent place_order instrument=BTC-USDT side=Buy qty=0.010
+2026-09-30T12:50:44.106766Z  INFO exchange_engine::exchanges::k_paper::client: k-paper: received Execution order_id=854868ef-89fa-4d45-9839-abed4ce3b6e5 instrument_id=BTC-USDT
+2026-09-30T12:50:44.106794Z  INFO exchange_engine::exchanges::k_paper::client: k-paper: execution correlation fields client_order_id=None qty=0 is_ack=true
+2026-09-30T12:50:44.405684Z  INFO market_data_engine::exchanges::k_paper::client: k-paper market data: book received pair=BTC/USDT ts_ms=1790772644405 bids=5 asks=5
+2026-09-30T12:50:44.405816Z  INFO market_data_engine::state::manager: market data: published orderbook to cache+channel pair=BTC/USDT ts_ms=1790772644405
+2026-09-30T12:50:44.512396Z  INFO exchange_engine::exchanges::k_paper::client: k-paper: received Execution order_id=854868ef-89fa-4d45-9839-abed4ce3b6e5 instrument_id=BTC-USDT
+2026-09-30T12:50:44.512417Z  INFO exchange_engine::exchanges::k_paper::client: k-paper: execution correlation fields client_order_id=Some("9c1c51cd-93fc-4026-bcda-feda9b0e9249") qty=0 is_ack=true
+2026-09-30T12:50:44.906188Z  INFO market_data_engine::exchanges::k_paper::client: k-paper market data: book received pair=BTC/USDT ts_ms=1790772644905 bids=5 asks=5
+2026-09-30T12:50:44.906275Z  INFO market_data_engine::state::manager: market data: published orderbook to cache+channel pair=BTC/USDT ts_ms=1790772644905
+2026-09-30T12:50:44.934360Z  INFO exchange_engine::exchanges::k_paper::client: k-paper: received Execution order_id=304bde4b-cefb-4500-a354-412e238189bd instrument_id=BTC-USDT
+2026-09-30T12:50:44.934378Z  INFO exchange_engine::exchanges::k_paper::client: k-paper: execution correlation fields client_order_id=Some("5a867b0c-5477-4ca9-8738-fedc22efad28") qty=0 is_ack=true
+2026-09-30T12:50:44.934654Z  INFO exchange_engine::exchanges::k_paper::client: k-paper: verifying place ACK via REST client-id lookup client_id=5a867b0c-5477-4ca9-8738-fedc22efad28 ack_exchange_id=304bde4b-cefb-4500-a354-412e238189bd
+2026-09-30T12:50:44.945640Z  INFO trading_engine::cex::levels::event_loop: [SUCCESS] Level posted order: 304bde4b-cefb-4500-a354-412e238189bd for BTC/USDT
+2026-09-30T12:50:44.945780Z  INFO trading_engine::cex::levels::event_loop: levels loop received book pair=BTC/USDT ts_ms=1790772644405 mid=Some(49675.2126184985)
+2026-09-30T12:50:44.946317Z  INFO trading_engine::cex::levels::event_loop: Level qual_rest_b resolved: price=1010.00, quantity=0.010, order_type=Limit
+2026-09-30T12:50:44.946378Z  INFO trading_engine::cex::levels::event_loop: Level qual_rest_a resolved: price=1000.00, quantity=0.010, order_type=Limit
+2026-09-30T12:50:44.946418Z  INFO trading_engine::cex::levels::event_loop: levels loop received book pair=BTC/USDT ts_ms=1790772644905 mid=Some(49683.1718601966)
+2026-09-30T12:50:44.946816Z  INFO trading_engine::cex::levels::event_loop: Level qual_rest_b resolved: price=1010.00, quantity=0.010, order_type=Limit
+2026-09-30T12:50:44.946867Z  INFO trading_engine::cex::levels::event_loop: Level qual_rest_a resolved: price=1000.00, quantity=0.010, order_type=Limit
+2026-09-30T12:50:44.946908Z  INFO trading_engine::cex::levels::event_loop: levels loop control snapshot at="enable" trading=true paused=false flatten=false ready_levels=0 total_levels=2
+2026-09-30T12:50:44.946930Z  INFO trading_engine::cex::levels::event_loop: levels enable: seeding from cached books count=1
+2026-09-30T12:50:44.947353Z  INFO trading_engine::cex::levels::event_loop: Level qual_rest_b resolved: price=1010.00, quantity=0.010, order_type=Limit
+2026-09-30T12:50:44.947400Z  INFO trading_engine::cex::levels::event_loop: Level qual_rest_a resolved: price=1000.00, quantity=0.010, order_type=Limit
+2026-09-30T12:50:45.229437Z  INFO exchange_engine::exchanges::k_paper::client: k-paper: received Execution order_id=854868ef-89fa-4d45-9839-abed4ce3b6e5 instrument_id=BTC-USDT
+2026-09-30T12:50:45.229472Z  INFO exchange_engine::exchanges::k_paper::client: k-paper: execution correlation fields client_order_id=Some("9c1c51cd-93fc-4026-bcda-feda9b0e9249") qty=0.001 is_ack=false
+2026-09-30T12:50:45.229659Z  INFO exchange_engine::exchanges::k_paper::client: k-paper: balance update USDT free=10000000.00000 used=0.00000 total=10000000
+2026-09-30T12:50:45.229721Z  INFO exchange_engine::exchanges::k_paper::client: k-paper: balance update BTC free=0.001 used=0 total=0.001
+2026-09-30T12:50:45.261871Z  INFO exchange_engine::exchanges::k_paper::client: k-paper: received Execution order_id=854868ef-89fa-4d45-9839-abed4ce3b6e5 instrument_id=BTC-USDT
+2026-09-30T12:50:45.261893Z  INFO exchange_engine::exchanges::k_paper::client: k-paper: execution correlation fields client_order_id=Some("9c1c51cd-93fc-4026-bcda-feda9b0e9249") qty=0.001 is_ack=false
+2026-09-30T12:50:45.262004Z  INFO exchange_engine::exchanges::k_paper::client: k-paper: balance update USDT free=10000000.00000 used=0.00000 total=10000000
+2026-09-30T12:50:45.262080Z  INFO exchange_engine::exchanges::k_paper::client: k-paper: balance update BTC free=0.002 used=0 total=0.002

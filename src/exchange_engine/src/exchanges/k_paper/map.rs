@@ -86,7 +86,7 @@ pub fn execution_ack_to_order(
     let timestamp_ms = timestamp_secs.saturating_mul(1000);
     Some(Order {
         order_id: OrderId::new(exec.order_id.clone().into()),
-        client_order_id: req.exchange_params.get("orderLinkId").cloned(),
+        client_order_id: execution_client_order_id(exec).map(SmolStr::new),
         instrument: instrument.clone(),
         side: side_from_str(exec.side.as_str()),
         price,
@@ -160,8 +160,8 @@ fn execution_is_reject(exec: &KPaperExecution) -> bool {
 
 /// Whether this execution may complete `pending_place`.
 ///
-/// Paper fill events have no client id. Consuming the next fill as a place
-/// response attaches another order's exchange id to the in-flight submit.
+/// Fills never complete a place. An ACK without a client id, or with a
+/// different client id, must not bind to the in-flight request.
 pub fn execution_may_complete_pending_place(
     exec: &KPaperExecution,
     pending: &OrderRequest,
@@ -169,13 +169,23 @@ pub fn execution_may_complete_pending_place(
     if !execution_is_reject(exec) && exec.quantity > Decimal::ZERO {
         return false;
     }
-    if let Some(exec_cid) = execution_client_order_id(exec) {
-        return pending
-            .exchange_params
-            .get("orderLinkId")
-            .is_some_and(|cid| cid.as_str() == exec_cid);
+    let Some(exec_cid) = execution_client_order_id(exec) else {
+        return false;
+    };
+    pending
+        .exchange_params
+        .get("orderLinkId")
+        .is_some_and(|cid| cid.as_str() == exec_cid)
+}
+
+/// Apply an amend ACK onto the cached working order. Paper's AmendAck is
+/// order-id only; price/qty come from the in-flight request.
+pub fn apply_amend_ack_to_order(existing: &Order, new_request: &OrderRequest) -> Order {
+    Order {
+        price: new_request.price,
+        amount: new_request.amount,
+        ..existing.clone()
     }
-    true
 }
 
 /// Convert k-paper execution to Order (for CexVenueUpdate::Order).
@@ -346,6 +356,70 @@ mod tests {
         assert_eq!(order.instrument.pair, Pair::new("BTC", "USDT"));
         assert_eq!(order.status, OrderStatus::New);
         assert_eq!(order.amount, Decimal::new(2, 3));
+        assert!(order.client_order_id.is_none());
+    }
+
+    #[test]
+    fn execution_ack_to_order_uses_exec_client_id_not_request() {
+        use trading_core::types::exchange::OrderRequest;
+        let mut exec = KPaperExecution {
+            order_id: "ord-1".to_string(),
+            trade_id: None,
+            instrument_id: "BTC-USDT".to_string(),
+            side: "Buy".to_string(),
+            price: Decimal::new(50000, 0),
+            quantity: Decimal::ZERO,
+            fee: None,
+            timestamp: "2026-01-01T00:00:00Z".to_string(),
+            reject_reason: None,
+            client_order_id: Some(serde_json::Value::String("cid-ack".to_string())),
+        };
+        let mut req = OrderRequest {
+            instrument: Instrument::new(InstrumentType::Spot, Pair::new("BTC", "USDT")),
+            side: trading_core::types::common::Side::Buy,
+            order_type: trading_core::types::common::OrderType::Limit,
+            price: Decimal::new(50000, 0),
+            amount: Decimal::new(2, 3),
+            timestamp: None,
+            exchange_params: std::collections::HashMap::new(),
+        };
+        req.exchange_params
+            .insert(SmolStr::new("orderLinkId"), SmolStr::new("cid-pending"));
+        let order = execution_ack_to_order(&exec, &req, InstrumentType::Spot).unwrap();
+        assert_eq!(order.client_order_id.as_deref(), Some("cid-ack"));
+        exec.client_order_id = None;
+        let uncorrelated = execution_ack_to_order(&exec, &req, InstrumentType::Spot).unwrap();
+        assert!(uncorrelated.client_order_id.is_none());
+    }
+
+    #[test]
+    fn apply_amend_ack_updates_price_and_qty() {
+        let existing = Order {
+            order_id: OrderId::new("ord-a".into()),
+            client_order_id: Some(SmolStr::new("cid-working")),
+            instrument: Instrument::new(InstrumentType::Spot, Pair::new("BTC", "USDT")),
+            side: Side::Buy,
+            price: Decimal::new(1010, 0),
+            amount: Decimal::new(1, 2),
+            internal_created_at: 1,
+            exchange_created_at: Some(1),
+            status: OrderStatus::New,
+            filled_amount: Decimal::ZERO,
+        };
+        let req = OrderRequest {
+            instrument: existing.instrument.clone(),
+            side: existing.side.clone(),
+            order_type: trading_core::types::common::OrderType::Limit,
+            price: Decimal::new(1020, 0),
+            amount: Decimal::new(1, 2),
+            timestamp: None,
+            exchange_params: std::collections::HashMap::new(),
+        };
+        let amended = apply_amend_ack_to_order(&existing, &req);
+        assert_eq!(amended.price, Decimal::new(1020, 0));
+        assert_eq!(amended.amount, Decimal::new(1, 2));
+        assert_eq!(amended.client_order_id.as_deref(), Some("cid-working"));
+        assert_eq!(amended.order_id.as_str(), "ord-a");
     }
 
     #[test]
@@ -472,9 +546,9 @@ mod tests {
     }
 
     #[test]
-    fn zero_qty_ack_completes_pending_place_without_client_id() {
+    fn zero_qty_ack_without_client_id_does_not_complete_pending_place() {
         let pending = pending_place("cid-b");
-        assert!(execution_may_complete_pending_place(
+        assert!(!execution_may_complete_pending_place(
             &exec(0, 0, None, None),
             &pending
         ));

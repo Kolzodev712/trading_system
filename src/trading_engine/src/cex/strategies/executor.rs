@@ -781,13 +781,14 @@ impl<S: Strategy> StrategyExecutor<S> {
                             if price_changed || quantity_changed {
                                 if let Some(ref risk) = self.risk_manager {
                                     let check = risk
-                                        .check_pre_trade(
+                                        .check_pre_trade_with_replace(
                                             &req,
                                             &state,
                                             balances.as_deref().unwrap_or(&[]),
                                             Some(&prices),
                                             position_qty,
                                             self.leverage,
+                                            Some(&existing_order),
                                         )
                                         .await;
                                     if !check.allowed {

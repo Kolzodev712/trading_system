@@ -1,0 +1,2 @@
+accepted=true state=completed venue=PAPER environment=LOCAL scope=account msg=CancelWorking: requested cancel of 2 orders; remain paused; reconcile fills before treating as flat
+order_ids=854868ef-89fa-4d45-9839-abed4ce3b6e5,304bde4b-cefb-4500-a354-412e238189bd

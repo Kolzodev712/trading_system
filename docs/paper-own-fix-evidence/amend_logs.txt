@@ -1,0 +1,2 @@
+85:2026-09-30T12:09:45.348694Z  INFO trading_engine::cex::levels::event_loop: Batch amending 1 level(s) for BTC/USDT
+86:2026-09-30T12:09:45.349375Z  INFO trading_engine::cex::levels::event_loop: [SUCCESS] Level amended order: 453858e2-427f-4064-83fe-ab06d628c23e -> 453858e2-427f-4064-83fe-ab06d628c23e for BTC/USDT

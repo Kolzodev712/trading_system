@@ -1,0 +1,270 @@
+2026-09-30T12:09:41.925014Z  INFO runner::launch: === Starting Trading System ===
+2026-09-30T12:09:41.925048Z  INFO runner::launch: Mode: levels
+2026-09-30T12:09:41.925052Z  INFO runner::launch: Venue mode: Cex
+2026-09-30T12:09:41.925057Z  INFO runner::launch: Exchange: Paper
+2026-09-30T12:09:41.925070Z  INFO runner::launch: MongoDB persistence: enabled (mongodb://localhost:27017/trading_system_paper_own_fix)
+2026-09-30T12:09:41.925080Z  INFO runner::platform::init: Connecting to MongoDB at mongodb://localhost:27017/trading_system_paper_own_fix...
+2026-09-30T12:09:41.925398Z  INFO runner::platform::init: MongoDB: Connected to mongodb://localhost:27017/trading_system_paper_own_fix
+2026-09-30T12:09:41.925600Z  INFO runner::platform::init: Initializing Asset Engine...
+2026-09-30T12:09:41.949044Z  INFO runner::platform::init: Fetching asset data for 1 configured pair(s): [Pair { base: "BTC", quote: "USDT" }]
+2026-09-30T12:09:41.949213Z  INFO asset_engine::exchanges::k_paper::client: Fetching k-paper exchange info from http://127.0.0.1:19996/exchange_info
+2026-09-30T12:09:41.950134Z  INFO asset_engine::exchanges::k_paper::client: Fetched k-paper exchange info: 1 symbols
+2026-09-30T12:09:41.950212Z  INFO asset_engine::service: Fetched market data: 1 symbols, 1 trading rules
+2026-09-30T12:09:41.950219Z  INFO runner::platform::init: Asset data fetched: 1 symbols, 1 trading rules
+2026-09-30T12:09:41.950230Z  INFO runner::platform::init: Starting Exchange Engine (exchange: Paper, reconciliation: enabled (interval: 180s))...
+2026-09-30T12:09:41.973034Z  INFO exchange_engine::state::manager: Bootstrap: Updated ExchangeStateManager with 2 balances
+2026-09-30T12:09:41.973478Z  INFO exchange_engine::state::manager: Bootstrap: Fetched 1 trades for BTC/USDT
+2026-09-30T12:09:41.973493Z  INFO exchange_engine::state::manager: Bootstrap: Updated ExchangeStateManager with 1 total trades
+2026-09-30T12:09:41.973786Z  INFO exchange_engine::state::manager: Bootstrap: Applied 0 REST futures positions
+2026-09-30T12:09:41.974134Z  INFO exchange_engine::state::manager: Bootstrap: Replaced open orders from REST (1)
+2026-09-30T12:09:41.974150Z  INFO exchange_engine::state::reconciler: Starting bootstrap reconciliation (exchange-level: WS vs REST)
+2026-09-30T12:09:41.974162Z  INFO exchange_engine::state::reconciler: Bootstrap reconciliation completed: 2 balances, 0 orders, 1 trades fetched, no discrepancies
+2026-09-30T12:09:41.974170Z  INFO exchange_engine::run: Bootstrap reconciliation: 2 balances, 0 orders, 1 trades fetched, no discrepancies
+2026-09-30T12:09:41.974209Z  INFO exchange_engine::run: Waiting for WebSocket connection to be ready...
+2026-09-30T12:09:41.974214Z  INFO exchange_engine::run: Paper driver starting, waiting for initial balance snapshot...
+2026-09-30T12:09:41.974230Z  INFO exchange_engine::exchanges::k_paper::driver: Starting k-paper exchange driver...
+2026-09-30T12:09:41.974285Z  INFO exchange_engine::exchanges::k_paper::client: k-paper: connecting to ws://127.0.0.1:19996/ws/trade
+2026-09-30T12:09:41.974778Z  INFO exchange_engine::exchanges::k_paper::client: k-paper: connected to ws://127.0.0.1:19996/ws/trade
+2026-09-30T12:09:41.974977Z  INFO exchange_engine::exchanges::k_paper::client: k-paper exchange: first message received (type=connected), read loop active
+2026-09-30T12:09:41.975008Z  INFO exchange_engine::exchanges::k_paper::client: k-paper: received connected (WebSocket live)
+2026-09-30T12:09:41.975059Z  INFO exchange_engine::exchanges::k_paper::client: k-paper: sent get_account_snapshot (after first read)
+2026-09-30T12:09:41.975103Z  INFO exchange_engine::exchanges::k_paper::client: k-paper: balance update BTC free=0.01 used=0 total=0.01
+2026-09-30T12:09:41.975169Z  INFO exchange_engine::exchanges::k_paper::client: k-paper: balance update USDT free=10000000.00000 used=0.00000 total=10000000
+2026-09-30T12:09:41.975362Z  INFO exchange_engine::exchanges::k_paper::client: k-paper: balance update BTC free=0.01 used=0 total=0.01
+2026-09-30T12:09:42.016627Z  INFO exchange_engine::exchanges::k_paper::client: k-paper: balance update USDT free=10000000.00000 used=0.00000 total=10000000
+2026-09-30T12:09:43.975136Z  INFO exchange_engine::run: Paper: received initial balance snapshot, proceeding
+2026-09-30T12:09:43.975183Z  INFO runner::platform::init: Exchange Engine: Bootstrap reconciliation completed
+2026-09-30T12:09:43.975198Z  INFO runner::platform::init: Starting Market Data Engine (exchange: Paper)...
+2026-09-30T12:09:43.975494Z  INFO market_data_engine::exchanges::k_paper::client: k-paper market data: forwarding 1 configured pair(s): BTC/USDT
+2026-09-30T12:09:43.975631Z  INFO market_data_engine::exchanges::k_paper::client: k-paper market data: connecting to ws://127.0.0.1:19996/ws/market
+2026-09-30T12:09:43.975664Z  INFO runner::platform::init: Initializing Indicator Service (MongoDB persistence: enabled)...
+2026-09-30T12:09:43.976325Z  INFO market_data_engine::exchanges::k_paper::client: k-paper market data: connected to ws://127.0.0.1:19996/ws/market
+2026-09-30T12:09:43.976956Z  INFO indicator_engine::service: Loaded 0 simple indicator(s) from MongoDB (0 registered)
+2026-09-30T12:09:43.977258Z  INFO indicator_engine::service: Loaded 0 composite indicator(s) from MongoDB (0 registered)
+2026-09-30T12:09:43.977533Z  INFO indicator_engine::service: Loaded 0 level pricing binding(s) from MongoDB
+2026-09-30T12:09:43.977548Z  INFO runner::platform::init: Loaded 0 indicator(s) from MongoDB
+2026-09-30T12:09:43.977679Z  INFO runner::platform::init: Loaded 4 indicator(s) and level pricing from config/indicators.json
+2026-09-30T12:09:43.977691Z  INFO runner::platform::init: Total indicators registered: 4 (across 1 pair(s))
+2026-09-30T12:09:43.977866Z  INFO runner::cex::levels: === Running in LEVELS mode ===
+2026-09-30T12:09:43.977903Z  INFO runner::cex::levels: Loading levels configuration from /tmp/paper-own-fix/levels.json...
+2026-09-30T12:09:43.978675Z  INFO runner::cex::levels: Updated levels configuration in MongoDB with file-based config
+2026-09-30T12:09:43.978693Z  INFO runner::cex::levels: Loaded 2 levels (expanded for 1 pairs)
+2026-09-30T12:09:43.978763Z  INFO runner::cex::levels: gRPC server started on [::]:50051
+2026-09-30T12:09:43.978775Z  INFO gateway::grpc::server: [gateway/grpc] Starting server on [::]:50051
+2026-09-30T12:09:43.978890Z  INFO runner::cex::levels: LiveConfig service initialized and running
+2026-09-30T12:09:43.978913Z  INFO runner::cex::levels: === All systems ready! ===
+2026-09-30T12:09:43.978918Z  INFO runner::cex::levels: Starting level-based trading for 1 pair(s): [Pair { base: "BTC", quote: "USDT" }]
+2026-09-30T12:09:43.978923Z  INFO runner::cex::levels: [INDICATOR SUBSCRIBER] Task started, waiting for indicator updates...
+2026-09-30T12:09:43.979045Z  INFO trading_engine::health: Health check server listening on 127.0.0.1:18085
+2026-09-30T12:09:43.979052Z  INFO trading_engine::cex::levels::event_loop: level submission recovery finished imported_working=0 resolved_terminal=0 still_ambiguous=0
+2026-09-30T12:09:43.987735Z  INFO trading_engine::cex::levels::event_loop: [LEVELS EVENT LOOP] Getting subscriber cache...
+2026-09-30T12:09:43.987756Z  INFO trading_engine::cex::levels::event_loop: [LEVELS EVENT LOOP] Subscriber cache obtained
+2026-09-30T12:09:43.987763Z  INFO trading_engine::cex::levels::event_loop: [LEVELS EVENT LOOP] Resubscribing to market_data_rx...
+2026-09-30T12:09:43.987769Z  INFO trading_engine::cex::levels::event_loop: [LEVELS EVENT LOOP] Market data resubscribe complete
+2026-09-30T12:09:43.987776Z  INFO trading_engine::cex::levels::event_loop: [LEVELS EVENT LOOP] Periodic timer created
+2026-09-30T12:09:43.987781Z  INFO trading_engine::cex::levels::event_loop: [LEVELS EVENT LOOP] Starting event loop, waiting for market data and exchange updates...
+2026-09-30T12:09:43.987814Z  INFO trading_engine::cex::levels::event_loop: Starting periodic trading-level reconciliation for 1 pair(s) (interval: 180 seconds)
+2026-09-30T12:09:43.989352Z  INFO trading_engine::cex::levels::event_loop: Trading-level reconciliation for BTC/USDT: no discrepancies found
+2026-09-30T12:09:44.347535Z  INFO market_data_engine::exchanges::k_paper::client: k-paper market data: book received pair=BTC/USDT ts_ms=1790770184347 bids=5 asks=5
+2026-09-30T12:09:44.347620Z  INFO market_data_engine::state::manager: market data: published orderbook to cache+channel pair=BTC/USDT ts_ms=1790770184347
+2026-09-30T12:09:44.347718Z  INFO trading_engine::cex::levels::event_loop: levels loop received book pair=BTC/USDT ts_ms=1790770184347 mid=Some(48732.3595462231)
+2026-09-30T12:09:44.347740Z  INFO trading_engine::cex::levels::event_loop: levels skip book: global trading disabled pair=BTC/USDT
+2026-09-30T12:09:44.847452Z  INFO market_data_engine::exchanges::k_paper::client: k-paper market data: book received pair=BTC/USDT ts_ms=1790770184846 bids=5 asks=5
+2026-09-30T12:09:44.847549Z  INFO market_data_engine::state::manager: market data: published orderbook to cache+channel pair=BTC/USDT ts_ms=1790770184846
+2026-09-30T12:09:44.847641Z  INFO trading_engine::cex::levels::event_loop: levels loop received book pair=BTC/USDT ts_ms=1790770184846 mid=Some(48755.9146823355)
+2026-09-30T12:09:44.847666Z  INFO trading_engine::cex::levels::event_loop: levels skip book: global trading disabled pair=BTC/USDT
+2026-09-30T12:09:45.226519Z  INFO gateway::grpc::service::trading_control: [gRPC] set_trading_enabled called with enabled=true
+2026-09-30T12:09:45.226571Z  INFO gateway::grpc::service::trading_control: [gRPC] Collected 1 unique order IDs and 1 unique pairs for cancellation (TradingState: 1, ExchangeState: 1, LevelManager: 2)
+2026-09-30T12:09:45.226587Z  INFO trading_core::grpc::trading_control: [TradingControl] set_enabled called: enabled=true, current_state=false, pairs=1, orders=1
+2026-09-30T12:09:45.226594Z  INFO trading_core::grpc::trading_control: [TradingControl] Trading enabled
+2026-09-30T12:09:45.226601Z  INFO gateway::grpc::service::trading_control: [gRPC] set_trading_enabled succeeded, cancelled 0 orders
+2026-09-30T12:09:45.347874Z  INFO market_data_engine::exchanges::k_paper::client: k-paper market data: book received pair=BTC/USDT ts_ms=1790770185347 bids=5 asks=5
+2026-09-30T12:09:45.347953Z  INFO market_data_engine::state::manager: market data: published orderbook to cache+channel pair=BTC/USDT ts_ms=1790770185347
+2026-09-30T12:09:45.348039Z  INFO trading_engine::cex::levels::event_loop: levels loop received book pair=BTC/USDT ts_ms=1790770185347 mid=Some(48659.582380588)
+2026-09-30T12:09:45.348625Z  INFO trading_engine::cex::levels::event_loop: Level qual_rest_b resolved: price=1020.00, quantity=0.010, order_type=Limit
+2026-09-30T12:09:45.348694Z  INFO trading_engine::cex::levels::event_loop: Batch amending 1 level(s) for BTC/USDT
+2026-09-30T12:09:45.349375Z  INFO trading_engine::cex::levels::event_loop: [SUCCESS] Level amended order: 453858e2-427f-4064-83fe-ab06d628c23e -> 453858e2-427f-4064-83fe-ab06d628c23e for BTC/USDT
+2026-09-30T12:09:45.671816Z  WARN exchange_engine::exchanges::k_paper::client: k-paper error: validation error: order already cancelled
+2026-09-30T12:09:45.671911Z  WARN trading_engine::cex::levels::owned_cancel: owned-order cancel ACK/error is not REST verification order_id="453858e2-427f-4064-83fe-ab06d628c23e" error=Custom error: validation error: order already cancelled
+2026-09-30T12:09:45.848310Z  INFO market_data_engine::exchanges::k_paper::client: k-paper market data: book received pair=BTC/USDT ts_ms=1790770185847 bids=5 asks=5
+2026-09-30T12:09:45.848375Z  INFO market_data_engine::state::manager: market data: published orderbook to cache+channel pair=BTC/USDT ts_ms=1790770185847
+2026-09-30T12:09:45.848473Z  INFO trading_engine::cex::levels::event_loop: levels loop received book pair=BTC/USDT ts_ms=1790770185847 mid=Some(48572.3979031502)
+2026-09-30T12:09:45.848553Z  INFO trading_engine::cex::levels::event_loop: levels skip book: no post/amend candidates pair=BTC/USDT total=2
+2026-09-30T12:09:45.848566Z  INFO trading_engine::cex::levels::event_loop: levels skip book: level not a post/amend candidate level=qual_rest_a state=Filled enabled=true active_orders=0
+2026-09-30T12:09:45.848574Z  INFO trading_engine::cex::levels::event_loop: levels skip book: level not a post/amend candidate level=qual_rest_b state=Paused enabled=false active_orders=1
+2026-09-30T12:09:45.988618Z  INFO trading_engine::cex::levels::event_loop: levels loop control snapshot at="enable" trading=true paused=false flatten=false ready_levels=0 total_levels=2
+2026-09-30T12:09:45.988660Z  INFO trading_engine::cex::levels::event_loop: levels enable: seeding from cached books count=1
+2026-09-30T12:09:45.988679Z  INFO trading_engine::cex::levels::event_loop: levels skip book: no post/amend candidates pair=BTC/USDT total=2
+2026-09-30T12:09:45.988686Z  INFO trading_engine::cex::levels::event_loop: levels skip book: level not a post/amend candidate level=qual_rest_a state=Filled enabled=true active_orders=0
+2026-09-30T12:09:45.988694Z  INFO trading_engine::cex::levels::event_loop: levels skip book: level not a post/amend candidate level=qual_rest_b state=Paused enabled=false active_orders=1
+2026-09-30T12:09:46.347350Z  INFO market_data_engine::exchanges::k_paper::client: k-paper market data: book received pair=BTC/USDT ts_ms=1790770186347 bids=5 asks=5
+2026-09-30T12:09:46.347394Z  INFO market_data_engine::state::manager: market data: published orderbook to cache+channel pair=BTC/USDT ts_ms=1790770186347
+2026-09-30T12:09:46.347482Z  INFO trading_engine::cex::levels::event_loop: levels loop received book pair=BTC/USDT ts_ms=1790770186347 mid=Some(48527.8110542668)
+2026-09-30T12:09:46.347507Z  INFO trading_engine::cex::levels::event_loop: levels skip book: no post/amend candidates pair=BTC/USDT total=2
+2026-09-30T12:09:46.347513Z  INFO trading_engine::cex::levels::event_loop: levels skip book: level not a post/amend candidate level=qual_rest_a state=Filled enabled=true active_orders=0
+2026-09-30T12:09:46.347519Z  INFO trading_engine::cex::levels::event_loop: levels skip book: level not a post/amend candidate level=qual_rest_b state=Paused enabled=false active_orders=1
+2026-09-30T12:09:46.848155Z  INFO market_data_engine::exchanges::k_paper::client: k-paper market data: book received pair=BTC/USDT ts_ms=1790770186847 bids=5 asks=5
+2026-09-30T12:09:46.848211Z  INFO market_data_engine::state::manager: market data: published orderbook to cache+channel pair=BTC/USDT ts_ms=1790770186847
+2026-09-30T12:09:46.848312Z  INFO trading_engine::cex::levels::event_loop: levels loop received book pair=BTC/USDT ts_ms=1790770186847 mid=Some(48565.0497302874)
+2026-09-30T12:09:46.848340Z  INFO trading_engine::cex::levels::event_loop: levels skip book: no post/amend candidates pair=BTC/USDT total=2
+2026-09-30T12:09:46.848348Z  INFO trading_engine::cex::levels::event_loop: levels skip book: level not a post/amend candidate level=qual_rest_a state=Filled enabled=true active_orders=0
+2026-09-30T12:09:46.848355Z  INFO trading_engine::cex::levels::event_loop: levels skip book: level not a post/amend candidate level=qual_rest_b state=Paused enabled=false active_orders=1
+2026-09-30T12:09:47.347447Z  INFO market_data_engine::exchanges::k_paper::client: k-paper market data: book received pair=BTC/USDT ts_ms=1790770187347 bids=5 asks=5
+2026-09-30T12:09:47.347494Z  INFO market_data_engine::state::manager: market data: published orderbook to cache+channel pair=BTC/USDT ts_ms=1790770187347
+2026-09-30T12:09:47.347591Z  INFO trading_engine::cex::levels::event_loop: levels loop received book pair=BTC/USDT ts_ms=1790770187347 mid=Some(48661.9019875161)
+2026-09-30T12:09:47.347626Z  INFO trading_engine::cex::levels::event_loop: levels skip book: no post/amend candidates pair=BTC/USDT total=2
+2026-09-30T12:09:47.347634Z  INFO trading_engine::cex::levels::event_loop: levels skip book: level not a post/amend candidate level=qual_rest_a state=Filled enabled=true active_orders=0
+2026-09-30T12:09:47.347641Z  INFO trading_engine::cex::levels::event_loop: levels skip book: level not a post/amend candidate level=qual_rest_b state=Paused enabled=false active_orders=1
+2026-09-30T12:09:47.848209Z  INFO market_data_engine::exchanges::k_paper::client: k-paper market data: book received pair=BTC/USDT ts_ms=1790770187847 bids=5 asks=5
+2026-09-30T12:09:47.848258Z  INFO market_data_engine::state::manager: market data: published orderbook to cache+channel pair=BTC/USDT ts_ms=1790770187847
+2026-09-30T12:09:47.848363Z  INFO trading_engine::cex::levels::event_loop: levels loop received book pair=BTC/USDT ts_ms=1790770187847 mid=Some(48639.0123447007)
+2026-09-30T12:09:47.848404Z  INFO trading_engine::cex::levels::event_loop: levels skip book: no post/amend candidates pair=BTC/USDT total=2
+2026-09-30T12:09:47.848411Z  INFO trading_engine::cex::levels::event_loop: levels skip book: level not a post/amend candidate level=qual_rest_a state=Filled enabled=true active_orders=0
+2026-09-30T12:09:47.848418Z  INFO trading_engine::cex::levels::event_loop: levels skip book: level not a post/amend candidate level=qual_rest_b state=Paused enabled=false active_orders=1
+2026-09-30T12:09:48.348097Z  INFO market_data_engine::exchanges::k_paper::client: k-paper market data: book received pair=BTC/USDT ts_ms=1790770188347 bids=5 asks=5
+2026-09-30T12:09:48.348198Z  INFO market_data_engine::state::manager: market data: published orderbook to cache+channel pair=BTC/USDT ts_ms=1790770188347
+2026-09-30T12:09:48.348329Z  INFO trading_engine::cex::levels::event_loop: levels loop received book pair=BTC/USDT ts_ms=1790770188347 mid=Some(48726.9982541948)
+2026-09-30T12:09:48.348391Z  INFO trading_engine::cex::levels::event_loop: levels skip book: no post/amend candidates pair=BTC/USDT total=2
+2026-09-30T12:09:48.348401Z  INFO trading_engine::cex::levels::event_loop: levels skip book: level not a post/amend candidate level=qual_rest_a state=Filled enabled=true active_orders=0
+2026-09-30T12:09:48.348410Z  INFO trading_engine::cex::levels::event_loop: levels skip book: level not a post/amend candidate level=qual_rest_b state=Paused enabled=false active_orders=1
+2026-09-30T12:09:48.847371Z  INFO market_data_engine::exchanges::k_paper::client: k-paper market data: book received pair=BTC/USDT ts_ms=1790770188846 bids=5 asks=5
+2026-09-30T12:09:48.847512Z  INFO market_data_engine::state::manager: market data: published orderbook to cache+channel pair=BTC/USDT ts_ms=1790770188846
+2026-09-30T12:09:48.847625Z  INFO trading_engine::cex::levels::event_loop: levels loop received book pair=BTC/USDT ts_ms=1790770188846 mid=Some(48721.8295947184)
+2026-09-30T12:09:48.847692Z  INFO trading_engine::cex::levels::event_loop: levels skip book: no post/amend candidates pair=BTC/USDT total=2
+2026-09-30T12:09:48.847698Z  INFO trading_engine::cex::levels::event_loop: levels skip book: level not a post/amend candidate level=qual_rest_a state=Filled enabled=true active_orders=0
+2026-09-30T12:09:48.847705Z  INFO trading_engine::cex::levels::event_loop: levels skip book: level not a post/amend candidate level=qual_rest_b state=Paused enabled=false active_orders=1
+2026-09-30T12:09:49.348215Z  INFO market_data_engine::exchanges::k_paper::client: k-paper market data: book received pair=BTC/USDT ts_ms=1790770189347 bids=5 asks=5
+2026-09-30T12:09:49.348268Z  INFO market_data_engine::state::manager: market data: published orderbook to cache+channel pair=BTC/USDT ts_ms=1790770189347
+2026-09-30T12:09:49.348348Z  INFO trading_engine::cex::levels::event_loop: levels loop received book pair=BTC/USDT ts_ms=1790770189347 mid=Some(48806.6385562599)
+2026-09-30T12:09:49.348374Z  INFO trading_engine::cex::levels::event_loop: levels skip book: no post/amend candidates pair=BTC/USDT total=2
+2026-09-30T12:09:49.348381Z  INFO trading_engine::cex::levels::event_loop: levels skip book: level not a post/amend candidate level=qual_rest_a state=Filled enabled=true active_orders=0
+2026-09-30T12:09:49.348387Z  INFO trading_engine::cex::levels::event_loop: levels skip book: level not a post/amend candidate level=qual_rest_b state=Paused enabled=false active_orders=1
+2026-09-30T12:09:49.847787Z  INFO market_data_engine::exchanges::k_paper::client: k-paper market data: book received pair=BTC/USDT ts_ms=1790770189847 bids=5 asks=5
+2026-09-30T12:09:49.847845Z  INFO market_data_engine::state::manager: market data: published orderbook to cache+channel pair=BTC/USDT ts_ms=1790770189847
+2026-09-30T12:09:49.847960Z  INFO trading_engine::cex::levels::event_loop: levels loop received book pair=BTC/USDT ts_ms=1790770189847 mid=Some(48772.2465213283)
+2026-09-30T12:09:49.847999Z  INFO trading_engine::cex::levels::event_loop: levels skip book: no post/amend candidates pair=BTC/USDT total=2
+2026-09-30T12:09:49.848007Z  INFO trading_engine::cex::levels::event_loop: levels skip book: level not a post/amend candidate level=qual_rest_a state=Filled enabled=true active_orders=0
+2026-09-30T12:09:49.848014Z  INFO trading_engine::cex::levels::event_loop: levels skip book: level not a post/amend candidate level=qual_rest_b state=Paused enabled=false active_orders=1
+2026-09-30T12:09:50.347372Z  INFO market_data_engine::exchanges::k_paper::client: k-paper market data: book received pair=BTC/USDT ts_ms=1790770190346 bids=5 asks=5
+2026-09-30T12:09:50.347433Z  INFO market_data_engine::state::manager: market data: published orderbook to cache+channel pair=BTC/USDT ts_ms=1790770190346
+2026-09-30T12:09:50.347539Z  INFO trading_engine::cex::levels::event_loop: levels loop received book pair=BTC/USDT ts_ms=1790770190346 mid=Some(48695.8359473265)
+2026-09-30T12:09:50.347584Z  INFO trading_engine::cex::levels::event_loop: levels skip book: no post/amend candidates pair=BTC/USDT total=2
+2026-09-30T12:09:50.347594Z  INFO trading_engine::cex::levels::event_loop: levels skip book: level not a post/amend candidate level=qual_rest_a state=Filled enabled=true active_orders=0
+2026-09-30T12:09:50.347603Z  INFO trading_engine::cex::levels::event_loop: levels skip book: level not a post/amend candidate level=qual_rest_b state=Paused enabled=false active_orders=1
+2026-09-30T12:09:50.848088Z  INFO market_data_engine::exchanges::k_paper::client: k-paper market data: book received pair=BTC/USDT ts_ms=1790770190847 bids=5 asks=5
+2026-09-30T12:09:50.848168Z  INFO market_data_engine::state::manager: market data: published orderbook to cache+channel pair=BTC/USDT ts_ms=1790770190847
+2026-09-30T12:09:50.848263Z  INFO trading_engine::cex::levels::event_loop: levels loop received book pair=BTC/USDT ts_ms=1790770190847 mid=Some(48754.1019024591)
+2026-09-30T12:09:50.848314Z  INFO trading_engine::cex::levels::event_loop: levels skip book: no post/amend candidates pair=BTC/USDT total=2
+2026-09-30T12:09:50.848322Z  INFO trading_engine::cex::levels::event_loop: levels skip book: level not a post/amend candidate level=qual_rest_a state=Filled enabled=true active_orders=0
+2026-09-30T12:09:50.848331Z  INFO trading_engine::cex::levels::event_loop: levels skip book: level not a post/amend candidate level=qual_rest_b state=Paused enabled=false active_orders=1
+2026-09-30T12:09:51.347488Z  INFO market_data_engine::exchanges::k_paper::client: k-paper market data: book received pair=BTC/USDT ts_ms=1790770191346 bids=5 asks=5
+2026-09-30T12:09:51.347569Z  INFO market_data_engine::state::manager: market data: published orderbook to cache+channel pair=BTC/USDT ts_ms=1790770191346
+2026-09-30T12:09:51.347667Z  INFO trading_engine::cex::levels::event_loop: levels loop received book pair=BTC/USDT ts_ms=1790770191346 mid=Some(48802.1508938516)
+2026-09-30T12:09:51.347725Z  INFO trading_engine::cex::levels::event_loop: levels skip book: no post/amend candidates pair=BTC/USDT total=2
+2026-09-30T12:09:51.347733Z  INFO trading_engine::cex::levels::event_loop: levels skip book: level not a post/amend candidate level=qual_rest_a state=Filled enabled=true active_orders=0
+2026-09-30T12:09:51.347742Z  INFO trading_engine::cex::levels::event_loop: levels skip book: level not a post/amend candidate level=qual_rest_b state=Paused enabled=false active_orders=1
+2026-09-30T12:09:51.847745Z  INFO market_data_engine::exchanges::k_paper::client: k-paper market data: book received pair=BTC/USDT ts_ms=1790770191846 bids=5 asks=5
+2026-09-30T12:09:51.847813Z  INFO market_data_engine::state::manager: market data: published orderbook to cache+channel pair=BTC/USDT ts_ms=1790770191846
+2026-09-30T12:09:51.847903Z  INFO trading_engine::cex::levels::event_loop: levels loop received book pair=BTC/USDT ts_ms=1790770191846 mid=Some(48897.8150403403)
+2026-09-30T12:09:51.847952Z  INFO trading_engine::cex::levels::event_loop: levels skip book: no post/amend candidates pair=BTC/USDT total=2
+2026-09-30T12:09:51.847958Z  INFO trading_engine::cex::levels::event_loop: levels skip book: level not a post/amend candidate level=qual_rest_a state=Filled enabled=true active_orders=0
+2026-09-30T12:09:51.847965Z  INFO trading_engine::cex::levels::event_loop: levels skip book: level not a post/amend candidate level=qual_rest_b state=Paused enabled=false active_orders=1
+2026-09-30T12:09:52.348033Z  INFO market_data_engine::exchanges::k_paper::client: k-paper market data: book received pair=BTC/USDT ts_ms=1790770192347 bids=5 asks=5
+2026-09-30T12:09:52.348085Z  INFO market_data_engine::state::manager: market data: published orderbook to cache+channel pair=BTC/USDT ts_ms=1790770192347
+2026-09-30T12:09:52.348166Z  INFO trading_engine::cex::levels::event_loop: levels loop received book pair=BTC/USDT ts_ms=1790770192347 mid=Some(48901.741509689)
+2026-09-30T12:09:52.348194Z  INFO trading_engine::cex::levels::event_loop: levels skip book: no post/amend candidates pair=BTC/USDT total=2
+2026-09-30T12:09:52.348200Z  INFO trading_engine::cex::levels::event_loop: levels skip book: level not a post/amend candidate level=qual_rest_a state=Filled enabled=true active_orders=0
+2026-09-30T12:09:52.348206Z  INFO trading_engine::cex::levels::event_loop: levels skip book: level not a post/amend candidate level=qual_rest_b state=Paused enabled=false active_orders=1
+2026-09-30T12:09:52.847987Z  INFO market_data_engine::exchanges::k_paper::client: k-paper market data: book received pair=BTC/USDT ts_ms=1790770192847 bids=5 asks=5
+2026-09-30T12:09:52.848074Z  INFO market_data_engine::state::manager: market data: published orderbook to cache+channel pair=BTC/USDT ts_ms=1790770192847
+2026-09-30T12:09:52.848188Z  INFO trading_engine::cex::levels::event_loop: levels loop received book pair=BTC/USDT ts_ms=1790770192847 mid=Some(48842.7955907098)
+2026-09-30T12:09:52.848252Z  INFO trading_engine::cex::levels::event_loop: levels skip book: no post/amend candidates pair=BTC/USDT total=2
+2026-09-30T12:09:52.848260Z  INFO trading_engine::cex::levels::event_loop: levels skip book: level not a post/amend candidate level=qual_rest_a state=Filled enabled=true active_orders=0
+2026-09-30T12:09:52.848269Z  INFO trading_engine::cex::levels::event_loop: levels skip book: level not a post/amend candidate level=qual_rest_b state=Paused enabled=false active_orders=1
+2026-09-30T12:09:52.988714Z  INFO trading_engine::cex::levels::event_loop: levels loop control snapshot at="heartbeat" trading=true paused=false flatten=false ready_levels=0 total_levels=2
+2026-09-30T12:09:53.348346Z  INFO market_data_engine::exchanges::k_paper::client: k-paper market data: book received pair=BTC/USDT ts_ms=1790770193347 bids=5 asks=5
+2026-09-30T12:09:53.348447Z  INFO market_data_engine::state::manager: market data: published orderbook to cache+channel pair=BTC/USDT ts_ms=1790770193347
+2026-09-30T12:09:53.348550Z  INFO trading_engine::cex::levels::event_loop: levels loop received book pair=BTC/USDT ts_ms=1790770193347 mid=Some(48802.3110305182)
+2026-09-30T12:09:53.348602Z  INFO trading_engine::cex::levels::event_loop: levels skip book: no post/amend candidates pair=BTC/USDT total=2
+2026-09-30T12:09:53.348609Z  INFO trading_engine::cex::levels::event_loop: levels skip book: level not a post/amend candidate level=qual_rest_a state=Filled enabled=true active_orders=0
+2026-09-30T12:09:53.348616Z  INFO trading_engine::cex::levels::event_loop: levels skip book: level not a post/amend candidate level=qual_rest_b state=Paused enabled=false active_orders=1
+2026-09-30T12:09:53.848048Z  INFO market_data_engine::exchanges::k_paper::client: k-paper market data: book received pair=BTC/USDT ts_ms=1790770193847 bids=5 asks=5
+2026-09-30T12:09:53.848098Z  INFO market_data_engine::state::manager: market data: published orderbook to cache+channel pair=BTC/USDT ts_ms=1790770193847
+2026-09-30T12:09:53.848184Z  INFO trading_engine::cex::levels::event_loop: levels loop received book pair=BTC/USDT ts_ms=1790770193847 mid=Some(48705.5660273673)
+2026-09-30T12:09:53.848224Z  INFO trading_engine::cex::levels::event_loop: levels skip book: no post/amend candidates pair=BTC/USDT total=2
+2026-09-30T12:09:53.848231Z  INFO trading_engine::cex::levels::event_loop: levels skip book: level not a post/amend candidate level=qual_rest_a state=Filled enabled=true active_orders=0
+2026-09-30T12:09:53.848239Z  INFO trading_engine::cex::levels::event_loop: levels skip book: level not a post/amend candidate level=qual_rest_b state=Paused enabled=false active_orders=1
+2026-09-30T12:09:54.347345Z  INFO market_data_engine::exchanges::k_paper::client: k-paper market data: book received pair=BTC/USDT ts_ms=1790770194347 bids=5 asks=5
+2026-09-30T12:09:54.347392Z  INFO market_data_engine::state::manager: market data: published orderbook to cache+channel pair=BTC/USDT ts_ms=1790770194347
+2026-09-30T12:09:54.347481Z  INFO trading_engine::cex::levels::event_loop: levels loop received book pair=BTC/USDT ts_ms=1790770194347 mid=Some(48640.9586093318)
+2026-09-30T12:09:54.347509Z  INFO trading_engine::cex::levels::event_loop: levels skip book: no post/amend candidates pair=BTC/USDT total=2
+2026-09-30T12:09:54.347516Z  INFO trading_engine::cex::levels::event_loop: levels skip book: level not a post/amend candidate level=qual_rest_a state=Filled enabled=true active_orders=0
+2026-09-30T12:09:54.347522Z  INFO trading_engine::cex::levels::event_loop: levels skip book: level not a post/amend candidate level=qual_rest_b state=Paused enabled=false active_orders=1
+2026-09-30T12:09:54.847892Z  INFO market_data_engine::exchanges::k_paper::client: k-paper market data: book received pair=BTC/USDT ts_ms=1790770194847 bids=5 asks=5
+2026-09-30T12:09:54.847943Z  INFO market_data_engine::state::manager: market data: published orderbook to cache+channel pair=BTC/USDT ts_ms=1790770194847
+2026-09-30T12:09:54.848051Z  INFO trading_engine::cex::levels::event_loop: levels loop received book pair=BTC/USDT ts_ms=1790770194847 mid=Some(48612.2650851088)
+2026-09-30T12:09:54.848081Z  INFO trading_engine::cex::levels::event_loop: levels skip book: no post/amend candidates pair=BTC/USDT total=2
+2026-09-30T12:09:54.848088Z  INFO trading_engine::cex::levels::event_loop: levels skip book: level not a post/amend candidate level=qual_rest_a state=Filled enabled=true active_orders=0
+2026-09-30T12:09:54.848096Z  INFO trading_engine::cex::levels::event_loop: levels skip book: level not a post/amend candidate level=qual_rest_b state=Paused enabled=false active_orders=1
+2026-09-30T12:09:55.347732Z  INFO market_data_engine::exchanges::k_paper::client: k-paper market data: book received pair=BTC/USDT ts_ms=1790770195346 bids=5 asks=5
+2026-09-30T12:09:55.347804Z  INFO market_data_engine::state::manager: market data: published orderbook to cache+channel pair=BTC/USDT ts_ms=1790770195346
+2026-09-30T12:09:55.347895Z  INFO trading_engine::cex::levels::event_loop: levels loop received book pair=BTC/USDT ts_ms=1790770195346 mid=Some(48614.4332981391)
+2026-09-30T12:09:55.347940Z  INFO trading_engine::cex::levels::event_loop: levels skip book: no post/amend candidates pair=BTC/USDT total=2
+2026-09-30T12:09:55.347947Z  INFO trading_engine::cex::levels::event_loop: levels skip book: level not a post/amend candidate level=qual_rest_a state=Filled enabled=true active_orders=0
+2026-09-30T12:09:55.347955Z  INFO trading_engine::cex::levels::event_loop: levels skip book: level not a post/amend candidate level=qual_rest_b state=Paused enabled=false active_orders=1
+2026-09-30T12:09:55.847388Z  INFO market_data_engine::exchanges::k_paper::client: k-paper market data: book received pair=BTC/USDT ts_ms=1790770195847 bids=5 asks=5
+2026-09-30T12:09:55.847439Z  INFO market_data_engine::state::manager: market data: published orderbook to cache+channel pair=BTC/USDT ts_ms=1790770195847
+2026-09-30T12:09:55.847562Z  INFO trading_engine::cex::levels::event_loop: levels loop received book pair=BTC/USDT ts_ms=1790770195847 mid=Some(48524.4747812732)
+2026-09-30T12:09:55.847594Z  INFO trading_engine::cex::levels::event_loop: levels skip book: no post/amend candidates pair=BTC/USDT total=2
+2026-09-30T12:09:55.847617Z  INFO trading_engine::cex::levels::event_loop: levels skip book: level not a post/amend candidate level=qual_rest_a state=Filled enabled=true active_orders=0
+2026-09-30T12:09:55.847625Z  INFO trading_engine::cex::levels::event_loop: levels skip book: level not a post/amend candidate level=qual_rest_b state=Paused enabled=false active_orders=1
+2026-09-30T12:09:56.347992Z  INFO market_data_engine::exchanges::k_paper::client: k-paper market data: book received pair=BTC/USDT ts_ms=1790770196347 bids=5 asks=5
+2026-09-30T12:09:56.348067Z  INFO market_data_engine::state::manager: market data: published orderbook to cache+channel pair=BTC/USDT ts_ms=1790770196347
+2026-09-30T12:09:56.348176Z  INFO trading_engine::cex::levels::event_loop: levels loop received book pair=BTC/USDT ts_ms=1790770196347 mid=Some(48585.105045912)
+2026-09-30T12:09:56.348229Z  INFO trading_engine::cex::levels::event_loop: levels skip book: no post/amend candidates pair=BTC/USDT total=2
+2026-09-30T12:09:56.348237Z  INFO trading_engine::cex::levels::event_loop: levels skip book: level not a post/amend candidate level=qual_rest_a state=Filled enabled=true active_orders=0
+2026-09-30T12:09:56.348245Z  INFO trading_engine::cex::levels::event_loop: levels skip book: level not a post/amend candidate level=qual_rest_b state=Paused enabled=false active_orders=1
+2026-09-30T12:09:56.847897Z  INFO market_data_engine::exchanges::k_paper::client: k-paper market data: book received pair=BTC/USDT ts_ms=1790770196847 bids=5 asks=5
+2026-09-30T12:09:56.847946Z  INFO market_data_engine::state::manager: market data: published orderbook to cache+channel pair=BTC/USDT ts_ms=1790770196847
+2026-09-30T12:09:56.848028Z  INFO trading_engine::cex::levels::event_loop: levels loop received book pair=BTC/USDT ts_ms=1790770196847 mid=Some(48487.8924079566)
+2026-09-30T12:09:56.848053Z  INFO trading_engine::cex::levels::event_loop: levels skip book: no post/amend candidates pair=BTC/USDT total=2
+2026-09-30T12:09:56.848059Z  INFO trading_engine::cex::levels::event_loop: levels skip book: level not a post/amend candidate level=qual_rest_a state=Filled enabled=true active_orders=0
+2026-09-30T12:09:56.848066Z  INFO trading_engine::cex::levels::event_loop: levels skip book: level not a post/amend candidate level=qual_rest_b state=Paused enabled=false active_orders=1
+2026-09-30T12:09:57.348013Z  INFO market_data_engine::exchanges::k_paper::client: k-paper market data: book received pair=BTC/USDT ts_ms=1790770197347 bids=5 asks=5
+2026-09-30T12:09:57.348065Z  INFO market_data_engine::state::manager: market data: published orderbook to cache+channel pair=BTC/USDT ts_ms=1790770197347
+2026-09-30T12:09:57.348166Z  INFO trading_engine::cex::levels::event_loop: levels loop received book pair=BTC/USDT ts_ms=1790770197347 mid=Some(48390.8103516442)
+2026-09-30T12:09:57.348194Z  INFO trading_engine::cex::levels::event_loop: levels skip book: no post/amend candidates pair=BTC/USDT total=2
+2026-09-30T12:09:57.348201Z  INFO trading_engine::cex::levels::event_loop: levels skip book: level not a post/amend candidate level=qual_rest_a state=Filled enabled=true active_orders=0
+2026-09-30T12:09:57.348208Z  INFO trading_engine::cex::levels::event_loop: levels skip book: level not a post/amend candidate level=qual_rest_b state=Paused enabled=false active_orders=1
+2026-09-30T12:09:57.847734Z  INFO market_data_engine::exchanges::k_paper::client: k-paper market data: book received pair=BTC/USDT ts_ms=1790770197847 bids=5 asks=5
+2026-09-30T12:09:57.847772Z  INFO market_data_engine::state::manager: market data: published orderbook to cache+channel pair=BTC/USDT ts_ms=1790770197847
+2026-09-30T12:09:57.847855Z  INFO trading_engine::cex::levels::event_loop: levels loop received book pair=BTC/USDT ts_ms=1790770197847 mid=Some(48403.9403999974)
+2026-09-30T12:09:57.847877Z  INFO trading_engine::cex::levels::event_loop: levels skip book: no post/amend candidates pair=BTC/USDT total=2
+2026-09-30T12:09:57.847890Z  INFO trading_engine::cex::levels::event_loop: levels skip book: level not a post/amend candidate level=qual_rest_a state=Filled enabled=true active_orders=0
+2026-09-30T12:09:57.847897Z  INFO trading_engine::cex::levels::event_loop: levels skip book: level not a post/amend candidate level=qual_rest_b state=Paused enabled=false active_orders=1
+2026-09-30T12:09:58.347963Z  INFO market_data_engine::exchanges::k_paper::client: k-paper market data: book received pair=BTC/USDT ts_ms=1790770198347 bids=5 asks=5
+2026-09-30T12:09:58.348017Z  INFO market_data_engine::state::manager: market data: published orderbook to cache+channel pair=BTC/USDT ts_ms=1790770198347
+2026-09-30T12:09:58.348100Z  INFO trading_engine::cex::levels::event_loop: levels loop received book pair=BTC/USDT ts_ms=1790770198347 mid=Some(48364.1853774597)
+2026-09-30T12:09:58.348130Z  INFO trading_engine::cex::levels::event_loop: levels skip book: no post/amend candidates pair=BTC/USDT total=2
+2026-09-30T12:09:58.348136Z  INFO trading_engine::cex::levels::event_loop: levels skip book: level not a post/amend candidate level=qual_rest_a state=Filled enabled=true active_orders=0
+2026-09-30T12:09:58.348143Z  INFO trading_engine::cex::levels::event_loop: levels skip book: level not a post/amend candidate level=qual_rest_b state=Paused enabled=false active_orders=1
+2026-09-30T12:09:58.848456Z  INFO market_data_engine::exchanges::k_paper::client: k-paper market data: book received pair=BTC/USDT ts_ms=1790770198847 bids=5 asks=5
+2026-09-30T12:09:58.848559Z  INFO market_data_engine::state::manager: market data: published orderbook to cache+channel pair=BTC/USDT ts_ms=1790770198847
+2026-09-30T12:09:58.848688Z  INFO trading_engine::cex::levels::event_loop: levels loop received book pair=BTC/USDT ts_ms=1790770198847 mid=Some(48430.0131470102)
+2026-09-30T12:09:58.848751Z  INFO trading_engine::cex::levels::event_loop: levels skip book: no post/amend candidates pair=BTC/USDT total=2
+2026-09-30T12:09:58.848760Z  INFO trading_engine::cex::levels::event_loop: levels skip book: level not a post/amend candidate level=qual_rest_a state=Filled enabled=true active_orders=0
+2026-09-30T12:09:58.848770Z  INFO trading_engine::cex::levels::event_loop: levels skip book: level not a post/amend candidate level=qual_rest_b state=Paused enabled=false active_orders=1
+2026-09-30T12:09:59.348091Z  INFO market_data_engine::exchanges::k_paper::client: k-paper market data: book received pair=BTC/USDT ts_ms=1790770199347 bids=5 asks=5
+2026-09-30T12:09:59.348163Z  INFO market_data_engine::state::manager: market data: published orderbook to cache+channel pair=BTC/USDT ts_ms=1790770199347
+2026-09-30T12:09:59.348250Z  INFO trading_engine::cex::levels::event_loop: levels loop received book pair=BTC/USDT ts_ms=1790770199347 mid=Some(48407.8882612844)
+2026-09-30T12:09:59.348294Z  INFO trading_engine::cex::levels::event_loop: levels skip book: no post/amend candidates pair=BTC/USDT total=2
+2026-09-30T12:09:59.348301Z  INFO trading_engine::cex::levels::event_loop: levels skip book: level not a post/amend candidate level=qual_rest_a state=Filled enabled=true active_orders=0
+2026-09-30T12:09:59.348307Z  INFO trading_engine::cex::levels::event_loop: levels skip book: level not a post/amend candidate level=qual_rest_b state=Paused enabled=false active_orders=1
+2026-09-30T12:09:59.847737Z  INFO market_data_engine::exchanges::k_paper::client: k-paper market data: book received pair=BTC/USDT ts_ms=1790770199847 bids=5 asks=5
+2026-09-30T12:09:59.847795Z  INFO market_data_engine::state::manager: market data: published orderbook to cache+channel pair=BTC/USDT ts_ms=1790770199847
+2026-09-30T12:09:59.847898Z  INFO trading_engine::cex::levels::event_loop: levels loop received book pair=BTC/USDT ts_ms=1790770199847 mid=Some(48344.4447334246)
+2026-09-30T12:09:59.847937Z  INFO trading_engine::cex::levels::event_loop: levels skip book: no post/amend candidates pair=BTC/USDT total=2
+2026-09-30T12:09:59.847947Z  INFO trading_engine::cex::levels::event_loop: levels skip book: level not a post/amend candidate level=qual_rest_a state=Filled enabled=true active_orders=0
+2026-09-30T12:09:59.847959Z  INFO trading_engine::cex::levels::event_loop: levels skip book: level not a post/amend candidate level=qual_rest_b state=Paused enabled=false active_orders=1
+2026-09-30T12:10:00.124427Z  WARN exchange_engine::exchanges::k_paper::client: k-paper error: validation error: order already cancelled
+2026-09-30T12:10:00.124546Z  WARN trading_engine::cex::levels::owned_cancel: owned-order cancel ACK/error is not REST verification order_id="453858e2-427f-4064-83fe-ab06d628c23e" error=Custom error: validation error: order already cancelled

@@ -1,0 +1,2 @@
+level qual_rest_a_BTCUSDT enabled=true status=Filled filled=1 orders=
+level qual_rest_b_BTCUSDT enabled=false status=Paused filled=0 orders=

@@ -1,0 +1,97 @@
+{
+  "levels": [
+    {
+      "id": "qual_amend",
+      "name": "Price-only amend at exact caps",
+      "side": "Buy",
+      "order_type": "Limit",
+      "quantity": {
+        "type": "Fixed",
+        "value": "0.01"
+      },
+      "price": {
+        "Fixed": "1010"
+      },
+      "risk": {
+        "max_position": "0.01",
+        "max_orders": 1,
+        "max_order_qty": null,
+        "max_notional": null,
+        "daily_loss_limit": null
+      },
+      "lifecycle": {
+        "auto_repost": false,
+        "auto_repost_on_cancel": false,
+        "max_reposts": 0,
+        "repost_delay_secs": 1,
+        "repost_conditions": []
+      },
+      "enabled": false,
+      "group": "paper_ack_amend"
+    }
+  ],
+  "instances": [
+    {
+      "id": "qual_amend_BTCUSDT",
+      "template_id": "qual_amend",
+      "pair": {
+        "base": "BTC",
+        "quote": "USDT"
+      },
+      "config": {
+        "id": "qual_amend",
+        "name": "Price-only amend at exact caps",
+        "side": "Buy",
+        "order_type": "Limit",
+        "quantity": {
+          "type": "Fixed",
+          "value": "0.01"
+        },
+        "price": {
+          "Fixed": "1020"
+        },
+        "risk": {
+          "max_position": "0.01",
+          "max_orders": 1,
+          "max_order_qty": null,
+          "max_notional": null,
+          "daily_loss_limit": null
+        },
+        "lifecycle": {
+          "auto_repost": false,
+          "auto_repost_on_cancel": false,
+          "max_reposts": 0,
+          "repost_delay_secs": 1,
+          "repost_conditions": []
+        },
+        "enabled": true,
+        "group": "paper_ack_amend"
+      },
+      "owned_client_ids": [
+        "d9bde905-f680-4619-9943-efbf542550bf"
+      ],
+      "owned_exchange_ids": [
+        "1479df6e-027a-4a61-8a3e-8fd44325a04e"
+      ],
+      "filled_qty": "0",
+      "state": "Posted",
+      "repost_count": 0,
+      "last_filled_at": null,
+      "fill_count": 0,
+      "inflight_client_order_id": null,
+      "filled_by_order": {}
+    }
+  ],
+  "tombstones": [],
+  "risk_limits": {
+    "total_max_position": "0.01",
+    "max_total_orders": 1,
+    "max_notional": "200",
+    "max_order_qty": "0.01",
+    "daily_loss_limit_all_pairs": null,
+    "daily_loss_limit_per_pair": {}
+  },
+  "venue": "Paper",
+  "instrument": "Spot",
+  "account": "paper_ack_amend"
+}

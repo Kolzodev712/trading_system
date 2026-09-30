@@ -181,7 +181,10 @@ async fn get_positions(
         positions.push(PositionInfo {
             symbol: format!("{}{}", pair.base, pair.quote),
             quantity: position.quantity.to_string(),
-            avg_price: position.avg_price.to_string(),
+            avg_price: position
+                .cost_basis()
+                .map(|p| p.to_string())
+                .unwrap_or_else(|| "?".into()),
         });
     }
 
@@ -200,7 +203,7 @@ async fn get_state(
     let total_value = trading_state
         .positions
         .values()
-        .map(|p| p.quantity * p.avg_price)
+        .filter_map(|p| p.cost_basis().map(|avg| p.quantity * avg))
         .sum::<rust_decimal::Decimal>();
 
     Ok(Json(StateResponse {

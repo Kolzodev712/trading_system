@@ -1,0 +1,284 @@
+{
+  "levels": [
+    {
+      "id": "so_buy",
+      "name": "Signoff spot buy inventory",
+      "side": "Buy",
+      "order_type": "Limit",
+      "quantity": {
+        "type": "Fixed",
+        "value": "0.001"
+      },
+      "price": {
+        "Fixed": "10000"
+      },
+      "risk": {
+        "max_position": "0.02",
+        "max_orders": 1,
+        "max_order_qty": null,
+        "max_notional": null,
+        "daily_loss_limit": null
+      },
+      "lifecycle": {
+        "auto_repost": false,
+        "auto_repost_on_cancel": false,
+        "max_reposts": 0,
+        "repost_delay_secs": 1,
+        "repost_conditions": []
+      },
+      "enabled": false,
+      "group": "paper_signoff"
+    },
+    {
+      "id": "so_sell",
+      "name": "Signoff spot sell inventory",
+      "side": "Sell",
+      "order_type": "Limit",
+      "quantity": {
+        "type": "Fixed",
+        "value": "0.001"
+      },
+      "price": {
+        "Fixed": "100000"
+      },
+      "risk": {
+        "max_position": "0.02",
+        "max_orders": 1,
+        "max_order_qty": null,
+        "max_notional": null,
+        "daily_loss_limit": null
+      },
+      "lifecycle": {
+        "auto_repost": false,
+        "auto_repost_on_cancel": false,
+        "max_reposts": 0,
+        "repost_delay_secs": 1,
+        "repost_conditions": []
+      },
+      "enabled": false,
+      "group": "paper_signoff"
+    },
+    {
+      "id": "so_rest",
+      "name": "Signoff disable resting",
+      "side": "Buy",
+      "order_type": "Limit",
+      "quantity": {
+        "type": "Fixed",
+        "value": "0.01"
+      },
+      "price": {
+        "Fixed": "1010"
+      },
+      "risk": {
+        "max_position": "0.02",
+        "max_orders": 1,
+        "max_order_qty": null,
+        "max_notional": null,
+        "daily_loss_limit": null
+      },
+      "lifecycle": {
+        "auto_repost": false,
+        "auto_repost_on_cancel": false,
+        "max_reposts": 0,
+        "repost_delay_secs": 1,
+        "repost_conditions": []
+      },
+      "enabled": false,
+      "group": "paper_signoff"
+    },
+    {
+      "id": "so_partial",
+      "name": "Signoff delete partial",
+      "side": "Buy",
+      "order_type": "Limit",
+      "quantity": {
+        "type": "Fixed",
+        "value": "0.01"
+      },
+      "price": {
+        "Fixed": "1020"
+      },
+      "risk": {
+        "max_position": "0.02",
+        "max_orders": 1,
+        "max_order_qty": null,
+        "max_notional": null,
+        "daily_loss_limit": null
+      },
+      "lifecycle": {
+        "auto_repost": false,
+        "auto_repost_on_cancel": false,
+        "max_reposts": 0,
+        "repost_delay_secs": 1,
+        "repost_conditions": []
+      },
+      "enabled": false,
+      "group": "paper_signoff"
+    }
+  ],
+  "instances": [
+    {
+      "id": "so_buy_BTCUSDT",
+      "template_id": "so_buy",
+      "pair": {
+        "base": "BTC",
+        "quote": "USDT"
+      },
+      "config": {
+        "id": "so_buy",
+        "name": "Signoff spot buy inventory",
+        "side": "Buy",
+        "order_type": "Limit",
+        "quantity": {
+          "type": "Fixed",
+          "value": "0.001"
+        },
+        "price": {
+          "Fixed": "10000"
+        },
+        "risk": {
+          "max_position": "0.02",
+          "max_orders": 1,
+          "max_order_qty": null,
+          "max_notional": null,
+          "daily_loss_limit": null
+        },
+        "lifecycle": {
+          "auto_repost": false,
+          "auto_repost_on_cancel": false,
+          "max_reposts": 0,
+          "repost_delay_secs": 1,
+          "repost_conditions": []
+        },
+        "enabled": true,
+        "group": "paper_signoff"
+      },
+      "owned_client_ids": [
+        "566cc332-fa46-4d30-9db2-16497cb9f335"
+      ],
+      "owned_exchange_ids": [],
+      "filled_qty": "0.001",
+      "state": "Filled",
+      "repost_count": 0,
+      "last_filled_at": 1790779288862,
+      "fill_count": 1,
+      "inflight_client_order_id": null,
+      "filled_by_order": {
+        "cd293fbe-2d14-42ab-8a87-1e50ee0e3157": "0.001"
+      }
+    },
+    {
+      "id": "so_sell_BTCUSDT",
+      "template_id": "so_sell",
+      "pair": {
+        "base": "BTC",
+        "quote": "USDT"
+      },
+      "config": {
+        "id": "so_sell",
+        "name": "Signoff spot sell inventory",
+        "side": "Sell",
+        "order_type": "Limit",
+        "quantity": {
+          "type": "Fixed",
+          "value": "0.001"
+        },
+        "price": {
+          "Fixed": "100000"
+        },
+        "risk": {
+          "max_position": "0.02",
+          "max_orders": 1,
+          "max_order_qty": null,
+          "max_notional": null,
+          "daily_loss_limit": null
+        },
+        "lifecycle": {
+          "auto_repost": false,
+          "auto_repost_on_cancel": false,
+          "max_reposts": 0,
+          "repost_delay_secs": 1,
+          "repost_conditions": []
+        },
+        "enabled": true,
+        "group": "paper_signoff"
+      },
+      "owned_client_ids": [
+        "26866cd9-e896-4b9f-bc85-df91aae8d599"
+      ],
+      "owned_exchange_ids": [],
+      "filled_qty": "0.001",
+      "state": "Filled",
+      "repost_count": 0,
+      "last_filled_at": 1790779291971,
+      "fill_count": 1,
+      "inflight_client_order_id": null,
+      "filled_by_order": {
+        "7f648ca1-0c19-45db-94ef-a3afb7e70598": "0.001"
+      }
+    },
+    {
+      "id": "so_rest_BTCUSDT",
+      "template_id": "so_rest",
+      "pair": {
+        "base": "BTC",
+        "quote": "USDT"
+      },
+      "config": {
+        "id": "so_rest",
+        "name": "Signoff disable resting",
+        "side": "Buy",
+        "order_type": "Limit",
+        "quantity": {
+          "type": "Fixed",
+          "value": "0.01"
+        },
+        "price": {
+          "Fixed": "1010"
+        },
+        "risk": {
+          "max_position": "0.02",
+          "max_orders": 1,
+          "max_order_qty": null,
+          "max_notional": null,
+          "daily_loss_limit": null
+        },
+        "lifecycle": {
+          "auto_repost": false,
+          "auto_repost_on_cancel": false,
+          "max_reposts": 0,
+          "repost_delay_secs": 1,
+          "repost_conditions": []
+        },
+        "enabled": false,
+        "group": "paper_signoff"
+      },
+      "owned_client_ids": [
+        "711959c9-fc97-41f3-ad29-23c7e4decc76"
+      ],
+      "owned_exchange_ids": [],
+      "filled_qty": "0",
+      "state": "Paused",
+      "repost_count": 0,
+      "last_filled_at": null,
+      "fill_count": 0,
+      "inflight_client_order_id": null,
+      "filled_by_order": {}
+    }
+  ],
+  "tombstones": [
+    "so_partial_BTCUSDT"
+  ],
+  "risk_limits": {
+    "total_max_position": "0.05",
+    "max_total_orders": 8,
+    "max_notional": "200",
+    "max_order_qty": "0.01",
+    "daily_loss_limit_all_pairs": null,
+    "daily_loss_limit_per_pair": {}
+  },
+  "venue": "Paper",
+  "instrument": "Spot",
+  "account": "paper_signoff_spot"
+}

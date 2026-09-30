@@ -1,0 +1,16 @@
+2026-09-30T14:41:33.790140Z  INFO paper_exchange_server::runtime: paper exchange listening on 127.0.0.1:19994
+2026-09-30T14:41:33.790169Z  INFO paper_exchange_server::runtime: profile=Lab scenario=None market_engine=true instruments=1
+2026-09-30T14:41:33.790174Z  INFO paper_exchange_server::runtime: fill_model=ImmediateCross max_trade_history=10000
+2026-09-30T14:41:33.790182Z  INFO paper_exchange_server::runtime: Paper exchange URL: ws://127.0.0.1:19994/ws/trade
+2026-09-30T14:41:33.790186Z  INFO paper_exchange_server::runtime: REST: http://127.0.0.1:19994/balances
+2026-09-30T14:41:33.847508Z  INFO paper_exchange_server::transport: trading endpoint: client connected
+2026-09-30T14:41:33.847542Z  INFO paper_exchange_server::transport: new trading connection: account snapshot requested (broadcast)
+2026-09-30T14:41:33.847558Z  INFO paper_exchange_server::session: account snapshot emitted (broadcast to all connections)
+2026-09-30T14:41:33.847857Z  INFO paper_exchange_server::transport: trading: incoming frame len=31 body={"type":"get_account_snapshot"}
+2026-09-30T14:41:33.847894Z  INFO paper_exchange_server::transport: trading: command received: get_account_snapshot
+2026-09-30T14:41:33.847928Z  INFO paper_exchange_server::session: account snapshot sent (direct reply to connection)
+2026-09-30T14:41:33.847940Z  INFO paper_exchange_server::transport: trading: sending account snapshot (1 balances, 0 positions)
+2026-09-30T14:41:35.848667Z  INFO paper_exchange_server::transport: market endpoint: client connected
+2026-09-30T14:41:36.308041Z  INFO paper_exchange_server::transport: trading: incoming frame len=198 body={"type":"place_order","request":{"instrument_id":"BTC-USDT","side":"Buy","order_type":"Limit","quantity":"0.001","limit_price":"10000.00","client_order_id":["10e422a2-a91f-40af-98f1-4d694a53b7ce"]}}
+2026-09-30T14:41:36.308165Z  INFO paper_exchange_server::transport: trading: command received: place_order instrument_id=BTC-USDT side=Buy quantity=0.001
+2026-09-30T14:41:36.308326Z  INFO paper_exchange_server::transport: trading: sending execution report order_id=789ec39f-eed0-4ae0-99e6-ade771260f16 instrument_id=BTC-USDT

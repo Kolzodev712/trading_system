@@ -44,6 +44,18 @@ pub struct Position {
     pub avg_price: Decimal,
 }
 
+impl Position {
+    /// Average entry used for P&L. `None` means the cost basis is unknown
+    /// (wallet bootstrap without a venue entry), not a real zero price.
+    pub fn cost_basis(&self) -> Option<Decimal> {
+        if self.avg_price.abs() <= Decimal::new(1, 6) {
+            None
+        } else {
+            Some(self.avg_price)
+        }
+    }
+}
+
 /// A submission whose exchange outcome is not yet known.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PendingSubmission {

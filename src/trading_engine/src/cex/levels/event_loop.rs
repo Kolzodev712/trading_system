@@ -848,6 +848,12 @@ impl LevelBasedEventLoop {
                     }
                     Err(err) => {
                         tracing::error!("Level {} submit apply failed: {}", expanded_id, err);
+                        self.trading_state_manager
+                            .get_state()
+                            .write()
+                            .await
+                            .halt_new_exposure(format!("level submit apply failed: {err}"));
+                        return Err(err);
                     }
                 }
             }
@@ -1045,6 +1051,10 @@ impl LevelBasedEventLoop {
                 .collect()
         };
 
+        if levels_to_repost.is_empty() {
+            return Ok(());
+        }
+
         // Reset levels to Created state for reposting
         for level_id in levels_to_repost {
             if let Some(level) = manager.get_level_mut(&level_id) {
@@ -1060,6 +1070,7 @@ impl LevelBasedEventLoop {
                 }
             }
         }
+        manager.persist_runtime_state()?;
 
         Ok(())
     }

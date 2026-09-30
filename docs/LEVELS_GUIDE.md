@@ -645,7 +645,7 @@ Groups can be used for:
 
 ### Persistence
 
-The file catalog is canonical. Mongo may mirror it and must not override it at restart. Catalog load rejects a venue/account/instrument scope mismatch. Terminal filled/cancelled exchange IDs are retired so restart does not restore `Posted`.
+The file catalog is canonical. Mongo may mirror it and must not override it at restart. Catalog load rejects a venue/account/instrument scope mismatch. Terminal filled/cancelled exchange IDs are retired so restart does not restore `Posted`. Delete latches a durable `Deleting` instance (owned IDs kept) and writes the tombstone only after REST verification. `repost_count` and `last_filled_at` are persisted so restart does not reset max-repost and delay bounds.
 
 ## Paper / Bybit capability (levels)
 

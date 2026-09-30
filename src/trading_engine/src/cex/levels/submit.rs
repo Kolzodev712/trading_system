@@ -83,6 +83,10 @@ pub fn prepare_level_submission(
         trading_state.halt_new_exposure(format!("level journal write failed: {err}"));
         return Err(err);
     }
+    if let Err(err) = manager.record_inflight_client_id(level_id, &client_order_id) {
+        trading_state.halt_new_exposure(format!("level catalog write failed: {err}"));
+        return Err(err);
+    }
     Ok(PreparedLevelSubmit {
         pending,
         generation,
@@ -99,6 +103,10 @@ pub fn abort_unsent_submission(
 ) -> Result<LevelSubmitResult, EngineError> {
     if let Err(err) = persist(journal, &prepared.pending, SubmissionState::Rejected) {
         trading_state.halt_new_exposure(format!("level journal write failed: {err}"));
+        return Err(err);
+    }
+    if let Err(err) = manager.clear_inflight_client_id(level_id) {
+        trading_state.halt_new_exposure(format!("level catalog write failed: {err}"));
         return Err(err);
     }
     trading_state.clear_submission(prepared.pending.client_order_id.as_str());
@@ -119,7 +127,10 @@ pub fn apply_level_submit_result(
             if order.client_order_id.is_none() {
                 order.client_order_id = Some(prepared.pending.client_order_id.clone());
             }
-            persist(journal, &prepared.pending, SubmissionState::Acknowledged)?;
+            if let Err(err) = persist(journal, &prepared.pending, SubmissionState::Acknowledged) {
+                trading_state.halt_new_exposure(format!("level journal write failed: {err}"));
+                return Err(err);
+            }
             trading_state.import_working_order(order.clone());
             let keep = manager.submit_still_allowed(level_id, prepared.generation);
             manager.attach_owned_order(
@@ -141,12 +152,20 @@ pub fn apply_level_submit_result(
                     .halt_new_exposure(format!("level journal write failed: {persist_err}"));
                 return Err(persist_err);
             }
+            if let Err(persist_err) = manager.clear_inflight_client_id(level_id) {
+                trading_state
+                    .halt_new_exposure(format!("level catalog write failed: {persist_err}"));
+                return Err(persist_err);
+            }
             trading_state.clear_submission(prepared.pending.client_order_id.as_str());
             manager.abort_submit(level_id, prepared.generation);
             Ok(LevelSubmitResult::Rejected)
         }
         Err(_) => {
-            persist(journal, &prepared.pending, SubmissionState::Unknown)?;
+            if let Err(err) = persist(journal, &prepared.pending, SubmissionState::Unknown) {
+                trading_state.halt_new_exposure(format!("level journal write failed: {err}"));
+                return Err(err);
+            }
             Ok(LevelSubmitResult::Unknown)
         }
     }
@@ -178,10 +197,18 @@ pub fn attach_recovered_level_orders(
                 .as_ref()
                 .is_some_and(|cid| cid.as_str() == record.client_order_id)
         }) {
-            manager.confirm_posted(
+            let keep = manager.get_level(&level_id).is_some_and(|level| {
+                level.config.enabled
+                    && !matches!(
+                        level.state,
+                        LevelState::Deleting | LevelState::Paused | LevelState::Removed
+                    )
+            });
+            manager.attach_owned_order(
                 &level_id,
                 &SmolStr::new(&record.client_order_id),
                 &order.order_id,
+                keep,
             )?;
         } else if record.state.is_unresolved() {
             if let Some(level) = manager.get_level_mut(&level_id) {
@@ -194,6 +221,7 @@ pub fn attach_recovered_level_orders(
                         .owned_client_ids
                         .push(SmolStr::new(&record.client_order_id));
                 }
+                level.inflight_client_order_id = Some(SmolStr::new(&record.client_order_id));
                 if matches!(level.state, LevelState::Created) {
                     level.state = LevelState::Submitting;
                 }
@@ -672,5 +700,99 @@ mod tests {
             .iter()
             .any(|id| id.as_str() == "ex-race"));
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn delete_during_inflight_submit_keeps_instance_and_must_cancel_on_ack() {
+        let path = journal_path("delete-ack-race");
+        let journal = SubmissionJournal::open(&path).unwrap();
+        let mut manager = LevelManager::new();
+        let level_id = manager.add_level(cfg("buy_level_1"), pair()).await.unwrap();
+        let mut state = TradingState::new();
+        let prepared =
+            prepare_level_submission(&mut manager, &journal, &mut state, &level_id, request())
+                .unwrap();
+        manager.begin_delete(&level_id).unwrap();
+        let err = manager.complete_delete(&level_id).unwrap_err();
+        assert!(err.to_string().contains("pending submission"));
+        assert!(manager.get_level(&level_id).is_some());
+
+        let mut placed = working("x", "ex-delete-race");
+        placed.client_order_id = Some(prepared.pending.client_order_id.clone());
+        let result = apply_level_submit_result(
+            &mut manager,
+            &journal,
+            &mut state,
+            &prepared,
+            &level_id,
+            Ok(placed),
+        )
+        .unwrap();
+        assert!(matches!(result, LevelSubmitResult::MustCancel(_)));
+        let level = manager.get_level(&level_id).unwrap();
+        assert_eq!(level.state, LevelState::Deleting);
+        assert!(level
+            .active_orders
+            .iter()
+            .any(|id| id.as_str() == "ex-delete-race"));
+        let err = manager.complete_delete(&level_id).unwrap_err();
+        assert!(err.to_string().contains("owned orders"));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn ack_journal_write_failure_keeps_reservation_and_halts() {
+        let path = journal_path("ack-fail");
+        let journal = SubmissionJournal::open(&path).unwrap();
+        let mut manager = LevelManager::new();
+        let level_id = manager.add_level(cfg("buy_level_1"), pair()).await.unwrap();
+        let mut state = TradingState::new();
+        let prepared =
+            prepare_level_submission(&mut manager, &journal, &mut state, &level_id, request())
+                .unwrap();
+        std::fs::remove_file(&path).unwrap();
+        std::fs::create_dir(&path).unwrap();
+        let mut placed = working("x", "ex-ack-fail");
+        placed.client_order_id = Some(prepared.pending.client_order_id.clone());
+        let err = apply_level_submit_result(
+            &mut manager,
+            &journal,
+            &mut state,
+            &prepared,
+            &level_id,
+            Ok(placed),
+        );
+        assert!(err.is_err());
+        assert!(state.has_unresolved_submission(&pair()));
+        assert!(state.blocks_new_exposure(&pair()));
+        let _ = std::fs::remove_dir_all(&path);
+    }
+
+    #[tokio::test]
+    async fn unknown_journal_write_failure_keeps_reservation_and_halts() {
+        let path = journal_path("unknown-fail");
+        let journal = SubmissionJournal::open(&path).unwrap();
+        let mut manager = LevelManager::new();
+        let level_id = manager.add_level(cfg("buy_level_1"), pair()).await.unwrap();
+        let mut state = TradingState::new();
+        let prepared =
+            prepare_level_submission(&mut manager, &journal, &mut state, &level_id, request())
+                .unwrap();
+        std::fs::remove_file(&path).unwrap();
+        std::fs::create_dir(&path).unwrap();
+        let err = apply_level_submit_result(
+            &mut manager,
+            &journal,
+            &mut state,
+            &prepared,
+            &level_id,
+            Err(EngineError::CustomError(anyhow::anyhow!(
+                "k-paper: open_order timeout (15s)"
+            ))),
+        );
+        assert!(err.is_err());
+        assert!(state.has_unresolved_submission(&pair()));
+        assert!(state.blocks_new_exposure(&pair()));
+        let _ = std::fs::remove_dir_all(&path);
     }
 }

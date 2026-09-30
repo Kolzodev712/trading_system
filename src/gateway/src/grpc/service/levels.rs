@@ -376,7 +376,7 @@ impl LevelService {
         let mut level_manager = self.level_manager.write().await;
         level_manager
             .complete_delete(&level_id)
-            .map_err(|e| Status::internal(format!("Failed to complete delete: {e}")))?;
+            .map_err(|e| Status::failed_precondition(format!("{e}")))?;
         Ok(Response::new(trading_cli::DeleteLevelResponse {
             success: true,
         }))

@@ -2,6 +2,7 @@
 use super::config::LevelConfig;
 use super::identity::LevelIdentity;
 use rust_decimal::Decimal;
+use serde::{Deserialize, Serialize};
 use trading_core::types::common::{OrderId, OrderType, Pair};
 
 /// Runtime level representation with resolved values
@@ -32,6 +33,9 @@ pub struct Level {
     /// Bumped on disable/delete so an in-flight submit can refuse to send.
     pub generation: u64,
 
+    /// Client order id of a persist-before-send that has not ACK'd or aborted.
+    pub inflight_client_order_id: Option<smol_str::SmolStr>,
+
     /// Repost count
     pub repost_count: usize,
 
@@ -60,6 +64,7 @@ impl Level {
             filled_qty: Decimal::ZERO,
             fill_count: 0,
             generation: 0,
+            inflight_client_order_id: None,
             repost_count: 0,
             last_posted_at: None,
             last_filled_at: None,
@@ -80,7 +85,7 @@ impl Level {
 }
 
 /// Level state
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum LevelState {
     /// Level created but not posted
     Created,

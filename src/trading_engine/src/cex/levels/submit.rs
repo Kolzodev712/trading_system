@@ -123,9 +123,24 @@ pub fn apply_level_submit_result(
     result: Result<Order, EngineError>,
 ) -> Result<LevelSubmitResult, EngineError> {
     match result {
-        Ok(mut order) => {
-            if order.client_order_id.is_none() {
-                order.client_order_id = Some(prepared.pending.client_order_id.clone());
+        Ok(order) => {
+            let matches_prepared =
+                order.client_order_id.as_ref() == Some(&prepared.pending.client_order_id);
+            if !matches_prepared {
+                tracing::error!(
+                    expected = %prepared.pending.client_order_id,
+                    got = ?order.client_order_id,
+                    exchange_id = %order.order_id.as_str(),
+                    "place response is not correlated to the pending client order id"
+                );
+                trading_state.halt_new_exposure(
+                    "place response missing verified client-order-id association",
+                );
+                if let Err(err) = persist(journal, &prepared.pending, SubmissionState::Unknown) {
+                    trading_state.halt_new_exposure(format!("level journal write failed: {err}"));
+                    return Err(err);
+                }
+                return Ok(LevelSubmitResult::Unknown);
             }
             if let Err(err) = persist(journal, &prepared.pending, SubmissionState::Acknowledged) {
                 trading_state.halt_new_exposure(format!("level journal write failed: {err}"));
@@ -133,12 +148,15 @@ pub fn apply_level_submit_result(
             }
             trading_state.import_working_order(order.clone());
             let keep = manager.submit_still_allowed(level_id, prepared.generation);
-            manager.attach_owned_order(
+            if let Err(err) = manager.attach_owned_order(
                 level_id,
                 &prepared.pending.client_order_id,
                 &order.order_id,
                 keep,
-            )?;
+            ) {
+                trading_state.halt_new_exposure(format!("level ownership attach failed: {err}"));
+                return Err(err);
+            }
             if keep {
                 Ok(LevelSubmitResult::Posted(order))
             } else {
@@ -204,6 +222,14 @@ pub fn attach_recovered_level_orders(
                         LevelState::Deleting | LevelState::Paused | LevelState::Removed
                     )
             });
+            if order.client_order_id.as_ref().map(|c| c.as_str())
+                != Some(record.client_order_id.as_str())
+            {
+                return Err(EngineError::CustomError(anyhow::anyhow!(
+                    "ambiguous recovery: journal {} does not match order client id",
+                    record.client_order_id
+                )));
+            }
             manager.attach_owned_order(
                 &level_id,
                 &SmolStr::new(&record.client_order_id),
@@ -228,6 +254,7 @@ pub fn attach_recovered_level_orders(
             }
         }
     }
+    manager.assert_unique_exchange_ownership()?;
     Ok(())
 }
 
@@ -236,13 +263,24 @@ pub fn classify_open_orders(
     open_orders: &[Order],
     manager: &mut LevelManager,
     trading_state: &mut TradingState,
-) {
+) -> Result<(), EngineError> {
     for order in open_orders {
-        let owned_level = order
+        let by_client = order
             .client_order_id
             .as_ref()
-            .and_then(|cid| manager.owns_client_id(cid.as_str()))
-            .or_else(|| manager.owns_exchange_id(&order.order_id));
+            .and_then(|cid| manager.owns_client_id(cid.as_str()));
+        let by_exchange = manager.owns_exchange_id(&order.order_id);
+        if let (Some(client_owner), Some(exchange_owner)) = (&by_client, &by_exchange) {
+            if client_owner != exchange_owner {
+                let reason = format!(
+                    "ambiguous recovery: client owner {client_owner} != exchange owner {exchange_owner} for {}",
+                    order.order_id.as_str()
+                );
+                trading_state.halt_new_exposure(reason.clone());
+                return Err(EngineError::CustomError(anyhow::anyhow!(reason)));
+            }
+        }
+        let owned_level = by_client.or(by_exchange);
         if let Some(level_id) = owned_level {
             let keep = manager.get_level(&level_id).is_some_and(|level| {
                 level.config.enabled
@@ -252,7 +290,7 @@ pub fn classify_open_orders(
                     )
             });
             if let Some(cid) = order.client_order_id.as_ref() {
-                let _ = manager.attach_owned_order(&level_id, cid, &order.order_id, keep);
+                manager.attach_owned_order(&level_id, cid, &order.order_id, keep)?;
             }
             if !trading_state.active_orders.contains_key(&order.order_id) {
                 trading_state.import_working_order(order.clone());
@@ -261,6 +299,30 @@ pub fn classify_open_orders(
             manager.mark_external_order(order.order_id.clone());
         }
     }
+    if let Err(err) = manager.assert_unique_exchange_ownership() {
+        trading_state.halt_new_exposure(err.to_string());
+        return Err(err);
+    }
+    Ok(())
+}
+
+/// Match an amend result to the original working order by identity, not list position.
+pub fn find_amend_result<'a>(
+    original_id: &trading_core::types::common::OrderId,
+    expected_client: Option<&str>,
+    results: &'a [trading_core::types::exchange::BulkOperationResult<Order>],
+) -> Option<&'a trading_core::types::exchange::BulkOperationResult<Order>> {
+    results.iter().find(|result| {
+        result.data.as_ref().is_some_and(|order| {
+            order.order_id == *original_id
+                || expected_client.is_some_and(|cid| {
+                    order
+                        .client_order_id
+                        .as_ref()
+                        .is_some_and(|owned| owned.as_str() == cid)
+                })
+        })
+    })
 }
 
 #[cfg(test)]
@@ -634,7 +696,7 @@ mod tests {
         manager
             .confirm_posted(&level_id, &SmolStr::new("cid-ours"), &ours.order_id)
             .unwrap();
-        classify_open_orders(&[ours.clone(), foreign.clone()], &mut manager, &mut state);
+        classify_open_orders(&[ours.clone(), foreign.clone()], &mut manager, &mut state).unwrap();
         assert!(manager.is_external_order(&foreign.order_id));
         assert!(!manager.is_external_order(&ours.order_id));
         assert!(!manager
@@ -655,7 +717,7 @@ mod tests {
             .confirm_posted(&level_id, &SmolStr::new("cid-1"), &order.order_id)
             .unwrap();
         manager.begin_delete(&level_id).unwrap();
-        classify_open_orders(&[order], &mut manager, &mut state);
+        classify_open_orders(&[order], &mut manager, &mut state).unwrap();
         assert_eq!(
             manager.get_level(&level_id).unwrap().state,
             LevelState::Deleting
@@ -818,5 +880,105 @@ mod tests {
         assert!(state.has_unresolved_submission(&pair()));
         assert!(state.blocks_new_exposure(&pair()));
         let _ = std::fs::remove_dir_all(&path);
+    }
+
+    #[tokio::test]
+    async fn uncorrelated_place_response_does_not_attach() {
+        let path = journal_path("uncorr");
+        let journal = SubmissionJournal::open(&path).unwrap();
+        let mut manager = LevelManager::new();
+        let a = manager.add_level(cfg("buy_level_1"), pair()).await.unwrap();
+        let b = manager.add_level(cfg("buy_level_2"), pair()).await.unwrap();
+        let mut state = TradingState::new();
+        let prepared =
+            prepare_level_submission(&mut manager, &journal, &mut state, &b, request()).unwrap();
+        let alien = working("cid-a", "ex-a");
+        let result =
+            apply_level_submit_result(&mut manager, &journal, &mut state, &prepared, &b, Ok(alien))
+                .unwrap();
+        assert_eq!(result, LevelSubmitResult::Unknown);
+        assert!(manager.get_level(&b).unwrap().active_orders.is_empty());
+        assert!(manager.get_level(&a).unwrap().active_orders.is_empty());
+        assert!(state.blocks_new_exposure(&pair()));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn duplicate_exchange_id_is_rejected() {
+        let path = journal_path("dup-ex");
+        let journal = SubmissionJournal::open(&path).unwrap();
+        let mut manager = LevelManager::new();
+        let a = manager.add_level(cfg("buy_level_1"), pair()).await.unwrap();
+        let b = manager.add_level(cfg("buy_level_2"), pair()).await.unwrap();
+        let mut state = TradingState::new();
+        manager
+            .confirm_posted(
+                &a,
+                &SmolStr::new("cid-a"),
+                &OrderId::new("ex-shared".into()),
+            )
+            .unwrap();
+        let prepared =
+            prepare_level_submission(&mut manager, &journal, &mut state, &b, request()).unwrap();
+        let mut placed = working("x", "ex-shared");
+        placed.client_order_id = Some(prepared.pending.client_order_id.clone());
+        let err = apply_level_submit_result(
+            &mut manager,
+            &journal,
+            &mut state,
+            &prepared,
+            &b,
+            Ok(placed),
+        );
+        assert!(err.is_err());
+        assert!(state.blocks_new_exposure(&pair()));
+        assert_eq!(
+            manager.get_level(&a).unwrap().active_orders[0].as_str(),
+            "ex-shared"
+        );
+        assert!(manager.get_level(&b).unwrap().active_orders.is_empty());
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn classify_halts_on_client_vs_exchange_owner_mismatch() {
+        let mut manager = LevelManager::new();
+        let mut state = TradingState::new();
+        let a = manager.add_level(cfg("buy_level_1"), pair()).await.unwrap();
+        let b = manager.add_level(cfg("buy_level_2"), pair()).await.unwrap();
+        manager
+            .confirm_posted(&a, &SmolStr::new("cid-a"), &OrderId::new("ex-a".into()))
+            .unwrap();
+        manager
+            .confirm_posted(&b, &SmolStr::new("cid-b"), &OrderId::new("ex-b".into()))
+            .unwrap();
+        let order = working("cid-b", "ex-a");
+        let err = classify_open_orders(&[order], &mut manager, &mut state);
+        assert!(err.is_err());
+        assert!(state.blocks_new_exposure(&pair()));
+    }
+
+    #[test]
+    fn find_amend_result_matches_identity_not_list_position() {
+        let original = OrderId::new("ex-1".into());
+        let other = working("cid-2", "ex-2");
+        let ours = working("cid-1", "ex-new");
+        let results = vec![
+            trading_core::types::exchange::BulkOperationResult {
+                success: true,
+                data: Some(other),
+                error: None,
+                index: 0,
+            },
+            trading_core::types::exchange::BulkOperationResult {
+                success: true,
+                data: Some(ours),
+                error: None,
+                index: 1,
+            },
+        ];
+        let matched = find_amend_result(&original, Some("cid-1"), &results).unwrap();
+        assert_eq!(matched.data.as_ref().unwrap().order_id.as_str(), "ex-new");
+        assert!(find_amend_result(&original, Some("cid-missing"), &results).is_none());
     }
 }

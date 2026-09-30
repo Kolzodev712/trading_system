@@ -138,6 +138,46 @@ pub fn cancel_all_after_rest(
     }
 }
 
+/// Client id from a Paper execution, if the venue included one.
+pub fn execution_client_order_id(exec: &KPaperExecution) -> Option<String> {
+    match &exec.client_order_id {
+        Some(serde_json::Value::String(s)) if !s.is_empty() => Some(s.clone()),
+        Some(serde_json::Value::Array(items)) => items
+            .iter()
+            .find_map(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .map(str::to_string),
+        _ => None,
+    }
+}
+
+fn execution_is_reject(exec: &KPaperExecution) -> bool {
+    exec.reject_reason
+        .as_ref()
+        .map(|s| !s.is_empty())
+        .unwrap_or(false)
+}
+
+/// Whether this execution may complete `pending_place`.
+///
+/// Paper fill events have no client id. Consuming the next fill as a place
+/// response attaches another order's exchange id to the in-flight submit.
+pub fn execution_may_complete_pending_place(
+    exec: &KPaperExecution,
+    pending: &OrderRequest,
+) -> bool {
+    if !execution_is_reject(exec) && exec.quantity > Decimal::ZERO {
+        return false;
+    }
+    if let Some(exec_cid) = execution_client_order_id(exec) {
+        return pending
+            .exchange_params
+            .get("orderLinkId")
+            .is_some_and(|cid| cid.as_str() == exec_cid);
+    }
+    true
+}
+
 /// Convert k-paper execution to Order (for CexVenueUpdate::Order).
 /// Rejects stay rejected. A lone fill event is not enough to mark the full order
 /// terminal; merge it with the working order via [`merge_fill_into_working_order`].
@@ -164,7 +204,7 @@ pub fn execution_to_order(
     let timestamp_ms = timestamp_secs.saturating_mul(1000);
     Some(Order {
         order_id: OrderId::new(exec.order_id.clone().into()),
-        client_order_id: None,
+        client_order_id: execution_client_order_id(exec).map(SmolStr::new),
         instrument: instrument.clone(),
         side: side_from_str(exec.side.as_str()),
         price,
@@ -386,5 +426,70 @@ mod tests {
         assert_eq!(trade.fee, Decimal::new(6, 2));
         assert_eq!(trade.fee_currency, Symbol::from("USDT"));
         assert_eq!(trade.quantity, Decimal::new(1, 2));
+    }
+
+    fn pending_place(client_id: &str) -> OrderRequest {
+        let mut req = OrderRequest {
+            instrument: Instrument::new(InstrumentType::Spot, Pair::new("BTC", "USDT")),
+            side: Side::Buy,
+            order_type: trading_core::types::common::OrderType::Limit,
+            price: Decimal::new(1000, 0),
+            amount: Decimal::new(1, 2),
+            timestamp: None,
+            exchange_params: std::collections::HashMap::new(),
+        };
+        req.exchange_params
+            .insert(SmolStr::new("orderLinkId"), SmolStr::new(client_id));
+        req
+    }
+
+    fn exec(qty: i64, scale: u32, reject: Option<&str>, client: Option<&str>) -> KPaperExecution {
+        KPaperExecution {
+            order_id: "ord-other".to_string(),
+            trade_id: Some("fill-1".to_string()),
+            instrument_id: "BTC-USDT".to_string(),
+            side: "Buy".to_string(),
+            price: Decimal::new(1000, 0),
+            quantity: Decimal::new(qty, scale),
+            fee: None,
+            timestamp: "2026-01-01T00:00:00Z".to_string(),
+            reject_reason: reject.map(str::to_string),
+            client_order_id: client.map(|s| serde_json::Value::String(s.to_string())),
+        }
+    }
+
+    #[test]
+    fn fill_never_completes_pending_place() {
+        let pending = pending_place("cid-b");
+        assert!(!execution_may_complete_pending_place(
+            &exec(1, 2, None, None),
+            &pending
+        ));
+        assert!(!execution_may_complete_pending_place(
+            &exec(1, 2, None, Some("cid-a")),
+            &pending
+        ));
+    }
+
+    #[test]
+    fn zero_qty_ack_completes_pending_place_without_client_id() {
+        let pending = pending_place("cid-b");
+        assert!(execution_may_complete_pending_place(
+            &exec(0, 0, None, None),
+            &pending
+        ));
+    }
+
+    #[test]
+    fn ack_with_other_client_id_does_not_complete_pending_place() {
+        let pending = pending_place("cid-b");
+        assert!(!execution_may_complete_pending_place(
+            &exec(0, 0, None, Some("cid-a")),
+            &pending
+        ));
+        assert!(execution_may_complete_pending_place(
+            &exec(0, 0, None, Some("cid-b")),
+            &pending
+        ));
     }
 }

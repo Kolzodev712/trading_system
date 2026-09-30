@@ -332,14 +332,25 @@ impl LevelBasedEventLoop {
             let mut manager = self.level_manager.write().await;
             let state_lock = self.trading_state_manager.get_state();
             let state = state_lock.read().await;
-            super::submit::attach_recovered_level_orders(journal.as_ref(), &state, &mut manager)?;
+            if let Err(err) =
+                super::submit::attach_recovered_level_orders(journal.as_ref(), &state, &mut manager)
+            {
+                drop(state);
+                drop(manager);
+                self.trading_state_manager
+                    .get_state()
+                    .write()
+                    .await
+                    .halt_new_exposure(format!("ambiguous level recovery: {err}"));
+                return Err(err);
+            }
         }
         match client.fetch_open_orders().await {
             Ok(open) => {
                 let mut manager = self.level_manager.write().await;
                 let state_lock = self.trading_state_manager.get_state();
                 let mut state = state_lock.write().await;
-                super::submit::classify_open_orders(&open, &mut manager, &mut state);
+                super::submit::classify_open_orders(&open, &mut manager, &mut state)?;
                 let rest_working = open
                     .iter()
                     .filter(|order| order.is_working())
@@ -432,16 +443,15 @@ impl LevelBasedEventLoop {
             let ready_levels: Vec<_> = all_levels
                 .iter()
                 .filter(|level| {
-                    // Match the orderbook's pair
                     level.pair.base == orderbook.pair.base
                         && level.pair.quote == orderbook.pair.quote
                 })
-                .filter(|level| level.is_ready_to_post())
+                .filter(|level| level.needs_book_tick())
                 .collect();
 
             if !ready_levels.is_empty() {
                 tracing::debug!(
-                    "Found {} level(s) ready to post for {}/{}: {:?}",
+                    "Found {} level(s) for post/amend on {}/{}: {:?}",
                     ready_levels.len(),
                     orderbook.pair.base,
                     orderbook.pair.quote,
@@ -454,7 +464,7 @@ impl LevelBasedEventLoop {
                 tracing::info!(
                     pair = %format!("{}/{}", orderbook.pair.base, orderbook.pair.quote),
                     total = all_levels.len(),
-                    "levels skip book: no ready levels"
+                    "levels skip book: no post/amend candidates"
                 );
                 for level in all_levels.iter() {
                     if level.pair.base == orderbook.pair.base
@@ -465,7 +475,7 @@ impl LevelBasedEventLoop {
                             state = ?level.state,
                             enabled = level.config.enabled,
                             active_orders = level.active_orders.len(),
-                            "levels skip book: level not ready to post"
+                            "levels skip book: level not a post/amend candidate"
                         );
                     }
                 }
@@ -674,6 +684,11 @@ impl LevelBasedEventLoop {
                             // Side must not have changed for amendment
                             if existing_order.side == resolved.level.config.side {
                                 // Create order request for amendment
+                                let mut exchange_params = std::collections::HashMap::new();
+                                if let Some(cid) = current_level.owned_client_ids.first() {
+                                    exchange_params
+                                        .insert(smol_str::SmolStr::new("orderLinkId"), cid.clone());
+                                }
                                 let order_request = OrderRequest {
                                     instrument: trading_core::types::common::Instrument::new(
                                         self.level_executor.instrument_type().clone(),
@@ -684,7 +699,7 @@ impl LevelBasedEventLoop {
                                     price: resolved.resolved_price,
                                     amount: resolved.resolved_quantity,
                                     timestamp: Some(trading_core::utils::current_timestamp()),
-                                    exchange_params: std::collections::HashMap::new(),
+                                    exchange_params,
                                 };
 
                                 to_amend.push((expanded_id, order_id.clone(), order_request));
@@ -991,68 +1006,71 @@ impl LevelBasedEventLoop {
             let trading_client = self.trading_client.write().await;
             let bulk_response = trading_client.bulk_amend_orders(bulk_request).await;
 
-            // Process results by request index (never zip truncated batches).
             match bulk_response {
                 Ok(response) => {
-                    let results = response.results;
-                    for (idx, (expanded_id, original_order_id, _)) in to_amend.iter().enumerate() {
-                        if idx >= results.len() {
+                    for (expanded_id, original_order_id, req) in &to_amend {
+                        let expected_client = req
+                            .exchange_params
+                            .get("orderLinkId")
+                            .map(|cid| cid.as_str());
+                        let Some(result) = super::submit::find_amend_result(
+                            original_order_id,
+                            expected_client,
+                            &response.results,
+                        ) else {
+                            if response
+                                .failed_amendments
+                                .iter()
+                                .any(|(id, _)| id == original_order_id)
+                            {
+                                tracing::warn!(
+                                    "Amend failed for level {} order {}",
+                                    expanded_id,
+                                    original_order_id.as_str()
+                                );
+                            } else {
+                                tracing::warn!(
+                                    "Bulk amend result not correlated for level {} order {}",
+                                    expanded_id,
+                                    original_order_id.as_str()
+                                );
+                            }
+                            continue;
+                        };
+                        let Some(amended_order) = result.data.clone() else {
                             tracing::warn!(
-                                "Bulk amend response missing result for index {} (level {})",
-                                idx,
-                                expanded_id
+                                "Amend result for {} has no order payload",
+                                original_order_id.as_str()
                             );
                             continue;
-                        }
-                        let result = &results[idx];
-                        let amended_order_result = if result.success {
-                            result.data.clone().ok_or_else(|| {
-                                EngineError::CustomError(anyhow::anyhow!(
-                                    "Bulk operation succeeded but no data returned"
-                                ))
-                            })
-                        } else {
-                            let error_msg = result
-                                .error
-                                .clone()
-                                .unwrap_or_else(|| "Unknown error".to_string());
-                            Err(EngineError::CustomError(anyhow::anyhow!(error_msg)))
                         };
+                        tracing::info!(
+                            "[SUCCESS] Level amended order: {} -> {} for {}/{}",
+                            original_order_id.as_str(),
+                            amended_order.order_id.as_str(),
+                            orderbook.pair.base,
+                            orderbook.pair.quote
+                        );
 
-                        match amended_order_result {
-                            Ok(amended_order) => {
-                                tracing::info!(
-                                    "[SUCCESS] Level amended order: {} -> {} for {}/{}",
-                                    original_order_id.as_str(),
-                                    amended_order.order_id.as_str(),
-                                    orderbook.pair.base,
-                                    orderbook.pair.quote
-                                );
+                        self.trading_state_manager
+                            .add_order(amended_order.clone())
+                            .await;
 
-                                // Update trading state with amended order
-                                self.trading_state_manager
-                                    .add_order(amended_order.clone())
-                                    .await;
-
-                                // Update level state (order ID might have changed if amend used cancel+place fallback)
-                                {
-                                    let mut manager = self.level_manager.write().await;
-                                    if let Some(level_mut) = manager.get_level_mut(expanded_id) {
-                                        // If order ID changed, update active_orders
-                                        if amended_order.order_id != *original_order_id {
-                                            level_mut.active_orders.clear();
-                                            level_mut
-                                                .active_orders
-                                                .push(amended_order.order_id.clone());
-                                        }
-                                        level_mut.last_posted_at =
-                                            Some(trading_core::utils::current_timestamp());
-                                    }
-                                }
-                            }
-                            Err(e) => {
-                                tracing::warn!("Failed to amend level in batch: {}", e);
-                            }
+                        let mut manager = self.level_manager.write().await;
+                        if let Err(err) = manager.replace_owned_exchange_id(
+                            expanded_id,
+                            original_order_id,
+                            &amended_order.order_id,
+                        ) {
+                            drop(manager);
+                            self.trading_state_manager
+                                .get_state()
+                                .write()
+                                .await
+                                .halt_new_exposure(format!(
+                                    "amend ownership persist failed: {err}"
+                                ));
+                            return Err(err);
                         }
                     }
                 }
@@ -1215,6 +1233,15 @@ impl LevelBasedEventLoop {
 
                     // TradingStateManager automatically handles order updates via ExchangeStateManager
                     // No manual update needed
+                }
+                trading_core::types::common::OrderStatus::PartiallyFilled => {
+                    manager
+                        .handle_order_partially_filled(
+                            &level_id,
+                            &order.order_id,
+                            order.filled_amount,
+                        )
+                        .await?;
                 }
                 trading_core::types::common::OrderStatus::Canceled
                 | trading_core::types::common::OrderStatus::Rejected

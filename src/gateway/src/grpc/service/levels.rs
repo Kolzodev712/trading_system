@@ -282,6 +282,7 @@ impl LevelService {
     }
 
     /// Latch enable/disable, and on disable REST-verify owned orders are gone.
+    /// A second Disable after a failed REST check must retry verification.
     async fn set_level_enabled(&self, level_id: &SmolStr, enabled: bool) -> Result<(), Status> {
         let mut level_manager = self.level_manager.write().await;
 
@@ -298,6 +299,10 @@ impl LevelService {
         }
 
         if current_enabled == enabled {
+            drop(level_manager);
+            if !enabled {
+                self.verify_disable(level_id).await?;
+            }
             return Ok(());
         }
 
@@ -313,25 +318,32 @@ impl LevelService {
             .disable_level(level_id)
             .await
             .map_err(|e| Status::internal(format!("Failed to disable level: {e}")))?;
-        let owned = level_manager
-            .get_level(level_id)
-            .map(|level| level.active_orders.clone())
-            .unwrap_or_default();
         drop(level_manager);
-        if !owned.is_empty() {
-            let client = self.trading_client.write().await;
-            if let Err(err) = trading_engine::levels::cancel_owned_order_ids(&*client, &owned).await
-            {
-                return Err(Status::failed_precondition(format!(
-                    "disable latched but owned-order cancel unverified: {err}"
-                )));
-            }
-            drop(client);
-            let mut level_manager = self.level_manager.write().await;
+        self.verify_disable(level_id).await
+    }
+
+    async fn verify_disable(&self, level_id: &SmolStr) -> Result<(), Status> {
+        let owned = {
+            let level_manager = self.level_manager.read().await;
             level_manager
-                .retire_verified_order_ids(level_id, &owned)
-                .map_err(|e| Status::internal(format!("Failed to retire owned ids: {e}")))?;
+                .get_level(level_id)
+                .map(|level| level.active_orders.clone())
+                .unwrap_or_default()
+        };
+        if owned.is_empty() {
+            return Ok(());
         }
+        let client = self.trading_client.write().await;
+        if let Err(err) = trading_engine::levels::cancel_owned_order_ids(&*client, &owned).await {
+            return Err(Status::failed_precondition(format!(
+                "disable latched but owned-order cancel unverified: {err}"
+            )));
+        }
+        drop(client);
+        let mut level_manager = self.level_manager.write().await;
+        level_manager
+            .retire_verified_order_ids(level_id, &owned)
+            .map_err(|e| Status::internal(format!("Failed to retire owned ids: {e}")))?;
         Ok(())
     }
 
@@ -763,6 +775,139 @@ mod tests {
             .unwrap();
         assert!(level.enabled);
         assert_eq!(level.status, "Created");
+    }
+
+    #[derive(Debug)]
+    struct FailOpenOrdersClient {
+        open: Arc<Mutex<Vec<Order>>>,
+        fail: Arc<Mutex<bool>>,
+    }
+
+    #[async_trait]
+    impl TradingClient<OrderRequest> for FailOpenOrdersClient {
+        fn exchange_id(&self) -> Exchange {
+            Exchange::Paper
+        }
+        async fn test_open_order(&self, _req: OrderRequest) -> Result<(), EngineError> {
+            Ok(())
+        }
+        async fn open_order(&self, _req: OrderRequest) -> Result<Order, EngineError> {
+            Err(EngineError::NotSupported("test".into()))
+        }
+        async fn cancel_order_by_id(&self, _order_id: OrderId) -> Result<(), EngineError> {
+            Ok(())
+        }
+        async fn cancel_all_orders(&self, _pair: &Pair) -> Result<(), EngineError> {
+            panic!("must not cancel_all");
+        }
+        async fn fetch_balance(&self) -> Result<Vec<Balance>, EngineError> {
+            Ok(vec![])
+        }
+        async fn fetch_open_orders(&self) -> Result<Vec<Order>, EngineError> {
+            if *self.fail.lock().unwrap() {
+                return Err(EngineError::CustomError(anyhow::anyhow!(
+                    "REST GET /open_orders: 503"
+                )));
+            }
+            Ok(self.open.lock().unwrap().clone())
+        }
+        async fn fetch_trades(&self, _pair: Option<&Pair>) -> Result<Vec<Trade>, EngineError> {
+            Ok(vec![])
+        }
+        async fn fetch_market_data_snapshot(&self, _pair: &Pair) -> Result<(), EngineError> {
+            Ok(())
+        }
+        async fn amend_order(
+            &self,
+            _order_id: OrderId,
+            _new_request: OrderRequest,
+        ) -> Result<Order, EngineError> {
+            Err(EngineError::NotSupported("test".into()))
+        }
+        async fn bulk_open_orders(
+            &self,
+            _req: trading_core::types::exchange::BulkOrderRequest,
+        ) -> Result<trading_core::types::exchange::BulkOrderResponse, EngineError> {
+            Err(EngineError::NotSupported("test".into()))
+        }
+        async fn bulk_amend_orders(
+            &self,
+            _req: trading_core::types::exchange::BulkAmendRequest,
+        ) -> Result<trading_core::types::exchange::BulkAmendResponse, EngineError> {
+            Err(EngineError::NotSupported("test".into()))
+        }
+    }
+
+    #[tokio::test]
+    async fn second_disable_retries_unverified_rest() {
+        let open = Arc::new(Mutex::new(vec![working_rest_order("ex-1")]));
+        let fail = Arc::new(Mutex::new(true));
+        let service = level_service_from_client(Arc::new(RwLock::new(FailOpenOrdersClient {
+            open: open.clone(),
+            fail: fail.clone(),
+        })));
+        service
+            .create_level(Request::new(trading_cli::CreateLevelRequest {
+                config: Some(ui_create_config()),
+            }))
+            .await
+            .unwrap();
+        {
+            let mut manager = service.level_manager.write().await;
+            manager
+                .confirm_posted(
+                    &SmolStr::new("buy_level_1_BTCUSDT"),
+                    &SmolStr::new("cid-1"),
+                    &OrderId::new("ex-1".into()),
+                )
+                .unwrap();
+        }
+        let first = service
+            .toggle_level(Request::new(trading_cli::ToggleLevelRequest {
+                level_id: "buy_level_1_BTCUSDT".into(),
+                enabled: false,
+            }))
+            .await
+            .unwrap_err();
+        assert_eq!(first.code(), tonic::Code::FailedPrecondition);
+        let level = service
+            .get_level(Request::new(trading_cli::GetLevelRequest {
+                level_id: "buy_level_1_BTCUSDT".into(),
+            }))
+            .await
+            .unwrap()
+            .into_inner()
+            .level
+            .unwrap();
+        assert!(!level.enabled);
+        assert!(!level.active_orders.is_empty());
+        let second = service
+            .toggle_level(Request::new(trading_cli::ToggleLevelRequest {
+                level_id: "buy_level_1_BTCUSDT".into(),
+                enabled: false,
+            }))
+            .await
+            .unwrap_err();
+        assert_eq!(second.code(), tonic::Code::FailedPrecondition);
+        *fail.lock().unwrap() = false;
+        open.lock().unwrap().clear();
+        service
+            .toggle_level(Request::new(trading_cli::ToggleLevelRequest {
+                level_id: "buy_level_1_BTCUSDT".into(),
+                enabled: false,
+            }))
+            .await
+            .unwrap();
+        let level = service
+            .get_level(Request::new(trading_cli::GetLevelRequest {
+                level_id: "buy_level_1_BTCUSDT".into(),
+            }))
+            .await
+            .unwrap()
+            .into_inner()
+            .level
+            .unwrap();
+        assert!(level.active_orders.is_empty());
     }
 
     #[tokio::test]

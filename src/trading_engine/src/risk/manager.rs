@@ -596,6 +596,21 @@ pub fn order_increases_exposure(side: Side, position_qty: Decimal) -> bool {
     }
 }
 
+/// Qty of a futures order that opens or adds to exposure after reducing any opposite position.
+pub fn futures_opening_qty(side: Side, position_qty: Decimal, amount: Decimal) -> Decimal {
+    let order_sign = match side {
+        Side::Buy => Decimal::ONE,
+        Side::Sell => -Decimal::ONE,
+    };
+    if position_qty.is_zero()
+        || (order_sign > Decimal::ZERO && position_qty > Decimal::ZERO)
+        || (order_sign < Decimal::ZERO && position_qty < Decimal::ZERO)
+    {
+        return amount.max(Decimal::ZERO);
+    }
+    (amount - position_qty.abs()).max(Decimal::ZERO)
+}
+
 /// Spot checks inventory. Futures increases require quote margin. Futures reductions do not
 /// require the base asset, so a long can be sold and a short can be bought back.
 pub fn check_order_balance(
@@ -609,10 +624,15 @@ pub fn check_order_balance(
         order_request.instrument.instrument_type(),
         InstrumentType::Futures | InstrumentType::Derivitives
     ) {
-        if !order_increases_exposure(order_request.side.clone(), position_qty) {
+        let opening = futures_opening_qty(
+            order_request.side.clone(),
+            position_qty,
+            order_request.amount,
+        );
+        if opening <= Decimal::ZERO {
             return RiskCheckResult::allowed();
         }
-        let mut required = order_request.price * order_request.amount;
+        let mut required = order_request.price * opening;
         if let Some(lev) = leverage {
             if lev > 0 {
                 required /= Decimal::from(lev);
@@ -728,6 +748,23 @@ mod balance_tests {
             Some(5),
         );
         assert!(allowed.allowed);
+    }
+
+    #[test]
+    fn futures_sell_flipping_long_requires_margin_for_short_remainder() {
+        let mut sell = req(InstrumentType::Futures, Side::Sell);
+        sell.amount = dec!(2);
+        let blocked = check_order_balance(&sell, &[usdt(dec!(10))], dec!(1), Some(5));
+        assert!(!blocked.allowed);
+        let allowed = check_order_balance(&sell, &[usdt(dec!(20))], dec!(1), Some(5));
+        assert!(allowed.allowed);
+        let close_only = check_order_balance(
+            &req(InstrumentType::Futures, Side::Sell),
+            &[],
+            dec!(1),
+            Some(5),
+        );
+        assert!(close_only.allowed);
     }
 
     #[tokio::test]

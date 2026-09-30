@@ -244,8 +244,15 @@ pub fn classify_open_orders(
             .and_then(|cid| manager.owns_client_id(cid.as_str()))
             .or_else(|| manager.owns_exchange_id(&order.order_id));
         if let Some(level_id) = owned_level {
+            let keep = manager.get_level(&level_id).is_some_and(|level| {
+                level.config.enabled
+                    && !matches!(
+                        level.state,
+                        LevelState::Deleting | LevelState::Paused | LevelState::Removed
+                    )
+            });
             if let Some(cid) = order.client_order_id.as_ref() {
-                let _ = manager.confirm_posted(&level_id, cid, &order.order_id);
+                let _ = manager.attach_owned_order(&level_id, cid, &order.order_id, keep);
             }
             if !trading_state.active_orders.contains_key(&order.order_id) {
                 trading_state.import_working_order(order.clone());
@@ -636,6 +643,23 @@ mod tests {
             .active_orders
             .iter()
             .any(|id| id.as_str() == "ex-foreign"));
+    }
+
+    #[tokio::test]
+    async fn classify_open_orders_does_not_mark_deleting_as_posted() {
+        let mut manager = LevelManager::new();
+        let mut state = TradingState::new();
+        let order = working("cid-1", "ex-1");
+        let level_id = manager.add_level(cfg("buy_level_1"), pair()).await.unwrap();
+        manager
+            .confirm_posted(&level_id, &SmolStr::new("cid-1"), &order.order_id)
+            .unwrap();
+        manager.begin_delete(&level_id).unwrap();
+        classify_open_orders(&[order], &mut manager, &mut state);
+        assert_eq!(
+            manager.get_level(&level_id).unwrap().state,
+            LevelState::Deleting
+        );
     }
 
     #[test]

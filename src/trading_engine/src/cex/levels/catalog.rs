@@ -54,6 +54,8 @@ pub struct LevelInstanceRecord {
     pub fill_count: usize,
     #[serde(default)]
     pub inflight_client_order_id: Option<String>,
+    #[serde(default)]
+    pub filled_by_order: HashMap<String, rust_decimal::Decimal>,
 }
 
 impl LevelsCatalog {
@@ -183,6 +185,11 @@ impl LevelsCatalog {
             }
             level.filled_qty = record.filled_qty;
             level.fill_count = record.fill_count;
+            level.filled_by_order = record
+                .filled_by_order
+                .iter()
+                .map(|(id, qty)| (SmolStr::new(id), *qty))
+                .collect();
             level.repost_count = record.repost_count;
             level.last_filled_at = record.last_filled_at;
             level.active_orders = record
@@ -289,6 +296,7 @@ mod tests {
                 last_filled_at: None,
                 fill_count: 0,
                 inflight_client_order_id: None,
+                filled_by_order: HashMap::new(),
             }],
             tombstones: vec![],
             risk_limits: RiskLimits::default(),
@@ -366,6 +374,7 @@ mod tests {
                 last_filled_at: None,
                 fill_count: 0,
                 inflight_client_order_id: None,
+                filled_by_order: HashMap::new(),
             }],
             tombstones: vec!["buy_level_1_BTCUSDT".into()],
             risk_limits: RiskLimits::default(),
@@ -397,6 +406,7 @@ mod tests {
                 last_filled_at: Some(1_700_000_000_000),
                 fill_count: 3,
                 inflight_client_order_id: None,
+                filled_by_order: HashMap::new(),
             }],
             tombstones: vec![],
             risk_limits: RiskLimits::default(),

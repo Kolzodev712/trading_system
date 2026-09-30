@@ -265,6 +265,13 @@ impl LevelBasedEventLoop {
                 let state_lock = self.trading_state_manager.get_state();
                 let mut state = state_lock.write().await;
                 super::submit::classify_open_orders(&open, &mut manager, &mut state);
+                let rest_working = open
+                    .iter()
+                    .filter(|order| order.is_working())
+                    .map(|order| order.order_id.clone())
+                    .collect();
+                manager.retire_absent_owned_orders(&rest_working)?;
+                manager.complete_ready_deletes()?;
             }
             Err(err) => {
                 tracing::error!("REST open-order reconcile failed: {err}");
@@ -835,6 +842,12 @@ impl LevelBasedEventLoop {
                                 ));
                             return Err(err);
                         }
+                        drop(client);
+                        let mut manager = self.level_manager.write().await;
+                        manager.retire_verified_order_ids(
+                            &expanded_id,
+                            std::slice::from_ref(&order.order_id),
+                        )?;
                     }
                     Ok(super::submit::LevelSubmitResult::Unknown) => {
                         tracing::warn!(

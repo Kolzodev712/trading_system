@@ -322,41 +322,47 @@ impl DemoAdapter {
                 &[("category", "linear"), ("symbol", "BTCUSDT")],
             )
             .await?;
-        Ok(v.get("list")
-            .and_then(|x| x.as_array())
+        Ok(parse_rest_orders(&v))
+    }
+
+    /// Exact `orderLinkId` via open orders, then order history. An immediate
+    /// fill may never appear on the default realtime list.
+    pub(crate) async fn signed_order_by_link_id(
+        &self,
+        client_order_id: &str,
+    ) -> Result<Option<RestOrder>> {
+        if client_order_id.is_empty() {
+            return Ok(None);
+        }
+        let open = self
+            .signed_get(
+                "/v5/order/realtime",
+                &[
+                    ("category", "linear"),
+                    ("symbol", "BTCUSDT"),
+                    ("orderLinkId", client_order_id),
+                ],
+            )
+            .await?;
+        if let Some(order) = parse_rest_orders(&open)
             .into_iter()
-            .flatten()
-            .map(|o| RestOrder {
-                order_id: o
-                    .get("orderId")
-                    .and_then(|x| x.as_str())
-                    .unwrap_or("")
-                    .to_string(),
-                client_order_id: o
-                    .get("orderLinkId")
-                    .and_then(|x| x.as_str())
-                    .unwrap_or("")
-                    .to_string(),
-                instrument: o
-                    .get("symbol")
-                    .and_then(|x| x.as_str())
-                    .unwrap_or("BTCUSDT")
-                    .to_string(),
-                price: dec_field(o, "price"),
-                amount: dec_field(o, "qty"),
-                filled: dec_field(o, "cumExecQty"),
-                status: o
-                    .get("orderStatus")
-                    .and_then(|x| x.as_str())
-                    .unwrap_or("")
-                    .to_string(),
-                side: o
-                    .get("side")
-                    .and_then(|x| x.as_str())
-                    .unwrap_or("")
-                    .to_string(),
-            })
-            .collect())
+            .find(|o| o.client_order_id == client_order_id)
+        {
+            return Ok(Some(order));
+        }
+        let history = self
+            .signed_get(
+                "/v5/order/history",
+                &[
+                    ("category", "linear"),
+                    ("symbol", "BTCUSDT"),
+                    ("orderLinkId", client_order_id),
+                ],
+            )
+            .await?;
+        Ok(parse_rest_orders(&history)
+            .into_iter()
+            .find(|o| o.client_order_id == client_order_id))
     }
 
     pub(crate) async fn signed_wallet(&self) -> Result<Vec<RestBalance>> {
@@ -408,6 +414,45 @@ impl DemoAdapter {
         }
         Ok(body.get("result").cloned().unwrap_or(Value::Null))
     }
+}
+
+fn parse_rest_orders(result: &Value) -> Vec<RestOrder> {
+    result
+        .get("list")
+        .and_then(|x| x.as_array())
+        .into_iter()
+        .flatten()
+        .map(|o| RestOrder {
+            order_id: o
+                .get("orderId")
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .to_string(),
+            client_order_id: o
+                .get("orderLinkId")
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .to_string(),
+            instrument: o
+                .get("symbol")
+                .and_then(|x| x.as_str())
+                .unwrap_or("BTCUSDT")
+                .to_string(),
+            price: dec_field(o, "price"),
+            amount: dec_field(o, "qty"),
+            filled: dec_field(o, "cumExecQty"),
+            status: o
+                .get("orderStatus")
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .to_string(),
+            side: o
+                .get("side")
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .to_string(),
+        })
+        .collect()
 }
 
 /// Live credentialed bot.json lives outside preserved artifacts (0600). Drop shreds it.

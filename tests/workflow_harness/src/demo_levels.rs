@@ -29,6 +29,11 @@ const LEVEL_ID: &str = "wf_demo_buy";
 const INSTRUMENT: &str = "BTCUSDT";
 const SIDE: &str = "Buy";
 
+/// Runner expands the template to `{template}_{BASE}{QUOTE}`.
+pub fn expanded_instance_id(template_id: &str, instrument: &str) -> String {
+    format!("{template_id}_{instrument}")
+}
+
 #[derive(Debug)]
 pub struct MutateAuth {
     pub bot_path: PathBuf,
@@ -216,6 +221,23 @@ pub fn rest_order_matches_owned(order: &RestOrder, spec: &OwnedOrderSpec) -> boo
         && (order.status == "New" || order.status == "PartiallyFilled" || order.status == "Filled")
 }
 
+/// Open-order list first, then exact-ID history. Immediate fills may skip realtime.
+pub fn owned_order_from_open_or_history(
+    open: &[RestOrder],
+    history: Option<&RestOrder>,
+    spec: &OwnedOrderSpec,
+) -> Option<RestOrder> {
+    if let Some(order) = open
+        .iter()
+        .find(|order| rest_order_matches_owned(order, spec))
+    {
+        return Some(order.clone());
+    }
+    history
+        .filter(|order| rest_order_matches_owned(order, spec))
+        .cloned()
+}
+
 /// REST errors are unverified, never an empty account.
 pub fn cleanup_verification(
     orders: Result<Vec<RestOrder>, String>,
@@ -247,15 +269,39 @@ pub fn cleanup_verification(
     Ok(())
 }
 
-/// Failed GetLevels or an empty list is unverified. `all()` on empty is not proof.
+/// Failed GetLevels or a missing instance is unverified. Template-only ids do not count.
 pub fn levels_disabled_proof(
     levels_verified: bool,
     levels: &[(String, bool, String)],
+    required_instance_id: &str,
 ) -> Option<bool> {
-    if !levels_verified || levels.is_empty() {
+    if !levels_verified || required_instance_id.is_empty() {
         return None;
     }
-    Some(levels.iter().all(|(_, enabled, _)| !enabled))
+    let Some((_, enabled, _)) = levels.iter().find(|(id, _, _)| id == required_instance_id) else {
+        return None;
+    };
+    Some(!*enabled && levels.iter().all(|(_, other, _)| !other))
+}
+
+/// The paused runner must already expose the expanded instance, not the template id.
+pub fn resolve_paused_instance_id(
+    levels_verified: bool,
+    levels: &[(String, bool, String)],
+    template_id: &str,
+    instrument: &str,
+) -> Result<String, String> {
+    if !levels_verified {
+        return Err("GetLevels unverified while paused".into());
+    }
+    let expected = expanded_instance_id(template_id, instrument);
+    match levels.iter().find(|(id, _, _)| id == &expected) {
+        Some((_, false, _)) => Ok(expected),
+        Some((_, true, _)) => Err(format!("{expected} enabled before Resume")),
+        None => Err(format!(
+            "paused runner missing instance {expected} (template {template_id} is not the gRPC id)"
+        )),
+    }
 }
 
 /// Cleanup retries must be new operations. Reusing a cached request id can
@@ -337,21 +383,55 @@ async fn run_inner(
     let clock = Instant::now();
     let entry_deadline = clock + Duration::from_secs(ENTRY_SECS);
     let hard_deadline = clock + Duration::from_secs(DEADLINE_SECS);
+    let instance_id =
+        match wait_paused_instance(&mut grpc, Instant::now() + Duration::from_secs(30)).await {
+            Ok(id) => {
+                r.assert_eq(
+                    "paused_instance_id",
+                    &expanded_instance_id(LEVEL_ID, INSTRUMENT),
+                    &id,
+                );
+                id
+            }
+            Err(e) => {
+                r.fail(
+                    "paused_instance_id",
+                    &expanded_instance_id(LEVEL_ID, INSTRUMENT),
+                    &e.to_string(),
+                );
+                expanded_instance_id(LEVEL_ID, INSTRUMENT)
+            }
+        };
 
-    let started = run_after_start(
+    let started = if r.verdict == Verdict::Fail {
+        Err(anyhow::anyhow!(
+            "paused instance was not verified; Resume skipped"
+        ))
+    } else {
+        run_after_start(
+            r,
+            adapter,
+            &mut grpc,
+            &stack,
+            &instance_id,
+            qty,
+            rest_price,
+            fill_price,
+            entry_deadline,
+        )
+        .await
+    };
+    let filled = started.as_ref().ok().copied().unwrap_or(Decimal::ZERO);
+    let cleanup = protective_cleanup(
         r,
         adapter,
         &mut grpc,
         &stack,
-        qty,
-        rest_price,
-        fill_price,
-        entry_deadline,
+        &instance_id,
+        Some(filled),
+        hard_deadline,
     )
     .await;
-    let filled = started.as_ref().ok().copied().unwrap_or(Decimal::ZERO);
-    let cleanup =
-        protective_cleanup(r, adapter, &mut grpc, &stack, Some(filled), hard_deadline).await;
     if let Err(e) = cleanup {
         r.fail(
             "cleanup",
@@ -394,7 +474,9 @@ async fn run_inner(
     r.assert_eq(
         "end_level_disabled",
         "true",
-        snap_end.levels.iter().all(|(_, en, _)| !en).to_string(),
+        levels_disabled_proof(snap_end.levels_verified, &snap_end.levels, &instance_id)
+            .unwrap_or(false)
+            .to_string(),
     );
     r.assert_eq(
         "end_rest_orders",
@@ -441,6 +523,7 @@ async fn run_after_start(
     adapter: &DemoAdapter,
     grpc: &mut GrpcCtl,
     stack: &DemoLevelsRunner,
+    instance_id: &str,
     qty: Decimal,
     rest_price: Decimal,
     fill_price: Decimal,
@@ -472,14 +555,34 @@ async fn run_after_start(
     grpc.resume_entries().await.context("ResumeEntries")?;
     r.note("one authenticated entry-enable (ResumeEntries) after independent preflight");
 
-    place_and_cancel(r, adapter, grpc, qty, rest_price, entry_deadline, stack).await?;
+    place_and_cancel(
+        r,
+        adapter,
+        grpc,
+        qty,
+        rest_price,
+        entry_deadline,
+        stack,
+        instance_id,
+    )
+    .await?;
     if r.verdict == Verdict::Fail {
         return Err(anyhow::anyhow!("place/cancel assertions failed"));
     }
 
     let mut filled = rest_btc_position(&adapter.signed_positions().await?);
     if qty_close(filled, Decimal::ZERO) && Instant::now() < entry_deadline {
-        attempt_fill(r, adapter, grpc, qty, fill_price, entry_deadline, stack).await?;
+        attempt_fill(
+            r,
+            adapter,
+            grpc,
+            qty,
+            fill_price,
+            entry_deadline,
+            stack,
+            instance_id,
+        )
+        .await?;
         filled = rest_btc_position(&adapter.signed_positions().await?);
     }
     Ok(filled)
@@ -493,13 +596,15 @@ async fn place_and_cancel(
     rest_price: Decimal,
     entry_deadline: Instant,
     stack: &DemoLevelsRunner,
+    instance_id: &str,
 ) -> Result<()> {
-    grpc.update_level_price(LEVEL_ID, &rest_price.normalize().to_string())
+    grpc.update_level_price(instance_id, &rest_price.normalize().to_string())
         .await?;
-    grpc.toggle_level(LEVEL_ID, true).await?;
+    let watermark = latest_level_client_order_id(&stack.journal_text(), instance_id);
+    grpc.toggle_level(instance_id, true).await?;
     r.note(format!("create 1/2 rest qty={qty} price={rest_price}"));
-    let seen = latest_level_client_order_id(&stack.journal_text(), LEVEL_ID);
-    let client_order_id = wait_journaled_client_id(stack, entry_deadline, seen.as_deref()).await?;
+    let client_order_id =
+        wait_journaled_client_id(stack, instance_id, entry_deadline, watermark.as_deref()).await?;
     let spec = OwnedOrderSpec {
         client_order_id,
         instrument: INSTRUMENT.into(),
@@ -523,7 +628,7 @@ async fn place_and_cancel(
         &[],
         None,
     )?;
-    grpc.toggle_level(LEVEL_ID, false).await?;
+    grpc.toggle_level(instance_id, false).await?;
     let cancel_msg = grpc.cancel_working("wf-demo-cancel-rest").await?;
     r.note(format!("cancel owned {cancel_msg}"));
     if !wait_order_gone(adapter, &order.order_id, Duration::from_secs(30)).await {
@@ -541,15 +646,17 @@ async fn attempt_fill(
     fill_price: Decimal,
     entry_deadline: Instant,
     stack: &DemoLevelsRunner,
+    instance_id: &str,
 ) -> Result<()> {
-    grpc.update_level_price(LEVEL_ID, &fill_price.normalize().to_string())
+    grpc.update_level_price(instance_id, &fill_price.normalize().to_string())
         .await?;
-    grpc.toggle_level(LEVEL_ID, true).await?;
+    let watermark = latest_level_client_order_id(&stack.journal_text(), instance_id);
+    grpc.toggle_level(instance_id, true).await?;
     r.note(format!(
         "create 2/2 fill attempt qty={qty} price={fill_price}"
     ));
-    let seen = latest_level_client_order_id(&stack.journal_text(), LEVEL_ID);
-    let client_order_id = wait_journaled_client_id(stack, entry_deadline, seen.as_deref()).await?;
+    let client_order_id =
+        wait_journaled_client_id(stack, instance_id, entry_deadline, watermark.as_deref()).await?;
     let spec = OwnedOrderSpec {
         client_order_id,
         instrument: INSTRUMENT.into(),
@@ -559,9 +666,15 @@ async fn attempt_fill(
     };
     let order = wait_owned_order(adapter, &spec, entry_deadline).await?;
     r.note(format!(
-        "fill-leg owned client_id={} order={}",
-        order.client_order_id, order.order_id
+        "fill-leg owned client_id={} order={} status={}",
+        order.client_order_id, order.order_id, order.status
     ));
+    if order.status == "Filled" || order.status == "PartiallyFilled" {
+        r.note(format!(
+            "exact-id {} confirmed via open or history as {}",
+            order.client_order_id, order.status
+        ));
+    }
     let deadline = entry_deadline.min(Instant::now() + Duration::from_secs(45));
     while Instant::now() < deadline {
         let pos = rest_btc_position(&adapter.signed_positions().await?);
@@ -572,12 +685,16 @@ async fn attempt_fill(
                 "<=0.001",
                 &qty_canon(pos),
             );
-            r.note(format!("filled rest qty={pos}"));
+            let ledger_qty = unique_ledger_qty(&stack.ledger_text());
+            r.note(format!(
+                "filled rest qty={pos} ledger_qty={ledger_qty} client_id={}",
+                order.client_order_id
+            ));
             return Ok(());
         }
         tokio::time::sleep(Duration::from_millis(400)).await;
     }
-    grpc.toggle_level(LEVEL_ID, false).await?;
+    grpc.toggle_level(instance_id, false).await?;
     let _ = grpc.cancel_working("wf-demo-cancel-unfilled").await;
     Ok(())
 }
@@ -587,6 +704,7 @@ async fn protective_cleanup(
     adapter: &DemoAdapter,
     grpc: &mut GrpcCtl,
     stack: &DemoLevelsRunner,
+    instance_id: &str,
     known_pos: Option<Decimal>,
     hard_deadline: Instant,
 ) -> Result<()> {
@@ -601,7 +719,7 @@ async fn protective_cleanup(
         let paused = snap.as_ref().map(|s| s.entries_paused);
         let disabled = snap
             .as_ref()
-            .and_then(|s| levels_disabled_proof(s.levels_verified, &s.levels));
+            .and_then(|s| levels_disabled_proof(s.levels_verified, &s.levels, instance_id));
         match cleanup_verification(orders.clone(), positions.clone(), paused, disabled) {
             Ok(()) => {
                 if let (Ok(orders), Ok(positions)) = (orders, positions) {
@@ -634,7 +752,7 @@ async fn protective_cleanup(
                         .await,
                     "pause",
                 );
-                retry_note(r, grpc.toggle_level(LEVEL_ID, false).await, "disable");
+                retry_note(r, grpc.toggle_level(instance_id, false).await, "disable");
                 retry_note(
                     r,
                     grpc.cancel_working(&next_cleanup_request_id("cancel", attempt))
@@ -685,18 +803,39 @@ fn operator_alert(r: &ScenarioResult, artifacts: &Path, why: &str) {
     );
 }
 
+async fn wait_paused_instance(grpc: &mut GrpcCtl, deadline: Instant) -> Result<String> {
+    let mut last = String::new();
+    while Instant::now() < deadline {
+        match grpc.snapshot().await {
+            Ok(snap) => match resolve_paused_instance_id(
+                snap.levels_verified,
+                &snap.levels,
+                LEVEL_ID,
+                INSTRUMENT,
+            ) {
+                Ok(id) => return Ok(id),
+                Err(e) => last = e,
+            },
+            Err(e) => last = e.to_string(),
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    bail!("paused instance {LEVEL_ID}_{INSTRUMENT} not verified: {last}")
+}
+
 async fn wait_journaled_client_id(
     stack: &DemoLevelsRunner,
+    instance_id: &str,
     deadline: Instant,
     after: Option<&str>,
 ) -> Result<String> {
     let mut last = String::new();
     while Instant::now() < deadline {
         let journal = stack.journal_text();
-        if let Some(cid) = journaled_client_id_after(&journal, LEVEL_ID, after) {
+        if let Some(cid) = journaled_client_id_after(&journal, instance_id, after) {
             return Ok(cid);
         }
-        last = match (after, latest_level_client_order_id(&journal, LEVEL_ID)) {
+        last = match (after, latest_level_client_order_id(&journal, instance_id)) {
             (Some(prev), Some(existing)) if existing == prev => {
                 format!("still seeing previous client_order_id {prev}")
             }
@@ -705,7 +844,7 @@ async fn wait_journaled_client_id(
         };
         tokio::time::sleep(Duration::from_millis(200)).await;
     }
-    bail!("no new journaled client_order_id for {LEVEL_ID}: {last}")
+    bail!("no new journaled client_order_id for {instance_id}: {last}")
 }
 
 async fn wait_owned_order(
@@ -715,21 +854,33 @@ async fn wait_owned_order(
 ) -> Result<RestOrder> {
     let mut last = String::new();
     while Instant::now() < deadline {
-        match adapter.signed_orders().await {
-            Ok(orders) => {
-                if let Some(o) = orders.iter().find(|o| rest_order_matches_owned(o, spec)) {
-                    return Ok(o.clone());
-                }
-                last = format!(
-                    "orders={} want client_id={} qty={} price={}",
-                    orders.len(),
-                    spec.client_order_id,
-                    spec.qty,
-                    spec.price
-                );
+        let open = match adapter.signed_orders().await {
+            Ok(orders) => orders,
+            Err(e) => {
+                last = format!("REST orders unverified: {e}");
+                tokio::time::sleep(Duration::from_millis(300)).await;
+                continue;
             }
-            Err(e) => last = format!("REST orders unverified: {e}"),
+        };
+        let (history, history_note) =
+            match adapter.signed_order_by_link_id(&spec.client_order_id).await {
+                Ok(order) => (order, String::new()),
+                Err(e) => (None, format!(" history_err={e}")),
+            };
+        if let Some(order) = owned_order_from_open_or_history(&open, history.as_ref(), spec) {
+            return Ok(order);
         }
+        last = format!(
+            "open={} history={}{history_note} want client_id={} qty={} price={}",
+            open.len(),
+            history
+                .as_ref()
+                .map(|o| o.status.as_str())
+                .unwrap_or("none"),
+            spec.client_order_id,
+            spec.qty,
+            spec.price
+        );
         tokio::time::sleep(Duration::from_millis(300)).await;
     }
     bail!(

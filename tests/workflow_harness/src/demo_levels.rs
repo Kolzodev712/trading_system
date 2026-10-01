@@ -11,8 +11,8 @@ use std::time::{Duration, Instant};
 use crate::demo::{write_demo_truth, DemoAdapter, SecretBotFile};
 use crate::grpc::GrpcCtl;
 use crate::oracle::{
-    journal_has_state, latest_level_client_order_id, qty_canon, qty_close, rest_btc_position,
-    runner_btc_qty, unique_ledger_qty, working_ids,
+    journal_has_state, journaled_client_id_after, latest_level_client_order_id, qty_canon,
+    qty_close, rest_btc_position, runner_btc_qty, unique_ledger_qty, working_ids,
 };
 use crate::process::{
     allocate_port, cargo_build, debug_bin, require_mongo, wait_health_cex_ready, workspace_root,
@@ -245,6 +245,23 @@ pub fn cleanup_verification(
         None => return Err("runner snapshot unverified".into()),
     }
     Ok(())
+}
+
+/// Failed GetLevels or an empty list is unverified. `all()` on empty is not proof.
+pub fn levels_disabled_proof(
+    levels_verified: bool,
+    levels: &[(String, bool, String)],
+) -> Option<bool> {
+    if !levels_verified || levels.is_empty() {
+        return None;
+    }
+    Some(levels.iter().all(|(_, enabled, _)| !enabled))
+}
+
+/// Cleanup retries must be new operations. Reusing a cached request id can
+/// replay a failed CancelWorking / FlattenAndPause after REST recovers.
+pub fn next_cleanup_request_id(kind: &str, attempt: u32) -> String {
+    format!("wf-demo-cleanup-{kind}-{attempt}")
 }
 
 async fn run_inner(
@@ -481,7 +498,8 @@ async fn place_and_cancel(
         .await?;
     grpc.toggle_level(LEVEL_ID, true).await?;
     r.note(format!("create 1/2 rest qty={qty} price={rest_price}"));
-    let client_order_id = wait_journaled_client_id(stack, entry_deadline).await?;
+    let seen = latest_level_client_order_id(&stack.journal_text(), LEVEL_ID);
+    let client_order_id = wait_journaled_client_id(stack, entry_deadline, seen.as_deref()).await?;
     let spec = OwnedOrderSpec {
         client_order_id,
         instrument: INSTRUMENT.into(),
@@ -530,7 +548,8 @@ async fn attempt_fill(
     r.note(format!(
         "create 2/2 fill attempt qty={qty} price={fill_price}"
     ));
-    let client_order_id = wait_journaled_client_id(stack, entry_deadline).await?;
+    let seen = latest_level_client_order_id(&stack.journal_text(), LEVEL_ID);
+    let client_order_id = wait_journaled_client_id(stack, entry_deadline, seen.as_deref()).await?;
     let spec = OwnedOrderSpec {
         client_order_id,
         instrument: INSTRUMENT.into(),
@@ -574,43 +593,15 @@ async fn protective_cleanup(
     r.note("protective cleanup: pause, disable, cancel, flatten if needed");
     let give_up = Instant::now() + Duration::from_secs(90);
     let deadline = give_up.min(hard_deadline);
+    let mut attempt = 0u32;
     loop {
-        retry_note(r, grpc.pause_entries().await, "pause");
-        retry_note(r, grpc.toggle_level(LEVEL_ID, false).await, "disable");
-        retry_note(
-            r,
-            grpc.cancel_working("wf-demo-cleanup-cancel").await,
-            "cancel_working",
-        );
-        let pos = match known_pos {
-            Some(p) if p > Decimal::ZERO => Some(p),
-            _ => match adapter.signed_positions().await {
-                Ok(rows) => Some(rest_btc_position(&rows)),
-                Err(e) => {
-                    r.note(format!(
-                        "REST positions unverified during flatten check: {e}"
-                    ));
-                    None
-                }
-            },
-        };
-        if pos.is_some_and(|p| p > Decimal::ZERO) {
-            r.note(format!(
-                "reduce-only flatten of independently verified qty={}",
-                pos.unwrap_or_default()
-            ));
-            retry_note(
-                r,
-                grpc.flatten_and_pause("wf-demo-flatten").await,
-                "flatten",
-            );
-        }
-
         let orders = adapter.signed_orders().await.map_err(|e| e.to_string());
         let positions = adapter.signed_positions().await.map_err(|e| e.to_string());
         let snap = grpc.snapshot().await.ok();
         let paused = snap.as_ref().map(|s| s.entries_paused);
-        let disabled = snap.as_ref().map(|s| s.levels.iter().all(|(_, en, _)| !en));
+        let disabled = snap
+            .as_ref()
+            .and_then(|s| levels_disabled_proof(s.levels_verified, &s.levels));
         match cleanup_verification(orders.clone(), positions.clone(), paused, disabled) {
             Ok(()) => {
                 if let (Ok(orders), Ok(positions)) = (orders, positions) {
@@ -635,7 +626,45 @@ async fn protective_cleanup(
                     );
                     bail!("{e}");
                 }
-                r.note(format!("cleanup retry: {e}"));
+                r.note(format!("cleanup retry after venue/journal check: {e}"));
+                attempt += 1;
+                retry_note(
+                    r,
+                    grpc.pause_entries_named(&next_cleanup_request_id("pause", attempt))
+                        .await,
+                    "pause",
+                );
+                retry_note(r, grpc.toggle_level(LEVEL_ID, false).await, "disable");
+                retry_note(
+                    r,
+                    grpc.cancel_working(&next_cleanup_request_id("cancel", attempt))
+                        .await,
+                    "cancel_working",
+                );
+                let pos = match known_pos {
+                    Some(p) if p > Decimal::ZERO => Some(p),
+                    _ => match adapter.signed_positions().await {
+                        Ok(rows) => Some(rest_btc_position(&rows)),
+                        Err(rest_err) => {
+                            r.note(format!(
+                                "REST positions unverified during flatten check: {rest_err}"
+                            ));
+                            None
+                        }
+                    },
+                };
+                if pos.is_some_and(|p| p > Decimal::ZERO) {
+                    r.note(format!(
+                        "reduce-only flatten of independently verified qty={}",
+                        pos.unwrap_or_default()
+                    ));
+                    retry_note(
+                        r,
+                        grpc.flatten_and_pause(&next_cleanup_request_id("flatten", attempt))
+                            .await,
+                        "flatten",
+                    );
+                }
                 tokio::time::sleep(Duration::from_millis(400)).await;
             }
         }
@@ -656,21 +685,27 @@ fn operator_alert(r: &ScenarioResult, artifacts: &Path, why: &str) {
     );
 }
 
-async fn wait_journaled_client_id(stack: &DemoLevelsRunner, deadline: Instant) -> Result<String> {
+async fn wait_journaled_client_id(
+    stack: &DemoLevelsRunner,
+    deadline: Instant,
+    after: Option<&str>,
+) -> Result<String> {
     let mut last = String::new();
     while Instant::now() < deadline {
         let journal = stack.journal_text();
-        if let Some(cid) = latest_level_client_order_id(&journal, LEVEL_ID) {
+        if let Some(cid) = journaled_client_id_after(&journal, LEVEL_ID, after) {
             return Ok(cid);
         }
-        last = if journal.is_empty() {
-            "journal empty".into()
-        } else {
-            "no level client_order_id yet".into()
+        last = match (after, latest_level_client_order_id(&journal, LEVEL_ID)) {
+            (Some(prev), Some(existing)) if existing == prev => {
+                format!("still seeing previous client_order_id {prev}")
+            }
+            _ if journal.is_empty() => "journal empty".into(),
+            _ => "no new level client_order_id yet".into(),
         };
         tokio::time::sleep(Duration::from_millis(200)).await;
     }
-    bail!("no journaled client_order_id for {LEVEL_ID}: {last}")
+    bail!("no new journaled client_order_id for {LEVEL_ID}: {last}")
 }
 
 async fn wait_owned_order(

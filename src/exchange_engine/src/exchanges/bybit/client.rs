@@ -46,7 +46,7 @@ use trading_core::{
     registry::symbol::SymbolRegistry,
     rest::HttpMethod,
     types::{
-        common::{Instrument, InstrumentType, OrderId, OrderStatus, OrderType, Pair},
+        common::{InstrumentType, OrderId, OrderStatus, OrderType, Pair},
         exchange::{
             Balance, BulkAmendItem, BulkAmendRequest, BulkAmendResponse, BulkCancelRequest,
             BulkCancelResponse, BulkOperationResult, BulkOrderRequest, BulkOrderResponse,
@@ -283,50 +283,6 @@ impl BybitClient {
                 .collect(),
             next_page_cursor,
         })
-    }
-
-    async fn lookup_terminal_from_executions(
-        &self,
-        client_order_id: &str,
-    ) -> Result<Option<Order>, EngineError> {
-        let category = self.get_category_from_instrument_type(self.config.instrument_type.clone());
-        let params = BybitTradesParams {
-            category,
-            symbol: None,
-            order_id: None,
-            order_link_id: Some(client_order_id.into()),
-            base_coin: None,
-            settle_coin: None,
-            exec_type: None,
-            start_time: None,
-            end_time: None,
-            limit: Some(10),
-            cursor: None,
-        };
-        let response: BybitTradesResponse = match self
-            .rest_client
-            .call(
-                "execution/list",
-                HttpMethod::GET,
-                Some(params),
-                None,
-                None,
-                true,
-            )
-            .await
-        {
-            Ok(Some(response)) => response,
-            Ok(None) | Err(_) => return Ok(None),
-        };
-        if response.ret_code != 0 {
-            return Ok(None);
-        }
-        let trades = response.to_trades(self.symbol_registry.clone());
-        Ok(terminal_order_from_exact_executions(
-            client_order_id,
-            self.config.instrument_type.clone(),
-            &trades,
-        ))
     }
 
     async fn lookup_orders_by_link_id(
@@ -748,10 +704,9 @@ impl TradingClient<OrderRequest> for BybitClient {
                 return Ok(ClientOrderLookup::from_order(order));
             }
         }
-        match self.lookup_terminal_from_executions(client_order_id).await {
-            Ok(Some(order)) => Ok(ClientOrderLookup::from_order(order)),
-            Ok(None) | Err(_) => Ok(ClientOrderLookup::Inconclusive),
-        }
+        // Executions are not terminal proof: Bybit can return a partial fill
+        // on one page. Keep RecoveryRequired until open/history shows status.
+        Ok(lookup_absent_from_open_and_history())
     }
 
     async fn fetch_trades(&self, pair: Option<&Pair>) -> Result<Vec<Trade>, EngineError> {
@@ -1564,75 +1519,41 @@ impl TradingClient<OrderRequest> for BybitClient {
     }
 }
 
-/// Exact `orderLinkId` executions may confirm a fill. An empty or missing list
-/// stays inconclusive and must not clear `RecoveryRequired`.
-fn terminal_order_from_exact_executions(
-    client_order_id: &str,
-    instrument_type: InstrumentType,
-    trades: &[Trade],
-) -> Option<Order> {
-    let first = trades.first()?;
-    let filled: rust_decimal::Decimal = trades.iter().map(|trade| trade.quantity).sum();
-    Some(Order {
-        order_id: first.order_id.clone(),
-        client_order_id: Some(smol_str::SmolStr::new(client_order_id)),
-        instrument: Instrument::new(instrument_type, first.pair.clone()),
-        side: first.side.clone(),
-        price: first.price,
-        amount: filled,
-        internal_created_at: first.timestamp,
-        exchange_created_at: Some(first.timestamp),
-        status: OrderStatus::Filled,
-        filled_amount: filled,
-    })
+/// Open-order and order-history misses stay inconclusive. Execution rows
+/// (including a single partial fill) must not synthesize `Filled`.
+fn lookup_absent_from_open_and_history() -> ClientOrderLookup {
+    ClientOrderLookup::Inconclusive
 }
 
 #[cfg(test)]
 mod execution_lookup_tests {
     use super::*;
-    use trading_core::types::common::Side;
-
-    fn trade(qty: &str) -> Trade {
-        Trade {
-            trade_id: "e1".into(),
-            order_id: OrderId::new("ex-1".into()),
-            pair: Pair::new("BTC", "USDT"),
-            price: rust_decimal::Decimal::new(100, 0),
-            quantity: rust_decimal::Decimal::from_str_exact(qty).unwrap(),
-            side: Side::Buy,
-            timestamp: 1,
-            fee: rust_decimal::Decimal::ZERO,
-            fee_currency: "USDT".into(),
-        }
-    }
+    use trading_core::types::common::Instrument;
 
     #[test]
-    fn missing_executions_stay_inconclusive() {
-        assert!(
-            terminal_order_from_exact_executions("cid-1", InstrumentType::Futures, &[]).is_none()
+    fn missing_open_and_history_stay_inconclusive() {
+        assert_eq!(
+            lookup_absent_from_open_and_history(),
+            ClientOrderLookup::Inconclusive
         );
     }
 
     #[test]
-    fn exact_executions_confirm_terminal_fill() {
-        let order = terminal_order_from_exact_executions(
-            "cid-1",
-            InstrumentType::Futures,
-            &[trade("0.001")],
-        )
-        .expect("found");
-        assert_eq!(order.client_order_id.as_deref(), Some("cid-1"));
-        assert_eq!(order.status, OrderStatus::Filled);
-        assert_eq!(
-            ClientOrderLookup::from_order(order),
-            ClientOrderLookup::Terminal(
-                terminal_order_from_exact_executions(
-                    "cid-1",
-                    InstrumentType::Futures,
-                    &[trade("0.001")],
-                )
-                .unwrap()
-            )
+    fn executions_do_not_synthesize_filled_terminal() {
+        assert_ne!(
+            lookup_absent_from_open_and_history(),
+            ClientOrderLookup::Terminal(Order {
+                order_id: OrderId::new("ex-1".into()),
+                client_order_id: Some(smol_str::SmolStr::new("cid-1")),
+                instrument: Instrument::new(InstrumentType::Futures, Pair::new("BTC", "USDT")),
+                side: trading_core::types::common::Side::Buy,
+                price: rust_decimal::Decimal::new(100, 0),
+                amount: rust_decimal::Decimal::from_str_exact("0.001").unwrap(),
+                internal_created_at: 1,
+                exchange_created_at: Some(1),
+                status: OrderStatus::Filled,
+                filled_amount: rust_decimal::Decimal::from_str_exact("0.001").unwrap(),
+            })
         );
     }
 }

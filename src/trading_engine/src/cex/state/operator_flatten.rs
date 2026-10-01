@@ -219,16 +219,7 @@ pub async fn verify_rest_exposure_flat(
         }
         InstrumentType::Spot => match trading_client.fetch_balance().await {
             Ok(balances) => {
-                let leftover: Vec<String> = pairs
-                    .iter()
-                    .filter_map(|pair| {
-                        balances
-                            .iter()
-                            .find(|b| b.symbol.as_ref() == pair.base.as_str())
-                    })
-                    .filter(|b| b.total.abs() > flat_eps() || b.free.abs() > flat_eps())
-                    .map(|b| format!("{}:{}", b.symbol, b.total.normalize()))
-                    .collect();
+                let leftover = leftover_spot_wallet_assets(&balances, pairs);
                 if leftover.is_empty() {
                     Ok(())
                 } else {
@@ -243,6 +234,32 @@ pub async fn verify_rest_exposure_flat(
             ))),
         },
     }
+}
+
+fn is_spot_quote_asset(symbol: &str) -> bool {
+    matches!(
+        symbol.to_ascii_uppercase().as_str(),
+        "USDT" | "USDC" | "USD"
+    )
+}
+
+/// Spot flatten proof comes from the wallet, not TSM rows. Empty `pairs`
+/// still flags leftover non-quote inventory (TSM-flat is not wallet-flat).
+fn leftover_spot_wallet_assets(
+    balances: &[trading_core::types::exchange::Balance],
+    pairs: &[Pair],
+) -> Vec<String> {
+    balances
+        .iter()
+        .filter(|balance| {
+            let requested = pairs
+                .iter()
+                .any(|pair| pair.base.eq_ignore_ascii_case(balance.symbol.as_ref()));
+            let inventory = requested || !is_spot_quote_asset(balance.symbol.as_ref());
+            inventory && (balance.total.abs() > flat_eps() || balance.free.abs() > flat_eps())
+        })
+        .map(|balance| format!("{}:{}", balance.symbol, balance.total.normalize()))
+        .collect()
 }
 
 pub fn merge_rest_working_orders(
@@ -1283,6 +1300,49 @@ mod tests {
             .await
             .expect_err("spot wallet leftover must fail");
         assert!(err.to_string().contains("wallet still shows"));
+    }
+
+    #[tokio::test]
+    async fn rest_spot_wallet_leftover_without_tsm_pairs_is_unverified() {
+        let client = SpotWallet {
+            balances: vec![
+                Balance {
+                    symbol: "USDT".into(),
+                    free: Decimal::new(100, 0),
+                    used: Decimal::ZERO,
+                    total: Decimal::new(100, 0),
+                },
+                Balance {
+                    symbol: "BTC".into(),
+                    free: Decimal::new(1, 3),
+                    used: Decimal::ZERO,
+                    total: Decimal::new(1, 3),
+                },
+            ],
+        };
+        let err = verify_rest_exposure_flat(&client, InstrumentType::Spot, &[])
+            .await
+            .expect_err("TSM-empty must still fail when wallet holds BTC");
+        assert!(err.to_string().contains("BTC"));
+        let leftover = leftover_spot_wallet_assets(
+            &[
+                Balance {
+                    symbol: "USDT".into(),
+                    free: Decimal::new(100, 0),
+                    used: Decimal::ZERO,
+                    total: Decimal::new(100, 0),
+                },
+                Balance {
+                    symbol: "BTC".into(),
+                    free: Decimal::new(1, 3),
+                    used: Decimal::ZERO,
+                    total: Decimal::new(1, 3),
+                },
+            ],
+            &[],
+        );
+        assert!(leftover.iter().any(|row| row.starts_with("BTC:")));
+        assert!(!leftover.iter().any(|row| row.starts_with("USDT:")));
     }
 
     #[tokio::test]

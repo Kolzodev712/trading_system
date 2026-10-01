@@ -50,6 +50,8 @@ pub struct RunnerSnapshot {
     pub positions: Vec<(String, Decimal, String)>,
     pub orders: Vec<(String, String, String)>,
     pub levels: Vec<(String, bool, String)>,
+    /// False when GetLevels failed. An empty `levels` vec is not proof they are disabled.
+    pub levels_verified: bool,
     pub exposure_halt_reason: String,
     pub last_block_reason_code: String,
     pub avg_entry: String,

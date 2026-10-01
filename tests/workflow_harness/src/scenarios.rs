@@ -43,6 +43,7 @@ fn empty_snap() -> RunnerSnapshot {
         positions: vec![],
         orders: vec![],
         levels: vec![],
+        levels_verified: false,
         exposure_halt_reason: String::new(),
         last_block_reason_code: String::new(),
         avg_entry: String::new(),

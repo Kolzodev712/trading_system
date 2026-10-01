@@ -30,6 +30,24 @@ fn ledger_sells_are_signed() {
 }
 
 #[test]
+fn not_supported_is_never_gate_ok() {
+    let mut r = ScenarioResult::new("demo_mutating_preflight", "BYBIT", "Spot", "opt-in");
+    r.verdict = Verdict::NotSupported;
+    assert!(!r.gate_ok());
+}
+
+#[test]
+fn expected_failure_is_gate_ok_only_when_scenario_fails() {
+    let mut r = ScenarioResult::new("negative_control_mismatch", "PAPER", "Futures", "exchange");
+    r.expected_failure = true;
+    assert!(!r.gate_ok());
+    r.fail("runner_vs_rest", "0.001", "1");
+    assert!(r.expected_failure);
+    assert_eq!(r.verdict, Verdict::Fail);
+    assert!(r.gate_ok());
+}
+
+#[test]
 fn matching_qty_passes() {
     let mut r = ScenarioResult::new("ok", "PAPER", "Spot", "exchange");
     let q = Decimal::from_str_exact("0.001").unwrap();

@@ -30,11 +30,13 @@ pub struct PaperStack {
     pub journal_path: PathBuf,
     bot_path: PathBuf,
     levels_path: PathBuf,
+    instruments_path: PathBuf,
     workspace: PathBuf,
     grpc_bind: String,
     health_port: u16,
     paper_port: u16,
     _instrument: PaperInstrument,
+    bin: PaperBin,
 }
 
 #[derive(Clone, Copy)]
@@ -52,6 +54,12 @@ pub enum CatalogKind {
     AmendCap,
 }
 
+#[derive(Clone, Copy)]
+enum PaperBin {
+    Runner,
+    C2,
+}
+
 impl PaperStack {
     pub async fn launch(
         artifacts: &Path,
@@ -59,18 +67,68 @@ impl PaperStack {
         catalog: CatalogKind,
         execution_mode: &str,
     ) -> Result<Self> {
+        Self::launch_inner(
+            artifacts,
+            instrument,
+            Some(catalog),
+            execution_mode,
+            180_000,
+            PaperBin::Runner,
+        )
+        .await
+    }
+
+    pub async fn launch_fast_recon(
+        artifacts: &Path,
+        instrument: PaperInstrument,
+        catalog: CatalogKind,
+        execution_mode: &str,
+        recon_ms: u64,
+    ) -> Result<Self> {
+        Self::launch_inner(
+            artifacts,
+            instrument,
+            Some(catalog),
+            execution_mode,
+            recon_ms,
+            PaperBin::Runner,
+        )
+        .await
+    }
+
+    pub async fn launch_c2(artifacts: &Path) -> Result<Self> {
+        Self::launch_inner(
+            artifacts,
+            PaperInstrument::Futures,
+            None,
+            "exchange",
+            1_000,
+            PaperBin::C2,
+        )
+        .await
+    }
+
+    async fn launch_inner(
+        artifacts: &Path,
+        instrument: PaperInstrument,
+        catalog: Option<CatalogKind>,
+        execution_mode: &str,
+        recon_ms: u64,
+        bin: PaperBin,
+    ) -> Result<Self> {
         require_mongo()?;
         let workspace = workspace_root();
         let kpaper_dir = k_paper_dir()?;
-        cargo_build(
-            &workspace,
-            &["build", "-q", "-p", "runner", "--bin", "runner"],
-        )?;
+        let pkg = match bin {
+            PaperBin::Runner => ("runner", "runner"),
+            PaperBin::C2 => ("btc_price_ma_app", "btc_price_ma_app"),
+        };
+        cargo_build(&workspace, &["build", "-q", "-p", pkg.0, "--bin", pkg.1])?;
         cargo_build(&kpaper_dir, &["build", "-q", "--bin", "k-paper"])?;
-        let runner_bin = debug_bin(&workspace, "runner");
+        let runner_bin = debug_bin(&workspace, pkg.1);
         let kpaper_bin = debug_bin(&kpaper_dir, "k-paper");
         if !runner_bin.exists() {
-            bail!("missing runner binary {}", runner_bin.display());
+            bail!("missing binary {}", runner_bin.display());
         }
         if !kpaper_bin.exists() {
             bail!("missing k-paper binary {}", kpaper_bin.display());
@@ -105,9 +163,15 @@ impl PaperStack {
                 &run_id,
                 instrument,
                 execution_mode,
+                recon_ms,
             ),
         )?;
-        fs::write(&levels_path, catalog_json(catalog, &run_id))?;
+        if let Some(catalog) = catalog {
+            fs::write(&levels_path, catalog_json(catalog, &run_id))?;
+        }
+        if matches!(bin, PaperBin::C2) {
+            fs::write(run_dir.join("strategies.json"), c2_strategies_json())?;
+        }
 
         let mut k_cmd = Command::new(&kpaper_bin);
         k_cmd
@@ -134,13 +198,18 @@ impl PaperStack {
             journal_path,
             bot_path,
             levels_path,
+            instruments_path: instruments,
             workspace,
             grpc_bind,
             health_port,
             paper_port,
             _instrument: instrument,
+            bin,
         };
-        stack.start_runner("runner.log").await?;
+        match bin {
+            PaperBin::Runner => stack.start_runner("runner.log").await?,
+            PaperBin::C2 => stack.start_c2("runner.log").await?,
+        }
         let _ = (stack.health_port, stack.paper_port, stack.grpc_bind.clone());
         Ok(stack)
     }
@@ -167,6 +236,39 @@ impl PaperStack {
         Ok(())
     }
 
+    pub async fn start_c2(&mut self, log_name: &str) -> Result<()> {
+        if let Some(mut prev) = self.runner.take() {
+            prev.terminate();
+        }
+        let candles = self.workspace.join("scripts/inc9a_long_candles.json");
+        if !candles.exists() {
+            bail!("missing {}", candles.display());
+        }
+        let mut cmd = Command::new(&self.runner_bin);
+        cmd.arg("--mode")
+            .arg("strategies")
+            .arg("--config")
+            .arg(&self.bot_path)
+            .arg("--strategies-config")
+            .arg(self.run_dir.join("strategies.json"))
+            .env("TRACE_JAEGER_DISABLED", "1")
+            .env("TRADING_LOG_JSON", "1")
+            .env("TRADING_RUN_ID", &self.run_id)
+            .env("TRADING_GRPC", &self.grpc_url)
+            .env("TRADING_TEST_CANDLES_PATH", &candles)
+            .env("TRADING_TEST_NOW_MS", "259200000")
+            .current_dir(&self.workspace);
+        if log_name == "runner.log" {
+            cmd.env("TRADING_TEST_FORCE_PLACE", "1")
+                .env("TRADING_TEST_LIMIT_PRICE", "10000")
+                .env("TRADING_TEST_ORDER_QTY", "0.001");
+        }
+        let runner = ChildProc::spawn("btc_price_ma_app", cmd, &self.run_dir.join(log_name))?;
+        wait_health_cex_ready(&self.health, Duration::from_secs(60)).await?;
+        self.runner = Some(runner);
+        Ok(())
+    }
+
     pub async fn restart_runner(&mut self) -> Result<()> {
         if let Some(mut r) = self.runner.take() {
             r.terminate();
@@ -175,7 +277,10 @@ impl PaperStack {
                 r.terminate();
             }
         }
-        self.start_runner("runner-restart.log").await
+        match self.bin {
+            PaperBin::Runner => self.start_runner("runner-restart.log").await,
+            PaperBin::C2 => self.start_c2("runner-restart.log").await,
+        }
     }
 
     pub async fn grpc(&self) -> Result<GrpcCtl> {
@@ -335,10 +440,16 @@ impl PaperStack {
             (&self.catalog_path, "catalog.json"),
             (&self.ledger_path, "execution-ledger.jsonl"),
             (&self.journal_path, "submission-journal.jsonl"),
+            (&self.bot_path, "bot.json"),
+            (&self.instruments_path, "instruments.yaml"),
         ] {
             if src.exists() {
                 let _ = fs::copy(src, dest.join(name));
             }
+        }
+        let strategies = self.run_dir.join("strategies.json");
+        if strategies.exists() {
+            let _ = fs::copy(&strategies, dest.join("strategies.json"));
         }
         for log in ["runner.log", "runner-restart.log", "k-paper.log"] {
             let src = self.run_dir.join(log);
@@ -346,6 +457,43 @@ impl PaperStack {
                 let _ = fs::copy(&src, dest.join(log));
             }
         }
+    }
+
+    pub async fn write_truth(&self, tag: &str) -> Result<()> {
+        let dest = self
+            .run_dir
+            .parent()
+            .map(|p| p.join("snapshots").join(tag))
+            .ok_or_else(|| anyhow::anyhow!("no snapshot dest"))?;
+        fs::create_dir_all(&dest)?;
+        for path in ["open_orders", "balances", "positions"] {
+            match self.http_get(path).await {
+                Ok(v) => {
+                    fs::write(
+                        dest.join(format!("rest-{}.json", path.replace('_', "-"))),
+                        serde_json::to_vec_pretty(&v)?,
+                    )?;
+                }
+                Err(e) => {
+                    fs::write(
+                        dest.join(format!("rest-{}-error.txt", path.replace('_', "-"))),
+                        e.to_string(),
+                    )?;
+                }
+            }
+        }
+        match self.snapshot().await {
+            Ok(s) => {
+                fs::write(
+                    dest.join("grpc-status.json"),
+                    serde_json::to_vec_pretty(&s)?,
+                )?;
+            }
+            Err(e) => {
+                fs::write(dest.join("grpc-status-error.txt"), e.to_string())?;
+            }
+        }
+        Ok(())
     }
 
     async fn http_get(&self, path: &str) -> Result<serde_json::Value> {
@@ -388,6 +536,7 @@ fn bot_json(
     run_id: &str,
     instrument: PaperInstrument,
     execution_mode: &str,
+    recon_ms: u64,
 ) -> String {
     let inst = match instrument {
         PaperInstrument::Spot => "Spot",
@@ -414,8 +563,8 @@ fn bot_json(
   "redis": {{ "url": "", "enabled": false }},
   "features": {{ "enable_reconciliation": true }},
   "reconciliation": {{
-    "exchange_level_interval_ms": 180000,
-    "trading_level_interval_ms": 180000,
+    "exchange_level_interval_ms": {recon_ms},
+    "trading_level_interval_ms": {recon_ms},
     "enabled": true
   }},
   "mongo": {{
@@ -489,17 +638,36 @@ fn catalog_json(kind: CatalogKind, run_id: &str) -> String {
             json!({"total_max_position":"0.05","max_total_orders":8,"max_notional":"200","max_order_qty":"0.01"}),
         ),
         CatalogKind::FuturesSignoff => (
-            vec![level(
-                "wf_fut_buy",
-                "fut buy",
-                "Buy",
-                "0.001",
-                "10000",
-                "0.01",
-            )],
+            vec![
+                level("wf_fut_buy", "fut buy", "Buy", "0.001", "10000", "0.002"),
+                level(
+                    "wf_fut_adverse",
+                    "fut adverse",
+                    "Buy",
+                    "0.001",
+                    "11000",
+                    "0.003",
+                ),
+                level(
+                    "wf_fut_sell",
+                    "fut sell",
+                    "Sell",
+                    "0.001",
+                    "100000",
+                    "0.002",
+                ),
+                level(
+                    "wf_fut_flip",
+                    "fut flip",
+                    "Sell",
+                    "0.002",
+                    "100000",
+                    "0.003",
+                ),
+            ],
             run_id,
             "Futures",
-            json!({"total_max_position":"0.01","max_total_orders":2,"max_notional":"200","max_order_qty":"0.001"}),
+            json!({"total_max_position":"0.01","max_total_orders":4,"max_notional":"400","max_order_qty":"0.002"}),
         ),
         CatalogKind::Shadow => (
             vec![level("wf_sh", "shadow", "Buy", "0.01", "1000", "0.02")],
@@ -522,6 +690,37 @@ fn catalog_json(kind: CatalogKind, run_id: &str) -> String {
         "venue": "Paper",
         "instrument": instrument,
         "account": account
+    })
+    .to_string()
+}
+
+fn c2_strategies_json() -> String {
+    json!({
+        "strategies": [{
+            "strategy_type": "BTCPriceMALongFlatV1",
+            "symbol": { "base": "BTC", "quote": "USDT" },
+            "position_size": "0.001",
+            "max_position": "0.001",
+            "buy_threshold_percent": "0.5",
+            "sell_threshold_percent": "0.5",
+            "max_active_orders": 1,
+            "price_history_size": 10,
+            "min_price_history": 2,
+            "min_order_size": "0.001",
+            "step_size": "0.001",
+            "tick_size": "0.01",
+            "min_notional": "10.0",
+            "lookback": 2,
+            "max_entry_age_secs": 86400000,
+            "max_market_data_age_ms": 5000,
+            "initially_enabled": true
+        }],
+        "risk_limits": {
+            "total_max_position": "0.01",
+            "max_total_orders": 4,
+            "max_notional": "1000",
+            "max_order_qty": "0.01"
+        }
     })
     .to_string()
 }

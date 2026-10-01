@@ -96,7 +96,7 @@ test-paper:
     cargo run -p workflow_harness --bin workflow_gate -- --layer paper
 
 test-paper-negative:
-    # Deliberate mismatch; must exit nonzero (gate fails closed).
+    # Deliberate mismatch. The scenario must FAIL; this recipe exits 0 when it does.
     cargo run -p workflow_harness --bin workflow_gate -- --layer paper --only negative_control_mismatch --expect-process-failure
 
 test-paper-ui:
@@ -185,10 +185,13 @@ ci-local:
     echo "LAYER fast-component: RUN"
     just test-fast
     echo "LAYER paper-process: RUN"
-    just test-paper
+    WORKFLOW_REQUIRE_CLEAN=1 just test-paper
     echo "LAYER paper-process: PASS"
+    echo "LAYER paper-negative: RUN"
+    WORKFLOW_REQUIRE_CLEAN=1 just test-paper-negative
+    echo "LAYER paper-negative: PASS"
     echo "LAYER ui-envoy: RUN"
-    just test-paper-ui
+    WORKFLOW_REQUIRE_CLEAN=1 just test-paper-ui
     echo "LAYER ui-envoy: PASS"
     echo "LAYER bybit-demo-readonly: NOT_RUN (use just test-demo-readonly)"
     echo "LAYER bybit-demo-mutating: NOT_RUN (explicit just test-demo-mutating only)"

@@ -1,5 +1,6 @@
 use anyhow::Result;
 use rust_decimal::Decimal;
+use serde::Serialize;
 
 use crate::types::Capability;
 
@@ -37,12 +38,14 @@ pub struct RestPosition {
     pub quantity: Decimal,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct RunnerSnapshot {
     pub venue: String,
     pub environment: String,
     pub execution_mode: String,
     pub trading_enabled: bool,
+    pub entries_paused: bool,
+    pub flatten_latched: bool,
     pub positions: Vec<(String, Decimal, String)>,
     pub orders: Vec<(String, String, String)>,
     pub levels: Vec<(String, bool, String)>,

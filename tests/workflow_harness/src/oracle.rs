@@ -81,6 +81,44 @@ pub fn catalog_filled_qty(catalog: &serde_json::Value) -> Decimal {
     qty
 }
 
+pub fn catalog_owns(catalog: &serde_json::Value, instance_id: &str, order_id: &str) -> bool {
+    catalog
+        .get("instances")
+        .and_then(|x| x.as_array())
+        .into_iter()
+        .flatten()
+        .any(|inst| {
+            inst.get("id").and_then(|x| x.as_str()) == Some(instance_id)
+                && inst
+                    .get("owned_exchange_ids")
+                    .and_then(|x| x.as_array())
+                    .into_iter()
+                    .flatten()
+                    .any(|v| v.as_str() == Some(order_id))
+        })
+}
+
+pub fn journal_has_state(jsonl: &str, state: &str) -> bool {
+    jsonl.lines().any(|line| {
+        serde_json::from_str::<serde_json::Value>(line)
+            .ok()
+            .and_then(|v| v.get("state").and_then(|s| s.as_str()).map(|s| s == state))
+            .unwrap_or(false)
+    })
+}
+
+pub fn halt_is_disagreement(snap: &RunnerSnapshot) -> bool {
+    snap.last_block_reason_code == "RECONCILE_DISAGREEMENT"
+        || snap
+            .exposure_halt_reason
+            .to_lowercase()
+            .contains("disagrees")
+        || snap
+            .exposure_halt_reason
+            .to_lowercase()
+            .contains("disagreement")
+}
+
 pub fn working_ids(orders: &[RestOrder]) -> Vec<String> {
     orders
         .iter()

@@ -1,7 +1,9 @@
 //! Oracle unit tests (no processes).
 
+use crate::demo_levels::{cleanup_verification, rest_order_matches_owned, OwnedOrderSpec};
 use crate::oracle::assert_spot_agreement;
 use crate::types::{ScenarioResult, Verdict};
+use crate::venue::{RestOrder, RestPosition};
 use rust_decimal::Decimal;
 
 #[test]
@@ -120,6 +122,93 @@ fn secret_bot_archives_redacted_and_shreds_live() {
     };
     assert!(!live.exists());
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn rest_error_is_not_empty_account() {
+    let err = cleanup_verification(Err("timeout".into()), Ok(vec![]), Some(true), Some(true))
+        .unwrap_err();
+    assert!(err.contains("unverified"));
+    assert!(!err.contains("working=0"));
+}
+
+#[test]
+fn cleanup_requires_rest_and_runner() {
+    let leftover = vec![RestOrder {
+        order_id: "1".into(),
+        client_order_id: "cid-a".into(),
+        instrument: "BTCUSDT".into(),
+        price: Decimal::ONE,
+        amount: Decimal::from_str_exact("0.001").unwrap(),
+        filled: Decimal::ZERO,
+        status: "New".into(),
+        side: "Buy".into(),
+    }];
+    assert!(cleanup_verification(Ok(leftover), Ok(vec![]), Some(true), Some(true)).is_err());
+    assert!(cleanup_verification(
+        Ok(vec![]),
+        Ok(vec![RestPosition {
+            instrument: "BTCUSDT".into(),
+            quantity: Decimal::from_str_exact("0.001").unwrap(),
+        }]),
+        Some(true),
+        Some(true),
+    )
+    .is_err());
+    assert!(cleanup_verification(Ok(vec![]), Ok(vec![]), Some(false), Some(true)).is_err());
+    assert!(cleanup_verification(Ok(vec![]), Ok(vec![]), Some(true), Some(false)).is_err());
+    assert!(cleanup_verification(Ok(vec![]), Ok(vec![]), None, Some(true)).is_err());
+    cleanup_verification(Ok(vec![]), Ok(vec![]), Some(true), Some(true)).unwrap();
+}
+
+#[test]
+fn owned_order_requires_exact_journaled_id() {
+    let spec = OwnedOrderSpec {
+        client_order_id: "cid-wanted".into(),
+        instrument: "BTCUSDT".into(),
+        side: "Buy".into(),
+        qty: Decimal::from_str_exact("0.001").unwrap(),
+        price: Decimal::from_str_exact("50000").unwrap(),
+    };
+    let twin = RestOrder {
+        order_id: "other".into(),
+        client_order_id: "cid-other".into(),
+        instrument: "BTCUSDT".into(),
+        price: spec.price,
+        amount: spec.qty,
+        filled: Decimal::ZERO,
+        status: "New".into(),
+        side: "Buy".into(),
+    };
+    let owned = RestOrder {
+        order_id: "mine".into(),
+        client_order_id: "cid-wanted".into(),
+        instrument: "BTCUSDT".into(),
+        price: spec.price,
+        amount: spec.qty,
+        filled: Decimal::ZERO,
+        status: "New".into(),
+        side: "Buy".into(),
+    };
+    assert!(!rest_order_matches_owned(&twin, &spec));
+    assert!(rest_order_matches_owned(&owned, &spec));
+    let nonempty_only = OwnedOrderSpec {
+        client_order_id: String::new(),
+        ..spec.clone()
+    };
+    assert!(!rest_order_matches_owned(&owned, &nonempty_only));
+}
+
+#[test]
+fn latest_level_client_order_id_uses_last_row() {
+    let jsonl = r#"{"client_order_id":"old","level_id":"wf_demo_buy","state":"submitted"}
+{"client_order_id":"new","level_id":"wf_demo_buy","state":"acknowledged"}
+{"client_order_id":"other","level_id":"other_level","state":"submitted"}
+"#;
+    assert_eq!(
+        crate::oracle::latest_level_client_order_id(jsonl, "wf_demo_buy").as_deref(),
+        Some("new")
+    );
 }
 
 #[test]

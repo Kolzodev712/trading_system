@@ -77,6 +77,7 @@ pub fn cargo_build(dir: &Path, args: &[&str]) -> Result<()> {
 pub struct ChildProc {
     pub name: String,
     child: Child,
+    keep_alive: bool,
 }
 
 impl ChildProc {
@@ -90,7 +91,12 @@ impl ChildProc {
         Ok(Self {
             name: name.into(),
             child,
+            keep_alive: false,
         })
+    }
+
+    pub fn disarm(&mut self) {
+        self.keep_alive = true;
     }
 
     pub fn pid(&self) -> u32 {
@@ -111,7 +117,9 @@ impl ChildProc {
 
 impl Drop for ChildProc {
     fn drop(&mut self) {
-        self.terminate();
+        if !self.keep_alive {
+            self.terminate();
+        }
     }
 }
 

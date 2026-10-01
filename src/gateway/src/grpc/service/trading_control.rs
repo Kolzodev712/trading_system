@@ -9,7 +9,8 @@ use trading_core::grpc::TradingControl;
 use trading_engine::levels::LevelManager;
 use trading_engine::state::manager::TradingStateManager;
 use trading_engine::state::{
-    flatten_cancel_working_failed, merge_rest_working_orders, submit_operator_reduce_only_exits,
+    cancel_working_unverified, flatten_cancel_working_failed, flatten_position_unverified,
+    merge_rest_working_orders, submit_operator_reduce_only_exits, verify_rest_exposure_flat,
     verify_rest_working_orders_cleared, SubmissionJournal,
 };
 
@@ -180,28 +181,57 @@ impl TradingControlService {
         }
         self.trading_control.pause_entries().await;
         let (order_ids, pairs) = self.collect_working().await;
-        let response = match self.trading_control.cancel_working(order_ids, pairs).await {
-            Ok(cancelled) => trading_cli::OperatorCommandResponse {
+        let cancelled = match self.trading_control.cancel_working(order_ids, pairs).await {
+            Ok(cancelled) => Ok(cancelled),
+            Err(e) => Err(e.to_string()),
+        };
+        let cancelled = match cancelled {
+            Ok(cancelled) => cancelled,
+            Err(err) => {
+                let response = trading_cli::OperatorCommandResponse {
+                    accepted: false,
+                    state: "failed".into(),
+                    message: cancel_working_unverified(&err),
+                    venue,
+                    environment,
+                    scope: scope_label(&req.symbol),
+                    order_ids: vec![],
+                };
+                self.remember(&req.request_id, response.clone()).await;
+                return Ok(Response::new(response));
+            }
+        };
+        let rest_err = {
+            let client = self.trading_control.trading_client();
+            let client = client.read().await;
+            match verify_rest_working_orders_cleared(&*client).await {
+                Ok(()) => None,
+                Err(err) => Some(err.to_string()),
+            }
+        };
+        let response = if let Some(err) = rest_err {
+            trading_cli::OperatorCommandResponse {
+                accepted: false,
+                state: "failed".into(),
+                message: cancel_working_unverified(&err),
+                venue,
+                environment,
+                scope: scope_label(&req.symbol),
+                order_ids: cancelled,
+            }
+        } else {
+            trading_cli::OperatorCommandResponse {
                 accepted: true,
                 state: "completed".into(),
                 message: format!(
-                    "CancelWorking: requested cancel of {} orders; remain paused; reconcile fills before treating as flat",
+                    "CancelWorking: REST confirmed {} orders gone; remain paused",
                     cancelled.len()
                 ),
                 venue,
                 environment,
                 scope: scope_label(&req.symbol),
                 order_ids: cancelled,
-            },
-            Err(e) => trading_cli::OperatorCommandResponse {
-                accepted: false,
-                state: "failed".into(),
-                message: format!("CancelWorking failed: {e}"),
-                venue,
-                environment,
-                scope: scope_label(&req.symbol),
-                order_ids: vec![],
-            },
+            }
         };
         self.remember(&req.request_id, response.clone()).await;
         Ok(Response::new(response))
@@ -317,7 +347,7 @@ impl TradingControlService {
                 journal.as_ref(),
                 &*client,
                 &mut state,
-                instrument_type,
+                instrument_type.clone(),
                 &tsm_positions,
             )
             .await
@@ -341,6 +371,34 @@ impl TradingControlService {
             }
         };
 
+        let verify_pairs: Vec<trading_core::types::common::Pair> = {
+            let mut pairs: Vec<_> = tsm_positions.iter().map(|(p, _)| p.clone()).collect();
+            pairs.sort_by(|a, b| a.base.cmp(&b.base).then(a.quote.cmp(&b.quote)));
+            pairs.dedup();
+            pairs
+        };
+        let rest_position_err = {
+            let client = self.trading_control.trading_client();
+            let client = client.read().await;
+            match verify_rest_exposure_flat(&*client, instrument_type, &verify_pairs).await {
+                Ok(()) => None,
+                Err(err) => Some(err.to_string()),
+            }
+        };
+        if let Some(err) = rest_position_err {
+            let response = trading_cli::OperatorCommandResponse {
+                accepted: false,
+                state: "failed".into(),
+                message: flatten_position_unverified(&err),
+                venue,
+                environment,
+                scope: scope_label(&req.symbol),
+                order_ids: flatten_ids,
+            };
+            self.remember(&req.request_id, response.clone()).await;
+            return Ok(Response::new(response));
+        }
+
         let still_open: Vec<_> = {
             let state = self.trading_state_manager.get_state();
             let guard = state.read().await;
@@ -355,7 +413,7 @@ impl TradingControlService {
             (
                 "completed",
                 format!(
-                    "FlattenAndPause: latch held until Resume; {} reduce-only orders; TSM is flat",
+                    "FlattenAndPause: latch held until Resume; {} reduce-only orders; REST and TSM are flat",
                     flatten_ids.len()
                 ),
             )
@@ -363,7 +421,7 @@ impl TradingControlService {
             (
                 "in_progress",
                 format!(
-                    "FlattenAndPause: latch held; RPC success is not flat (open: {})",
+                    "FlattenAndPause: latch held; REST working book cleared; TSM still open: {}",
                     still_open.join(",")
                 ),
             )
@@ -729,5 +787,168 @@ mod tests {
         assert!(response.message.contains("working orders after cancel"));
         assert!(service.trading_control.flatten_latched().await);
         assert_eq!(placed.load(Ordering::SeqCst), 0);
+    }
+
+    #[derive(Debug)]
+    struct TsmFlatRestOpenClient {
+        leftover: rust_decimal::Decimal,
+    }
+
+    #[async_trait]
+    impl TradingClient<OrderRequest> for TsmFlatRestOpenClient {
+        fn exchange_id(&self) -> Exchange {
+            Exchange::Paper
+        }
+        async fn test_open_order(&self, _req: OrderRequest) -> Result<(), EngineError> {
+            Ok(())
+        }
+        async fn open_order(&self, req: OrderRequest) -> Result<Order, EngineError> {
+            Ok(Order {
+                order_id: OrderId::new("flatten-rest".into()),
+                client_order_id: req.exchange_params.get("orderLinkId").cloned(),
+                instrument: req.instrument,
+                side: req.side,
+                price: Decimal::ONE,
+                amount: req.amount,
+                internal_created_at: 1,
+                exchange_created_at: Some(1),
+                status: trading_core::types::common::OrderStatus::New,
+                filled_amount: Decimal::ZERO,
+            })
+        }
+        async fn cancel_order_by_id(&self, _order_id: OrderId) -> Result<(), EngineError> {
+            Ok(())
+        }
+        async fn cancel_all_orders(&self, _pair: &Pair) -> Result<(), EngineError> {
+            Ok(())
+        }
+        async fn fetch_balance(&self) -> Result<Vec<Balance>, EngineError> {
+            Ok(vec![])
+        }
+        async fn fetch_open_orders(&self) -> Result<Vec<Order>, EngineError> {
+            Ok(vec![])
+        }
+        async fn fetch_trades(&self, _pair: Option<&Pair>) -> Result<Vec<Trade>, EngineError> {
+            Ok(vec![])
+        }
+        async fn fetch_market_data_snapshot(&self, _pair: &Pair) -> Result<(), EngineError> {
+            Ok(())
+        }
+        async fn amend_order(
+            &self,
+            _order_id: OrderId,
+            _new_request: OrderRequest,
+        ) -> Result<Order, EngineError> {
+            Err(EngineError::NotSupported("test".into()))
+        }
+        async fn bulk_open_orders(
+            &self,
+            _req: trading_core::types::exchange::BulkOrderRequest,
+        ) -> Result<trading_core::types::exchange::BulkOrderResponse, EngineError> {
+            Err(EngineError::NotSupported("test".into()))
+        }
+        async fn bulk_amend_orders(
+            &self,
+            _req: trading_core::types::exchange::BulkAmendRequest,
+        ) -> Result<trading_core::types::exchange::BulkAmendResponse, EngineError> {
+            Err(EngineError::NotSupported("test".into()))
+        }
+        async fn fetch_positions(
+            &self,
+        ) -> Result<Vec<trading_core::types::exchange::Position>, EngineError> {
+            Ok(vec![trading_core::types::exchange::Position {
+                instrument: trading_core::types::common::Instrument::new(
+                    trading_core::types::common::InstrumentType::Futures,
+                    Pair::new("BTC", "USDT"),
+                ),
+                quantity: self.leftover,
+                avg_price: Decimal::ONE,
+                current_price: Decimal::ONE,
+                unrealized_pnl: Decimal::ZERO,
+                last_update: 1,
+                mark_price: None,
+                index_price: None,
+                realized_pnl: None,
+                initial_margin: None,
+                maintenance_margin: None,
+                leverage: None,
+                position_mode: None,
+                margin_type: None,
+                liquidation_price: None,
+            }])
+        }
+    }
+
+    #[tokio::test]
+    async fn flatten_and_pause_tsm_flat_rest_position_is_unverified() {
+        let client: Arc<RwLock<dyn TradingClient<OrderRequest>>> =
+            Arc::new(RwLock::new(TsmFlatRestOpenClient {
+                leftover: Decimal::new(1, 3),
+            }));
+        let journal_path = std::env::temp_dir().join(format!(
+            "gw-flat-tsm-{}-{}.jsonl",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let journal = Arc::new(SubmissionJournal::open(&journal_path).unwrap());
+        let mut service = flatten_service(client);
+        service.submission_journal = Some(journal);
+        let response = service
+            .flatten_and_pause(
+                Request::new(trading_cli::OperatorCommandRequest {
+                    request_id: "tsm-flat-rest-open".into(),
+                    symbol: String::new(),
+                }),
+                "PAPER".into(),
+                "LOCAL".into(),
+                trading_core::types::common::InstrumentType::Futures,
+            )
+            .await
+            .expect("rpc")
+            .into_inner();
+        let _ = std::fs::remove_file(&journal_path);
+        assert!(!response.accepted);
+        assert_eq!(response.state, "failed");
+        assert!(
+            response.message.contains("venue position unverified")
+                || response.message.contains("TSM flat is not venue flat"),
+            "unexpected message: {}",
+            response.message
+        );
+        assert!(service.trading_control.flatten_latched().await);
+        assert!(service.trading_control.entries_paused().await);
+    }
+
+    #[tokio::test]
+    async fn cancel_working_ack_with_remaining_order_is_unverified() {
+        let placed = Arc::new(AtomicUsize::new(0));
+        let client: Arc<RwLock<dyn TradingClient<OrderRequest>>> =
+            Arc::new(RwLock::new(RemainingWorkingAfterCancelClient {
+                placed: placed.clone(),
+            }));
+        let service = flatten_service(client);
+        let response = service
+            .cancel_working(
+                Request::new(trading_cli::OperatorCommandRequest {
+                    request_id: "cancel-leftover".into(),
+                    symbol: String::new(),
+                }),
+                "PAPER".into(),
+                "LOCAL".into(),
+            )
+            .await
+            .expect("rpc")
+            .into_inner();
+        assert!(!response.accepted);
+        assert_eq!(response.state, "failed");
+        assert!(
+            response.message.contains("CancelWorking unverified"),
+            "unexpected message: {}",
+            response.message
+        );
+        assert!(service.trading_control.entries_paused().await);
     }
 }

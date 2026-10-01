@@ -790,6 +790,9 @@ fn check_order_balance_adverse(
             }
         }
         Side::Sell => {
+            // Bybit, Binance, and k-paper already report `free` excluding venue-locked
+            // working reservations. Adding TSM `same_side_unfilled` would double-count
+            // those sells. Residual risk is only an in-process unacked second submit.
             let required = order_request.amount;
             let available = balances
                 .iter()
@@ -841,6 +844,29 @@ mod balance_tests {
             used: Decimal::ZERO,
             total: free,
         }
+    }
+
+    #[test]
+    fn spot_sell_uses_venue_free_without_double_counting_working() {
+        let allowed = check_order_balance_adverse(
+            &req(InstrumentType::Spot, Side::Sell),
+            &[btc(dec!(1))],
+            Decimal::ZERO,
+            dec!(1),
+            None,
+        );
+        assert!(
+            allowed.allowed,
+            "venue free already excludes locked working qty; same_side_unfilled must not be added"
+        );
+        let blocked = check_order_balance_adverse(
+            &req(InstrumentType::Spot, Side::Sell),
+            &[btc(dec!(0))],
+            Decimal::ZERO,
+            Decimal::ZERO,
+            None,
+        );
+        assert!(!blocked.allowed);
     }
 
     #[test]

@@ -19,6 +19,7 @@ pub trait VenueHarness: Send {
 pub struct RestOrder {
     pub order_id: String,
     pub client_order_id: String,
+    pub instrument: String,
     pub price: Decimal,
     pub amount: Decimal,
     pub filled: Decimal,

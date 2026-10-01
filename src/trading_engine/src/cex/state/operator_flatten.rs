@@ -39,6 +39,23 @@ pub fn flatten_cancel_working_failed(err: &str) -> String {
     )
 }
 
+/// Standalone CancelWorking: cancel ACK is not venue-empty.
+pub fn cancel_working_unverified(err: &str) -> String {
+    format!(
+        "CancelWorking unverified: {err}. \
+         Working orders are not treated as cancelled. \
+         Pause remains held."
+    )
+}
+
+/// FlattenAndPause: TSM flat is not venue flat.
+pub fn flatten_position_unverified(err: &str) -> String {
+    format!(
+        "FlattenAndPause: venue position unverified: {err}. \
+         Pause and flatten latch remain held. TSM flat is not venue flat."
+    )
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct OperatorFlattenReport {
     pub client_order_ids: Vec<String>,
@@ -165,6 +182,66 @@ pub async fn verify_rest_working_orders_cleared(
         Err(err) => Err(EngineError::CustomError(anyhow::anyhow!(
             "CancelWorking unverified: REST GET /open_orders failed: {err}"
         ))),
+    }
+}
+
+/// Venue exposure after flatten. Futures uses REST positions. Spot uses the wallet.
+/// REST failure or leftover size is unverified — never completed from TSM alone.
+pub async fn verify_rest_exposure_flat(
+    trading_client: &dyn TradingClient<OrderRequest>,
+    instrument_type: InstrumentType,
+    pairs: &[Pair],
+) -> Result<(), EngineError> {
+    match instrument_type {
+        InstrumentType::Futures | InstrumentType::Derivitives => {
+            match trading_client.fetch_positions().await {
+                Ok(positions) => {
+                    let leftover: Vec<String> = positions
+                        .iter()
+                        .filter(|position| position.quantity.abs() > flat_eps())
+                        .map(|position| {
+                            format!("{}:{}", position.pair(), position.quantity.normalize())
+                        })
+                        .collect();
+                    if leftover.is_empty() {
+                        Ok(())
+                    } else {
+                        Err(EngineError::CustomError(anyhow::anyhow!(
+                            "REST positions still open ({})",
+                            leftover.join(",")
+                        )))
+                    }
+                }
+                Err(err) => Err(EngineError::CustomError(anyhow::anyhow!(
+                    "REST GET /positions failed: {err}"
+                ))),
+            }
+        }
+        InstrumentType::Spot => match trading_client.fetch_balance().await {
+            Ok(balances) => {
+                let leftover: Vec<String> = pairs
+                    .iter()
+                    .filter_map(|pair| {
+                        balances
+                            .iter()
+                            .find(|b| b.symbol.as_ref() == pair.base.as_str())
+                    })
+                    .filter(|b| b.total.abs() > flat_eps() || b.free.abs() > flat_eps())
+                    .map(|b| format!("{}:{}", b.symbol, b.total.normalize()))
+                    .collect();
+                if leftover.is_empty() {
+                    Ok(())
+                } else {
+                    Err(EngineError::CustomError(anyhow::anyhow!(
+                        "REST spot wallet still shows base inventory ({})",
+                        leftover.join(",")
+                    )))
+                }
+            }
+            Err(err) => Err(EngineError::CustomError(anyhow::anyhow!(
+                "REST GET /wallet failed: {err}"
+            ))),
+        },
     }
 }
 
@@ -565,6 +642,119 @@ mod tests {
 
         async fn fetch_positions(&self) -> Result<Vec<Position>, EngineError> {
             Ok(self.positions.lock().await.clone())
+        }
+    }
+
+    #[derive(Debug)]
+    struct PositionsFail;
+
+    #[async_trait]
+    impl TradingClient<OrderRequest> for PositionsFail {
+        fn exchange_id(&self) -> Exchange {
+            Exchange::Paper
+        }
+        async fn test_open_order(&self, _req: OrderRequest) -> Result<(), EngineError> {
+            Ok(())
+        }
+        async fn open_order(&self, _req: OrderRequest) -> Result<Order, EngineError> {
+            Err(EngineError::NotSupported("test".into()))
+        }
+        async fn cancel_order_by_id(&self, _order_id: OrderId) -> Result<(), EngineError> {
+            Ok(())
+        }
+        async fn cancel_all_orders(&self, _pair: &Pair) -> Result<(), EngineError> {
+            Ok(())
+        }
+        async fn fetch_balance(&self) -> Result<Vec<Balance>, EngineError> {
+            Err(EngineError::CustomError(anyhow::anyhow!("wallet 503")))
+        }
+        async fn fetch_open_orders(&self) -> Result<Vec<Order>, EngineError> {
+            Ok(vec![])
+        }
+        async fn fetch_trades(&self, _pair: Option<&Pair>) -> Result<Vec<Trade>, EngineError> {
+            Ok(vec![])
+        }
+        async fn fetch_market_data_snapshot(&self, _pair: &Pair) -> Result<(), EngineError> {
+            Ok(())
+        }
+        async fn amend_order(
+            &self,
+            _order_id: OrderId,
+            _new_request: OrderRequest,
+        ) -> Result<Order, EngineError> {
+            Err(EngineError::NotSupported("test".into()))
+        }
+        async fn bulk_open_orders(
+            &self,
+            _req: BulkOrderRequest,
+        ) -> Result<BulkOrderResponse, EngineError> {
+            Err(EngineError::NotSupported("test".into()))
+        }
+        async fn bulk_amend_orders(
+            &self,
+            _req: BulkAmendRequest,
+        ) -> Result<BulkAmendResponse, EngineError> {
+            Err(EngineError::NotSupported("test".into()))
+        }
+        async fn fetch_positions(&self) -> Result<Vec<Position>, EngineError> {
+            Err(EngineError::CustomError(anyhow::anyhow!(
+                "REST GET /positions: 503"
+            )))
+        }
+    }
+
+    #[derive(Debug)]
+    struct SpotWallet {
+        balances: Vec<Balance>,
+    }
+
+    #[async_trait]
+    impl TradingClient<OrderRequest> for SpotWallet {
+        fn exchange_id(&self) -> Exchange {
+            Exchange::Paper
+        }
+        async fn test_open_order(&self, _req: OrderRequest) -> Result<(), EngineError> {
+            Ok(())
+        }
+        async fn open_order(&self, _req: OrderRequest) -> Result<Order, EngineError> {
+            Err(EngineError::NotSupported("test".into()))
+        }
+        async fn cancel_order_by_id(&self, _order_id: OrderId) -> Result<(), EngineError> {
+            Ok(())
+        }
+        async fn cancel_all_orders(&self, _pair: &Pair) -> Result<(), EngineError> {
+            Ok(())
+        }
+        async fn fetch_balance(&self) -> Result<Vec<Balance>, EngineError> {
+            Ok(self.balances.clone())
+        }
+        async fn fetch_open_orders(&self) -> Result<Vec<Order>, EngineError> {
+            Ok(vec![])
+        }
+        async fn fetch_trades(&self, _pair: Option<&Pair>) -> Result<Vec<Trade>, EngineError> {
+            Ok(vec![])
+        }
+        async fn fetch_market_data_snapshot(&self, _pair: &Pair) -> Result<(), EngineError> {
+            Ok(())
+        }
+        async fn amend_order(
+            &self,
+            _order_id: OrderId,
+            _new_request: OrderRequest,
+        ) -> Result<Order, EngineError> {
+            Err(EngineError::NotSupported("test".into()))
+        }
+        async fn bulk_open_orders(
+            &self,
+            _req: BulkOrderRequest,
+        ) -> Result<BulkOrderResponse, EngineError> {
+            Err(EngineError::NotSupported("test".into()))
+        }
+        async fn bulk_amend_orders(
+            &self,
+            _req: BulkAmendRequest,
+        ) -> Result<BulkAmendResponse, EngineError> {
+            Err(EngineError::NotSupported("test".into()))
         }
     }
 
@@ -1060,5 +1250,54 @@ mod tests {
             .expect_err("remaining REST working must fail closed");
         assert!(err.to_string().contains("still shows working"));
         assert!(err.to_string().contains("still-open"));
+    }
+
+    #[tokio::test]
+    async fn rest_futures_position_leftover_is_unverified() {
+        let client = Scripted::new(vec![long_pos(Decimal::new(1, 3))]);
+        let err = verify_rest_exposure_flat(&client, InstrumentType::Futures, &[])
+            .await
+            .expect_err("TSM-flat REST-nonflat must fail");
+        assert!(err.to_string().contains("still open"));
+    }
+
+    #[tokio::test]
+    async fn rest_futures_positions_error_is_unverified() {
+        let err = verify_rest_exposure_flat(&PositionsFail, InstrumentType::Futures, &[])
+            .await
+            .expect_err("REST error is unverified");
+        assert!(err.to_string().contains("GET /positions failed"));
+    }
+
+    #[tokio::test]
+    async fn rest_spot_wallet_leftover_is_unverified() {
+        let client = SpotWallet {
+            balances: vec![Balance {
+                symbol: "BTC".into(),
+                free: Decimal::new(1, 3),
+                used: Decimal::ZERO,
+                total: Decimal::new(1, 3),
+            }],
+        };
+        let err = verify_rest_exposure_flat(&client, InstrumentType::Spot, &[pair()])
+            .await
+            .expect_err("spot wallet leftover must fail");
+        assert!(err.to_string().contains("wallet still shows"));
+    }
+
+    #[tokio::test]
+    async fn rest_spot_wallet_error_is_unverified() {
+        let err = verify_rest_exposure_flat(&PositionsFail, InstrumentType::Spot, &[pair()])
+            .await
+            .expect_err("wallet REST error is unverified");
+        assert!(err.to_string().contains("GET /wallet failed"));
+    }
+
+    #[tokio::test]
+    async fn rest_futures_empty_positions_is_flat() {
+        let client = Scripted::new(vec![]);
+        verify_rest_exposure_flat(&client, InstrumentType::Futures, &[])
+            .await
+            .expect("empty REST positions are flat");
     }
 }

@@ -30,6 +30,9 @@ pub async fn level_runner(
     level_persistence: Option<Arc<trading_engine::levels::persistence::LevelPersistence>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     info!("=== Running in LEVELS mode ===");
+    let (execution_mode, venue, environment) =
+        crate::config::execution_status_from_bot(&bot_config);
+    crate::config::levels_exchange_is_authorized(execution_mode, &venue, &environment)?;
 
     // Initialize level manager with persistence if enabled
     let mut level_manager = if let Some(ref persistence) = level_persistence {

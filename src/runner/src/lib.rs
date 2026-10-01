@@ -59,6 +59,21 @@ pub async fn run(
 ) -> Result<(), Box<dyn std::error::Error>> {
     bot_config.validate()?;
     bot_config.validate_for_runner(&mode)?;
+    if bot_config.venue.mode == VenueMode::Cex {
+        let (execution_mode, venue, environment) =
+            crate::config::execution_status_from_bot(&bot_config);
+        match mode.as_str() {
+            "levels" => {
+                crate::config::levels_exchange_is_authorized(execution_mode, &venue, &environment)?
+            }
+            "strategies" => crate::config::strategies_exchange_is_authorized(
+                execution_mode,
+                &venue,
+                &environment,
+            )?,
+            _ => {}
+        }
+    }
 
     let shutdown_manager = ShutdownManager::new(bot_config.channels.shutdown_capacity);
     platform::init::setup_shutdown_handler(shutdown_manager.clone());

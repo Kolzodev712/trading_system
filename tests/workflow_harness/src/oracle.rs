@@ -107,6 +107,24 @@ pub fn journal_has_state(jsonl: &str, state: &str) -> bool {
     })
 }
 
+/// Latest journaled client order id for a level. Empty ids are ignored.
+pub fn latest_level_client_order_id(jsonl: &str, level_id: &str) -> Option<String> {
+    let mut found = None;
+    for line in jsonl.lines() {
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        let matches_level = v.get("level_id").and_then(|x| x.as_str()) == Some(level_id);
+        let Some(cid) = v.get("client_order_id").and_then(|x| x.as_str()) else {
+            continue;
+        };
+        if matches_level && !cid.is_empty() {
+            found = Some(cid.to_string());
+        }
+    }
+    found
+}
+
 pub fn halt_is_disagreement(snap: &RunnerSnapshot) -> bool {
     snap.last_block_reason_code == "RECONCILE_DISAGREEMENT"
         || snap

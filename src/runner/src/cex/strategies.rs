@@ -137,7 +137,7 @@ pub async fn strategy_runner_with(
     risk_limits.require_explicit_for_exchange(bot_config.execution_mode)?;
     let (execution_mode, venue, environment) =
         crate::config::execution_status_from_bot(&bot_config);
-    crate::config::operator_labels::exchange_live_is_authorized(
+    crate::config::operator_labels::strategies_exchange_is_authorized(
         execution_mode,
         &venue,
         &environment,

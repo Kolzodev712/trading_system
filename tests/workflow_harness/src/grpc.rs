@@ -1,8 +1,10 @@
 use anyhow::{Context, Result};
 use rust_decimal::Decimal;
 use std::time::Duration;
+use tonic::metadata::{Ascii, MetadataValue};
+use tonic::service::Interceptor;
 use tonic::transport::Channel;
-use tonic::Request;
+use tonic::{Request, Status};
 
 pub mod trading_cli {
     tonic::include_proto!("trading_cli");
@@ -17,20 +19,46 @@ use trading_cli::{
 
 use crate::venue::RunnerSnapshot;
 
+#[derive(Clone)]
+struct OperatorAuth {
+    token: Option<MetadataValue<Ascii>>,
+}
+
+impl Interceptor for OperatorAuth {
+    fn call(&mut self, mut request: Request<()>) -> Result<Request<()>, Status> {
+        if let Some(ref token) = self.token {
+            request
+                .metadata_mut()
+                .insert("x-operator-token", token.clone());
+        }
+        Ok(request)
+    }
+}
+
 pub struct GrpcCtl {
-    inner: TradingCliServiceClient<Channel>,
+    inner: TradingCliServiceClient<
+        tonic::service::interceptor::InterceptedService<Channel, OperatorAuth>,
+    >,
 }
 
 impl GrpcCtl {
     pub async fn connect(endpoint: &str) -> Result<Self> {
+        Self::connect_with_token(endpoint, None).await
+    }
+
+    pub async fn connect_with_token(endpoint: &str, token: Option<&str>) -> Result<Self> {
         let channel = Channel::from_shared(endpoint.to_string())?
             .timeout(Duration::from_secs(5))
             .connect_timeout(Duration::from_secs(5))
             .connect()
             .await
             .with_context(|| format!("grpc connect {endpoint}"))?;
+        let token = token
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .and_then(|s| MetadataValue::try_from(s).ok());
         Ok(Self {
-            inner: TradingCliServiceClient::new(channel),
+            inner: TradingCliServiceClient::with_interceptor(channel, OperatorAuth { token }),
         })
     }
 
@@ -100,6 +128,21 @@ impl GrpcCtl {
             anyhow::bail!("update-level {level_id} failed");
         }
         Ok(())
+    }
+
+    pub async fn cancel_working(&mut self, request_id: &str) -> Result<String> {
+        let resp = self
+            .inner
+            .cancel_working(Request::new(OperatorCommandRequest {
+                request_id: request_id.into(),
+                symbol: String::new(),
+            }))
+            .await?
+            .into_inner();
+        if !resp.accepted {
+            anyhow::bail!("cancel_working not accepted: {}", resp.message);
+        }
+        Ok(resp.message)
     }
 
     pub async fn pause_entries(&mut self) -> Result<()> {

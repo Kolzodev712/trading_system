@@ -4,6 +4,7 @@
 
 pub mod artifacts;
 pub mod demo;
+pub mod demo_levels;
 pub mod grpc;
 pub mod oracle;
 pub mod paper;

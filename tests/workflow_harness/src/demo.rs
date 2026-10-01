@@ -4,9 +4,13 @@ use reqwest::Client;
 use rust_decimal::Decimal;
 use serde_json::Value;
 use sha2::Sha256;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 
 use crate::grpc::GrpcCtl;
 use crate::oracle::{qty_canon, qty_close, rest_btc_position, runner_btc_qty, working_ids};
@@ -14,7 +18,7 @@ use crate::process::{
     allocate_port, cargo_build, debug_bin, require_mongo, wait_health_cex_ready, workspace_root,
     ChildProc,
 };
-use crate::types::{Capability, ScenarioResult, Verdict};
+use crate::types::{Capability, ScenarioResult};
 use crate::venue::{RestBalance, RestOrder, RestPosition, RunnerSnapshot, VenueHarness};
 
 const DEMO_REST: &str = "https://api-demo.bybit.com";
@@ -168,7 +172,12 @@ impl DemoAdapter {
             rest_pos.len(),
             rest_bal.len()
         ));
-        write_demo_truth(artifacts, "rest", &rest_orders, &rest_pos, &rest_bal, None);
+        if let Err(e) =
+            write_demo_truth(artifacts, "rest", &rest_orders, &rest_pos, &rest_bal, None)
+        {
+            r.fail("truth_rest", "ok", &e.to_string());
+            return r;
+        }
 
         let paused = match DemoPausedRunner::launch(artifacts, &self.bot_path).await {
             Ok(p) => p,
@@ -221,14 +230,17 @@ impl DemoAdapter {
                 &qty_canon(runner_qty),
             );
         }
-        write_demo_truth(
+        if let Err(e) = write_demo_truth(
             artifacts,
             "paused",
             &rest_orders,
             &rest_pos,
             &rest_bal,
             Some(&snap),
-        );
+        ) {
+            r.fail("truth_paused", "ok", &e.to_string());
+            return r;
+        }
         r.assert_eq(
             "no_mutating_flag",
             "false",
@@ -237,7 +249,7 @@ impl DemoAdapter {
         r
     }
 
-    async fn signed_get(&self, path: &str, query: &[(&str, &str)]) -> Result<Value> {
+    pub(crate) async fn signed_get(&self, path: &str, query: &[(&str, &str)]) -> Result<Value> {
         let qs = serde_urlencoded(query);
         let ts = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -269,7 +281,7 @@ impl DemoAdapter {
         Ok(body.get("result").cloned().unwrap_or(Value::Null))
     }
 
-    async fn signed_positions(&self) -> Result<Vec<RestPosition>> {
+    pub(crate) async fn signed_positions(&self) -> Result<Vec<RestPosition>> {
         let v = self
             .signed_get(
                 "/v5/position/list",
@@ -303,7 +315,7 @@ impl DemoAdapter {
             .collect())
     }
 
-    async fn signed_orders(&self) -> Result<Vec<RestOrder>> {
+    pub(crate) async fn signed_orders(&self) -> Result<Vec<RestOrder>> {
         let v = self
             .signed_get(
                 "/v5/order/realtime",
@@ -342,7 +354,7 @@ impl DemoAdapter {
             .collect())
     }
 
-    async fn signed_wallet(&self) -> Result<Vec<RestBalance>> {
+    pub(crate) async fn signed_wallet(&self) -> Result<Vec<RestBalance>> {
         let v = self
             .signed_get("/v5/account/wallet-balance", &[("accountType", "UNIFIED")])
             .await?;
@@ -371,10 +383,115 @@ impl DemoAdapter {
         }
         Ok(out)
     }
+
+    pub(crate) async fn public_get(&self, path: &str, query: &[(&str, &str)]) -> Result<Value> {
+        let qs = serde_urlencoded(query);
+        let url = format!("{}{}?{}", self.rest_base, path, qs);
+        let client = Client::builder().timeout(Duration::from_secs(15)).build()?;
+        let resp = client
+            .get(&url)
+            .send()
+            .await
+            .with_context(|| format!("GET {path}"))?;
+        let status = resp.status();
+        let body: Value = resp.json().await.context("demo public REST json")?;
+        if !status.is_success() || body.get("retCode").and_then(|x| x.as_i64()) != Some(0) {
+            bail!(
+                "Demo public REST {path} status={status} ret={:?}",
+                body.get("retMsg")
+            );
+        }
+        Ok(body.get("result").cloned().unwrap_or(Value::Null))
+    }
+}
+
+/// Live credentialed bot.json lives outside preserved artifacts (0600). Drop shreds it.
+pub(crate) struct SecretBotFile {
+    live_dir: PathBuf,
+    live_bot: PathBuf,
+    archive_bot: PathBuf,
+    archived: bool,
+}
+
+impl SecretBotFile {
+    pub(crate) fn create(archive_bot: PathBuf, bot: &Value) -> Result<Self> {
+        let live_dir =
+            std::env::temp_dir().join(format!("ts-demo-{}", uuid::Uuid::new_v4().simple()));
+        fs::create_dir_all(&live_dir).with_context(|| format!("create {}", live_dir.display()))?;
+        restrict_dir(&live_dir, 0o700);
+        let live_bot = live_dir.join("bot.json");
+        fs::write(&live_bot, serde_json::to_vec_pretty(bot)?)
+            .with_context(|| format!("write {}", live_bot.display()))?;
+        restrict_dir(&live_bot, 0o600);
+        Ok(Self {
+            live_dir,
+            live_bot,
+            archive_bot,
+            archived: false,
+        })
+    }
+
+    pub(crate) fn path(&self) -> &Path {
+        &self.live_bot
+    }
+
+    pub(crate) fn archive_redacted(&mut self) -> Result<()> {
+        let raw = fs::read_to_string(&self.live_bot)
+            .with_context(|| format!("read {}", self.live_bot.display()))?;
+        let mut v: Value = serde_json::from_str(&raw)?;
+        redact_credentials(&mut v);
+        if let Some(parent) = self.archive_bot.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(&self.archive_bot, serde_json::to_vec_pretty(&v)?)?;
+        self.archived = true;
+        Ok(())
+    }
+}
+
+impl Drop for SecretBotFile {
+    fn drop(&mut self) {
+        if !self.archived {
+            let _ = self.archive_redacted();
+        }
+        shred_and_remove(&self.live_bot);
+        let _ = fs::remove_dir_all(&self.live_dir);
+    }
+}
+
+fn restrict_dir(path: &Path, mode: u32) {
+    #[cfg(unix)]
+    {
+        let _ = fs::set_permissions(path, fs::Permissions::from_mode(mode));
+    }
+    let _ = mode;
+}
+
+fn shred_and_remove(path: &Path) {
+    if path.exists() {
+        let zeros = vec![0u8; 4096];
+        let _ = fs::write(path, zeros);
+        let _ = fs::remove_file(path);
+    }
+}
+
+fn redact_credentials(v: &mut Value) {
+    if let Some(cred) = v
+        .pointer_mut("/exchange_engine/config/credentials")
+        .and_then(|c| c.as_object_mut())
+    {
+        if cred.contains_key("apiKey") {
+            cred.insert("apiKey".into(), "REDACTED".into());
+        }
+        if cred.contains_key("apiSecret") {
+            cred.insert("apiSecret".into(), "REDACTED".into());
+        }
+    }
 }
 
 struct DemoPausedRunner {
     grpc_url: String,
+    _secret: SecretBotFile,
     _child: ChildProc,
 }
 
@@ -399,12 +516,12 @@ impl DemoPausedRunner {
         }
         let run_id = format!("demo-{}", uuid::Uuid::new_v4().simple());
         let run_dir = artifacts.join(&run_id).join("run");
-        std::fs::create_dir_all(&run_dir)?;
+        fs::create_dir_all(&run_dir)?;
         let health_port = allocate_port()?;
         let grpc_port = allocate_port()?;
         let grpc_bind = format!("127.0.0.1:{grpc_port}");
         let grpc_url = format!("http://127.0.0.1:{grpc_port}");
-        let mut bot: Value = serde_json::from_str(&std::fs::read_to_string(src_bot)?)?;
+        let mut bot: Value = serde_json::from_str(&fs::read_to_string(src_bot)?)?;
         if let Some(obj) = bot.as_object_mut() {
             obj.insert(
                 "submission_journal_path".into(),
@@ -457,8 +574,7 @@ impl DemoPausedRunner {
                 mongo.insert("database".into(), format!("trading_system_{run_id}").into());
             }
         }
-        let bot_path = run_dir.join("bot.json");
-        std::fs::write(&bot_path, serde_json::to_vec_pretty(&bot)?)?;
+        let mut secret = SecretBotFile::create(run_dir.join("bot.json"), &bot)?;
         let strategies = ws.join("sample_config/bybit-demo/strategies.json");
         if !strategies.exists() {
             bail!("missing {}", strategies.display());
@@ -467,7 +583,7 @@ impl DemoPausedRunner {
         cmd.arg("--mode")
             .arg("strategies")
             .arg("--config")
-            .arg(&bot_path)
+            .arg(secret.path())
             .arg("--strategies-config")
             .arg(&strategies)
             .env("TRACE_JAEGER_DISABLED", "1")
@@ -484,9 +600,10 @@ impl DemoPausedRunner {
             Duration::from_secs(90),
         )
         .await?;
-        redact_bot_file(&bot_path);
+        secret.archive_redacted()?;
         Ok(Self {
             grpc_url,
+            _secret: secret,
             _child: child,
         })
     }
@@ -521,29 +638,6 @@ impl VenueHarness for DemoAdapter {
     async fn rest_positions(&self) -> Result<Vec<RestPosition>> {
         self.signed_positions().await
     }
-}
-
-pub fn mutating_refused() -> ScenarioResult {
-    let mut r = ScenarioResult::new("demo_mutating_preflight", "BYBIT", "Spot", "opt-in");
-    let allowed = std::env::var("WORKFLOW_DEMO_MUTATE").ok().as_deref() == Some("1");
-    if !allowed {
-        r.note("WORKFLOW_DEMO_MUTATE is not set; refusing to place Demo orders");
-        r.fail(
-            "explicit_mutate_flag",
-            "WORKFLOW_DEMO_MUTATE=1 required; this command still places no orders in this task",
-            "flag unset; no Resume, no order, no live funds",
-        );
-        return r;
-    }
-    r.verdict = Verdict::NotSupported;
-    r.note("flag present but Demo mutation is not implemented; requested gate must not pass");
-    r.assertions.push(crate::types::AssertionRecord {
-        name: "no_demo_orders".into(),
-        expected: "implemented mutating Demo workflow".into(),
-        actual: "NOT_SUPPORTED (preflight only; never a pass)".into(),
-        verdict: Verdict::NotSupported,
-    });
-    r
 }
 
 impl Default for DemoAdapter {
@@ -586,27 +680,6 @@ fn serde_urlencoded(query: &[(&str, &str)]) -> String {
         .join("&")
 }
 
-fn redact_bot_file(path: &Path) {
-    let Ok(raw) = std::fs::read_to_string(path) else {
-        return;
-    };
-    let Ok(mut v) = serde_json::from_str::<Value>(&raw) else {
-        return;
-    };
-    if let Some(cred) = v
-        .pointer_mut("/exchange_engine/config/credentials")
-        .and_then(|c| c.as_object_mut())
-    {
-        if cred.contains_key("apiKey") {
-            cred.insert("apiKey".into(), "REDACTED".into());
-        }
-        if cred.contains_key("apiSecret") {
-            cred.insert("apiSecret".into(), "REDACTED".into());
-        }
-    }
-    let _ = std::fs::write(path, serde_json::to_vec_pretty(&v).unwrap_or_default());
-}
-
 fn dec_field(v: &Value, key: &str) -> Decimal {
     v.get(key)
         .and_then(|x| x.as_str())
@@ -614,44 +687,53 @@ fn dec_field(v: &Value, key: &str) -> Decimal {
         .unwrap_or(Decimal::ZERO)
 }
 
-fn write_demo_truth(
+pub(crate) fn write_demo_truth(
     artifacts: &Path,
     tag: &str,
     orders: &[RestOrder],
     positions: &[RestPosition],
     balances: &[RestBalance],
     snap: Option<&RunnerSnapshot>,
-) {
+) -> Result<()> {
     let dest = artifacts.join("demo-snapshots").join(tag);
-    let _ = std::fs::create_dir_all(&dest);
-    let _ = std::fs::write(
+    fs::create_dir_all(&dest)?;
+    fs::write(
         dest.join("rest-open-orders.json"),
-        serde_json::to_vec_pretty(&orders.iter().map(|o| {
-            serde_json::json!({"id": o.order_id, "side": o.side, "qty": o.amount.to_string()})
-        }).collect::<Vec<_>>())
-        .unwrap_or_default(),
-    );
-    let _ = std::fs::write(
+        serde_json::to_vec_pretty(
+            &orders
+                .iter()
+                .map(|o| {
+                    serde_json::json!({
+                        "id": o.order_id,
+                        "client_id": o.client_order_id,
+                        "side": o.side,
+                        "qty": o.amount.to_string(),
+                        "status": o.status
+                    })
+                })
+                .collect::<Vec<_>>(),
+        )?,
+    )?;
+    fs::write(
         dest.join("rest-positions.json"),
-        serde_json::to_vec_pretty(&positions.iter().map(|p| {
-            serde_json::json!({"instrument": p.instrument, "qty": p.quantity.to_string()})
-        }).collect::<Vec<_>>())
-        .unwrap_or_default(),
-    );
-    let _ = std::fs::write(
+        serde_json::to_vec_pretty(
+            &positions
+                .iter()
+                .map(|p| serde_json::json!({"instrument": p.instrument, "qty": p.quantity.to_string()}))
+                .collect::<Vec<_>>(),
+        )?,
+    )?;
+    fs::write(
         dest.join("rest-balances.json"),
         serde_json::to_vec_pretty(
             &balances
                 .iter()
                 .map(|b| serde_json::json!({"asset": b.asset, "total": b.total.to_string()}))
                 .collect::<Vec<_>>(),
-        )
-        .unwrap_or_default(),
-    );
+        )?,
+    )?;
     if let Some(s) = snap {
-        let _ = std::fs::write(
-            dest.join("grpc-status.json"),
-            serde_json::to_vec_pretty(s).unwrap_or_default(),
-        );
+        fs::write(dest.join("grpc-status.json"), serde_json::to_vec_pretty(s)?)?;
     }
+    Ok(())
 }

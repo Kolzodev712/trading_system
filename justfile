@@ -106,6 +106,9 @@ test-demo-readonly:
     cargo run -p workflow_harness --bin workflow_gate -- --layer demo-readonly
 
 test-demo-mutating:
+    # Opt-in only. Requires WORKFLOW_DEMO_MUTATE=1, BYBIT/DEMO, linear/BTCUSDT,
+    # 300s deadline, WORKFLOW_DEMO_BOT, TRADING_OPERATOR_ID/TOKEN, and 0.001/150 caps.
+    # Do not run until the operator has reviewed the printed procedure.
     cargo run -p workflow_harness --bin workflow_gate -- --layer demo-mutating
 
 # Compilation checks

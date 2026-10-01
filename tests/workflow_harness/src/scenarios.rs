@@ -6,8 +6,8 @@ use crate::demo::DemoAdapter;
 use crate::demo_levels;
 use crate::oracle::{
     assert_spot_agreement, btc_total, catalog_filled_qty, catalog_owns, halt_is_disagreement,
-    journal_has_state, qty_canon, qty_close, rest_btc_position, runner_btc_qty, unique_ledger_qty,
-    working_ids,
+    journal_has_state, journaled_client_id_after, latest_level_client_order_id, qty_canon,
+    qty_close, rest_btc_position, runner_btc_qty, unique_ledger_qty, working_ids,
 };
 use crate::paper::{CatalogKind, PaperInstrument, PaperStack};
 use crate::process::ui_dir;
@@ -168,6 +168,7 @@ pub async fn run_layer(layer: Layer, only: Option<&str>, artifacts: &Path) -> Ve
             let all = [
                 "paper_spot_levels",
                 "paper_futures_levels",
+                "paper_two_creates_one_resume",
                 "paper_shadow_zero_mutations",
                 "paper_lost_ack_restart",
                 "paper_c2_exchange",
@@ -207,6 +208,7 @@ async fn run_named(name: &str, artifacts: &Path) -> ScenarioResult {
     match name {
         "paper_spot_levels" => paper_spot_levels(artifacts).await,
         "paper_futures_levels" => paper_futures_levels(artifacts).await,
+        "paper_two_creates_one_resume" => paper_two_creates_one_resume(artifacts).await,
         "paper_shadow_zero_mutations" => paper_shadow(artifacts).await,
         "paper_lost_ack_restart" => paper_lost_ack(artifacts).await,
         "paper_c2_exchange" => paper_c2_exchange(artifacts).await,
@@ -739,6 +741,133 @@ async fn paper_futures_levels(artifacts: &Path) -> ScenarioResult {
         "missing",
     );
     r
+}
+
+async fn paper_two_creates_one_resume(artifacts: &Path) -> ScenarioResult {
+    let mut r = ScenarioResult::new("paper_two_creates_one_resume", "PAPER", "Spot", "exchange");
+    let stack = match PaperStack::launch(
+        artifacts,
+        PaperInstrument::Spot,
+        CatalogKind::TwoRest,
+        "exchange",
+    )
+    .await
+    {
+        Ok(s) => s,
+        Err(e) => {
+            r.fail("launch", "ok", &e.to_string());
+            return r;
+        }
+    };
+    let mut grpc = match require(&mut r, "grpc", stack.grpc().await) {
+        Some(g) => g,
+        None => return r,
+    };
+    if require(&mut r, "enable", grpc.enable().await).is_none() {
+        return r;
+    }
+    if require(&mut r, "one_resume", grpc.resume_entries().await).is_none() {
+        return r;
+    }
+    let snap = match require(&mut r, "snap_after_resume", grpc.snapshot().await) {
+        Some(s) => s,
+        None => return r,
+    };
+    r.assert_eq(
+        "entries_paused_after_resume",
+        "false",
+        snap.entries_paused.to_string(),
+    );
+
+    let id = stack.instance_id("wf_rest_a");
+    let first = match require(
+        &mut r,
+        "first_journal",
+        enable_and_wait_journal(&stack, &mut grpc, &id, "1000").await,
+    ) {
+        Some(v) => v,
+        None => return r,
+    };
+    if require(&mut r, "disable_first", grpc.toggle_level(&id, false).await).is_none() {
+        return r;
+    }
+    r.assert_eq(
+        "first_rest_gone",
+        "gone",
+        if wait_gone(&stack, &first.1).await {
+            "gone"
+        } else {
+            "still_working"
+        },
+    );
+    let snap = match require(&mut r, "snap_before_second", grpc.snapshot().await) {
+        Some(s) => s,
+        None => return r,
+    };
+    r.assert_eq(
+        "entries_paused_before_second_create",
+        "false",
+        snap.entries_paused.to_string(),
+    );
+    if snap.entries_paused {
+        r.fail(
+            "no_cancel_working_between_creates",
+            "entries_paused=false",
+            "true",
+        );
+        return r;
+    }
+
+    let second = match require(
+        &mut r,
+        "second_journal",
+        enable_and_wait_journal(&stack, &mut grpc, &id, "1030").await,
+    ) {
+        Some(v) => v,
+        None => return r,
+    };
+    r.assert_true(
+        "two_distinct_journal_ids",
+        first.0 != second.0 && !first.0.is_empty() && !second.0.is_empty(),
+        "two client ids",
+        &format!("{} / {}", first.0, second.0),
+    );
+    let _ = grpc.toggle_level(&id, false).await;
+    require_truth(&mut r, &stack, "two_creates").await;
+    r
+}
+
+async fn enable_and_wait_journal(
+    stack: &PaperStack,
+    grpc: &mut crate::grpc::GrpcCtl,
+    instance_id: &str,
+    price: &str,
+) -> Result<(String, String), String> {
+    grpc.update_level_price(instance_id, price)
+        .await
+        .map_err(|e| e.to_string())?;
+    let watermark = latest_level_client_order_id(&stack.journal_text(), instance_id);
+    grpc.toggle_level(instance_id, true)
+        .await
+        .map_err(|e| e.to_string())?;
+    let deadline = std::time::Instant::now() + Duration::from_secs(15);
+    let mut cid = String::new();
+    while std::time::Instant::now() < deadline {
+        if let Some(found) =
+            journaled_client_id_after(&stack.journal_text(), instance_id, watermark.as_deref())
+        {
+            cid = found;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    if cid.is_empty() {
+        return Err(format!(
+            "no new journaled client_order_id for {instance_id}"
+        ));
+    }
+    let order = stack.wait_open_at(price).await.map_err(|e| e.to_string())?;
+    Ok((cid, order.order_id))
 }
 
 async fn paper_shadow(artifacts: &Path) -> ScenarioResult {

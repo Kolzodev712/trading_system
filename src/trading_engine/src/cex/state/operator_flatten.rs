@@ -56,6 +56,44 @@ pub fn flatten_position_unverified(err: &str) -> String {
     )
 }
 
+/// FlattenAndPause: a REST position target cannot be skipped without a verified
+/// journaled operator exit on the venue working book.
+pub fn flatten_exit_unverified(err: &str) -> String {
+    format!(
+        "FlattenAndPause: venue exit unverified: {err}. \
+         Pause and flatten latch remain held. REST position target was not dropped."
+    )
+}
+
+/// Local TSM `is_working` rows that are not on the paginated REST working book.
+/// These are a reconciliation problem, not proof of a live operator exit.
+pub fn tsm_working_absent_from_rest(state: &TradingState, rest: &[Order]) -> Vec<String> {
+    let rest_ids: std::collections::HashSet<&str> = rest
+        .iter()
+        .filter(|order| order.is_working())
+        .map(|order| order.order_id.as_str())
+        .collect();
+    let mut ids: Vec<String> = state
+        .active_orders
+        .values()
+        .filter(|order| order.is_working() && !rest_ids.contains(order.order_id.as_str()))
+        .map(|order| order.order_id.as_str().to_string())
+        .collect();
+    ids.sort();
+    ids
+}
+
+fn tsm_working_ids_for_pair(state: &TradingState, pair: &Pair) -> Vec<String> {
+    let mut ids: Vec<String> = state
+        .active_orders
+        .values()
+        .filter(|order| &order.instrument.pair == pair && order.is_working())
+        .map(|order| order.order_id.as_str().to_string())
+        .collect();
+    ids.sort();
+    ids
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct OperatorFlattenReport {
     pub client_order_ids: Vec<String>,
@@ -76,27 +114,94 @@ pub async fn submit_operator_reduce_only_exits(
     recover_unknown_submissions(journal, trading_client, trading_state).await?;
     settle_operator_flatten_exits(journal, trading_client, trading_state).await?;
 
-    let unresolved: Vec<SubmissionRecord> = journal
-        .unresolved()?
-        .into_iter()
-        .filter(is_operator_flatten)
-        .collect();
-    if let Some(record) = unresolved.first() {
-        return Err(EngineError::CustomError(anyhow::anyhow!(
-            "ambiguous flatten acknowledgement for {}; not retrying until client-id lookup or venue position resolves it",
-            record.client_order_id
-        )));
-    }
-
-    let mut targets = venue_or_tsm_targets(trading_client, instrument_type, tsm_positions).await?;
+    let targets = venue_or_tsm_targets(trading_client, instrument_type, tsm_positions).await?;
     let latest = journal.load_latest()?;
-    targets.retain(|(instrument, _)| {
-        !has_inflight_flatten(&latest, &instrument.pair)
-            && !has_working_exit(trading_state, &instrument.pair)
+    let inflight_any = latest.values().any(|record| {
+        is_operator_flatten(record)
+            && !matches!(
+                record.state,
+                SubmissionState::Terminal | SubmissionState::Rejected
+            )
     });
+    let rest_open = match trading_client.fetch_open_orders().await {
+        Ok(orders) => Some(orders),
+        Err(err) if inflight_any => {
+            return Err(EngineError::CustomError(anyhow::anyhow!(
+                flatten_exit_unverified(&format!(
+                    "paginated REST working-order lookup failed: {err}"
+                ))
+            )));
+        }
+        Err(err) => {
+            tracing::warn!(
+                error = %err,
+                "flatten REST working book unverified; no journaled operator exit so REST position targets still send"
+            );
+            None
+        }
+    };
+    if let Some(rest) = rest_open.as_ref() {
+        let stale = tsm_working_absent_from_rest(trading_state, rest);
+        if !stale.is_empty() {
+            tracing::warn!(
+                tsm_working_ids = ?stale,
+                rest_working_n = rest.iter().filter(|order| order.is_working()).count(),
+                "TSM working IDs absent from paginated REST working book; reconciliation mismatch, not a live operator exit"
+            );
+        }
+    }
 
     let mut report = OperatorFlattenReport::default();
     for (instrument, qty) in targets {
+        let tsm_ids = tsm_working_ids_for_pair(trading_state, &instrument.pair);
+        let journal_rec = inflight_operator_flatten(&latest, &instrument.pair);
+        tracing::info!(
+            pair = %instrument.pair,
+            rest_position = %qty.normalize(),
+            tsm_working_ids = ?tsm_ids,
+            journal_id = journal_rec
+                .map(|record| record.client_order_id.as_str())
+                .unwrap_or("-"),
+            "flatten REST position target"
+        );
+        if let Some(record) = journal_rec {
+            let rest = rest_open.as_deref().unwrap_or(&[]);
+            match verify_journaled_exit_on_venue(trading_client, record, rest).await? {
+                VenueExit::Live { order_id } => {
+                    tracing::info!(
+                        pair = %instrument.pair,
+                        rest_position = %qty.normalize(),
+                        tsm_working_ids = ?tsm_ids,
+                        journal_id = %record.client_order_id,
+                        venue_order_id = %order_id,
+                        reason = "verified venue working journaled operator exit",
+                        "flatten exit suppressed"
+                    );
+                    continue;
+                }
+                VenueExit::Terminal => {
+                    journal.append(&record.clone().with_state(SubmissionState::Terminal))?;
+                    trading_state.clear_submission(&record.client_order_id);
+                    tracing::info!(
+                        pair = %instrument.pair,
+                        rest_position = %qty.normalize(),
+                        tsm_working_ids = ?tsm_ids,
+                        journal_id = %record.client_order_id,
+                        reason = "journaled operator exit terminal on venue; REST position remains",
+                        "flatten sending reduce-only"
+                    );
+                }
+            }
+        } else {
+            tracing::info!(
+                pair = %instrument.pair,
+                rest_position = %qty.normalize(),
+                tsm_working_ids = ?tsm_ids,
+                journal_id = "-",
+                reason = "no unresolved journaled operator exit",
+                "flatten sending reduce-only"
+            );
+        }
         let side = if qty > Decimal::ZERO {
             Side::Sell
         } else {
@@ -463,11 +568,11 @@ fn persist(
         })
 }
 
-fn has_inflight_flatten(
-    latest: &std::collections::HashMap<String, SubmissionRecord>,
+fn inflight_operator_flatten<'a>(
+    latest: &'a std::collections::HashMap<String, SubmissionRecord>,
     pair: &Pair,
-) -> bool {
-    latest.values().any(|record| {
+) -> Option<&'a SubmissionRecord> {
+    latest.values().find(|record| {
         is_operator_flatten(record)
             && record.symbol_base == pair.base.as_str()
             && record.symbol_quote == pair.quote.as_str()
@@ -478,11 +583,67 @@ fn has_inflight_flatten(
     })
 }
 
+enum VenueExit {
+    Live { order_id: String },
+    Terminal,
+}
+
+async fn verify_journaled_exit_on_venue(
+    trading_client: &dyn TradingClient<OrderRequest>,
+    record: &SubmissionRecord,
+    rest_open: &[Order],
+) -> Result<VenueExit, EngineError> {
+    if let Some(order) = rest_open.iter().find(|order| {
+        order.is_working()
+            && order
+                .client_order_id
+                .as_deref()
+                .is_some_and(|cid| cid == record.client_order_id)
+    }) {
+        return Ok(VenueExit::Live {
+            order_id: order.order_id.as_str().to_string(),
+        });
+    }
+    match trading_client
+        .fetch_order_by_client_id(&record.client_order_id)
+        .await
+    {
+        Ok(ClientOrderLookup::Working(order)) => Ok(VenueExit::Live {
+            order_id: order.order_id.as_str().to_string(),
+        }),
+        Ok(ClientOrderLookup::Terminal(_)) => Ok(VenueExit::Terminal),
+        Ok(ClientOrderLookup::Inconclusive) => Err(EngineError::CustomError(anyhow::anyhow!(
+            flatten_exit_unverified(&format!(
+                "journaled operator exit {} not on paginated REST working book and orderLinkId open/history lookup is inconclusive",
+                record.client_order_id
+            ))
+        ))),
+        Err(err) => Err(EngineError::CustomError(anyhow::anyhow!(
+            flatten_exit_unverified(&format!(
+                "REST lookup by orderLinkId {} failed: {err}",
+                record.client_order_id
+            ))
+        ))),
+    }
+}
+
 fn has_working_exit(state: &TradingState, pair: &Pair) -> bool {
-    state
-        .active_orders
-        .values()
-        .any(|order| &order.instrument.pair == pair && order.is_working())
+    let qty = state
+        .get_position(pair)
+        .map(|position| position.quantity)
+        .unwrap_or(Decimal::ZERO);
+    state.active_orders.values().any(|order| {
+        if &order.instrument.pair != pair || !order.is_working() {
+            return false;
+        }
+        if qty > flat_eps() {
+            order.side == Side::Sell
+        } else if qty < -flat_eps() {
+            order.side == Side::Buy
+        } else {
+            false
+        }
+    })
 }
 
 fn pair_is_flat(positions: &[Position], pair: &Pair) -> bool {
@@ -547,6 +708,8 @@ mod tests {
         place_err: Mutex<Option<String>>,
         last_link: Mutex<Option<String>>,
         rest_open: Mutex<Vec<Order>>,
+        lookup_err: Mutex<Option<String>>,
+        open_err: Mutex<Option<String>>,
     }
 
     impl Scripted {
@@ -558,6 +721,8 @@ mod tests {
                 place_err: Mutex::new(None),
                 last_link: Mutex::new(None),
                 rest_open: Mutex::new(vec![]),
+                lookup_err: Mutex::new(None),
+                open_err: Mutex::new(None),
             }
         }
     }
@@ -611,6 +776,9 @@ mod tests {
         }
 
         async fn fetch_open_orders(&self) -> Result<Vec<Order>, EngineError> {
+            if let Some(err) = self.open_err.lock().await.clone() {
+                return Err(EngineError::CustomError(anyhow::anyhow!(err)));
+            }
             Ok(self.rest_open.lock().await.clone())
         }
 
@@ -618,6 +786,9 @@ mod tests {
             &self,
             client_order_id: &str,
         ) -> Result<ClientOrderLookup, EngineError> {
+            if let Some(err) = self.lookup_err.lock().await.clone() {
+                return Err(EngineError::CustomError(anyhow::anyhow!(err)));
+            }
             Ok(self
                 .lookups
                 .lock()
@@ -950,6 +1121,10 @@ mod tests {
         .await
         .expect_err("must not mint a second client id");
         assert!(err.to_string().contains("flat-dup"));
+        assert!(
+            err.to_string().contains("unverified"),
+            "must fail closed unverified, got {err}"
+        );
         assert_eq!(client.placed.load(Ordering::SeqCst), 0);
         let _ = std::fs::remove_file(&path);
     }
@@ -979,6 +1154,208 @@ mod tests {
         assert!(report.client_order_ids.is_empty());
         let latest = journal.load_latest().unwrap();
         assert_eq!(latest["flat-2"].state, SubmissionState::Terminal);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    fn stale_working_buy() -> Order {
+        Order {
+            order_id: OrderId::new("stale-entry".into()),
+            client_order_id: Some(SmolStr::new("stale-entry-cid")),
+            instrument: Instrument::new(InstrumentType::Futures, pair()),
+            side: Side::Buy,
+            price: Decimal::new(41780, 0),
+            amount: Decimal::new(1, 3),
+            internal_created_at: 1,
+            exchange_created_at: Some(1),
+            status: OrderStatus::New,
+            filled_amount: Decimal::ZERO,
+        }
+    }
+
+    fn stale_working_sell() -> Order {
+        Order {
+            order_id: OrderId::new("stale-sell".into()),
+            client_order_id: Some(SmolStr::new("stale-sell-cid")),
+            instrument: Instrument::new(InstrumentType::Futures, pair()),
+            side: Side::Sell,
+            price: Decimal::ZERO,
+            amount: Decimal::new(1, 3),
+            internal_created_at: 1,
+            exchange_created_at: Some(1),
+            status: OrderStatus::New,
+            filled_amount: Decimal::ZERO,
+        }
+    }
+
+    fn live_operator_exit(cid: &str, exchange_id: &str) -> Order {
+        Order {
+            order_id: OrderId::new(exchange_id.into()),
+            client_order_id: Some(SmolStr::new(cid)),
+            instrument: Instrument::new(InstrumentType::Futures, pair()),
+            side: Side::Sell,
+            price: Decimal::ZERO,
+            amount: Decimal::new(1, 3),
+            internal_created_at: 1,
+            exchange_created_at: Some(1),
+            status: OrderStatus::New,
+            filled_amount: Decimal::ZERO,
+        }
+    }
+
+    #[tokio::test]
+    async fn stale_cached_entry_does_not_suppress_reduce_only() {
+        let path = journal_path("stale-entry");
+        let journal = SubmissionJournal::open(&path).unwrap();
+        let client = Scripted::new(vec![long_pos(Decimal::new(1, 3))]);
+        let mut state = TradingState::new().with_instrument_type(InstrumentType::Futures);
+        state.set_position(pair(), Decimal::new(1, 3), Decimal::new(83556, 0));
+        state.import_working_order(stale_working_buy());
+        let report = submit_operator_reduce_only_exits(
+            &journal,
+            &client,
+            &mut state,
+            InstrumentType::Futures,
+            &[(pair(), Decimal::new(1, 3))],
+        )
+        .await
+        .expect("stale cached Buy must not skip flatten");
+        assert_eq!(client.placed.load(Ordering::SeqCst), 1);
+        assert_eq!(report.client_order_ids.len(), 1);
+        let link = client.last_link.lock().await.clone().unwrap();
+        let latest = journal.load_latest().unwrap();
+        assert_eq!(
+            latest[&link].strategy_id.as_deref(),
+            Some(OPERATOR_FLATTEN_INTENT)
+        );
+        assert_eq!(latest[&link].side, "Sell");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn stale_cached_sell_with_rest_working_empty_sends() {
+        let path = journal_path("stale-sell");
+        let journal = SubmissionJournal::open(&path).unwrap();
+        let client = Scripted::new(vec![long_pos(Decimal::new(1, 3))]);
+        let mut state = TradingState::new().with_instrument_type(InstrumentType::Futures);
+        state.set_position(pair(), Decimal::new(1, 3), Decimal::new(83556, 0));
+        state.import_working_order(stale_working_sell());
+        assert_eq!(
+            tsm_working_absent_from_rest(&state, &[]),
+            vec!["stale-sell".to_string()]
+        );
+        let report = submit_operator_reduce_only_exits(
+            &journal,
+            &client,
+            &mut state,
+            InstrumentType::Futures,
+            &[(pair(), Decimal::new(1, 3))],
+        )
+        .await
+        .expect("stale cached Sell with REST working [] must send");
+        assert_eq!(client.placed.load(Ordering::SeqCst), 1, "sends");
+        assert_eq!(report.client_order_ids.len(), 1);
+        let latest = journal.load_latest().unwrap();
+        assert!(latest.values().any(|record| record.strategy_id.as_deref()
+            == Some(OPERATOR_FLATTEN_INTENT)
+            && record.side == "Sell"));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn genuine_live_operator_exit_waits() {
+        let path = journal_path("live-exit");
+        let journal = SubmissionJournal::open(&path).unwrap();
+        journal
+            .append(&SubmissionRecord::from_pending(
+                &pending_flatten("live-exit-cid"),
+                SubmissionState::Acknowledged,
+            ))
+            .unwrap();
+        let live = live_operator_exit("live-exit-cid", "ex-live");
+        let client = Scripted::new(vec![long_pos(Decimal::new(1, 3))]);
+        client.lookups.lock().await.insert(
+            "live-exit-cid".into(),
+            ClientOrderLookup::Working(live.clone()),
+        );
+        *client.rest_open.lock().await = vec![live.clone()];
+        let mut state = TradingState::new().with_instrument_type(InstrumentType::Futures);
+        state.set_position(pair(), Decimal::new(1, 3), Decimal::new(83556, 0));
+        state.import_working_order(live);
+        let report = submit_operator_reduce_only_exits(
+            &journal,
+            &client,
+            &mut state,
+            InstrumentType::Futures,
+            &[(pair(), Decimal::new(1, 3))],
+        )
+        .await
+        .expect("verified live operator exit waits");
+        assert_eq!(client.placed.load(Ordering::SeqCst), 0, "waits");
+        assert!(report.client_order_ids.is_empty());
+        let latest = journal.load_latest().unwrap();
+        assert_eq!(latest["live-exit-cid"].state, SubmissionState::Acknowledged);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn rest_lookup_failure_fails_closed() {
+        let path = journal_path("lookup-fail");
+        let journal = SubmissionJournal::open(&path).unwrap();
+        journal
+            .append(&SubmissionRecord::from_pending(
+                &pending_flatten("flat-lookup"),
+                SubmissionState::Acknowledged,
+            ))
+            .unwrap();
+        let client = Scripted::new(vec![long_pos(Decimal::new(1, 3))]);
+        *client.lookup_err.lock().await = Some("orderLinkId 503".into());
+        let mut state = TradingState::new().with_instrument_type(InstrumentType::Futures);
+        let err = submit_operator_reduce_only_exits(
+            &journal,
+            &client,
+            &mut state,
+            InstrumentType::Futures,
+            &[(pair(), Decimal::new(1, 3))],
+        )
+        .await
+        .expect_err("REST lookup failure must fail closed");
+        assert!(
+            err.to_string().contains("unverified"),
+            "expected unverified, got {err}"
+        );
+        assert!(err.to_string().contains("flat-lookup"));
+        assert_eq!(client.placed.load(Ordering::SeqCst), 0, "does not send");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn rest_working_book_failure_with_inflight_fails_closed() {
+        let path = journal_path("open-fail");
+        let journal = SubmissionJournal::open(&path).unwrap();
+        journal
+            .append(&SubmissionRecord::from_pending(
+                &pending_flatten("flat-open"),
+                SubmissionState::Acknowledged,
+            ))
+            .unwrap();
+        let client = Scripted::new(vec![long_pos(Decimal::new(1, 3))]);
+        *client.open_err.lock().await = Some("open orders 503".into());
+        let mut state = TradingState::new().with_instrument_type(InstrumentType::Futures);
+        let err = submit_operator_reduce_only_exits(
+            &journal,
+            &client,
+            &mut state,
+            InstrumentType::Futures,
+            &[(pair(), Decimal::new(1, 3))],
+        )
+        .await
+        .expect_err("REST working-book failure must fail closed");
+        assert!(
+            err.to_string().contains("unverified"),
+            "expected unverified, got {err}"
+        );
+        assert!(err.to_string().contains("working-order"));
+        assert_eq!(client.placed.load(Ordering::SeqCst), 0, "does not send");
         let _ = std::fs::remove_file(&path);
     }
 

@@ -169,6 +169,7 @@ pub async fn run_layer(layer: Layer, only: Option<&str>, artifacts: &Path) -> Ve
                 "paper_spot_levels",
                 "paper_futures_levels",
                 "paper_two_creates_one_resume",
+                "paper_flatten_after_stale_entry",
                 "paper_shadow_zero_mutations",
                 "paper_lost_ack_restart",
                 "paper_c2_exchange",
@@ -209,6 +210,7 @@ async fn run_named(name: &str, artifacts: &Path) -> ScenarioResult {
         "paper_spot_levels" => paper_spot_levels(artifacts).await,
         "paper_futures_levels" => paper_futures_levels(artifacts).await,
         "paper_two_creates_one_resume" => paper_two_creates_one_resume(artifacts).await,
+        "paper_flatten_after_stale_entry" => paper_flatten_after_stale_entry(artifacts).await,
         "paper_shadow_zero_mutations" => paper_shadow(artifacts).await,
         "paper_lost_ack_restart" => paper_lost_ack(artifacts).await,
         "paper_c2_exchange" => paper_c2_exchange(artifacts).await,
@@ -834,6 +836,160 @@ async fn paper_two_creates_one_resume(artifacts: &Path) -> ScenarioResult {
     );
     let _ = grpc.toggle_level(&id, false).await;
     require_truth(&mut r, &stack, "two_creates").await;
+    r
+}
+
+/// Demo cleanup failed because FlattenAndPause skipped the journaled reduce-only
+/// close when TSM still held a cancelled entry as working. Reproduce the sequence
+/// on Paper: disable+REST-gone without CancelWorking, fill, then FlattenAndPause
+/// must journal `operator_flatten` and rest-flat.
+async fn paper_flatten_after_stale_entry(artifacts: &Path) -> ScenarioResult {
+    let mut r = ScenarioResult::new(
+        "paper_flatten_after_stale_entry",
+        "PAPER",
+        "Futures",
+        "exchange",
+    );
+    let stack = match PaperStack::launch(
+        artifacts,
+        PaperInstrument::Futures,
+        CatalogKind::FuturesSignoff,
+        "exchange",
+    )
+    .await
+    {
+        Ok(s) => s,
+        Err(e) => {
+            r.fail("launch", "ok", &e.to_string());
+            return r;
+        }
+    };
+    let mut grpc = match require(&mut r, "grpc", stack.grpc().await) {
+        Some(g) => g,
+        None => return r,
+    };
+    if require(&mut r, "enable", grpc.enable().await).is_none() {
+        return r;
+    }
+    if require(&mut r, "one_resume", grpc.resume_entries().await).is_none() {
+        return r;
+    }
+
+    let id = stack.instance_id("wf_fut_buy");
+    let first = match require(
+        &mut r,
+        "first_journal",
+        enable_and_wait_journal(&stack, &mut grpc, &id, "10000").await,
+    ) {
+        Some(v) => v,
+        None => return r,
+    };
+    if require(&mut r, "disable_first", grpc.toggle_level(&id, false).await).is_none() {
+        return r;
+    }
+    r.assert_eq(
+        "first_rest_gone",
+        "gone",
+        if wait_gone(&stack, &first.1).await {
+            "gone"
+        } else {
+            "still_working"
+        },
+    );
+    let snap = match require(&mut r, "snap_before_second", grpc.snapshot().await) {
+        Some(s) => s,
+        None => return r,
+    };
+    r.assert_eq(
+        "entries_paused_before_second_create",
+        "false",
+        snap.entries_paused.to_string(),
+    );
+    if snap.entries_paused {
+        r.fail(
+            "no_cancel_working_between_creates",
+            "entries_paused=false",
+            "true",
+        );
+        return r;
+    }
+
+    let second = match require(
+        &mut r,
+        "second_journal",
+        enable_and_wait_journal(&stack, &mut grpc, &id, "10000").await,
+    ) {
+        Some(v) => v,
+        None => return r,
+    };
+    r.assert_true(
+        "two_distinct_journal_ids",
+        first.0 != second.0 && !first.0.is_empty() && !second.0.is_empty(),
+        "two client ids",
+        &format!("{} / {}", first.0, second.0),
+    );
+    if require(
+        &mut r,
+        "lab_fill_second",
+        stack
+            .lab_post(
+                "test/lab_fill_open",
+                serde_json::json!({"qty":"0.001","order_id": second.1}),
+            )
+            .await,
+    )
+    .is_none()
+    {
+        return r;
+    }
+    wait_fut_qty(&stack, &mut r, "filled_long", d("0.001")).await;
+    if r.verdict == Verdict::Fail {
+        return r;
+    }
+
+    let journal_before = stack.journal_text();
+    r.assert_true(
+        "no_operator_flatten_before_cleanup",
+        !journal_before.contains("operator_flatten"),
+        "no flatten yet",
+        "operator_flatten already present",
+    );
+
+    let flatten_msg = match require(
+        &mut r,
+        "flatten_reduce_only",
+        grpc.flatten_and_pause("wf-stale-entry-flatten").await,
+    ) {
+        Some(m) => m,
+        None => return r,
+    };
+    r.note(format!("flatten {flatten_msg}"));
+    r.assert_true(
+        "flatten_sent_reduce_only",
+        !flatten_msg.contains("0 reduce-only")
+            && (flatten_msg.contains("reduce-only") || flatten_msg.to_lowercase().contains("flat")),
+        "journaled reduce-only exit sent",
+        &flatten_msg,
+    );
+    wait_fut_qty(&stack, &mut r, "flatten_rest_flat", Decimal::ZERO).await;
+    let journal = stack.journal_text();
+    r.assert_true(
+        "journal_operator_flatten",
+        journal.contains("operator_flatten"),
+        "operator_flatten journaled",
+        "missing",
+    );
+    r.assert_true(
+        "journal_flatten_sell",
+        journal.contains("operator_flatten") && journal.contains("Sell"),
+        "flatten Sell journaled",
+        "missing Sell",
+    );
+    let snap = match require(&mut r, "snap_after_flatten", stack.snapshot().await) {
+        Some(s) => s,
+        None => return r,
+    };
+    r.assert_eq("flatten_latched", "true", snap.flatten_latched.to_string());
     r
 }
 

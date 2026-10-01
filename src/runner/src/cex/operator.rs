@@ -16,7 +16,7 @@ use trading_core::types::common::{InstrumentType, Pair};
 use trading_engine::state::manager::TradingStateManager;
 use trading_engine::state::{
     flatten_cancel_working_failed, merge_rest_working_orders, submit_operator_reduce_only_exits,
-    verify_rest_working_orders_cleared, SubmissionJournal,
+    tsm_working_absent_from_rest, verify_rest_working_orders_cleared, SubmissionJournal,
 };
 use trading_engine::strategies::strategy_manager::StrategyManager;
 
@@ -354,6 +354,17 @@ impl StrategyOperator for FileStrategyOperator {
             };
             if let Some(err) = rest_after {
                 return Err(flatten_cancel_working_failed(&err));
+            }
+            {
+                let state = ctx.trading_state_manager.get_state();
+                let guard = state.read().await;
+                let stale = tsm_working_absent_from_rest(&guard, &[]);
+                if !stale.is_empty() {
+                    tracing::warn!(
+                        tsm_working_ids = ?stale,
+                        "FlattenAndPause CancelWorking: TSM working IDs absent from REST; reconciliation mismatch, not a live operator exit"
+                    );
+                }
             }
             let client = self.trading_control.trading_client();
             let client = client.read().await;

@@ -10,8 +10,8 @@ use trading_engine::levels::LevelManager;
 use trading_engine::state::manager::TradingStateManager;
 use trading_engine::state::{
     cancel_working_unverified, flatten_cancel_working_failed, flatten_position_unverified,
-    merge_rest_working_orders, submit_operator_reduce_only_exits, verify_rest_exposure_flat,
-    verify_rest_working_orders_cleared, SubmissionJournal,
+    merge_rest_working_orders, submit_operator_reduce_only_exits, tsm_working_absent_from_rest,
+    verify_rest_exposure_flat, verify_rest_working_orders_cleared, SubmissionJournal,
 };
 
 pub struct TradingControlService {
@@ -220,11 +220,30 @@ impl TradingControlService {
                 order_ids: cancelled,
             }
         } else {
+            let stale = {
+                let state = self.trading_state_manager.get_state();
+                let guard = state.read().await;
+                tsm_working_absent_from_rest(&guard, &[])
+            };
+            if !stale.is_empty() {
+                tracing::warn!(
+                    tsm_working_ids = ?stale,
+                    "CancelWorking: TSM working IDs absent from REST after cancel; reconciliation mismatch"
+                );
+            }
+            let recon = if stale.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    " TSM still lists working IDs absent from REST ({}); reconciliation mismatch",
+                    stale.join(",")
+                )
+            };
             trading_cli::OperatorCommandResponse {
                 accepted: true,
                 state: "completed".into(),
                 message: format!(
-                    "CancelWorking: REST confirmed {} orders gone; remain paused",
+                    "CancelWorking: REST confirmed {} orders gone; remain paused.{recon}",
                     cancelled.len()
                 ),
                 venue,
@@ -311,6 +330,17 @@ impl TradingControlService {
             };
             self.remember(&req.request_id, response.clone()).await;
             return Ok(Response::new(response));
+        }
+        {
+            let state = self.trading_state_manager.get_state();
+            let guard = state.read().await;
+            let stale = tsm_working_absent_from_rest(&guard, &[]);
+            if !stale.is_empty() {
+                tracing::warn!(
+                    tsm_working_ids = ?stale,
+                    "FlattenAndPause CancelWorking: TSM working IDs absent from REST; reconciliation mismatch, not a live operator exit"
+                );
+            }
         }
 
         let Some(journal) = self.submission_journal.as_ref() else {

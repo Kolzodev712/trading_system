@@ -29,31 +29,25 @@ async fn test_risk_manager_position_limit() {
     let result = risk_manager.check_total_position_limits(&trading_state);
     assert!(result.allowed);
 
-    // Test exceeding limit
+    // Per-pair cap: BTC 0.6 is under 1.0. ETH is not added to BTC.
     let mut state_with_position = TradingState::new();
     state_with_position.update_position(
         trading_core::types::common::Pair::new("BTC", "USDT"),
         dec!(0.6),
         dec!(50000),
     );
-    let result = risk_manager.check_total_position_limits(&state_with_position);
-    // With limit of 1.0 and position of 0.6, should still be allowed
-    assert!(result.allowed);
-
-    // Test at limit
     state_with_position.update_position(
         trading_core::types::common::Pair::new("ETH", "USDT"),
-        dec!(0.4),
+        dec!(0.9),
         dec!(3000),
     );
     let result = risk_manager.check_total_position_limits(&state_with_position);
-    assert!(result.allowed); // Exactly at limit
+    assert!(result.allowed);
 
-    // Test over limit
     state_with_position.update_position(
-        trading_core::types::common::Pair::new("ETH", "USDT"),
-        dec!(0.1),
-        dec!(3000),
+        trading_core::types::common::Pair::new("BTC", "USDT"),
+        dec!(0.5),
+        dec!(50000),
     );
     let result = risk_manager.check_total_position_limits(&state_with_position);
     assert!(!result.allowed);

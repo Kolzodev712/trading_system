@@ -59,6 +59,8 @@ message GetTradingStatusResponse {
     bool flatten_latched = 6;
     string global_toggle_semantics = 7; // legacy SetTradingEnabled cancels working when disabling
     string operator_id = 8; // TRADING_OPERATOR_ID; never a browser username
+    string exposure_halt_reason = 9; // empty when new exposure is allowed
+    string last_block_reason_code = 10; // stable ReasonCode; empty if none
 }
 
 message OperatorCommandRequest {
@@ -295,6 +297,8 @@ message MonitoringData {
     string funding_pnl = 26;
     string ledger_equity = 27;
     string operator_id = 28; // TRADING_OPERATOR_ID; never a browser username
+    string exposure_halt_reason = 29; // empty when new exposure is allowed
+    string last_block_reason_code = 30; // stable ReasonCode; empty if none
 }
 
 message DexVenueSnapshot {

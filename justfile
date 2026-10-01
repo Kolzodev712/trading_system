@@ -58,17 +58,55 @@ test-5r-graph:
     echo "$app" | grep -E 'strategy_core v' >/dev/null
     echo "$app" | grep -E 'runner v' >/dev/null
 
+# Fast component + parity: no processes, credentials, or required network.
+test-fast:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "LAYER fast-component: RUN"
+    cargo test --workspace --lib --all-features
+    cargo test -p strategy_core -p research_engine -p research_cli -p trading_engine -p runner -p btc_price_ma_app --all-targets
+    cargo test --test integration integration::internal -- --test-threads=1
+    cargo test --test integration helpers::external -- --test-threads=1
+    echo "LAYER fast-component: PASS"
+    echo "LAYER paper-process: NOT_RUN"
+    echo "LAYER ui-envoy: NOT_RUN"
+    echo "LAYER bybit-demo-readonly: NOT_RUN"
+    echo "LAYER bybit-demo-mutating: NOT_RUN"
+
 test-integration:
-    # Run integration tests (excluding ignored)
+    # Component integration + non-ignored external probes. Ignored live/API cases are NOT_RUN.
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "LAYER component-integration: RUN"
     cargo test --test integration -- --test-threads=1
+    echo "LAYER component-integration: PASS"
+    echo "LAYER external-ignored: NOT_RUN (use cargo test --test integration -- --ignored)"
+    echo "LAYER paper-process: NOT_RUN"
 
 test-all:
-    # Run all tests (unit + integration)
+    # Run all tests (unit + integration). Does not run ignored external or Paper process workflows.
     cargo test --all-features -- --test-threads=1
 
 test-bin:
-    # Run test binary in levels mode for 60 seconds
-    cargo run --bin test_runner -- --mode levels --duration 60
+    # Retired: test_runner never installed a no-order guard.
+    cargo run --quiet -p runner --bin test_runner
+
+test-paper:
+    # Isolated Paper process workflows. Fails if k-paper or Mongo is missing.
+    cargo run -p workflow_harness --bin workflow_gate -- --layer paper
+
+test-paper-negative:
+    # Deliberate mismatch; must exit nonzero (gate fails closed).
+    cargo run -p workflow_harness --bin workflow_gate -- --layer paper --only negative_control_mismatch --expect-process-failure
+
+test-paper-ui:
+    cargo run -p workflow_harness --bin workflow_gate -- --layer ui
+
+test-demo-readonly:
+    cargo run -p workflow_harness --bin workflow_gate -- --layer demo-readonly
+
+test-demo-mutating:
+    cargo run -p workflow_harness --bin workflow_gate -- --layer demo-mutating
 
 # Compilation checks
 check:
@@ -120,12 +158,41 @@ gate-5r:
     just test-5r-graph
     cargo clippy -p trading_engine -p runner -p btc_price_ma_app --all-targets --no-deps -- -D warnings
 
-# Full CI check (local; GitHub Actions is disabled)
+# Component/parity CI. Does not run Paper process workflows or Bybit Demo.
 ci:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "LAYER gate-5r: RUN"
     just gate-5r
+    echo "LAYER gate-5r: PASS"
+    echo "LAYER venue-imports: RUN"
     just check-venue-imports
+    echo "LAYER venue-imports: PASS"
+    echo "LAYER check: RUN"
     just check
+    echo "LAYER check: PASS"
     just test-integration
+    echo "LAYER paper-process: NOT_RUN (use just ci-local)"
+    echo "LAYER ui-envoy: NOT_RUN"
+    echo "LAYER bybit-demo-readonly: NOT_RUN"
+    echo "LAYER bybit-demo-mutating: NOT_RUN"
+    echo "VERDICT: component CI only — not Paper/Demo/live qualification"
+
+# Mandatory local technical qualification: fast tests + Paper process workflows.
+ci-local:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "LAYER fast-component: RUN"
+    just test-fast
+    echo "LAYER paper-process: RUN"
+    just test-paper
+    echo "LAYER paper-process: PASS"
+    echo "LAYER ui-envoy: RUN"
+    just test-paper-ui
+    echo "LAYER ui-envoy: PASS"
+    echo "LAYER bybit-demo-readonly: NOT_RUN (use just test-demo-readonly)"
+    echo "LAYER bybit-demo-mutating: NOT_RUN (explicit just test-demo-mutating only)"
+    echo "VERDICT: local Paper technical qualification — not Bybit Demo or live qualification"
 
 # Quick check (format, clippy, test)
 quick:

@@ -1,11 +1,11 @@
-//! External Integration Tests
+//! External connection probes.
 //!
 //! Tests that verify external connections to exchange APIs work correctly.
-//! Each service (asset, market_data, exchange) has its own test suite,
-//! with exchange-specific implementations in their exchanges/ subdirectories.
+//! Almost all cases are `#[ignore]` and are **not** run by `just test-integration`
+//! or `just ci`. A green default CI run is not evidence that these probes passed.
 //!
-//! **Important**: These tests ONLY verify external API calls work.
-//! State management and internal logic are tested in unit tests.
+//! Do not use `helpers::external::ExchangeClientBuilder` for Paper process
+//! workflows or mutating Bybit (that builder refuses Paper and Bybit mainnet).
 
 pub mod asset_engine;
 pub mod dex_engine;

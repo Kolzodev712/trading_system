@@ -10,6 +10,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio::time::{interval, Duration};
 use trading_core::channels::market_data::{MarketDataUpdate, MarketDataUpdateReceiver};
+use trading_core::diagnostics::{HoldAggregator, ReasonCode};
 use trading_core::error::EngineError;
 use trading_core::types::common::{OrderId, Pair};
 use trading_core::types::exchange::{BulkAmendItem, BulkAmendRequest};
@@ -37,6 +38,7 @@ pub struct LevelBasedEventLoop {
     /// Snapshot of the MD cache so enable can seed without waiting for a broadcast.
     cached_books: Option<Arc<dyn Fn() -> Vec<StructuredOrderbook> + Send + Sync>>,
     max_market_data_age_ms: Option<u64>,
+    hold_agg: parking_lot::Mutex<HoldAggregator>,
 }
 
 impl LevelBasedEventLoop {
@@ -71,6 +73,7 @@ impl LevelBasedEventLoop {
             submission_journal: None,
             cached_books: None,
             max_market_data_age_ms: Some(120_000),
+            hold_agg: parking_lot::Mutex::new(HoldAggregator::default()),
         }
     }
 
@@ -365,8 +368,10 @@ impl LevelBasedEventLoop {
                     .get_state()
                     .write()
                     .await
-                    .halt_new_exposure(format!("REST open-order reconcile failed: {err}"));
-                return Err(err);
+                    .halt_new_exposure_with(
+                        trading_core::diagnostics::ReasonCode::RestLookupFailed,
+                        format!("REST open-order reconcile failed: {err}"),
+                    );
             }
         }
         Ok(())
@@ -380,35 +385,30 @@ impl LevelBasedEventLoop {
         let flatten = self.level_executor.flatten_latched().await;
         let paused = self.level_executor.entries_paused().await;
         let trading = self.level_executor.is_trading_enabled().await;
+        let pair_key = format!("{}/{}", orderbook.pair.base, orderbook.pair.quote);
         if flatten {
-            tracing::info!(
-                pair = %format!("{}/{}", orderbook.pair.base, orderbook.pair.quote),
-                "levels skip book: flatten latched"
-            );
+            self.hold_agg
+                .lock()
+                .note(ReasonCode::HoldFlattenLatched, &pair_key);
             return Ok(());
         }
         if paused {
-            tracing::info!(
-                pair = %format!("{}/{}", orderbook.pair.base, orderbook.pair.quote),
-                "levels skip book: entries paused"
-            );
+            self.hold_agg
+                .lock()
+                .note(ReasonCode::HoldEntriesPaused, &pair_key);
             return Ok(());
         }
         if !trading {
-            tracing::info!(
-                pair = %format!("{}/{}", orderbook.pair.base, orderbook.pair.quote),
-                "levels skip book: global trading disabled"
-            );
+            self.hold_agg
+                .lock()
+                .note(ReasonCode::HoldTradingDisabled, &pair_key);
             return Ok(());
         }
         if let Some(max_age_ms) = self.max_market_data_age_ms {
             if orderbook_is_stale(orderbook.timestamp, max_age_ms) {
-                tracing::info!(
-                    pair = %format!("{}/{}", orderbook.pair.base, orderbook.pair.quote),
-                    ts_ms = orderbook.timestamp,
-                    max_age_ms,
-                    "levels skip book: stale market data blocks new exposure"
-                );
+                self.hold_agg
+                    .lock()
+                    .note(ReasonCode::HoldStaleBook, &pair_key);
                 return Ok(());
             }
         }
@@ -606,14 +606,21 @@ impl LevelBasedEventLoop {
                 .await;
 
             if !risk_result.allowed {
-                tracing::info!(
-                    "Level {} blocked by risk check: {}",
-                    level.config.id,
+                trading_core::diagnostics::emit_decision(
+                    "hold",
+                    ReasonCode::RiskRejected,
                     risk_result
                         .reason
                         .as_ref()
                         .map(|r| r.as_str())
-                        .unwrap_or("unknown")
+                        .unwrap_or("unknown"),
+                );
+                tracing::info!(
+                    event = "decision",
+                    action = "hold",
+                    reason_code = %ReasonCode::RiskRejected,
+                    level_id = %level.config.id,
+                    "Level blocked by risk check"
                 );
                 continue;
             }

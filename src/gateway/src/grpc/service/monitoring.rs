@@ -325,7 +325,20 @@ impl MonitoringService {
             funding_pnl: String::new(),
             ledger_equity: String::new(),
             operator_id: crate::grpc::access::displayed_operator_id(&self.venue_label),
+            exposure_halt_reason: String::new(),
+            last_block_reason_code: String::new(),
         };
+
+        {
+            let ts = self.trading_state_manager.get_state();
+            let guard = ts.read().await;
+            if let Some(reason) = guard.exposure_halt_reason() {
+                data.exposure_halt_reason = reason.to_string();
+            }
+            if let Some(code) = guard.last_block_reason_code() {
+                data.last_block_reason_code = code.as_str().to_string();
+            }
+        }
 
         if let Some(ledger) = self.trading_state_manager.execution_ledger() {
             let marks = self.ledger_marks().await;

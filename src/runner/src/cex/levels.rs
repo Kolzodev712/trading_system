@@ -144,11 +144,7 @@ pub async fn level_runner(
     // Wrap level_manager in Arc<RwLock<>> for sharing with LiveConfig and event loop
     let level_manager = Arc::new(RwLock::new(level_manager));
 
-    // Start gRPC server for CLI (use the same TradingControl instance)
-    // Bind to :: (IPv6 wildcard) to accept both IPv4 and IPv6 connections
-    let grpc_addr: std::net::SocketAddr = "[::]:50051"
-        .parse()
-        .map_err(|e| format!("Failed to parse gRPC address: {}", e))?;
+    let grpc_addr = bot_config.grpc_listen_addr()?;
 
     // Create gRPC service with instrument_type (same as strategy_runner)
     use crate::grpc::service::TradingCliServiceImpl;

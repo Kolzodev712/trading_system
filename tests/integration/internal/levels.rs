@@ -111,7 +111,7 @@ async fn test_level_manager_order_tracking() {
 
     let order_id = OrderId::new("order123".into());
     manager
-        .handle_order_filled(&level_id, &order_id, rust_decimal::Decimal::ZERO)
+        .handle_order_filled(&level_id, &order_id, rust_decimal::Decimal::new(1, 3))
         .await
         .unwrap();
 

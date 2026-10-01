@@ -142,6 +142,14 @@ pub struct ServerConfig {
 
     /// HTTP server port
     pub port: u16,
+
+    /// gRPC listen address. Default preserves historical `[::]:50051`.
+    #[serde(default = "default_grpc_bind")]
+    pub grpc_bind: String,
+}
+
+fn default_grpc_bind() -> String {
+    "[::]:50051".to_string()
 }
 
 /// Redis configuration (optional, only needed if using Redis feature for Web UI)
@@ -400,6 +408,14 @@ impl BotConfig {
         let config_data = std::fs::read_to_string(path)?;
         let config: BotConfig = serde_json::from_str(&config_data)?;
         Ok(config)
+    }
+
+    /// gRPC listen address from `server.grpc_bind` (allocated by the workflow harness).
+    pub fn grpc_listen_addr(&self) -> Result<std::net::SocketAddr, String> {
+        self.server
+            .grpc_bind
+            .parse()
+            .map_err(|e| format!("invalid server.grpc_bind '{}': {e}", self.server.grpc_bind))
     }
 
     /// Validate bot configuration

@@ -411,11 +411,7 @@ pub async fn strategy_runner_with(
     // Create a dummy LevelManager for gRPC server (not used in strategies mode, but required by server)
     let dummy_level_manager = Arc::new(RwLock::new(LevelManager::new()));
 
-    // Start gRPC server for CLI (use the same TradingControl instance)
-    // Bind to :: (IPv6 wildcard) to accept both IPv4 and IPv6 connections
-    let grpc_addr: std::net::SocketAddr = "[::]:50051"
-        .parse()
-        .map_err(|e| format!("Failed to parse gRPC address: {}", e))?;
+    let grpc_addr = bot_config.grpc_listen_addr()?;
 
     // Convert strategy infos to monitoring format
     let monitoring_strategy_infos: Vec<crate::grpc::service::StrategyInfo> = strategy_infos

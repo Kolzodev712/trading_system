@@ -132,9 +132,12 @@ impl PositionReconciler {
                                 "Spot position disagrees with base wallet for {}: internal={}, wallet={}",
                                 pair, trading_position_qty, exchange_qty
                             );
-                            trading_state.halt_new_exposure(format!(
+                            trading_state.halt_new_exposure_with(
+                                trading_core::diagnostics::ReasonCode::ReconcileDisagreement,
+                                format!(
                                 "spot position disagrees with base balance: internal={trading_position_qty} wallet={exchange_qty}"
-                            ));
+                            ),
+                            );
                             trading_state.note_position_disagreement(pair.clone());
                         }
                     }

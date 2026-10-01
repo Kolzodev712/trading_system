@@ -1,11 +1,12 @@
-//! Internal Integration Tests
+//! Component integration tests (in-memory).
 //!
 //! These tests verify internal system interactions:
 //! - Risk management, indicators, trading state, circuit breakers
-//! - Level management, workflows, live config
+//! - Level management, component workflows, live config
 //! - Strategy execution, channel communication
 //!
-//! These tests do NOT require external connections and test internal component integration.
+//! They do **not** launch a runner, k-paper, gRPC control plane, journal, or ledger.
+//! A pass here is not Paper/Demo/live qualification.
 
 pub mod channels;
 pub mod circuit_breaker;

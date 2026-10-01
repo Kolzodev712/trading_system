@@ -128,12 +128,16 @@ pub fn apply_level_submit_result(
                 order.client_order_id.as_ref() == Some(&prepared.pending.client_order_id);
             if !matches_prepared {
                 tracing::error!(
+                    event = "decision",
+                    action = "halt",
+                    reason_code = %trading_core::diagnostics::ReasonCode::AckUncorrelated,
                     expected = %prepared.pending.client_order_id,
                     got = ?order.client_order_id,
                     exchange_id = %order.order_id.as_str(),
                     "place response is not correlated to the pending client order id"
                 );
-                trading_state.halt_new_exposure(
+                trading_state.halt_new_exposure_with(
+                    trading_core::diagnostics::ReasonCode::AckUncorrelated,
                     "place response missing verified client-order-id association",
                 );
                 if let Err(err) = persist(journal, &prepared.pending, SubmissionState::Unknown) {

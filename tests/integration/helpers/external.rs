@@ -1,7 +1,8 @@
 //! Generic builders for external exchange clients and drivers
 //!
-//! These builders are exchange-agnostic and provide a unified interface
-//! for creating exchange clients for testing external connections.
+//! These builders are **not** a Paper process harness and must not construct a
+//! Bybit trading client that targets mainnet. Mutating Bybit Demo workflows live
+//! in `workflow_harness` behind an explicit command.
 
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -24,6 +25,14 @@ use exchange_engine::{
     },
     state::manager::ExchangeStateManager,
 };
+
+/// Explicit Bybit environment for a trading client. Default refuses construction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BybitTradingTarget {
+    #[default]
+    Refused,
+    Demo,
+}
 
 /// Exchange-agnostic configuration for testing
 #[derive(Debug, Clone)]
@@ -49,6 +58,7 @@ impl Default for TestExchangeConfig {
 pub struct ExchangeClientBuilder {
     config: TestExchangeConfig,
     channels: ChannelConfig,
+    bybit_trading: BybitTradingTarget,
 }
 
 impl ExchangeClientBuilder {
@@ -56,11 +66,17 @@ impl ExchangeClientBuilder {
         Self {
             config,
             channels: ChannelConfig::default(),
+            bybit_trading: BybitTradingTarget::Refused,
         }
     }
 
     pub fn with_channels(mut self, channels: ChannelConfig) -> Self {
         self.channels = channels;
+        self
+    }
+
+    pub fn with_bybit_trading(mut self, target: BybitTradingTarget) -> Self {
+        self.bybit_trading = target;
         self
     }
 
@@ -77,18 +93,30 @@ impl ExchangeClientBuilder {
                     self.channels.shutdown_capacity,
                 )))
             }
-            Exchange::Bybit => {
-                let bybit_config = self.create_bybit_config();
-                Arc::new(RwLock::new(BybitClient::new(
-                    bybit_config,
-                    self.channels.websocket_inbound_capacity,
-                    self.channels.websocket_ping_capacity,
-                    self.channels.websocket_outbound_rpc_capacity,
-                    self.channels.shutdown_capacity,
-                )))
-            }
+            Exchange::Bybit => match self.bybit_trading {
+                BybitTradingTarget::Demo => {
+                    let bybit_config = self.create_bybit_demo_config();
+                    Arc::new(RwLock::new(BybitClient::new(
+                        bybit_config,
+                        self.channels.websocket_inbound_capacity,
+                        self.channels.websocket_ping_capacity,
+                        self.channels.websocket_outbound_rpc_capacity,
+                        self.channels.shutdown_capacity,
+                    )))
+                }
+                BybitTradingTarget::Refused => {
+                    panic!(
+                        "refusing Bybit trading client: demo:false targets mainnet. \
+                         Use workflow_harness Demo adapter (`just test-demo-readonly` / \
+                         `just test-demo-mutating`). This helper must not place Demo or live orders."
+                    )
+                }
+            },
             Exchange::Paper => {
-                todo!("Paper exchange clients not yet implemented in tests")
+                panic!(
+                    "Paper trading clients are not built by tests/integration/helpers. \
+                     Use the workflow_harness Paper adapter (`just test-paper`)."
+                )
             }
             Exchange::Unsupported => {
                 panic!("Unsupported exchange cannot be used in tests")
@@ -132,7 +160,7 @@ impl ExchangeClientBuilder {
         }
     }
 
-    fn create_bybit_config(&self) -> BybitConfig {
+    fn create_bybit_demo_config(&self) -> BybitConfig {
         use exchange_engine::exchanges::bybit::config::{BybitCredentials, BybitRateLimiterConfig};
         BybitConfig {
             pairs: self.config.pairs.clone(),
@@ -142,7 +170,7 @@ impl ExchangeClientBuilder {
                 api_secret: SecretString::from(self.config.secret_key.as_str()),
             },
             testnet: false,
-            demo: false,
+            demo: true,
             leverage: None,
             rate_limiter: BybitRateLimiterConfig::default(),
         }
@@ -201,7 +229,10 @@ impl MarketDataClientBuilder {
                 Box::new(BybitClient::new(config, self.buffer_size, None, vec![]))
             }
             Exchange::Paper => {
-                todo!("Paper exchange clients not yet implemented in tests")
+                panic!(
+                    "Paper market-data clients are not built by tests/integration/helpers. \
+                     Use the workflow_harness Paper adapter (`just test-paper`)."
+                )
             }
             Exchange::Unsupported => {
                 panic!("Unsupported exchange cannot be used in tests")
@@ -250,7 +281,10 @@ impl MarketDataClientBuilder {
                 Box::new(client)
             }
             Exchange::Paper => {
-                todo!("Paper exchange clients not yet implemented in tests")
+                panic!(
+                    "Paper market-data clients are not built by tests/integration/helpers. \
+                     Use the workflow_harness Paper adapter (`just test-paper`)."
+                )
             }
             Exchange::Unsupported => {
                 panic!("Unsupported exchange cannot be used in tests")
@@ -298,4 +332,38 @@ impl AssetDataClientBuilder {
             }
         }
     }
+}
+
+#[test]
+fn paper_trading_builder_does_not_todo() {
+    let builder = ExchangeClientBuilder::new(TestExchangeConfig {
+        exchange: Exchange::Paper,
+        ..TestExchangeConfig::default()
+    });
+    let err = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _ = builder.build_trading_client();
+    }));
+    assert!(err.is_err(), "Paper helper must fail closed, not todo!()");
+}
+
+#[test]
+fn bybit_trading_builder_refuses_mainnet_default() {
+    let builder = ExchangeClientBuilder::new(TestExchangeConfig {
+        exchange: Exchange::Bybit,
+        ..TestExchangeConfig::default()
+    });
+    let err = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _ = builder.build_trading_client();
+    }));
+    let payload = err.expect_err("Bybit helper must refuse demo:false mainnet");
+    let text = payload
+        .downcast_ref::<&str>()
+        .copied()
+        .map(str::to_string)
+        .or_else(|| payload.downcast_ref::<String>().cloned())
+        .unwrap_or_default();
+    assert!(
+        text.contains("refusing Bybit") || text.contains("mainnet"),
+        "unexpected panic: {text}"
+    );
 }

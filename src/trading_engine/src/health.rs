@@ -29,6 +29,10 @@ struct HealthResponse {
     uptime_secs: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     detail: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    exposure_halt_reason: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    last_block_reason_code: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -137,6 +141,13 @@ impl HealthServer {
 async fn health_check(State(state): State<Arc<HealthState>>) -> Response {
     let ready = state.readiness.as_ref().map(|f| f()).unwrap_or(true);
     let detail = state.readiness_detail.as_ref().map(|f| f());
+    let (halt, code) = {
+        let ts = state.trading_state.read().await;
+        (
+            ts.exposure_halt_reason().map(|s| s.to_string()),
+            ts.last_block_reason_code().map(|c| c.as_str().to_string()),
+        )
+    };
     let body = HealthResponse {
         status: if ready {
             "healthy".to_string()
@@ -146,6 +157,8 @@ async fn health_check(State(state): State<Arc<HealthState>>) -> Response {
         timestamp: chrono::Utc::now().to_rfc3339(),
         uptime_secs: None,
         detail,
+        exposure_halt_reason: halt,
+        last_block_reason_code: code,
     };
     if ready {
         (StatusCode::OK, Json(body)).into_response()

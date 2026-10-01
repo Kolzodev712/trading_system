@@ -13,6 +13,8 @@ pub async fn cancel_owned_order_ids(
     for order_id in order_ids {
         if let Err(err) = trading_client.cancel_order_by_id(order_id.clone()).await {
             tracing::warn!(
+                event = "decision",
+                reason_code = %trading_core::diagnostics::ReasonCode::CancelUnverified,
                 order_id = order_id.as_str(),
                 error = %err,
                 "owned-order cancel ACK/error is not REST verification"

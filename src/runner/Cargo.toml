@@ -19,7 +19,7 @@ gateway = { path = "../gateway" }
 
 # Logging
 tracing = { workspace = true }
-tracing-subscriber = { workspace = true }
+tracing-subscriber = { workspace = true, features = ["json", "env-filter"] }
 
 # SerDe
 serde = { workspace = true }

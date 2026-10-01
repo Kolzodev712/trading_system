@@ -53,8 +53,7 @@ pub async fn initialize_mongodb(
     }
 
     info!(
-        "Connecting to MongoDB at {}/{}...",
-        bot_config.mongo.connection_string.expose(),
+        "Connecting to MongoDB database {}...",
         bot_config.mongo.database
     );
 
@@ -72,8 +71,7 @@ pub async fn initialize_mongodb(
     })?;
 
     info!(
-        "MongoDB: Connected to {}/{}",
-        bot_config.mongo.connection_string.expose(),
+        "MongoDB: Connected to database {}",
         bot_config.mongo.database
     );
 

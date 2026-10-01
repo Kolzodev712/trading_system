@@ -132,26 +132,34 @@ fn initialize_logging(bot_config: &BotConfig) {
         _ => tracing::Level::INFO,
     };
 
-    let _ = tracing::subscriber::set_global_default(
-        tracing_subscriber::fmt::Subscriber::builder()
-            .with_max_level(log_level)
-            .finish(),
-    );
+    let json = std::env::var("TRADING_LOG_JSON").ok().as_deref() == Some("1");
+    if json {
+        let _ = tracing::subscriber::set_global_default(
+            tracing_subscriber::fmt::Subscriber::builder()
+                .with_max_level(log_level)
+                .json()
+                .flatten_event(true)
+                .finish(),
+        );
+    } else {
+        let _ = tracing::subscriber::set_global_default(
+            tracing_subscriber::fmt::Subscriber::builder()
+                .with_max_level(log_level)
+                .finish(),
+        );
+    }
 }
 
 fn log_startup_info(bot_config: &BotConfig, mode: &str) {
-    info!("=== Starting Trading System ===");
+    let run_id = std::env::var("TRADING_RUN_ID").unwrap_or_default();
+    info!(run_id = %run_id, "=== Starting Trading System ===");
     info!("Mode: {}", mode);
     info!("Venue mode: {:?}", bot_config.venue.mode);
     info!("Exchange: {:?}", bot_config.exchange_engine.exchange);
     info!(
         "MongoDB persistence: {}",
         if bot_config.mongo.enabled {
-            format!(
-                "enabled ({}/{})",
-                bot_config.mongo.connection_string.expose(),
-                bot_config.mongo.database
-            )
+            format!("enabled (database={})", bot_config.mongo.database)
         } else {
             "disabled".to_string()
         }

@@ -22,9 +22,7 @@ pub(crate) async fn start_platform(
     services: &SharedServices,
     grpc_control: DexGrpcControl,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let grpc_addr: std::net::SocketAddr = "[::]:50051"
-        .parse()
-        .map_err(|e| format!("Failed to parse gRPC address: {e}"))?;
+    let grpc_addr = bot_config.grpc_listen_addr()?;
     let monitoring = build_dex_monitoring_grpc(services, grpc_control, bot_config)?;
     let grpc_server = TradingGrpcServer::from_service(monitoring.service);
     let mut shutdown_rx_grpc = services.shutdown_manager.subscribe();

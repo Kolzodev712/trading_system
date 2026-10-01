@@ -6,6 +6,7 @@
 /src/market_data_engine/config/
 /config
 /runtime-data/
+/artifacts/workflows/
 /cli_debug.log
 __pycache__/
 *.pyc

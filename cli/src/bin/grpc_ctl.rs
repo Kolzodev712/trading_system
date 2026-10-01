@@ -150,6 +150,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 status.entries_paused, status.flatten_latched
             );
             println!("operator_id={}", status.operator_id);
+            println!(
+                "exposure_halt_reason={} last_block_reason_code={}",
+                status.exposure_halt_reason, status.last_block_reason_code
+            );
             println!("global_toggle_semantics={}", status.global_toggle_semantics);
             println!(
                 "runner_mode={} venue={} environment={} execution_mode={} snapshot_unix_ms={}",

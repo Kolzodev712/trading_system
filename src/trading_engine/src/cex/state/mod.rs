@@ -84,6 +84,7 @@ pub struct TradingState {
     submissions: HashMap<SmolStr, PendingSubmission>,
     /// Journal or recovery failure: block further sends until the process is repaired.
     exposure_halt: Option<String>,
+    last_block_reason_code: Option<trading_core::diagnostics::ReasonCode>,
     instrument_type: InstrumentType,
     /// Futures pairs whose REST/WS position snapshot has not been applied yet.
     position_sync_pending: HashSet<Pair>,
@@ -101,6 +102,7 @@ impl TradingState {
             applied_trade_ids: HashSet::new(),
             submissions: HashMap::new(),
             exposure_halt: None,
+            last_block_reason_code: None,
             instrument_type: InstrumentType::Spot,
             position_sync_pending: HashSet::new(),
             position_disagreement: HashSet::new(),
@@ -143,6 +145,13 @@ impl TradingState {
 
     pub fn note_position_disagreement(&mut self, pair: Pair) {
         self.position_disagreement.insert(pair.clone());
+        self.last_block_reason_code =
+            Some(trading_core::diagnostics::ReasonCode::ReconcileDisagreement);
+        trading_core::diagnostics::emit_decision(
+            "halt",
+            trading_core::diagnostics::ReasonCode::ReconcileDisagreement,
+            "REST/WS position disagreement",
+        );
         self.mark_position_sync_pending(pair);
     }
 
@@ -387,7 +396,13 @@ impl TradingState {
         } else {
             trade.trade_id.to_string()
         };
-        if !self.applied_trade_ids.insert(id) {
+        if !self.applied_trade_ids.insert(id.clone()) {
+            tracing::debug!(
+                event = "state_transition",
+                reason_code = %trading_core::diagnostics::ReasonCode::FillDuplicate,
+                execution_id = %id,
+                "duplicate fill ignored"
+            );
             return false;
         }
         let signed = match trade.side {
@@ -395,6 +410,11 @@ impl TradingState {
             Side::Sell => -trade.quantity,
         };
         self.update_position(trade.pair.clone(), signed, trade.price);
+        trading_core::diagnostics::emit_state_transition(
+            "fill",
+            trading_core::diagnostics::ReasonCode::FillApplied,
+            &id,
+        );
         true
     }
 
@@ -454,13 +474,37 @@ impl TradingState {
 
     /// Block further order sends after a durability or recovery failure.
     pub fn halt_new_exposure(&mut self, reason: impl Into<String>) {
+        self.halt_new_exposure_with(
+            trading_core::diagnostics::ReasonCode::ExposureHalted,
+            reason,
+        );
+    }
+
+    /// Block further order sends and record a stable reason code.
+    pub fn halt_new_exposure_with(
+        &mut self,
+        code: trading_core::diagnostics::ReasonCode,
+        reason: impl Into<String>,
+    ) {
         let reason = reason.into();
-        tracing::error!(reason = %reason, "new exposure halted");
+        self.last_block_reason_code = Some(code);
+        tracing::error!(
+            event = "decision",
+            action = "halt",
+            reason_code = %code,
+            reason = %reason,
+            "new exposure halted"
+        );
+        trading_core::diagnostics::emit_decision("halt", code, &reason);
         self.exposure_halt = Some(reason);
     }
 
     pub fn exposure_halt_reason(&self) -> Option<&str> {
         self.exposure_halt.as_deref()
+    }
+
+    pub fn last_block_reason_code(&self) -> Option<trading_core::diagnostics::ReasonCode> {
+        self.last_block_reason_code
     }
 
     /// True when the pair has an unresolved submission, the account is halted,

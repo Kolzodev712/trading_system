@@ -1,24 +1,17 @@
 //! Integration Tests
 //!
-//! Split into two categories:
+//! ## Component integration (`integration/internal/`)
+//! In-memory tests of manager, risk, catalog, and related methods. They do **not**
+//! launch a runner, exchange, journal, or ledger. Do not treat a green result here
+//! as Paper/Demo/live end-to-end evidence. Included in `just test-fast`.
 //!
-//! ## External Integration Tests (`integration/external/`)
-//! Tests that verify external connections work correctly:
-//! - Asset Engine: Exchange info fetching, market data retrieval
-//! - Market Data Engine: WebSocket connections, data streaming
-//! - Exchange Engine: Trading API calls, order management
+//! ## External connection probes (`integration/external/`)
+//! Mostly `#[ignore]`. `just test-integration` and `just ci` do **not** execute
+//! ignored cases. The helper must not build a Paper process client or a Bybit
+//! mainnet trading client.
 //!
-//! These tests may require actual exchange API access (marked with #[ignore])
-//! Run with: cargo test --test integration integration::external -- --ignored
-//!
-//! ## Internal Integration Tests (`integration/internal/`)
-//! Tests that verify internal system interactions:
-//! - Risk management, indicators, trading state
-//! - Level management, workflows, live config
-//! - Strategy execution, channel communication
-//!
-//! These tests do NOT require external connections and test internal component integration.
-//! Run with: cargo test --test integration integration::internal
+//! Paper process workflows: `just test-paper` / `just ci-local`.
+//! Bybit Demo: `just test-demo-readonly` and `just test-demo-mutating` (opt-in).
 
 mod integration {
     pub mod external;
@@ -26,5 +19,4 @@ mod integration {
     pub mod internal;
 }
 
-// Re-export for easier access
 pub use integration::*;

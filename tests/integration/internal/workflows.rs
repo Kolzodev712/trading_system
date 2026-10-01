@@ -1,4 +1,6 @@
-//! End-to-end workflow tests
+//! Component workflow tests (in-memory LevelManager + RiskManager).
+//!
+//! Not end-to-end: no runner, exchange, journal, or ledger is started.
 
 use rust_decimal_macros::dec;
 use smol_str::SmolStr;

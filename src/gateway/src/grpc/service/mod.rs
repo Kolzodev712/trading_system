@@ -292,6 +292,7 @@ impl TradingCliServiceImpl {
             trading_client: self.trading_client.clone(),
             trading_control: self.trading_control.clone(),
             exchange_state_manager: self.exchange_state_manager.clone(),
+            trading_state_manager: self.trading_state_manager.clone(),
         }
     }
 
@@ -329,6 +330,17 @@ impl TradingCliService for TradingCliServiceImpl {
         _request: Request<trading_cli::GetTradingStatusRequest>,
     ) -> Result<Response<trading_cli::GetTradingStatusResponse>, Status> {
         let enabled = self.trading_control.is_enabled().await;
+        let (halt, code) = {
+            let ts = self.trading_state_manager.get_state();
+            let guard = ts.read().await;
+            (
+                guard.exposure_halt_reason().unwrap_or_default().to_string(),
+                guard
+                    .last_block_reason_code()
+                    .map(|c| c.as_str().to_string())
+                    .unwrap_or_default(),
+            )
+        };
         Ok(Response::new(trading_cli::GetTradingStatusResponse {
             enabled,
             execution_mode: self.execution_mode.as_str().to_string(),
@@ -338,6 +350,8 @@ impl TradingCliService for TradingCliServiceImpl {
             flatten_latched: self.trading_control.flatten_latched().await,
             global_toggle_semantics: GLOBAL_TOGGLE_SEMANTICS.to_string(),
             operator_id: crate::grpc::access::displayed_operator_id(&self.venue_label),
+            exposure_halt_reason: halt,
+            last_block_reason_code: code,
         }))
     }
 

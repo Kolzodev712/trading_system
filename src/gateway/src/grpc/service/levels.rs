@@ -9,6 +9,7 @@ use trading_core::grpc::TradingControl;
 use trading_core::types::exchange::OrderRequest;
 use trading_core::venue::cex::traits::TradingClient;
 use trading_engine::levels::LevelManager;
+use trading_engine::state::manager::TradingStateManager;
 
 use super::converters;
 
@@ -18,6 +19,7 @@ pub struct LevelService {
     pub trading_control: Arc<TradingControl>,
     #[allow(dead_code)]
     pub exchange_state_manager: Arc<ExchangeStateManager>,
+    pub trading_state_manager: Arc<TradingStateManager>,
 }
 
 impl LevelService {
@@ -335,6 +337,14 @@ impl LevelService {
         }
         let client = self.trading_client.write().await;
         if let Err(err) = trading_engine::levels::cancel_owned_order_ids(&*client, &owned).await {
+            self.trading_state_manager
+                .get_state()
+                .write()
+                .await
+                .halt_new_exposure_with(
+                    trading_core::diagnostics::ReasonCode::RestLookupFailed,
+                    format!("owned-order cancel unverified: {err}"),
+                );
             return Err(Status::failed_precondition(format!(
                 "disable latched but owned-order cancel unverified: {err}"
             )));
@@ -363,6 +373,14 @@ impl LevelService {
             let client = self.trading_client.write().await;
             if let Err(err) = trading_engine::levels::cancel_owned_order_ids(&*client, &owned).await
             {
+                self.trading_state_manager
+                    .get_state()
+                    .write()
+                    .await
+                    .halt_new_exposure_with(
+                        trading_core::diagnostics::ReasonCode::RestLookupFailed,
+                        format!("owned-order cancel unverified: {err}"),
+                    );
                 return Err(Status::failed_precondition(format!(
                     "delete latched; owned-order cancel unverified: {err}"
                 )));
@@ -543,7 +561,7 @@ mod tests {
     fn level_service_from_client(
         client: Arc<RwLock<dyn TradingClient<OrderRequest>>>,
     ) -> LevelService {
-        let (tx, _rx) = cex_venue_update_channel(8);
+        let (tx, rx) = cex_venue_update_channel(8);
         let exchange_state_manager = Arc::new(ExchangeStateManager::new(
             tx,
             Arc::new(SymbolRegistry::from_pairs(vec![Pair::new("BTC", "USDT")])),
@@ -551,11 +569,14 @@ mod tests {
             0,
             false,
         ));
+        let trading_state_manager =
+            Arc::new(TradingStateManager::new(rx, exchange_state_manager.clone()));
         LevelService {
             level_manager: Arc::new(RwLock::new(LevelManager::new())),
             trading_client: client.clone(),
             trading_control: Arc::new(TradingControl::new(client)),
             exchange_state_manager,
+            trading_state_manager,
         }
     }
 

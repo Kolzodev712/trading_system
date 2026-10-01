@@ -5,9 +5,10 @@ use std::time::Duration;
 use crate::demo::DemoAdapter;
 use crate::demo_levels;
 use crate::oracle::{
-    assert_spot_agreement, btc_total, catalog_filled_qty, catalog_owns, halt_is_disagreement,
-    journal_has_state, journaled_client_id_after, latest_level_client_order_id, qty_canon,
-    qty_close, rest_btc_position, runner_btc_qty, unique_ledger_qty, working_ids,
+    assert_spot_agreement, btc_total, catalog_filled_qty, catalog_owns,
+    distinct_level_client_order_ids, halt_is_disagreement, journal_has_state,
+    journaled_client_id_after, latest_level_client_order_id, qty_canon, qty_close,
+    rest_btc_position, runner_btc_qty, unique_ledger_qty, working_ids,
 };
 use crate::paper::{CatalogKind, PaperInstrument, PaperStack};
 use crate::process::ui_dir;
@@ -170,6 +171,7 @@ pub async fn run_layer(layer: Layer, only: Option<&str>, artifacts: &Path) -> Ve
                 "paper_futures_levels",
                 "paper_two_creates_one_resume",
                 "paper_flatten_after_stale_entry",
+                "paper_fill_ask_above_last",
                 "paper_shadow_zero_mutations",
                 "paper_lost_ack_restart",
                 "paper_c2_exchange",
@@ -211,6 +213,7 @@ async fn run_named(name: &str, artifacts: &Path) -> ScenarioResult {
         "paper_futures_levels" => paper_futures_levels(artifacts).await,
         "paper_two_creates_one_resume" => paper_two_creates_one_resume(artifacts).await,
         "paper_flatten_after_stale_entry" => paper_flatten_after_stale_entry(artifacts).await,
+        "paper_fill_ask_above_last" => paper_fill_ask_above_last(artifacts).await,
         "paper_shadow_zero_mutations" => paper_shadow(artifacts).await,
         "paper_lost_ack_restart" => paper_lost_ack(artifacts).await,
         "paper_c2_exchange" => paper_c2_exchange(artifacts).await,
@@ -991,6 +994,166 @@ async fn paper_flatten_after_stale_entry(artifacts: &Path) -> ScenarioResult {
     };
     r.assert_eq("flatten_latched", "true", snap.flatten_latched.to_string());
     r
+}
+
+/// Last-based create 2 stays New when the live ask sits above that last.
+/// One enabled price amend of the same owned order must keep client/exchange ids.
+async fn paper_fill_ask_above_last(artifacts: &Path) -> ScenarioResult {
+    let mut r = ScenarioResult::new("paper_fill_ask_above_last", "PAPER", "Futures", "exchange");
+    let stack = match PaperStack::launch(
+        artifacts,
+        PaperInstrument::Futures,
+        CatalogKind::FuturesSignoff,
+        "exchange",
+    )
+    .await
+    {
+        Ok(s) => s,
+        Err(e) => {
+            r.fail("launch", "ok", &e.to_string());
+            return r;
+        }
+    };
+    let mut grpc = match require(&mut r, "grpc", stack.grpc().await) {
+        Some(g) => g,
+        None => return r,
+    };
+    if require(&mut r, "enable", grpc.enable().await).is_none() {
+        return r;
+    }
+    if require(&mut r, "one_resume", grpc.resume_entries().await).is_none() {
+        return r;
+    }
+
+    let id = stack.instance_id("wf_fut_buy");
+    let earlier_last = d("9900");
+    let qty = d("0.001");
+    let first = match require(
+        &mut r,
+        "first_journal",
+        enable_and_wait_journal(&stack, &mut grpc, &id, "10000").await,
+    ) {
+        Some(v) => v,
+        None => return r,
+    };
+    if require(&mut r, "disable_first", grpc.toggle_level(&id, false).await).is_none() {
+        return r;
+    }
+    r.assert_eq(
+        "first_rest_gone",
+        "gone",
+        if wait_gone(&stack, &first.1).await {
+            "gone"
+        } else {
+            "still_working"
+        },
+    );
+
+    let second = match require(
+        &mut r,
+        "second_journal",
+        enable_and_wait_journal(&stack, &mut grpc, &id, "9900").await,
+    ) {
+        Some(v) => v,
+        None => return r,
+    };
+    r.assert_true(
+        "two_distinct_journal_ids",
+        first.0 != second.0 && !first.0.is_empty() && !second.0.is_empty(),
+        "two client ids",
+        &format!("{} / {}", first.0, second.0),
+    );
+
+    let asks = [(d("10000"), d("0.002"))];
+    let walk = match demo_levels::limit_buy_from_asks(&asks, qty, d("0.1"), d("150")) {
+        Ok(px) => px,
+        Err(e) => {
+            r.fail("walk_asks", "ask above last within $150", &e);
+            return r;
+        }
+    };
+    r.assert_true(
+        "walk_ask_above_last",
+        walk > earlier_last,
+        "ask > earlier last",
+        &format!("last={earlier_last} walk={walk}"),
+    );
+    r.assert_true(
+        "walk_notional_le_max",
+        qty * walk <= d("150"),
+        "qty×limit ≤ 150",
+        &(qty * walk).to_string(),
+    );
+
+    let ids_before = distinct_level_client_order_ids(&stack.journal_text(), &id);
+    if require(
+        &mut r,
+        "amend_to_ask",
+        grpc.update_level_price(&id, &walk.normalize().to_string())
+            .await,
+    )
+    .is_none()
+    {
+        return r;
+    }
+
+    let amended = match require(
+        &mut r,
+        "amend_visible",
+        wait_same_order_amended(&stack, &second.1, walk).await,
+    ) {
+        Some(o) => o,
+        None => return r,
+    };
+    r.assert_eq("amend_keeps_exchange_id", &second.1, &amended.order_id);
+    if !amended.client_order_id.is_empty() {
+        r.assert_eq(
+            "amend_keeps_rest_client_id",
+            &second.0,
+            &amended.client_order_id,
+        );
+    }
+    r.assert_eq(
+        "amend_keeps_latest_journal_id",
+        &second.0,
+        &latest_level_client_order_id(&stack.journal_text(), &id).unwrap_or_default(),
+    );
+    let ids_after = distinct_level_client_order_ids(&stack.journal_text(), &id);
+    r.assert_eq(
+        "no_third_journal_id",
+        &ids_before.len().to_string(),
+        &ids_after.len().to_string(),
+    );
+    r.assert_eq("two_creates_only", "2", &ids_after.len().to_string());
+    let _ = grpc.toggle_level(&id, false).await;
+    require_truth(&mut r, &stack, "ask_above_last").await;
+    r
+}
+
+async fn wait_same_order_amended(
+    stack: &PaperStack,
+    order_id: &str,
+    price: Decimal,
+) -> Result<crate::venue::RestOrder, String> {
+    let deadline = std::time::Instant::now() + Duration::from_secs(15);
+    let mut last = String::new();
+    while std::time::Instant::now() < deadline {
+        let orders = stack.rest_orders().await.map_err(|e| e.to_string())?;
+        if let Some(o) = orders
+            .iter()
+            .find(|o| o.order_id == order_id && qty_close(o.price, price))
+        {
+            return Ok(o.clone());
+        }
+        last = format!(
+            "open={} want order={} price={}",
+            orders.len(),
+            order_id,
+            price
+        );
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    Err(format!("owned order not visible at amended price: {last}"))
 }
 
 async fn enable_and_wait_journal(

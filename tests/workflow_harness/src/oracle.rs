@@ -139,6 +139,27 @@ pub fn journaled_client_id_after(
     }
 }
 
+/// Order-preserving unique client ids for one level. An amend must not grow this list.
+pub fn distinct_level_client_order_ids(jsonl: &str, level_id: &str) -> Vec<String> {
+    let mut ids = Vec::new();
+    for line in jsonl.lines() {
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        if v.get("level_id").and_then(|x| x.as_str()) != Some(level_id) {
+            continue;
+        }
+        let Some(cid) = v.get("client_order_id").and_then(|x| x.as_str()) else {
+            continue;
+        };
+        if cid.is_empty() || ids.iter().any(|existing| existing == cid) {
+            continue;
+        }
+        ids.push(cid.to_string());
+    }
+    ids
+}
+
 pub fn halt_is_disagreement(snap: &RunnerSnapshot) -> bool {
     snap.last_block_reason_code == "RECONCILE_DISAGREEMENT"
         || snap

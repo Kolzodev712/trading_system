@@ -155,8 +155,8 @@ impl ScenarioResult {
         match self.verdict {
             Verdict::Pass => !self.expected_failure,
             Verdict::Fail => self.expected_failure,
-            Verdict::NotSupported => true,
-            Verdict::NotRun => false,
+            // Spec: never convert an unrun or unsupported scenario into a pass.
+            Verdict::NotSupported | Verdict::NotRun => false,
         }
     }
 }

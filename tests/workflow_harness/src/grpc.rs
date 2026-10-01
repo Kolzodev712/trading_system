@@ -12,7 +12,7 @@ use trading_cli::trading_cli_service_client::TradingCliServiceClient;
 use trading_cli::{
     DeleteLevelRequest, GetLevelRequest, GetLevelsRequest, GetMonitoringDataRequest,
     GetTradingStatusRequest, OperatorCommandRequest, SetTradingEnabledRequest, ToggleLevelRequest,
-    UpdateLevelRequest,
+    ToggleStrategyRequest, UpdateLevelRequest,
 };
 
 use crate::venue::RunnerSnapshot;
@@ -117,6 +117,52 @@ impl GrpcCtl {
         Ok(())
     }
 
+    pub async fn resume_entries(&mut self) -> Result<()> {
+        let resp = self
+            .inner
+            .resume(Request::new(OperatorCommandRequest {
+                request_id: "wf-resume".into(),
+                symbol: String::new(),
+            }))
+            .await?
+            .into_inner();
+        if !resp.accepted {
+            anyhow::bail!("resume not accepted: {}", resp.message);
+        }
+        Ok(())
+    }
+
+    pub async fn flatten_and_pause(&mut self, request_id: &str) -> Result<String> {
+        let resp = self
+            .inner
+            .flatten_and_pause(Request::new(OperatorCommandRequest {
+                request_id: request_id.into(),
+                symbol: String::new(),
+            }))
+            .await?
+            .into_inner();
+        if !resp.accepted {
+            anyhow::bail!("flatten_and_pause not accepted: {}", resp.message);
+        }
+        Ok(resp.message)
+    }
+
+    pub async fn toggle_strategy(&mut self, name: &str, symbol: &str, enabled: bool) -> Result<()> {
+        let resp = self
+            .inner
+            .toggle_strategy(Request::new(ToggleStrategyRequest {
+                strategy_name: name.into(),
+                symbol: symbol.into(),
+                enabled,
+            }))
+            .await?
+            .into_inner();
+        if !resp.success {
+            anyhow::bail!("toggle_strategy {name} failed: {}", resp.message);
+        }
+        Ok(())
+    }
+
     pub async fn snapshot(&mut self) -> Result<RunnerSnapshot> {
         let status = self
             .inner
@@ -156,6 +202,8 @@ impl GrpcCtl {
             environment: data.environment,
             execution_mode: data.execution_mode,
             trading_enabled: status.enabled,
+            entries_paused: status.entries_paused || data.entries_paused,
+            flatten_latched: status.flatten_latched || data.flatten_latched,
             positions,
             orders: data
                 .orders

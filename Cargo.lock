@@ -6580,6 +6580,7 @@ dependencies = [
  "chrono",
  "clap",
  "hex",
+ "hmac",
  "prost 0.12.6",
  "reqwest",
  "rust_decimal",

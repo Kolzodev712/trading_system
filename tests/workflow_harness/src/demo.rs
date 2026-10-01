@@ -337,6 +337,11 @@ impl DemoAdapter {
                     .and_then(|x| x.as_str())
                     .unwrap_or("")
                     .to_string(),
+                instrument: o
+                    .get("symbol")
+                    .and_then(|x| x.as_str())
+                    .unwrap_or("BTCUSDT")
+                    .to_string(),
                 price: dec_field(o, "price"),
                 amount: dec_field(o, "qty"),
                 filled: dec_field(o, "cumExecQty"),

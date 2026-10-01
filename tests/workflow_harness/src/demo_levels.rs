@@ -11,21 +11,23 @@ use std::time::{Duration, Instant};
 use crate::demo::{write_demo_truth, DemoAdapter, SecretBotFile};
 use crate::grpc::GrpcCtl;
 use crate::oracle::{
-    journal_has_state, qty_canon, qty_close, rest_btc_position, runner_btc_qty, unique_ledger_qty,
-    working_ids,
+    journal_has_state, latest_level_client_order_id, qty_canon, qty_close, rest_btc_position,
+    runner_btc_qty, unique_ledger_qty, working_ids,
 };
 use crate::process::{
     allocate_port, cargo_build, debug_bin, require_mongo, wait_health_cex_ready, workspace_root,
     ChildProc,
 };
 use crate::types::{ScenarioResult, Verdict};
-use crate::venue::RestOrder;
+use crate::venue::{RestOrder, RestPosition};
 
 const MAX_QTY: &str = "0.001";
 const MAX_NOTIONAL: &str = "150";
 const DEADLINE_SECS: u64 = 300;
 const ENTRY_SECS: u64 = 180;
 const LEVEL_ID: &str = "wf_demo_buy";
+const INSTRUMENT: &str = "BTCUSDT";
+const SIDE: &str = "Buy";
 
 #[derive(Debug)]
 pub struct MutateAuth {
@@ -185,10 +187,64 @@ pub async fn run(artifacts: &Path) -> ScenarioResult {
         }
     };
     if let Err(e) = run_inner(&mut r, artifacts, &auth, &adapter).await {
-        r.fail("workflow", "ok", &e.to_string());
+        if r.verdict != Verdict::Fail {
+            r.fail("workflow", "ok", &e.to_string());
+        }
         operator_alert(&r, artifacts, &e.to_string());
     }
     r
+}
+
+#[derive(Debug, Clone)]
+pub struct OwnedOrderSpec {
+    pub client_order_id: String,
+    pub instrument: String,
+    pub side: String,
+    pub qty: Decimal,
+    pub price: Decimal,
+}
+
+/// Exact journaled client id + instrument/side/qty/price. A nonempty id alone is not enough.
+pub fn rest_order_matches_owned(order: &RestOrder, spec: &OwnedOrderSpec) -> bool {
+    if spec.client_order_id.is_empty() || order.client_order_id != spec.client_order_id {
+        return false;
+    }
+    order.instrument.eq_ignore_ascii_case(&spec.instrument)
+        && order.side.eq_ignore_ascii_case(&spec.side)
+        && qty_close(order.amount, spec.qty)
+        && qty_close(order.price, spec.price)
+        && (order.status == "New" || order.status == "PartiallyFilled" || order.status == "Filled")
+}
+
+/// REST errors are unverified, never an empty account.
+pub fn cleanup_verification(
+    orders: Result<Vec<RestOrder>, String>,
+    positions: Result<Vec<RestPosition>, String>,
+    entries_paused: Option<bool>,
+    levels_disabled: Option<bool>,
+) -> Result<(), String> {
+    let orders = orders.map_err(|e| format!("REST orders unverified (not empty): {e}"))?;
+    let positions = positions.map_err(|e| format!("REST positions unverified (not empty): {e}"))?;
+    let working = working_ids(&orders);
+    let qty = rest_btc_position(&positions);
+    if !working.is_empty() || !qty_close(qty, Decimal::ZERO) {
+        return Err(format!(
+            "REST not flat: working={} pos={}",
+            working.len(),
+            qty
+        ));
+    }
+    match entries_paused {
+        Some(true) => {}
+        Some(false) => return Err("runner entries not paused".into()),
+        None => return Err("runner snapshot unverified".into()),
+    }
+    match levels_disabled {
+        Some(true) => {}
+        Some(false) => return Err("level still enabled".into()),
+        None => return Err("runner snapshot unverified".into()),
+    }
+    Ok(())
 }
 
 async fn run_inner(
@@ -259,83 +315,39 @@ async fn run_inner(
 
     write_demo_truth(artifacts, "preflight", &rest_orders, &rest_pos, &[], None)?;
 
-    let stack = DemoLevelsRunner::launch(artifacts, auth, qty, rest_price).await?;
+    let mut stack = DemoLevelsRunner::launch(artifacts, auth, qty, rest_price).await?;
     let mut grpc = GrpcCtl::connect_with_token(&stack.grpc_url, Some(&auth.operator_token)).await?;
-    let snap = grpc.snapshot().await?;
-    r.assert_eq("venue", "BYBIT", snap.venue.to_uppercase());
-    r.assert_true(
-        "environment_demo",
-        snap.environment.to_uppercase().contains("DEMO"),
-        "DEMO",
-        &snap.environment,
-    );
-    r.assert_eq(
-        "entries_paused_start",
-        "true",
-        snap.entries_paused.to_string(),
-    );
-    r.assert_eq(
-        "execution_mode",
-        "exchange",
-        snap.execution_mode.to_lowercase(),
-    );
-    if r.verdict == Verdict::Fail {
-        let _ = protective_cleanup(r, adapter, &mut grpc, &stack, None).await;
-        return Ok(());
-    }
-
     let clock = Instant::now();
     let entry_deadline = clock + Duration::from_secs(ENTRY_SECS);
     let hard_deadline = clock + Duration::from_secs(DEADLINE_SECS);
 
-    grpc.enable().await.context("SetTradingEnabled")?;
-    grpc.resume_entries().await.context("ResumeEntries")?;
-    r.note("one authenticated entry-enable (ResumeEntries) after independent preflight");
-
-    if let Err(e) = place_and_cancel(
+    let started = run_after_start(
         r,
         adapter,
         &mut grpc,
+        &stack,
         qty,
         rest_price,
+        fill_price,
         entry_deadline,
-        &stack,
     )
-    .await
-    {
-        r.fail("place_cancel", "ok", &e.to_string());
-        let _ = protective_cleanup(r, adapter, &mut grpc, &stack, None).await;
-        return Ok(());
-    }
-    if r.verdict == Verdict::Fail {
-        let _ = protective_cleanup(r, adapter, &mut grpc, &stack, None).await;
-        return Ok(());
-    }
-
-    let mut filled = rest_btc_position(&adapter.signed_positions().await?);
-    if qty_close(filled, Decimal::ZERO) && Instant::now() < entry_deadline {
-        if let Err(e) = attempt_fill(
-            r,
-            adapter,
-            &mut grpc,
-            qty,
-            fill_price,
-            entry_deadline,
-            &stack,
-        )
-        .await
-        {
-            r.fail("fill_phase", "ok", &e.to_string());
-            let _ = protective_cleanup(r, adapter, &mut grpc, &stack, None).await;
-            return Ok(());
-        }
-        filled = rest_btc_position(&adapter.signed_positions().await?);
-    }
-
-    let cleanup = protective_cleanup(r, adapter, &mut grpc, &stack, Some(filled)).await;
+    .await;
+    let filled = started.as_ref().ok().copied().unwrap_or(Decimal::ZERO);
+    let cleanup =
+        protective_cleanup(r, adapter, &mut grpc, &stack, Some(filled), hard_deadline).await;
     if let Err(e) = cleanup {
-        r.fail("cleanup", "verified flat", &e.to_string());
+        r.fail(
+            "cleanup",
+            "verified flat REST + paused + level disabled",
+            &e.to_string(),
+        );
         operator_alert(r, artifacts, &e.to_string());
+        write_recovery_handoff(artifacts, &stack, &e.to_string());
+        stack.disarm();
+        return Ok(());
+    }
+    if let Err(e) = started {
+        r.fail("workflow", "ok", &e.to_string());
         return Ok(());
     }
     if Instant::now() > hard_deadline && r.verdict != Verdict::Fail {
@@ -407,6 +419,55 @@ async fn run_inner(
     Ok(())
 }
 
+async fn run_after_start(
+    r: &mut ScenarioResult,
+    adapter: &DemoAdapter,
+    grpc: &mut GrpcCtl,
+    stack: &DemoLevelsRunner,
+    qty: Decimal,
+    rest_price: Decimal,
+    fill_price: Decimal,
+    entry_deadline: Instant,
+) -> Result<Decimal> {
+    let snap = grpc.snapshot().await?;
+    r.assert_eq("venue", "BYBIT", snap.venue.to_uppercase());
+    r.assert_true(
+        "environment_demo",
+        snap.environment.to_uppercase().contains("DEMO"),
+        "DEMO",
+        &snap.environment,
+    );
+    r.assert_eq(
+        "entries_paused_start",
+        "true",
+        snap.entries_paused.to_string(),
+    );
+    r.assert_eq(
+        "execution_mode",
+        "exchange",
+        snap.execution_mode.to_lowercase(),
+    );
+    if r.verdict == Verdict::Fail {
+        return Err(anyhow::anyhow!("pre-resume snapshot assertions failed"));
+    }
+
+    grpc.enable().await.context("SetTradingEnabled")?;
+    grpc.resume_entries().await.context("ResumeEntries")?;
+    r.note("one authenticated entry-enable (ResumeEntries) after independent preflight");
+
+    place_and_cancel(r, adapter, grpc, qty, rest_price, entry_deadline, stack).await?;
+    if r.verdict == Verdict::Fail {
+        return Err(anyhow::anyhow!("place/cancel assertions failed"));
+    }
+
+    let mut filled = rest_btc_position(&adapter.signed_positions().await?);
+    if qty_close(filled, Decimal::ZERO) && Instant::now() < entry_deadline {
+        attempt_fill(r, adapter, grpc, qty, fill_price, entry_deadline, stack).await?;
+        filled = rest_btc_position(&adapter.signed_positions().await?);
+    }
+    Ok(filled)
+}
+
 async fn place_and_cancel(
     r: &mut ScenarioResult,
     adapter: &DemoAdapter,
@@ -420,14 +481,22 @@ async fn place_and_cancel(
         .await?;
     grpc.toggle_level(LEVEL_ID, true).await?;
     r.note(format!("create 1/2 rest qty={qty} price={rest_price}"));
-    let order = wait_owned_order(adapter, rest_price, entry_deadline).await?;
-    r.assert_true(
+    let client_order_id = wait_journaled_client_id(stack, entry_deadline).await?;
+    let spec = OwnedOrderSpec {
+        client_order_id,
+        instrument: INSTRUMENT.into(),
+        side: SIDE.into(),
+        qty,
+        price: rest_price,
+    };
+    let order = wait_owned_order(adapter, &spec, entry_deadline).await?;
+    r.assert_eq(
         "rest_client_id",
-        !order.client_order_id.is_empty(),
-        "client id present",
-        "missing client id; ACK not correlated",
+        &spec.client_order_id,
+        &order.client_order_id,
     );
-    r.assert_eq("rest_side", "Buy", order.side.clone());
+    r.assert_eq("rest_side", SIDE, order.side.clone());
+    r.assert_eq("rest_instrument", INSTRUMENT, order.instrument.clone());
     write_demo_truth(
         &stack.artifacts,
         "resting",
@@ -453,7 +522,7 @@ async fn attempt_fill(
     qty: Decimal,
     fill_price: Decimal,
     entry_deadline: Instant,
-    _stack: &DemoLevelsRunner,
+    stack: &DemoLevelsRunner,
 ) -> Result<()> {
     grpc.update_level_price(LEVEL_ID, &fill_price.normalize().to_string())
         .await?;
@@ -461,7 +530,19 @@ async fn attempt_fill(
     r.note(format!(
         "create 2/2 fill attempt qty={qty} price={fill_price}"
     ));
-    let _ = wait_owned_order(adapter, fill_price, entry_deadline).await;
+    let client_order_id = wait_journaled_client_id(stack, entry_deadline).await?;
+    let spec = OwnedOrderSpec {
+        client_order_id,
+        instrument: INSTRUMENT.into(),
+        side: SIDE.into(),
+        qty,
+        price: fill_price,
+    };
+    let order = wait_owned_order(adapter, &spec, entry_deadline).await?;
+    r.note(format!(
+        "fill-leg owned client_id={} order={}",
+        order.client_order_id, order.order_id
+    ));
     let deadline = entry_deadline.min(Instant::now() + Duration::from_secs(45));
     while Instant::now() < deadline {
         let pos = rest_btc_position(&adapter.signed_positions().await?);
@@ -488,58 +569,82 @@ async fn protective_cleanup(
     grpc: &mut GrpcCtl,
     stack: &DemoLevelsRunner,
     known_pos: Option<Decimal>,
+    hard_deadline: Instant,
 ) -> Result<()> {
     r.note("protective cleanup: pause, disable, cancel, flatten if needed");
-    if let Err(e) = grpc.pause_entries().await {
-        r.note(format!("pause failed: {e}"));
-    }
-    if let Err(e) = grpc.toggle_level(LEVEL_ID, false).await {
-        r.note(format!("disable failed: {e}"));
-    }
-    if let Err(e) = grpc.cancel_working("wf-demo-cleanup-cancel").await {
-        r.note(format!("cancel_working failed: {e}"));
-    }
-    let pos = match known_pos {
-        Some(p) if p > Decimal::ZERO => p,
-        _ => rest_btc_position(&adapter.signed_positions().await.unwrap_or_default()),
-    };
-    if pos > Decimal::ZERO {
-        r.note(format!(
-            "reduce-only flatten of independently verified qty={pos}"
-        ));
-        match grpc.flatten_and_pause("wf-demo-flatten").await {
-            Ok(msg) => r.note(format!("flatten rpc {msg}")),
-            Err(e) => r.note(format!("flatten rpc failed: {e}")),
-        }
-    }
     let give_up = Instant::now() + Duration::from_secs(90);
+    let deadline = give_up.min(hard_deadline);
     loop {
-        let orders = adapter.signed_orders().await.unwrap_or_default();
-        let positions = adapter.signed_positions().await.unwrap_or_default();
-        let working = working_ids(&orders);
-        let qty = rest_btc_position(&positions);
-        if working.is_empty() && qty_close(qty, Decimal::ZERO) {
-            let snap = grpc.snapshot().await.ok();
-            let _ = write_demo_truth(
-                &stack.artifacts,
-                "cleanup",
-                &orders,
-                &positions,
-                &[],
-                snap.as_ref(),
+        retry_note(r, grpc.pause_entries().await, "pause");
+        retry_note(r, grpc.toggle_level(LEVEL_ID, false).await, "disable");
+        retry_note(
+            r,
+            grpc.cancel_working("wf-demo-cleanup-cancel").await,
+            "cancel_working",
+        );
+        let pos = match known_pos {
+            Some(p) if p > Decimal::ZERO => Some(p),
+            _ => match adapter.signed_positions().await {
+                Ok(rows) => Some(rest_btc_position(&rows)),
+                Err(e) => {
+                    r.note(format!(
+                        "REST positions unverified during flatten check: {e}"
+                    ));
+                    None
+                }
+            },
+        };
+        if pos.is_some_and(|p| p > Decimal::ZERO) {
+            r.note(format!(
+                "reduce-only flatten of independently verified qty={}",
+                pos.unwrap_or_default()
+            ));
+            retry_note(
+                r,
+                grpc.flatten_and_pause("wf-demo-flatten").await,
+                "flatten",
             );
-            return Ok(());
         }
-        if Instant::now() > give_up {
-            eprintln!(
-                "OPERATOR ALERT: Demo Levels cleanup not verified flat; working={} pos={} artifacts={}",
-                working.len(),
-                qty,
-                stack.artifacts.display()
-            );
-            bail!("cleanup not flat: working={} pos={}", working.len(), qty);
+
+        let orders = adapter.signed_orders().await.map_err(|e| e.to_string());
+        let positions = adapter.signed_positions().await.map_err(|e| e.to_string());
+        let snap = grpc.snapshot().await.ok();
+        let paused = snap.as_ref().map(|s| s.entries_paused);
+        let disabled = snap.as_ref().map(|s| s.levels.iter().all(|(_, en, _)| !en));
+        match cleanup_verification(orders.clone(), positions.clone(), paused, disabled) {
+            Ok(()) => {
+                if let (Ok(orders), Ok(positions)) = (orders, positions) {
+                    let _ = write_demo_truth(
+                        &stack.artifacts,
+                        "cleanup",
+                        &orders,
+                        &positions,
+                        &[],
+                        snap.as_ref(),
+                    );
+                }
+                return Ok(());
+            }
+            Err(e) => {
+                if Instant::now() > deadline {
+                    eprintln!(
+                        "OPERATOR ALERT: Demo Levels cleanup not verified; {e}; artifacts={} grpc={} pid={}",
+                        stack.artifacts.display(),
+                        stack.grpc_url,
+                        stack.pid()
+                    );
+                    bail!("{e}");
+                }
+                r.note(format!("cleanup retry: {e}"));
+                tokio::time::sleep(Duration::from_millis(400)).await;
+            }
         }
-        tokio::time::sleep(Duration::from_millis(400)).await;
+    }
+}
+
+fn retry_note<T, E: std::fmt::Display>(r: &mut ScenarioResult, result: Result<T, E>, what: &str) {
+    if let Err(e) = result {
+        r.note(format!("{what} failed (will retry): {e}"));
     }
 }
 
@@ -551,35 +656,70 @@ fn operator_alert(r: &ScenarioResult, artifacts: &Path, why: &str) {
     );
 }
 
+async fn wait_journaled_client_id(stack: &DemoLevelsRunner, deadline: Instant) -> Result<String> {
+    let mut last = String::new();
+    while Instant::now() < deadline {
+        let journal = stack.journal_text();
+        if let Some(cid) = latest_level_client_order_id(&journal, LEVEL_ID) {
+            return Ok(cid);
+        }
+        last = if journal.is_empty() {
+            "journal empty".into()
+        } else {
+            "no level client_order_id yet".into()
+        };
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    bail!("no journaled client_order_id for {LEVEL_ID}: {last}")
+}
+
 async fn wait_owned_order(
     adapter: &DemoAdapter,
-    price: Decimal,
+    spec: &OwnedOrderSpec,
     deadline: Instant,
 ) -> Result<RestOrder> {
     let mut last = String::new();
     while Instant::now() < deadline {
         match adapter.signed_orders().await {
             Ok(orders) => {
-                if let Some(o) = orders.iter().find(|o| {
-                    qty_close(o.price, price)
-                        && (o.status == "New"
-                            || o.status == "PartiallyFilled"
-                            || o.status == "Filled")
-                }) {
-                    if o.client_order_id.is_empty() {
-                        last = format!("order {} missing client id", o.order_id);
-                    } else {
-                        return Ok(o.clone());
-                    }
-                } else {
-                    last = format!("orders={}", orders.len());
+                if let Some(o) = orders.iter().find(|o| rest_order_matches_owned(o, spec)) {
+                    return Ok(o.clone());
                 }
+                last = format!(
+                    "orders={} want client_id={} qty={} price={}",
+                    orders.len(),
+                    spec.client_order_id,
+                    spec.qty,
+                    spec.price
+                );
             }
-            Err(e) => last = e.to_string(),
+            Err(e) => last = format!("REST orders unverified: {e}"),
         }
         tokio::time::sleep(Duration::from_millis(300)).await;
     }
-    bail!("no correlated REST order at {price}: {last}")
+    bail!(
+        "no REST order matching journaled {}: {last}",
+        spec.client_order_id
+    )
+}
+
+fn write_recovery_handoff(artifacts: &Path, stack: &DemoLevelsRunner, why: &str) {
+    let body = format!(
+        "OPERATOR RECOVERY HANDOFF\n\
+         reason={why}\n\
+         artifacts={}\n\
+         grpc={}\n\
+         runner_pid={}\n\
+         The runner was left running (not killed).\n\
+         Do not Resume. Use authenticated grpc_ctl PauseEntries, CancelWorking, FlattenAndPause.\n\
+         Confirm Bybit Demo REST working orders=0 and position=0 before stopping the process.\n",
+        artifacts.display(),
+        stack.grpc_url,
+        stack.pid()
+    );
+    let path = artifacts.join("OPERATOR_RECOVERY.txt");
+    let _ = fs::write(&path, &body);
+    eprintln!("{body}");
 }
 
 async fn wait_order_gone(adapter: &DemoAdapter, order_id: &str, timeout: Duration) -> bool {
@@ -695,7 +835,7 @@ struct DemoLevelsRunner {
     journal_path: PathBuf,
     ledger_path: PathBuf,
     _secret: SecretBotFile,
-    _child: ChildProc,
+    child: ChildProc,
 }
 
 impl DemoLevelsRunner {
@@ -755,8 +895,16 @@ impl DemoLevelsRunner {
             journal_path: run_dir.join("submission-journal.jsonl"),
             ledger_path: run_dir.join("execution-ledger.jsonl"),
             _secret: secret,
-            _child: child,
+            child,
         })
+    }
+
+    fn disarm(&mut self) {
+        self.child.disarm();
+    }
+
+    fn pid(&self) -> u32 {
+        self.child.pid()
     }
 
     fn journal_text(&self) -> String {

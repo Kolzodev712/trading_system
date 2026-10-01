@@ -22,7 +22,11 @@ pub fn execution_status_from_bot(bot: &BotConfig) -> (ExecutionMode, String, Str
     )
 }
 
-/// Increment 10: Bybit Exchange is demo-only. Paper Exchange remains the lab.
+/// Increment 10 default: Bybit Exchange is demo-only. Paper Exchange remains the lab.
+///
+/// Strategies / Candidate #2 must keep calling [`strategies_exchange_is_authorized`].
+/// Levels uses [`levels_exchange_is_authorized`] so a future explicit Levels live
+/// policy can be added without making Candidate #2 live-eligible.
 pub fn exchange_live_is_authorized(
     execution_mode: ExecutionMode,
     venue: &str,
@@ -37,6 +41,25 @@ pub fn exchange_live_is_authorized(
         );
     }
     Ok(())
+}
+
+/// Levels Exchange startup gate. Defaults to Increment 10 Bybit Demo-only.
+/// Replace this body later for an explicitly authorized Levels live policy.
+pub fn levels_exchange_is_authorized(
+    execution_mode: ExecutionMode,
+    venue: &str,
+    environment: &str,
+) -> Result<(), String> {
+    exchange_live_is_authorized(execution_mode, venue, environment)
+}
+
+/// Strategies / Candidate #2 Exchange startup gate. Stays Increment 10 Demo-only.
+pub fn strategies_exchange_is_authorized(
+    execution_mode: ExecutionMode,
+    venue: &str,
+    environment: &str,
+) -> Result<(), String> {
+    exchange_live_is_authorized(execution_mode, venue, environment)
 }
 
 /// Synthetic candle fixtures may execute on Paper or Bybit Demo Exchange only.
@@ -156,6 +179,13 @@ mod tests {
         assert!(exchange_live_is_authorized(ExecutionMode::Exchange, "PAPER", "LOCAL").is_ok());
         assert!(exchange_live_is_authorized(ExecutionMode::Exchange, "BYBIT", "MAINNET").is_err());
         assert!(exchange_live_is_authorized(ExecutionMode::Exchange, "BYBIT", "TESTNET").is_err());
+        assert!(levels_exchange_is_authorized(ExecutionMode::Exchange, "BYBIT", "DEMO").is_ok());
+        assert!(
+            levels_exchange_is_authorized(ExecutionMode::Exchange, "BYBIT", "MAINNET").is_err()
+        );
+        assert!(
+            strategies_exchange_is_authorized(ExecutionMode::Exchange, "BYBIT", "TESTNET").is_err()
+        );
     }
 
     #[test]

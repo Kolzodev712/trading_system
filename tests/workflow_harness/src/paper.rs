@@ -303,6 +303,12 @@ impl PaperStack {
                     .and_then(|x| x.as_str())
                     .unwrap_or("")
                     .to_string(),
+                instrument: o
+                    .get("symbol")
+                    .and_then(|x| x.as_str())
+                    .or_else(|| o.get("instrument").and_then(|x| x.as_str()))
+                    .unwrap_or("BTCUSDT")
+                    .to_string(),
                 price: parse_dec(o.get("price").unwrap_or(&serde_json::Value::Null)),
                 amount: parse_dec(o.get("amount").unwrap_or(&serde_json::Value::Null)),
                 filled: parse_dec(o.get("filledAmount").unwrap_or(&serde_json::Value::Null)),

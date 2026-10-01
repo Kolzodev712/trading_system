@@ -26,9 +26,10 @@ pub use ledger::{
     economic_source, ExecutionLedger, FillRecord, FundingRecord, LedgerRecord, LedgerSnapshot,
 };
 pub use operator_flatten::{
-    flatten_cancel_working_failed, is_operator_flatten, merge_rest_working_orders,
-    settle_operator_flatten_exits, settle_operator_flatten_on_order,
-    settle_operator_flatten_when_local_flat, submit_operator_reduce_only_exits,
+    cancel_working_unverified, flatten_cancel_working_failed, flatten_position_unverified,
+    is_operator_flatten, merge_rest_working_orders, settle_operator_flatten_exits,
+    settle_operator_flatten_on_order, settle_operator_flatten_when_local_flat,
+    submit_operator_reduce_only_exits, verify_rest_exposure_flat,
     verify_rest_working_orders_cleared, OperatorFlattenReport, OPERATOR_FLATTEN_INTENT,
 };
 pub use submission::{

@@ -97,9 +97,8 @@ async fn main() {
         config_hashes: Default::default(),
         capability_matrix: match layer {
             Layer::Paper | Layer::Ui => workflow_harness::Capability::paper(),
-            Layer::DemoReadonly | Layer::DemoMutating => {
-                workflow_harness::Capability::demo_readonly()
-            }
+            Layer::DemoReadonly => workflow_harness::Capability::demo_readonly(),
+            Layer::DemoMutating => workflow_harness::Capability::demo_mutating(),
         },
     };
 

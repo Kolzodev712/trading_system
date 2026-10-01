@@ -64,6 +64,15 @@ impl Capability {
             mutating: false,
         }
     }
+
+    pub fn demo_mutating() -> Self {
+        Self {
+            force_fill: false,
+            fault_inject: false,
+            rest_positions: true,
+            mutating: true,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -149,6 +158,18 @@ impl ScenarioResult {
 
     pub fn fail(&mut self, name: &str, expected: &str, actual: &str) {
         self.assert_eq(name, expected, actual);
+    }
+
+    pub fn mark_not_run(&mut self, name: &str, why: &str) {
+        self.assertions.push(AssertionRecord {
+            name: name.into(),
+            expected: "run".into(),
+            actual: why.into(),
+            verdict: Verdict::NotRun,
+        });
+        if self.verdict == Verdict::Pass {
+            self.verdict = Verdict::NotRun;
+        }
     }
 
     pub fn gate_ok(&self) -> bool {

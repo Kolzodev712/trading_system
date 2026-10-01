@@ -2,7 +2,8 @@ use rust_decimal::Decimal;
 use std::path::Path;
 use std::time::Duration;
 
-use crate::demo::{mutating_refused, DemoAdapter};
+use crate::demo::DemoAdapter;
+use crate::demo_levels;
 use crate::oracle::{
     assert_spot_agreement, btc_total, catalog_filled_qty, catalog_owns, halt_is_disagreement,
     journal_has_state, qty_canon, qty_close, rest_btc_position, runner_btc_qty, unique_ledger_qty,
@@ -196,7 +197,7 @@ pub async fn run_layer(layer: Layer, only: Option<&str>, artifacts: &Path) -> Ve
                 out.push(r);
             }
         },
-        Layer::DemoMutating => out.push(mutating_refused()),
+        Layer::DemoMutating => out.push(demo_levels::run(artifacts).await),
     }
     out
 }

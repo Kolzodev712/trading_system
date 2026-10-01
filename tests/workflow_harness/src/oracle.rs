@@ -108,6 +108,7 @@ pub fn journal_has_state(jsonl: &str, state: &str) -> bool {
 }
 
 /// Latest journaled client order id for a level. Empty ids are ignored.
+/// A later fill/create must wait for a *new* id via [`journaled_client_id_after`].
 pub fn latest_level_client_order_id(jsonl: &str, level_id: &str) -> Option<String> {
     let mut found = None;
     for line in jsonl.lines() {
@@ -123,6 +124,19 @@ pub fn latest_level_client_order_id(jsonl: &str, level_id: &str) -> Option<Strin
         }
     }
     found
+}
+
+/// Wait target for a subsequent Demo create. The latest existing row is not a new id.
+pub fn journaled_client_id_after(
+    jsonl: &str,
+    level_id: &str,
+    after: Option<&str>,
+) -> Option<String> {
+    let cid = latest_level_client_order_id(jsonl, level_id)?;
+    match after {
+        Some(prev) if prev == cid => None,
+        _ => Some(cid),
+    }
 }
 
 pub fn halt_is_disagreement(snap: &RunnerSnapshot) -> bool {

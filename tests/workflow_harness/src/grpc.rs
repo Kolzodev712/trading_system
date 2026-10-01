@@ -146,10 +146,14 @@ impl GrpcCtl {
     }
 
     pub async fn pause_entries(&mut self) -> Result<()> {
+        self.pause_entries_named("wf-pause").await
+    }
+
+    pub async fn pause_entries_named(&mut self, request_id: &str) -> Result<()> {
         let resp = self
             .inner
             .pause_entries(Request::new(OperatorCommandRequest {
-                request_id: "wf-pause".into(),
+                request_id: request_id.into(),
                 symbol: String::new(),
             }))
             .await?
@@ -219,12 +223,14 @@ impl GrpcCtl {
             .into_inner()
             .data
             .unwrap_or_default();
-        let levels = self
+        let (levels_verified, levels) = match self
             .inner
             .get_levels(Request::new(GetLevelsRequest {}))
             .await
-            .map(|r| r.into_inner().levels)
-            .unwrap_or_default();
+        {
+            Ok(resp) => (true, resp.into_inner().levels),
+            Err(_) => (false, Vec::new()),
+        };
         let mut avg_entry = String::new();
         let positions = data
             .positions
@@ -257,6 +263,7 @@ impl GrpcCtl {
                 .into_iter()
                 .map(|l| (l.id, l.enabled, l.status))
                 .collect(),
+            levels_verified,
             exposure_halt_reason: if status.exposure_halt_reason.is_empty() {
                 data.exposure_halt_reason
             } else {

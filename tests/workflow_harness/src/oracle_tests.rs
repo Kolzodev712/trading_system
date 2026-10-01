@@ -1,6 +1,9 @@
 //! Oracle unit tests (no processes).
 
-use crate::demo_levels::{cleanup_verification, rest_order_matches_owned, OwnedOrderSpec};
+use crate::demo_levels::{
+    cleanup_verification, levels_disabled_proof, next_cleanup_request_id, rest_order_matches_owned,
+    OwnedOrderSpec,
+};
 use crate::oracle::assert_spot_agreement;
 use crate::types::{ScenarioResult, Verdict};
 use crate::venue::{RestOrder, RestPosition};
@@ -162,6 +165,25 @@ fn cleanup_requires_rest_and_runner() {
 }
 
 #[test]
+fn failed_or_empty_get_levels_is_not_all_disabled() {
+    assert_eq!(levels_disabled_proof(false, &[]), None);
+    assert_eq!(levels_disabled_proof(true, &[]), None);
+    assert_eq!(
+        levels_disabled_proof(false, &[("wf_demo_buy".into(), false, "ok".into())]),
+        None
+    );
+    assert_eq!(
+        levels_disabled_proof(true, &[("wf_demo_buy".into(), false, "ok".into())]),
+        Some(true)
+    );
+    assert_eq!(
+        levels_disabled_proof(true, &[("wf_demo_buy".into(), true, "ok".into())]),
+        Some(false)
+    );
+    assert!(cleanup_verification(Ok(vec![]), Ok(vec![]), Some(true), None).is_err());
+}
+
+#[test]
 fn owned_order_requires_exact_journaled_id() {
     let spec = OwnedOrderSpec {
         client_order_id: "cid-wanted".into(),
@@ -197,6 +219,38 @@ fn owned_order_requires_exact_journaled_id() {
         ..spec.clone()
     };
     assert!(!rest_order_matches_owned(&owned, &nonempty_only));
+}
+
+#[test]
+fn second_create_does_not_reuse_first_journal_id() {
+    let first = r#"{"client_order_id":"cid-1","level_id":"wf_demo_buy","state":"submitted"}
+"#;
+    assert_eq!(
+        crate::oracle::journaled_client_id_after(first, "wf_demo_buy", None).as_deref(),
+        Some("cid-1")
+    );
+    assert_eq!(
+        crate::oracle::journaled_client_id_after(first, "wf_demo_buy", Some("cid-1")),
+        None
+    );
+    let second = r#"{"client_order_id":"cid-1","level_id":"wf_demo_buy","state":"submitted"}
+{"client_order_id":"cid-2","level_id":"wf_demo_buy","state":"submitted"}
+"#;
+    assert_eq!(
+        crate::oracle::journaled_client_id_after(second, "wf_demo_buy", Some("cid-1")).as_deref(),
+        Some("cid-2")
+    );
+}
+
+#[test]
+fn cleanup_retry_ids_are_new_operations() {
+    let first = next_cleanup_request_id("cancel", 1);
+    let second = next_cleanup_request_id("cancel", 2);
+    let flatten = next_cleanup_request_id("flatten", 2);
+    assert_ne!(first, second);
+    assert_ne!(second, flatten);
+    assert!(first.contains("cancel-1"));
+    assert!(second.contains("cancel-2"));
 }
 
 #[test]

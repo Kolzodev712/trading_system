@@ -519,7 +519,7 @@ mod tests {
     use super::*;
     use async_trait::async_trait;
     use rust_decimal::Decimal;
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use trading_core::error::EngineError;
     use trading_core::registry::symbol::SymbolRegistry;
     use trading_core::types::common::{Exchange, OrderId, Pair};
@@ -949,6 +949,233 @@ mod tests {
             "unexpected message: {}",
             response.message
         );
+        assert!(service.trading_control.entries_paused().await);
+    }
+
+    #[derive(Debug)]
+    struct RecoveringOpenOrdersClient {
+        leftover: Arc<AtomicBool>,
+    }
+
+    #[async_trait]
+    impl TradingClient<OrderRequest> for RecoveringOpenOrdersClient {
+        fn exchange_id(&self) -> Exchange {
+            Exchange::Paper
+        }
+        async fn test_open_order(&self, _req: OrderRequest) -> Result<(), EngineError> {
+            Ok(())
+        }
+        async fn open_order(&self, _req: OrderRequest) -> Result<Order, EngineError> {
+            Err(EngineError::NotSupported("test".into()))
+        }
+        async fn cancel_order_by_id(&self, _order_id: OrderId) -> Result<(), EngineError> {
+            Ok(())
+        }
+        async fn cancel_all_orders(&self, _pair: &Pair) -> Result<(), EngineError> {
+            Ok(())
+        }
+        async fn fetch_balance(&self) -> Result<Vec<Balance>, EngineError> {
+            Ok(vec![])
+        }
+        async fn fetch_open_orders(&self) -> Result<Vec<Order>, EngineError> {
+            if self.leftover.load(Ordering::SeqCst) {
+                Ok(vec![Order {
+                    order_id: OrderId::new("still-open".into()),
+                    client_order_id: None,
+                    instrument: trading_core::types::common::Instrument::new(
+                        trading_core::types::common::InstrumentType::Futures,
+                        Pair::new("BTC", "USDT"),
+                    ),
+                    side: trading_core::types::common::Side::Buy,
+                    price: Decimal::ONE,
+                    amount: Decimal::new(1, 3),
+                    internal_created_at: 1,
+                    exchange_created_at: Some(1),
+                    status: trading_core::types::common::OrderStatus::New,
+                    filled_amount: Decimal::ZERO,
+                }])
+            } else {
+                Ok(vec![])
+            }
+        }
+        async fn fetch_trades(&self, _pair: Option<&Pair>) -> Result<Vec<Trade>, EngineError> {
+            Ok(vec![])
+        }
+        async fn fetch_market_data_snapshot(&self, _pair: &Pair) -> Result<(), EngineError> {
+            Ok(())
+        }
+        async fn amend_order(
+            &self,
+            _order_id: OrderId,
+            _new_request: OrderRequest,
+        ) -> Result<Order, EngineError> {
+            Err(EngineError::NotSupported("test".into()))
+        }
+        async fn bulk_open_orders(
+            &self,
+            _req: trading_core::types::exchange::BulkOrderRequest,
+        ) -> Result<trading_core::types::exchange::BulkOrderResponse, EngineError> {
+            Err(EngineError::NotSupported("test".into()))
+        }
+        async fn bulk_amend_orders(
+            &self,
+            _req: trading_core::types::exchange::BulkAmendRequest,
+        ) -> Result<trading_core::types::exchange::BulkAmendResponse, EngineError> {
+            Err(EngineError::NotSupported("test".into()))
+        }
+    }
+
+    #[tokio::test]
+    async fn cancel_working_retry_requires_new_request_id() {
+        let leftover = Arc::new(AtomicBool::new(true));
+        let client: Arc<RwLock<dyn TradingClient<OrderRequest>>> =
+            Arc::new(RwLock::new(RecoveringOpenOrdersClient {
+                leftover: leftover.clone(),
+            }));
+        let service = flatten_service(client);
+        let first = service
+            .cancel_working(
+                Request::new(trading_cli::OperatorCommandRequest {
+                    request_id: "cleanup-cancel-1".into(),
+                    symbol: String::new(),
+                }),
+                "PAPER".into(),
+                "LOCAL".into(),
+            )
+            .await
+            .expect("rpc")
+            .into_inner();
+        assert!(!first.accepted);
+        leftover.store(false, Ordering::SeqCst);
+        let cached = service
+            .cancel_working(
+                Request::new(trading_cli::OperatorCommandRequest {
+                    request_id: "cleanup-cancel-1".into(),
+                    symbol: String::new(),
+                }),
+                "PAPER".into(),
+                "LOCAL".into(),
+            )
+            .await
+            .expect("rpc")
+            .into_inner();
+        assert!(!cached.accepted, "same request id must replay the failure");
+        assert_eq!(cached.message, first.message);
+        let retry = service
+            .cancel_working(
+                Request::new(trading_cli::OperatorCommandRequest {
+                    request_id: "cleanup-cancel-2".into(),
+                    symbol: String::new(),
+                }),
+                "PAPER".into(),
+                "LOCAL".into(),
+            )
+            .await
+            .expect("rpc")
+            .into_inner();
+        assert!(
+            retry.accepted,
+            "new request id after REST recovery must verify: {}",
+            retry.message
+        );
+    }
+
+    #[derive(Debug)]
+    struct TsmEmptySpotWalletClient;
+
+    #[async_trait]
+    impl TradingClient<OrderRequest> for TsmEmptySpotWalletClient {
+        fn exchange_id(&self) -> Exchange {
+            Exchange::Paper
+        }
+        async fn test_open_order(&self, _req: OrderRequest) -> Result<(), EngineError> {
+            Ok(())
+        }
+        async fn open_order(&self, _req: OrderRequest) -> Result<Order, EngineError> {
+            Err(EngineError::NotSupported("test".into()))
+        }
+        async fn cancel_order_by_id(&self, _order_id: OrderId) -> Result<(), EngineError> {
+            Ok(())
+        }
+        async fn cancel_all_orders(&self, _pair: &Pair) -> Result<(), EngineError> {
+            Ok(())
+        }
+        async fn fetch_balance(&self) -> Result<Vec<Balance>, EngineError> {
+            Ok(vec![Balance {
+                symbol: "BTC".into(),
+                free: Decimal::new(1, 3),
+                used: Decimal::ZERO,
+                total: Decimal::new(1, 3),
+            }])
+        }
+        async fn fetch_open_orders(&self) -> Result<Vec<Order>, EngineError> {
+            Ok(vec![])
+        }
+        async fn fetch_trades(&self, _pair: Option<&Pair>) -> Result<Vec<Trade>, EngineError> {
+            Ok(vec![])
+        }
+        async fn fetch_market_data_snapshot(&self, _pair: &Pair) -> Result<(), EngineError> {
+            Ok(())
+        }
+        async fn amend_order(
+            &self,
+            _order_id: OrderId,
+            _new_request: OrderRequest,
+        ) -> Result<Order, EngineError> {
+            Err(EngineError::NotSupported("test".into()))
+        }
+        async fn bulk_open_orders(
+            &self,
+            _req: trading_core::types::exchange::BulkOrderRequest,
+        ) -> Result<trading_core::types::exchange::BulkOrderResponse, EngineError> {
+            Err(EngineError::NotSupported("test".into()))
+        }
+        async fn bulk_amend_orders(
+            &self,
+            _req: trading_core::types::exchange::BulkAmendRequest,
+        ) -> Result<trading_core::types::exchange::BulkAmendResponse, EngineError> {
+            Err(EngineError::NotSupported("test".into()))
+        }
+    }
+
+    #[tokio::test]
+    async fn flatten_and_pause_tsm_empty_spot_wallet_is_unverified() {
+        let client: Arc<RwLock<dyn TradingClient<OrderRequest>>> =
+            Arc::new(RwLock::new(TsmEmptySpotWalletClient));
+        let journal_path = std::env::temp_dir().join(format!(
+            "gw-flat-spot-{}-{}.jsonl",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let journal = Arc::new(SubmissionJournal::open(&journal_path).unwrap());
+        let mut service = flatten_service(client);
+        service.submission_journal = Some(journal);
+        let response = service
+            .flatten_and_pause(
+                Request::new(trading_cli::OperatorCommandRequest {
+                    request_id: "tsm-empty-spot-btc".into(),
+                    symbol: String::new(),
+                }),
+                "PAPER".into(),
+                "LOCAL".into(),
+                trading_core::types::common::InstrumentType::Spot,
+            )
+            .await
+            .expect("rpc")
+            .into_inner();
+        let _ = std::fs::remove_file(&journal_path);
+        assert!(!response.accepted);
+        assert_eq!(response.state, "failed");
+        assert!(
+            response.message.contains("wallet still shows")
+                || response.message.contains("venue position unverified"),
+            "unexpected message: {}",
+            response.message
+        );
+        assert!(service.trading_control.flatten_latched().await);
         assert!(service.trading_control.entries_paused().await);
     }
 }

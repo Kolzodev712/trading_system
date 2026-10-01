@@ -1026,7 +1026,7 @@ async fn paper_fill_ask_above_last(artifacts: &Path) -> ScenarioResult {
     }
 
     let id = stack.instance_id("wf_fut_buy");
-    let earlier_last = d("9900");
+    let earlier_last = d("10000");
     let qty = d("0.001");
     let first = match require(
         &mut r,
@@ -1052,7 +1052,7 @@ async fn paper_fill_ask_above_last(artifacts: &Path) -> ScenarioResult {
     let second = match require(
         &mut r,
         "second_journal",
-        enable_and_wait_journal(&stack, &mut grpc, &id, "9900").await,
+        enable_and_wait_journal(&stack, &mut grpc, &id, "10000").await,
     ) {
         Some(v) => v,
         None => return r,
@@ -1064,7 +1064,7 @@ async fn paper_fill_ask_above_last(artifacts: &Path) -> ScenarioResult {
         &format!("{} / {}", first.0, second.0),
     );
 
-    let asks = [(d("10000"), d("0.002"))];
+    let asks = [(d("10100"), d("0.002"))];
     let walk = match demo_levels::limit_buy_from_asks(&asks, qty, d("0.1"), d("150")) {
         Ok(px) => px,
         Err(e) => {

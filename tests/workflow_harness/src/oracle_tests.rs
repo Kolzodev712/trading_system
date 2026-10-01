@@ -1,7 +1,8 @@
 //! Oracle unit tests (no processes).
 
 use crate::demo_levels::{
-    cleanup_verification, levels_disabled_proof, next_cleanup_request_id, rest_order_matches_owned,
+    cleanup_verification, expanded_instance_id, levels_disabled_proof, next_cleanup_request_id,
+    owned_order_from_open_or_history, resolve_paused_instance_id, rest_order_matches_owned,
     OwnedOrderSpec,
 };
 use crate::oracle::assert_spot_agreement;
@@ -166,21 +167,123 @@ fn cleanup_requires_rest_and_runner() {
 
 #[test]
 fn failed_or_empty_get_levels_is_not_all_disabled() {
-    assert_eq!(levels_disabled_proof(false, &[]), None);
-    assert_eq!(levels_disabled_proof(true, &[]), None);
+    let instance = expanded_instance_id("wf_demo_buy", "BTCUSDT");
+    assert_eq!(levels_disabled_proof(false, &[], &instance), None);
+    assert_eq!(levels_disabled_proof(true, &[], &instance), None);
     assert_eq!(
-        levels_disabled_proof(false, &[("wf_demo_buy".into(), false, "ok".into())]),
+        levels_disabled_proof(
+            false,
+            &[("wf_demo_buy_BTCUSDT".into(), false, "ok".into())],
+            &instance
+        ),
         None
     );
     assert_eq!(
-        levels_disabled_proof(true, &[("wf_demo_buy".into(), false, "ok".into())]),
+        levels_disabled_proof(
+            true,
+            &[("wf_demo_buy".into(), false, "ok".into())],
+            &instance
+        ),
+        None
+    );
+    assert_eq!(
+        levels_disabled_proof(
+            true,
+            &[("wf_demo_buy_BTCUSDT".into(), false, "ok".into())],
+            &instance
+        ),
         Some(true)
     );
     assert_eq!(
-        levels_disabled_proof(true, &[("wf_demo_buy".into(), true, "ok".into())]),
+        levels_disabled_proof(
+            true,
+            &[("wf_demo_buy_BTCUSDT".into(), true, "ok".into())],
+            &instance
+        ),
         Some(false)
     );
     assert!(cleanup_verification(Ok(vec![]), Ok(vec![]), Some(true), None).is_err());
+}
+
+#[test]
+fn paused_instance_id_is_expanded_not_template() {
+    let levels = vec![("wf_demo_buy_BTCUSDT".into(), false, "Ready".into())];
+    assert_eq!(
+        resolve_paused_instance_id(true, &levels, "wf_demo_buy", "BTCUSDT").as_deref(),
+        Ok("wf_demo_buy_BTCUSDT")
+    );
+    assert!(resolve_paused_instance_id(
+        true,
+        &[("wf_demo_buy".into(), false, "Ready".into())],
+        "wf_demo_buy",
+        "BTCUSDT"
+    )
+    .is_err());
+    assert!(resolve_paused_instance_id(true, &[], "wf_demo_buy", "BTCUSDT").is_err());
+    assert!(resolve_paused_instance_id(
+        true,
+        &[("wf_demo_buy_BTCUSDT".into(), true, "Ready".into())],
+        "wf_demo_buy",
+        "BTCUSDT"
+    )
+    .is_err());
+}
+
+#[test]
+fn journal_watermark_before_enable_keeps_id_prepared_during_toggle() {
+    let instance = "wf_demo_buy_BTCUSDT";
+    let before_enable = "";
+    let after_toggle = r#"{"client_order_id":"cid-fast","level_id":"wf_demo_buy_BTCUSDT","state":"submitted"}
+"#;
+    let watermark = crate::oracle::latest_level_client_order_id(before_enable, instance);
+    let mistaken = crate::oracle::latest_level_client_order_id(after_toggle, instance);
+    assert_eq!(mistaken.as_deref(), Some("cid-fast"));
+    assert_eq!(
+        crate::oracle::journaled_client_id_after(after_toggle, instance, mistaken.as_deref()),
+        None
+    );
+    assert_eq!(
+        crate::oracle::journaled_client_id_after(after_toggle, instance, watermark.as_deref())
+            .as_deref(),
+        Some("cid-fast")
+    );
+}
+
+#[test]
+fn immediate_fill_is_accepted_from_history() {
+    let spec = OwnedOrderSpec {
+        client_order_id: "cid-fill".into(),
+        instrument: "BTCUSDT".into(),
+        side: "Buy".into(),
+        qty: Decimal::from_str_exact("0.001").unwrap(),
+        price: Decimal::from_str_exact("120000").unwrap(),
+    };
+    let filled = RestOrder {
+        order_id: "ex-fill".into(),
+        client_order_id: "cid-fill".into(),
+        instrument: "BTCUSDT".into(),
+        price: spec.price,
+        amount: spec.qty,
+        filled: spec.qty,
+        status: "Filled".into(),
+        side: "Buy".into(),
+    };
+    assert!(owned_order_from_open_or_history(&[], None, &spec).is_none());
+    assert_eq!(
+        owned_order_from_open_or_history(&[], Some(&filled), &spec)
+            .unwrap()
+            .order_id,
+        "ex-fill"
+    );
+    assert!(owned_order_from_open_or_history(
+        &[],
+        Some(&RestOrder {
+            client_order_id: "other".into(),
+            ..filled.clone()
+        }),
+        &spec
+    )
+    .is_none());
 }
 
 #[test]
@@ -223,21 +326,22 @@ fn owned_order_requires_exact_journaled_id() {
 
 #[test]
 fn second_create_does_not_reuse_first_journal_id() {
-    let first = r#"{"client_order_id":"cid-1","level_id":"wf_demo_buy","state":"submitted"}
+    let first = r#"{"client_order_id":"cid-1","level_id":"wf_demo_buy_BTCUSDT","state":"submitted"}
 "#;
     assert_eq!(
-        crate::oracle::journaled_client_id_after(first, "wf_demo_buy", None).as_deref(),
+        crate::oracle::journaled_client_id_after(first, "wf_demo_buy_BTCUSDT", None).as_deref(),
         Some("cid-1")
     );
     assert_eq!(
-        crate::oracle::journaled_client_id_after(first, "wf_demo_buy", Some("cid-1")),
+        crate::oracle::journaled_client_id_after(first, "wf_demo_buy_BTCUSDT", Some("cid-1")),
         None
     );
-    let second = r#"{"client_order_id":"cid-1","level_id":"wf_demo_buy","state":"submitted"}
-{"client_order_id":"cid-2","level_id":"wf_demo_buy","state":"submitted"}
+    let second = r#"{"client_order_id":"cid-1","level_id":"wf_demo_buy_BTCUSDT","state":"submitted"}
+{"client_order_id":"cid-2","level_id":"wf_demo_buy_BTCUSDT","state":"submitted"}
 "#;
     assert_eq!(
-        crate::oracle::journaled_client_id_after(second, "wf_demo_buy", Some("cid-1")).as_deref(),
+        crate::oracle::journaled_client_id_after(second, "wf_demo_buy_BTCUSDT", Some("cid-1"))
+            .as_deref(),
         Some("cid-2")
     );
 }
@@ -255,12 +359,12 @@ fn cleanup_retry_ids_are_new_operations() {
 
 #[test]
 fn latest_level_client_order_id_uses_last_row() {
-    let jsonl = r#"{"client_order_id":"old","level_id":"wf_demo_buy","state":"submitted"}
-{"client_order_id":"new","level_id":"wf_demo_buy","state":"acknowledged"}
+    let jsonl = r#"{"client_order_id":"old","level_id":"wf_demo_buy_BTCUSDT","state":"submitted"}
+{"client_order_id":"new","level_id":"wf_demo_buy_BTCUSDT","state":"acknowledged"}
 {"client_order_id":"other","level_id":"other_level","state":"submitted"}
 "#;
     assert_eq!(
-        crate::oracle::latest_level_client_order_id(jsonl, "wf_demo_buy").as_deref(),
+        crate::oracle::latest_level_client_order_id(jsonl, "wf_demo_buy_BTCUSDT").as_deref(),
         Some("new")
     );
 }

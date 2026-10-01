@@ -11,8 +11,9 @@ use std::time::{Duration, Instant};
 use crate::demo::{write_demo_truth, DemoAdapter, SecretBotFile};
 use crate::grpc::GrpcCtl;
 use crate::oracle::{
-    journal_has_state, journaled_client_id_after, latest_level_client_order_id, qty_canon,
-    qty_close, rest_btc_position, runner_btc_qty, unique_ledger_qty, working_ids,
+    distinct_level_client_order_ids, journal_has_state, journaled_client_id_after,
+    latest_level_client_order_id, qty_canon, qty_close, rest_btc_position, runner_btc_qty,
+    unique_ledger_qty, working_ids,
 };
 use crate::process::{
     allocate_port, cargo_build, debug_bin, require_mongo, wait_health_cex_ready, workspace_root,
@@ -160,6 +161,84 @@ fn align_tick(price: Decimal, tick: Decimal) -> Decimal {
         return price;
     }
     (price / tick).trunc() * tick
+}
+
+/// Buy limits round up so a tick-aligned price is never below the walked ask.
+pub fn align_tick_up(price: Decimal, tick: Decimal) -> Decimal {
+    if tick <= Decimal::ZERO {
+        return price;
+    }
+    (price / tick).ceil() * tick
+}
+
+/// Bybit linear orderbook `result.a` rows are `[price, size]`.
+pub fn parse_asks(result: &Value) -> Result<Vec<(Decimal, Decimal)>, String> {
+    let Some(rows) = result.get("a").and_then(|x| x.as_array()) else {
+        return Err("orderbook missing asks".into());
+    };
+    let mut out = Vec::new();
+    for row in rows {
+        let Some(arr) = row.as_array() else {
+            return Err("ask row is not [price, size]".into());
+        };
+        let px = arr
+            .first()
+            .and_then(json_dec)
+            .ok_or_else(|| "ask price missing".to_string())?;
+        let sz = arr
+            .get(1)
+            .and_then(json_dec)
+            .ok_or_else(|| "ask size missing".to_string())?;
+        if px > Decimal::ZERO && sz > Decimal::ZERO {
+            out.push((px, sz));
+        }
+    }
+    if out.is_empty() {
+        return Err("orderbook has no positive asks".into());
+    }
+    Ok(out)
+}
+
+/// Walk displayed asks until cumulative size covers `qty`, then tick-align up.
+/// Fails closed on insufficient depth or `qty × limit > max_notional`.
+pub fn limit_buy_from_asks(
+    asks: &[(Decimal, Decimal)],
+    qty: Decimal,
+    tick: Decimal,
+    max_notional: Decimal,
+) -> Result<Decimal, String> {
+    if qty <= Decimal::ZERO {
+        return Err("qty must be positive".into());
+    }
+    let mut remaining = qty;
+    let mut walk_px = Decimal::ZERO;
+    for (px, sz) in asks {
+        if *px <= Decimal::ZERO || *sz <= Decimal::ZERO {
+            continue;
+        }
+        walk_px = *px;
+        remaining -= *sz;
+        if remaining <= Decimal::ZERO {
+            break;
+        }
+    }
+    if remaining > Decimal::ZERO || walk_px <= Decimal::ZERO {
+        return Err(format!("displayed ask depth < {qty}"));
+    }
+    let aligned = align_tick_up(walk_px, tick);
+    let notional = qty * aligned;
+    if notional > max_notional {
+        return Err(format!(
+            "qty×limit {notional} exceeds max {max_notional} (qty={qty} limit={aligned})"
+        ));
+    }
+    Ok(aligned)
+}
+
+fn json_dec(v: &Value) -> Option<Decimal> {
+    v.as_str()
+        .and_then(|s| Decimal::from_str_exact(s).ok())
+        .or_else(|| v.as_f64().and_then(|f| Decimal::try_from(f).ok()))
 }
 
 fn d(s: &str) -> Decimal {
@@ -366,7 +445,6 @@ async fn run_inner(
     }
 
     let rest_price = align_tick(last * d("0.5"), rules.tick);
-    let fill_price = align_tick(last + rules.tick * Decimal::from(5), rules.tick);
     if rest_price * qty < rules.min_notional {
         r.fail(
             "rest_price_min_notional",
@@ -416,7 +494,7 @@ async fn run_inner(
             &instance_id,
             qty,
             rest_price,
-            fill_price,
+            &rules,
             entry_deadline,
         )
         .await
@@ -526,7 +604,7 @@ async fn run_after_start(
     instance_id: &str,
     qty: Decimal,
     rest_price: Decimal,
-    fill_price: Decimal,
+    rules: &InstrumentRules,
     entry_deadline: Instant,
 ) -> Result<Decimal> {
     let snap = grpc.snapshot().await?;
@@ -577,7 +655,7 @@ async fn run_after_start(
             adapter,
             grpc,
             qty,
-            fill_price,
+            rules,
             entry_deadline,
             stack,
             instance_id,
@@ -642,11 +720,20 @@ async fn attempt_fill(
     adapter: &DemoAdapter,
     grpc: &mut GrpcCtl,
     qty: Decimal,
-    fill_price: Decimal,
+    rules: &InstrumentRules,
     entry_deadline: Instant,
     stack: &DemoLevelsRunner,
     instance_id: &str,
 ) -> Result<()> {
+    let fill_price = match price_from_fresh_asks(adapter, qty, rules).await {
+        Ok(px) => px,
+        Err(e) => {
+            r.note(format!(
+                "create 2 skipped; ask-depth price unavailable: {e}"
+            ));
+            return Ok(());
+        }
+    };
     grpc.update_level_price(instance_id, &fill_price.normalize().to_string())
         .await?;
     let snap = grpc.snapshot().await?;
@@ -663,27 +750,62 @@ async fn attempt_fill(
     let watermark = latest_level_client_order_id(&stack.journal_text(), instance_id);
     grpc.toggle_level(instance_id, true).await?;
     r.note(format!(
-        "create 2/2 fill attempt qty={qty} price={fill_price}"
+        "create 2/2 from fresh ask depth qty={qty} price={fill_price}"
     ));
     let client_order_id =
         wait_journaled_client_id(stack, instance_id, entry_deadline, watermark.as_deref()).await?;
-    let spec = OwnedOrderSpec {
+    let mut spec = OwnedOrderSpec {
         client_order_id,
         instrument: INSTRUMENT.into(),
         side: SIDE.into(),
         qty,
         price: fill_price,
     };
-    let order = wait_owned_order(adapter, &spec, entry_deadline).await?;
+    let mut order = wait_owned_order(adapter, &spec, entry_deadline).await?;
     r.note(format!(
-        "fill-leg owned client_id={} order={} status={}",
-        order.client_order_id, order.order_id, order.status
+        "fill-leg owned client_id={} order={} status={} price={}",
+        order.client_order_id, order.order_id, order.status, order.price
     ));
     if order.status == "Filled" || order.status == "PartiallyFilled" {
         r.note(format!(
             "exact-id {} confirmed via open or history as {}",
             order.client_order_id, order.status
         ));
+    } else if order.status == "New" && Instant::now() < entry_deadline {
+        let ids_before = distinct_level_client_order_ids(&stack.journal_text(), instance_id);
+        match price_from_fresh_asks(adapter, qty, rules).await {
+            Ok(amended) if !qty_close(amended, spec.price) => {
+                grpc.update_level_price(instance_id, &amended.normalize().to_string())
+                    .await?;
+                spec.price = amended;
+                r.note(format!(
+                    "one price amend of owned order {} to {amended}",
+                    order.order_id
+                ));
+                let after = wait_owned_order(adapter, &spec, entry_deadline).await?;
+                r.assert_eq(
+                    "amend_keeps_client_id",
+                    &order.client_order_id,
+                    &after.client_order_id,
+                );
+                r.assert_eq("amend_keeps_exchange_id", &order.order_id, &after.order_id);
+                r.assert_eq(
+                    "amend_keeps_latest_journal_id",
+                    &spec.client_order_id,
+                    &latest_level_client_order_id(&stack.journal_text(), instance_id)
+                        .unwrap_or_default(),
+                );
+                let ids_after = distinct_level_client_order_ids(&stack.journal_text(), instance_id);
+                r.assert_eq(
+                    "no_third_journal_id",
+                    &ids_before.len().to_string(),
+                    &ids_after.len().to_string(),
+                );
+                order = after;
+            }
+            Ok(_) => r.note("refreshed ask matches create-2 price; no amend"),
+            Err(e) => r.note(format!("amend skipped; refreshed ask unavailable: {e}")),
+        }
     }
     let deadline = entry_deadline.min(Instant::now() + Duration::from_secs(45));
     while Instant::now() < deadline {
@@ -706,6 +828,26 @@ async fn attempt_fill(
     }
     grpc.toggle_level(instance_id, false).await?;
     Ok(())
+}
+
+async fn price_from_fresh_asks(
+    adapter: &DemoAdapter,
+    qty: Decimal,
+    rules: &InstrumentRules,
+) -> Result<Decimal, String> {
+    let v = adapter
+        .public_get(
+            "/v5/market/orderbook",
+            &[
+                ("category", "linear"),
+                ("symbol", "BTCUSDT"),
+                ("limit", "50"),
+            ],
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+    let asks = parse_asks(&v)?;
+    limit_buy_from_asks(&asks, qty, rules.tick, d(MAX_NOTIONAL))
 }
 
 async fn protective_cleanup(

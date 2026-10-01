@@ -1,9 +1,9 @@
 //! Oracle unit tests (no processes).
 
 use crate::demo_levels::{
-    cleanup_verification, expanded_instance_id, levels_disabled_proof, next_cleanup_request_id,
-    owned_order_from_open_or_history, resolve_paused_instance_id, rest_order_matches_owned,
-    OwnedOrderSpec,
+    align_tick_up, cleanup_verification, expanded_instance_id, levels_disabled_proof,
+    limit_buy_from_asks, next_cleanup_request_id, owned_order_from_open_or_history, parse_asks,
+    resolve_paused_instance_id, rest_order_matches_owned, OwnedOrderSpec,
 };
 use crate::oracle::assert_spot_agreement;
 use crate::types::{ScenarioResult, Verdict};
@@ -375,4 +375,106 @@ fn matching_qty_passes() {
     let q = Decimal::from_str_exact("0.001").unwrap();
     assert_spot_agreement(&mut r, "ok", q, q, q, Some(q), Some(q), "");
     assert_eq!(r.verdict, Verdict::Pass);
+}
+
+#[test]
+fn walk_asks_uses_level_that_covers_qty() {
+    let qty = Decimal::from_str_exact("0.001").unwrap();
+    let tick = Decimal::from_str_exact("0.1").unwrap();
+    let max = Decimal::from_str_exact("150").unwrap();
+    let asks = [
+        (
+            Decimal::from_str_exact("83838.40").unwrap(),
+            Decimal::from_str_exact("0.0004").unwrap(),
+        ),
+        (
+            Decimal::from_str_exact("83850.00").unwrap(),
+            Decimal::from_str_exact("0.002").unwrap(),
+        ),
+    ];
+    let px = limit_buy_from_asks(&asks, qty, tick, max).unwrap();
+    assert_eq!(px, Decimal::from_str_exact("83850.00").unwrap());
+}
+
+#[test]
+fn walk_asks_ceils_to_tick() {
+    let qty = Decimal::from_str_exact("0.001").unwrap();
+    let tick = Decimal::from_str_exact("0.1").unwrap();
+    let max = Decimal::from_str_exact("150").unwrap();
+    let asks = [(
+        Decimal::from_str_exact("83838.41").unwrap(),
+        Decimal::from_str_exact("0.01").unwrap(),
+    )];
+    let px = limit_buy_from_asks(&asks, qty, tick, max).unwrap();
+    assert_eq!(px, Decimal::from_str_exact("83838.50").unwrap());
+    assert_eq!(
+        align_tick_up(Decimal::from_str_exact("83838.41").unwrap(), tick),
+        px
+    );
+}
+
+#[test]
+fn walk_asks_rejects_notional_over_cap() {
+    let qty = Decimal::from_str_exact("0.001").unwrap();
+    let tick = Decimal::from_str_exact("0.1").unwrap();
+    let max = Decimal::from_str_exact("150").unwrap();
+    let asks = [(
+        Decimal::from_str_exact("200000").unwrap(),
+        Decimal::from_str_exact("0.01").unwrap(),
+    )];
+    let err = limit_buy_from_asks(&asks, qty, tick, max).unwrap_err();
+    assert!(err.contains("exceeds max"));
+}
+
+#[test]
+fn walk_asks_rejects_insufficient_depth() {
+    let qty = Decimal::from_str_exact("0.001").unwrap();
+    let tick = Decimal::from_str_exact("0.1").unwrap();
+    let max = Decimal::from_str_exact("150").unwrap();
+    let asks = [(
+        Decimal::from_str_exact("83850").unwrap(),
+        Decimal::from_str_exact("0.0004").unwrap(),
+    )];
+    let err = limit_buy_from_asks(&asks, qty, tick, max).unwrap_err();
+    assert!(err.contains("ask depth"));
+}
+
+#[test]
+fn last_plus_five_ticks_can_sit_below_live_ask() {
+    let last = Decimal::from_str_exact("83838.40").unwrap();
+    let tick = Decimal::from_str_exact("0.10").unwrap();
+    let stale = last + tick * Decimal::from(5);
+    let qty = Decimal::from_str_exact("0.001").unwrap();
+    let walk = limit_buy_from_asks(
+        &[(
+            Decimal::from_str_exact("83850.00").unwrap(),
+            Decimal::from_str_exact("0.02").unwrap(),
+        )],
+        qty,
+        tick,
+        Decimal::from_str_exact("150").unwrap(),
+    )
+    .unwrap();
+    assert!(walk > last);
+    assert!(walk > stale);
+}
+
+#[test]
+fn parse_asks_reads_bybit_rows() {
+    let body = serde_json::json!({
+        "a": [["83840.1", "0.02"], ["83841.0", "0.01"]]
+    });
+    let asks = parse_asks(&body).unwrap();
+    assert_eq!(asks.len(), 2);
+    assert_eq!(asks[0].0, Decimal::from_str_exact("83840.1").unwrap());
+}
+
+#[test]
+fn amend_does_not_add_a_third_journal_id() {
+    let jsonl = r#"{"client_order_id":"cid-1","level_id":"wf_demo_buy_BTCUSDT","state":"submitted"}
+{"client_order_id":"cid-2","level_id":"wf_demo_buy_BTCUSDT","state":"submitted"}
+{"client_order_id":"cid-2","level_id":"wf_demo_buy_BTCUSDT","state":"acknowledged"}
+"#;
+    let ids = crate::oracle::distinct_level_client_order_ids(jsonl, "wf_demo_buy_BTCUSDT");
+    assert_eq!(ids, vec!["cid-1".to_string(), "cid-2".to_string()]);
 }

@@ -629,10 +629,9 @@ async fn place_and_cancel(
         None,
     )?;
     grpc.toggle_level(instance_id, false).await?;
-    let cancel_msg = grpc.cancel_working("wf-demo-cancel-rest").await?;
-    r.note(format!("cancel owned {cancel_msg}"));
+    r.note("disable first level; CancelWorking is reserved for protective cleanup");
     if !wait_order_gone(adapter, &order.order_id, Duration::from_secs(30)).await {
-        bail!("REST still lists canceled order {}", order.order_id);
+        bail!("REST still lists disabled order {}", order.order_id);
     }
     r.assert_eq("rest_cancel_removed", "true", "true");
     Ok(())
@@ -650,6 +649,17 @@ async fn attempt_fill(
 ) -> Result<()> {
     grpc.update_level_price(instance_id, &fill_price.normalize().to_string())
         .await?;
+    let snap = grpc.snapshot().await?;
+    r.assert_eq(
+        "entries_paused_before_second_create",
+        "false",
+        snap.entries_paused.to_string(),
+    );
+    if snap.entries_paused {
+        return Err(anyhow::anyhow!(
+            "entries still paused before second create; CancelWorking must not run between attempts"
+        ));
+    }
     let watermark = latest_level_client_order_id(&stack.journal_text(), instance_id);
     grpc.toggle_level(instance_id, true).await?;
     r.note(format!(
@@ -695,7 +705,6 @@ async fn attempt_fill(
         tokio::time::sleep(Duration::from_millis(400)).await;
     }
     grpc.toggle_level(instance_id, false).await?;
-    let _ = grpc.cancel_working("wf-demo-cancel-unfilled").await;
     Ok(())
 }
 

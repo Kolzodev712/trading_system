@@ -39,15 +39,11 @@ impl HttpVenueReader {
     }
 
     pub async fn snapshot(&self, instrument: &str, instrument_type: &str) -> VenueSnapshot {
-        let observed = chrono::Utc::now().to_rfc3339();
         match self.cfg.kind.to_ascii_lowercase().as_str() {
-            "paper" => self.paper_snapshot(observed, instrument_type).await,
-            "bybit_demo" => {
-                self.bybit_snapshot(observed, instrument, instrument_type)
-                    .await
-            }
+            "paper" => self.paper_snapshot(instrument_type).await,
+            "bybit_demo" => self.bybit_snapshot(instrument, instrument_type).await,
             other => VenueSnapshot {
-                observed_at_utc: observed,
+                observed_at_utc: chrono::Utc::now().to_rfc3339(),
                 http_methods: vec![],
                 orders: Err(format!("unsupported venue kind {other}")),
                 balances: Err(format!("unsupported venue kind {other}")),
@@ -57,7 +53,7 @@ impl HttpVenueReader {
         }
     }
 
-    async fn paper_snapshot(&self, observed: String, instrument_type: &str) -> VenueSnapshot {
+    async fn paper_snapshot(&self, instrument_type: &str) -> VenueSnapshot {
         let mut methods = Vec::new();
         let orders = self.paper_get_orders(&mut methods).await;
         let balances = self.paper_get_balances(&mut methods).await;
@@ -78,7 +74,7 @@ impl HttpVenueReader {
             (self.paper_get_positions(&mut methods).await, true)
         };
         VenueSnapshot {
-            observed_at_utc: observed,
+            observed_at_utc: chrono::Utc::now().to_rfc3339(),
             http_methods: methods,
             orders,
             balances,
@@ -132,12 +128,7 @@ impl HttpVenueReader {
         Ok(out)
     }
 
-    async fn bybit_snapshot(
-        &self,
-        observed: String,
-        instrument: &str,
-        instrument_type: &str,
-    ) -> VenueSnapshot {
+    async fn bybit_snapshot(&self, instrument: &str, instrument_type: &str) -> VenueSnapshot {
         let mut methods = Vec::new();
         let category = self.cfg.category.clone().unwrap_or_else(|| {
             if instrument_type.eq_ignore_ascii_case("spot") {
@@ -165,7 +156,7 @@ impl HttpVenueReader {
                 )
             };
         VenueSnapshot {
-            observed_at_utc: observed,
+            observed_at_utc: chrono::Utc::now().to_rfc3339(),
             http_methods: methods,
             orders,
             balances,

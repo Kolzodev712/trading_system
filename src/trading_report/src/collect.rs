@@ -16,8 +16,6 @@ pub struct CollectOutputs {
 }
 
 pub async fn collect_report(cfg: &ReportConfig) -> Result<CollectOutputs> {
-    let generated_at_utc = chrono::Utc::now().to_rfc3339();
-    let now_ms = chrono::Utc::now().timestamp_millis();
     let mandate = cfg.mandate_view();
     let mut subjects = Vec::new();
     for runner_cfg in &cfg.runners {
@@ -29,12 +27,13 @@ pub async fn collect_report(cfg: &ReportConfig) -> Result<CollectOutputs> {
             anyhow::bail!("{}: venue adapter used a non-GET method", runner_cfg.label);
         }
         let journal = load_latest_journal(&runner_cfg.journal_path).map_err(|e| e.to_string());
+        let completed_at = chrono::Utc::now();
         subjects.push(subject_report(
             runner_cfg,
             &cfg.freshness,
             mandate.clone(),
-            &generated_at_utc,
-            now_ms,
+            &completed_at.to_rfc3339(),
+            completed_at.timestamp_millis(),
             &runner,
             &venue,
             journal,
@@ -45,6 +44,7 @@ pub async fn collect_report(cfg: &ReportConfig) -> Result<CollectOutputs> {
         .map(|s| s.verdict)
         .fold(Verdict::Verified, Verdict::worse);
     let reasons = subjects.iter().flat_map(|s| s.reasons.clone()).collect();
+    let generated_at_utc = chrono::Utc::now().to_rfc3339();
     let report = TradingReport {
         schema_version: SCHEMA_VERSION.to_string(),
         generated_at_utc: generated_at_utc.clone(),

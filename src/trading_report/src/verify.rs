@@ -7,8 +7,8 @@ use crate::model::{
     Reason, SourceTime, SubjectReport, TrustSection, Verdict,
 };
 use crate::runner_source::{
-    age_ms, completed_candle, epoch_ms_to_utc, proto_balances, proto_orders, proto_positions,
-    proto_strategies, RunnerSnapshot,
+    age_ms, completed_candle, epoch_ms_to_utc, proto_orders, proto_positions, proto_strategies,
+    RunnerSnapshot,
 };
 use crate::venue_source::{
     instrument_base, matches_instrument, normalize_symbol, qty_close, VenueSnapshot,
@@ -50,6 +50,12 @@ pub fn subject_report(
 
     let status = runner.status.as_ref();
     let monitoring = runner.monitoring.as_ref();
+    if let Err(err) = status {
+        reasons.push(Reason::new(
+            "STATUS_MISSING",
+            format!("GetTradingStatus failed: {err}"),
+        ));
+    }
 
     let venue_avail = match status {
         Ok(s) if !s.venue.is_empty() => Availability::ok(s.venue.clone()),
@@ -75,7 +81,13 @@ pub fn subject_report(
     };
     let mode_avail = match status {
         Ok(s) if !s.execution_mode.is_empty() => Availability::ok(s.execution_mode.clone()),
-        Ok(_) => Availability::missing("empty execution_mode"),
+        Ok(_) => {
+            reasons.push(Reason::new(
+                "IDENTITY_DEFAULT",
+                "GetTradingStatus execution_mode is empty",
+            ));
+            Availability::missing("empty execution_mode")
+        }
         Err(e) => Availability::missing(e.clone()),
     };
 
@@ -100,7 +112,13 @@ pub fn subject_report(
 
     let runner_mode = match monitoring {
         Ok(d) if !d.runner_mode.is_empty() => Availability::ok(d.runner_mode.clone()),
-        Ok(_) => Availability::missing("empty runner_mode"),
+        Ok(_) => {
+            reasons.push(Reason::new(
+                "IDENTITY_DEFAULT",
+                "GetMonitoringData runner_mode is empty",
+            ));
+            Availability::missing("empty runner_mode")
+        }
         Err(e) => Availability::missing(e.clone()),
     };
     if let Some(mode) = runner_mode.value.as_ref() {
@@ -140,7 +158,7 @@ pub fn subject_report(
     };
 
     let market = market_section(cfg, freshness, now_ms, monitoring, &mut reasons);
-    let exposure = exposure_section(cfg, freshness, monitoring, venue, &mut reasons);
+    let exposure = exposure_section(cfg, freshness, monitoring, runner, venue, &mut reasons);
     let intent = intent_section(cfg, mandate, status, monitoring, runner, &mut reasons);
 
     let journal_rows = match &journal {
@@ -302,6 +320,7 @@ fn exposure_section(
     cfg: &RunnerConfig,
     freshness: &FreshnessConfig,
     monitoring: Result<&crate::runner_source::proto::MonitoringData, &String>,
+    runner: &RunnerSnapshot,
     venue: &VenueSnapshot,
     reasons: &mut Vec<Reason>,
 ) -> ExposureSection {
@@ -323,10 +342,6 @@ fn exposure_section(
     let runner_positions = match monitoring {
         Ok(d) => Availability::ok(scoped_positions(&proto_positions(d), &cfg.instrument)),
         Err(e) => Availability::missing((*e).clone()),
-    };
-    let runner_balances = match monitoring {
-        Ok(d) => proto_balances(d),
-        Err(_) => Vec::new(),
     };
     let venue_orders = match &venue.orders {
         Ok(v) => Availability::ok(scoped_orders(v, &cfg.instrument)),
@@ -369,22 +384,18 @@ fn exposure_section(
         }
     }
     if cfg.instrument_type.eq_ignore_ascii_case("spot") {
-        if let (Some(bals), Ok(_)) = (&venue_balances.value, monitoring) {
+        if let (Some(bals), Ok(risk)) = (&venue_balances.value, &runner.risk) {
             let base = instrument_base(&cfg.instrument);
             let venue_qty = bals
                 .iter()
                 .find(|b| b.asset.eq_ignore_ascii_case(base))
                 .map(|b| b.total.as_str())
                 .unwrap_or("0");
-            let runner_qty = runner_inventory_qty(
-                runner_positions.value.as_deref().unwrap_or(&[]),
-                &runner_balances,
-                &cfg.instrument,
-            );
-            match compare_qty(venue_qty, &runner_qty, tol) {
+            let state_qty = trading_state_qty(risk, runner_positions.value.as_deref().unwrap_or(&[]));
+            match compare_qty(venue_qty, &state_qty, tol) {
                 Ok(false) => {
                     differences.push(format!(
-                        "spot base inventory differs: venue {base}={venue_qty} runner {runner_qty}"
+                        "spot base inventory differs: venue {base}={venue_qty} trading_state {state_qty}"
                     ));
                 }
                 Ok(true) => {}
@@ -489,22 +500,16 @@ fn scoped_positions(
         .collect()
 }
 
-fn runner_inventory_qty(
+fn trading_state_qty(
+    risk: &crate::model::RiskView,
     positions: &[crate::model::PositionView],
-    balances: &[crate::model::BalanceView],
-    instrument: &str,
 ) -> String {
-    if let Some(pos) = positions
-        .iter()
-        .find(|p| matches_instrument(&p.symbol, instrument))
-    {
-        return pos.quantity.clone();
+    if !risk.position_qty.trim().is_empty() {
+        return risk.position_qty.clone();
     }
-    let base = instrument_base(instrument);
-    balances
-        .iter()
-        .find(|b| b.asset.eq_ignore_ascii_case(base))
-        .map(|b| b.total.clone())
+    positions
+        .first()
+        .map(|p| p.quantity.clone())
         .unwrap_or_else(|| "0".into())
 }
 
@@ -568,6 +573,7 @@ pub fn decide_verdict(reasons: &[Reason]) -> Verdict {
                 | "BOOK_UNAVAILABLE"
                 | "IDENTITY_MISMATCH"
                 | "IDENTITY_DEFAULT"
+                | "STATUS_MISSING"
                 | "JOURNAL_UNAVAILABLE"
                 | "JOURNAL_MALFORMED"
                 | "JOURNAL_UNRESOLVED"
@@ -621,6 +627,77 @@ mod tests {
     fn default_fields_are_not_verified() {
         let reasons = vec![Reason::new("IDENTITY_DEFAULT", "empty venue")];
         assert_eq!(decide_verdict(&reasons), Verdict::Unverified);
+    }
+
+    #[test]
+    fn missing_trading_status_is_unverified() {
+        let reasons = vec![Reason::new("STATUS_MISSING", "GetTradingStatus failed")];
+        assert_eq!(decide_verdict(&reasons), Verdict::Unverified);
+        let report = fixture_subject(FixtureOverrides {
+            status_err: Some("status rpc down".into()),
+            ..FixtureOverrides::default()
+        });
+        assert_eq!(report.verdict, Verdict::Unverified);
+        assert!(!report.actionable_for_analysis);
+        assert!(report.reasons.iter().any(|r| r.code == "STATUS_MISSING"));
+        assert!(!report.identity.venue.available);
+        assert!(!report.identity.environment.available);
+        assert!(!report.identity.execution_mode.available);
+    }
+
+    #[test]
+    fn spot_exchange_cache_does_not_hide_flat_trading_state() {
+        let report = fixture_subject(FixtureOverrides {
+            venue_balances: Some(Ok(vec![crate::model::BalanceView {
+                asset: "BTC".into(),
+                total: "0.010".into(),
+                free: None,
+            }])),
+            runner_balances: vec![crate::model::BalanceView {
+                asset: "BTC".into(),
+                total: "0.010".into(),
+                free: None,
+            }],
+            runner_positions: vec![],
+            risk_position_qty: "0".into(),
+            ..FixtureOverrides::default()
+        });
+        assert_eq!(report.verdict, Verdict::Disagreement);
+        assert!(report
+            .reasons
+            .iter()
+            .any(|r| r.code == "EXPOSURE_DISAGREEMENT"));
+        assert!(report.exposure.differences.iter().any(|d| {
+            d.contains("trading_state 0") && d.contains("venue BTC=0.010")
+        }));
+    }
+
+    #[test]
+    fn delayed_collection_evaluates_source_age_at_completion() {
+        let observed_ms = 1_700_000_000_000;
+        let completed_ms = observed_ms + 20_000;
+        let observed = chrono::Utc
+            .timestamp_millis_opt(observed_ms)
+            .single()
+            .unwrap()
+            .to_rfc3339();
+        let report = fixture_subject(FixtureOverrides {
+            venue_observed_at: observed,
+            now_ms: completed_ms,
+            max_source_age_ms: 5_000,
+            book_timestamp_ms: completed_ms,
+            ..FixtureOverrides::default()
+        });
+        assert_eq!(report.verdict, Verdict::Stale);
+        assert!(report.reasons.iter().any(|r| r.code == "SOURCE_STALE"));
+        let venue = report
+            .trust
+            .sources
+            .iter()
+            .find(|s| s.source == "venue_rest")
+            .expect("venue source");
+        assert_eq!(venue.age_ms, Some(20_000));
+        assert_ne!(venue.age_ms, Some(0));
     }
 
     #[test]
@@ -764,10 +841,14 @@ mod tests {
         venue_balances: Option<Result<Vec<crate::model::BalanceView>, String>>,
         runner_orders: Vec<crate::model::OrderView>,
         runner_positions: Vec<crate::model::PositionView>,
+        runner_balances: Vec<crate::model::BalanceView>,
         risk_instrument: String,
+        risk_position_qty: String,
+        status_err: Option<String>,
         venue_observed_at: String,
         now_ms: i64,
         max_source_age_ms: i64,
+        book_timestamp_ms: i64,
     }
 
     fn fixture_subject(over: FixtureOverrides) -> crate::model::SubjectReport {
@@ -820,15 +901,20 @@ mod tests {
             environment: "LOCAL".into(),
             ..Default::default()
         };
+        let book_ts = if over.book_timestamp_ms == 0 {
+            now_ms
+        } else {
+            over.book_timestamp_ms
+        };
         let mut data = proto::MonitoringData {
             runner_mode: "levels".into(),
             orderbook_source: "ok".into(),
-            snapshot_unix_ms: now_ms,
+            snapshot_unix_ms: book_ts,
             ..Default::default()
         };
         data.orderbooks.push(proto::Orderbook {
             pair: "BTC/USDT".into(),
-            timestamp: now_ms,
+            timestamp: book_ts,
             best_bid: "49999".into(),
             best_ask: "50001".into(),
             spread: "2".into(),
@@ -864,14 +950,33 @@ mod tests {
                 ..Default::default()
             })
             .collect();
+        data.balances = over
+            .runner_balances
+            .iter()
+            .map(|b| proto::Balance {
+                asset: b.asset.clone(),
+                total: b.total.clone(),
+                free: b.free.clone().unwrap_or_default(),
+                ..Default::default()
+            })
+            .collect();
         let risk_instrument = if over.risk_instrument.is_empty() {
             "BTC/USDT".into()
         } else {
             over.risk_instrument
         };
+        let risk_position_qty = if over.risk_position_qty.is_empty() {
+            "0".into()
+        } else {
+            over.risk_position_qty
+        };
+        let status = match over.status_err {
+            Some(err) => Err(err),
+            None => Ok(status),
+        };
         let runner = crate::runner_source::RunnerSnapshot {
             observed_at_utc: generated.clone(),
-            status: Ok(status),
+            status,
             monitoring: Ok(data),
             levels: Ok(Some(vec![])),
             risk: Ok(crate::model::RiskView {
@@ -880,7 +985,7 @@ mod tests {
                 max_notional: None,
                 max_order_qty: None,
                 daily_loss_limit_all_pairs: None,
-                position_qty: "0".into(),
+                position_qty: risk_position_qty,
                 working_qty: "0".into(),
                 reserved_qty: "0".into(),
                 daily_pnl: crate::model::Availability::missing("unavailable"),

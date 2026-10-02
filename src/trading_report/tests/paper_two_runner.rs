@@ -124,6 +124,28 @@ async fn two_runner_paper_and_negatives() {
         .await
         .expect("two-container collect");
     assert_eq!(two.report.subjects.len(), 2);
+    let worst = two
+        .report
+        .subjects
+        .iter()
+        .map(|s| s.verdict)
+        .fold(Verdict::Verified, Verdict::worse);
+    assert_eq!(two.report.verdict, worst);
+    assert_eq!(
+        two.report.verdict,
+        Verdict::Verified,
+        "combined Levels + Strategies overall must be verified: {:?}",
+        two.report.reasons
+    );
+    assert!(two.report.actionable_for_analysis);
+    let combined_dir = artifacts.join("combined-report");
+    trading_report::write_outputs(&combined_dir, &two).expect("write combined");
+    let combined_json: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(combined_dir.join("report.json")).unwrap())
+            .unwrap();
+    assert_eq!(combined_json["verdict"], "verified");
+    assert_eq!(combined_json["actionable_for_analysis"], true);
+    assert_eq!(combined_json["subjects"].as_array().map(|a| a.len()), Some(2));
     let strategies_subject = two
         .report
         .subjects
@@ -138,6 +160,14 @@ async fn two_runner_paper_and_negatives() {
         strategies_subject.identity.execution_mode.value.as_deref(),
         Some("shadow")
     );
+    assert_eq!(strategies_subject.verdict, Verdict::Verified);
+    let levels_subject = two
+        .report
+        .subjects
+        .iter()
+        .find(|s| s.identity.runner_label == "paper-levels")
+        .expect("levels subject");
+    assert_eq!(levels_subject.verdict, Verdict::Verified);
 
     let healthy_cfg = cfg_from(
         vec![runner_from_stack(

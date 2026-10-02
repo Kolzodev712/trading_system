@@ -53,12 +53,12 @@ pub async fn snapshot_runner(cfg: &RunnerConfig) -> RunnerSnapshot {
 
     let status = match client.get_trading_status(GetTradingStatusRequest {}).await {
         Ok(resp) => {
-            sources.push(ok_source("GetTradingStatus", &observed_at_utc));
+            sources.push(ok_source("GetTradingStatus", &now_rfc3339()));
             Ok(resp.into_inner())
         }
         Err(err) => {
             let msg = err.to_string();
-            sources.push(err_source("GetTradingStatus", &observed_at_utc, &msg));
+            sources.push(err_source("GetTradingStatus", &now_rfc3339(), &msg));
             Err(msg)
         }
     };
@@ -70,19 +70,19 @@ pub async fn snapshot_runner(cfg: &RunnerConfig) -> RunnerSnapshot {
         Ok(resp) => match resp.into_inner().data {
             Some(data) => {
                 let observed = epoch_ms_to_utc(data.snapshot_unix_ms)
-                    .unwrap_or_else(|| observed_at_utc.clone());
+                    .unwrap_or_else(now_rfc3339);
                 sources.push(ok_source("GetMonitoringData", &observed));
                 Ok(data)
             }
             None => {
                 let msg = "GetMonitoringData returned no payload".to_string();
-                sources.push(err_source("GetMonitoringData", &observed_at_utc, &msg));
+                sources.push(err_source("GetMonitoringData", &now_rfc3339(), &msg));
                 Err(msg)
             }
         },
         Err(err) => {
             let msg = err.to_string();
-            sources.push(err_source("GetMonitoringData", &observed_at_utc, &msg));
+            sources.push(err_source("GetMonitoringData", &now_rfc3339(), &msg));
             Err(msg)
         }
     };
@@ -90,7 +90,7 @@ pub async fn snapshot_runner(cfg: &RunnerConfig) -> RunnerSnapshot {
     let levels = if cfg.mode.eq_ignore_ascii_case("levels") {
         match client.get_levels(GetLevelsRequest {}).await {
             Ok(resp) => {
-                sources.push(ok_source("GetLevels", &observed_at_utc));
+                sources.push(ok_source("GetLevels", &now_rfc3339()));
                 Ok(Some(
                     resp.into_inner()
                         .levels
@@ -114,7 +114,7 @@ pub async fn snapshot_runner(cfg: &RunnerConfig) -> RunnerSnapshot {
             }
             Err(err) => {
                 let msg = format!("GetLevels failed: {err}");
-                sources.push(err_source("GetLevels", &observed_at_utc, &msg));
+                sources.push(err_source("GetLevels", &now_rfc3339(), &msg));
                 Err(msg)
             }
         }
@@ -131,9 +131,9 @@ pub async fn snapshot_runner(cfg: &RunnerConfig) -> RunnerSnapshot {
         Ok(resp) => match resp.into_inner().snapshot {
             Some(snap) if snap.available => {
                 let observed = if snap.observed_at_unix_ms > 0 {
-                    epoch_ms_to_utc(snap.observed_at_unix_ms).unwrap_or_else(|| observed_at_utc.clone())
+                    epoch_ms_to_utc(snap.observed_at_unix_ms).unwrap_or_else(now_rfc3339)
                 } else {
-                    observed_at_utc.clone()
+                    now_rfc3339()
                 };
                 sources.push(ok_source("GetRiskSnapshot", &observed));
                 Ok(RiskView {
@@ -164,18 +164,18 @@ pub async fn snapshot_runner(cfg: &RunnerConfig) -> RunnerSnapshot {
                 } else {
                     snap.unavailable_reason
                 };
-                sources.push(err_source("GetRiskSnapshot", &observed_at_utc, &msg));
+                sources.push(err_source("GetRiskSnapshot", &now_rfc3339(), &msg));
                 Err(msg)
             }
             None => {
                 let msg = "GetRiskSnapshot returned no payload".to_string();
-                sources.push(err_source("GetRiskSnapshot", &observed_at_utc, &msg));
+                sources.push(err_source("GetRiskSnapshot", &now_rfc3339(), &msg));
                 Err(msg)
             }
         },
         Err(err) => {
             let msg = err.to_string();
-            sources.push(err_source("GetRiskSnapshot", &observed_at_utc, &msg));
+            sources.push(err_source("GetRiskSnapshot", &now_rfc3339(), &msg));
             Err(msg)
         }
     };
@@ -188,6 +188,10 @@ pub async fn snapshot_runner(cfg: &RunnerConfig) -> RunnerSnapshot {
         risk,
         sources,
     }
+}
+
+fn now_rfc3339() -> String {
+    Utc::now().to_rfc3339()
 }
 
 fn empty_to_none(s: String) -> Option<String> {

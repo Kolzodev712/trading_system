@@ -1,0 +1,16 @@
+{
+  "id": "bybit_btcusdt_linear_trade_1m_shock_v1",
+  "role": "execution_minutes",
+  "venue": "bybit",
+  "environment": "mainnet",
+  "product": "linear",
+  "symbol": "BTCUSDT",
+  "interval": "1",
+  "format": "btc_liquidation_shock_v1_trade_1m",
+  "source_path": "data/btc_liquidation_shock_v1/trade-1m.json",
+  "sha256": "0369f963d6cfa4e3d3741baa42473198e5baaa09c6a5cf8ded8226193d90f77d",
+  "content_hash": "sha256:3a1941cd9facb31fed335172660c9b814521edef2c8b03bef1dc07fea2e84c4c",
+  "content_hash_kind": "research_engine_dataset_hash",
+  "count": 4998,
+  "notes": "Execution minutes required by the frozen decision files, not a full-history 1m series."
+}

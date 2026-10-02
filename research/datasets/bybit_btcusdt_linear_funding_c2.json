@@ -1,0 +1,15 @@
+{
+  "id": "bybit_btcusdt_linear_funding_c2",
+  "role": "funding",
+  "venue": "bybit",
+  "environment": "mainnet",
+  "product": "linear",
+  "symbol": "BTCUSDT",
+  "format": "donchian_daily_v1_funding",
+  "source_path": "data/btc_price_ma_long_flat_v1/aux/funding.json",
+  "sha256": "76ff5f5e08bc8487203d77646288d1beb061a290b6492ac1afc78c746437c0f1",
+  "content_hash": "sha256:a461acf4b952fe2e59e2166610707ef21cbcee0c88b92eb474f816bfa24e361f",
+  "content_hash_kind": "research_engine_dataset_hash",
+  "shared_with": "BTCPriceMALongFlatV1",
+  "notes": "Reused Candidate #2 funding series."
+}

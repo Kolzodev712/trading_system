@@ -1,0 +1,16 @@
+{
+  "id": "bybit_btcusdt_linear_mark_60_c2",
+  "role": "hourly_mark",
+  "venue": "bybit",
+  "environment": "mainnet",
+  "product": "linear",
+  "symbol": "BTCUSDT",
+  "interval": "60",
+  "format": "donchian_daily_v1_mark_60",
+  "source_path": "data/btc_price_ma_long_flat_v1/aux/mark-60.json",
+  "sha256": "0cfc51ddfab98ba1c4152498286e22472143b0219ec5c7eb0e8b8fa65d8c37b2",
+  "content_hash": "sha256:993ea03c9d15acf1b9c305e5686e4cd5c4e7b243b83d559a61d7cb96a3febccd",
+  "content_hash_kind": "research_engine_dataset_hash",
+  "shared_with": "BTCPriceMALongFlatV1",
+  "notes": "Reused Candidate #2 mark series. Still stored by file hash so restore does not need this Git tree."
+}

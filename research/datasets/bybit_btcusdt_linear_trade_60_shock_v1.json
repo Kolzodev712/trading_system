@@ -1,0 +1,21 @@
+{
+  "id": "bybit_btcusdt_linear_trade_60_shock_v1",
+  "role": "hourly_trade",
+  "venue": "bybit",
+  "environment": "mainnet",
+  "product": "linear",
+  "symbol": "BTCUSDT",
+  "interval": "60",
+  "format": "btc_liquidation_shock_v1_trade_60",
+  "source_path": "data/btc_liquidation_shock_v1/trade-60.json",
+  "sha256": "6c92c1d3d41cd90e113d9e35a6d3ed5706207cf5dc6c4e92381fc6a8ebccdf37",
+  "content_hash": "sha256:806a91c0afedee338bd2435a753e9a862e10279c9a9d12e969aabcfa839e415a",
+  "content_hash_kind": "research_engine_dataset_hash",
+  "candle_count": 25993,
+  "window": {
+    "requested_start_ms": 1673647200000,
+    "requested_end_exclusive_ms": 1767222000000,
+    "semantics": "end_exclusive"
+  },
+  "notes": "Raw file SHA-256 differs from content_hash because the engine hashes canonical candles, not the JSON wrapper."
+}

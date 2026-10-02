@@ -4,6 +4,7 @@ mod dex_quotes;
 mod dex_strategies;
 mod levels;
 mod monitoring;
+mod risk_snapshot;
 mod strategy_config;
 mod trading_control;
 
@@ -58,6 +59,7 @@ pub struct TradingCliServiceImpl {
     operator_results: Arc<Mutex<HashMap<String, trading_cli::OperatorCommandResponse>>>,
     submission_journal: Option<Arc<trading_engine::state::SubmissionJournal>>,
     restart_flag_path: Option<String>,
+    risk_manager: Option<Arc<RwLock<trading_engine::risk::RiskManager>>>,
 }
 
 impl TradingCliServiceImpl {
@@ -100,6 +102,7 @@ impl TradingCliServiceImpl {
             operator_results: Arc::new(Mutex::new(HashMap::new())),
             submission_journal: None,
             restart_flag_path: None,
+            risk_manager: None,
         }
     }
 
@@ -216,6 +219,14 @@ impl TradingCliServiceImpl {
         self
     }
 
+    pub fn with_risk_manager(
+        mut self,
+        risk_manager: Arc<RwLock<trading_engine::risk::RiskManager>>,
+    ) -> Self {
+        self.risk_manager = Some(risk_manager);
+        self
+    }
+
     fn clone_for_streaming(&self) -> Self {
         Self {
             level_manager: self.level_manager.clone(),
@@ -245,6 +256,7 @@ impl TradingCliServiceImpl {
             operator_results: self.operator_results.clone(),
             submission_journal: self.submission_journal.clone(),
             restart_flag_path: self.restart_flag_path.clone(),
+            risk_manager: self.risk_manager.clone(),
         }
     }
 
@@ -613,6 +625,52 @@ impl TradingCliService for TradingCliServiceImpl {
 
         Ok(Response::new(trading_cli::GetMonitoringDataResponse {
             data: Some(monitoring_data),
+        }))
+    }
+
+    async fn get_risk_snapshot(
+        &self,
+        _request: Request<trading_cli::GetRiskSnapshotRequest>,
+    ) -> Result<Response<trading_cli::GetRiskSnapshotResponse>, Status> {
+        let Some(risk_manager) = &self.risk_manager else {
+            return Ok(Response::new(trading_cli::GetRiskSnapshotResponse {
+                snapshot: Some(risk_snapshot::unavailable_risk_snapshot(
+                    "risk_manager_not_configured",
+                )),
+            }));
+        };
+        let limits = {
+            let guard = risk_manager.read().await;
+            guard.get_limits().clone()
+        };
+        let state = {
+            let ts = self.trading_state_manager.get_state();
+            let cloned = ts.read().await.clone();
+            cloned
+        };
+        let daily_pnl = if let Some(ledger) = self.trading_state_manager.execution_ledger() {
+            let marks = self.monitoring_service().ledger_marks().await;
+            ledger
+                .snapshot(&marks, risk_snapshot::now_unix_ms() as u64)
+                .ok()
+                .map(|snap| snap.daily_pnl)
+        } else {
+            None
+        };
+        let instrument = state
+            .positions
+            .keys()
+            .next()
+            .map(|p| format!("{}/{}", p.base, p.quote))
+            .unwrap_or_else(|| "account".to_string());
+        Ok(Response::new(trading_cli::GetRiskSnapshotResponse {
+            snapshot: Some(risk_snapshot::build_risk_snapshot(
+                &limits,
+                &state,
+                &instrument,
+                daily_pnl,
+                risk_snapshot::now_unix_ms(),
+            )),
         }))
     }
 

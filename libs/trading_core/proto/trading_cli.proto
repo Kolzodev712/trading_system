@@ -29,6 +29,7 @@ service TradingCliService {
     // Monitoring Data (Phase 2)
     rpc GetMonitoringData(GetMonitoringDataRequest) returns (GetMonitoringDataResponse);
     rpc StreamMonitoringData(StreamMonitoringDataRequest) returns (stream MonitoringDataUpdate);
+    rpc GetRiskSnapshot(GetRiskSnapshotRequest) returns (GetRiskSnapshotResponse);
 
     // Prop-trading operator commands (not aliases of SetTradingEnabled).
     rpc PauseEntries(OperatorCommandRequest) returns (OperatorCommandResponse);
@@ -299,6 +300,36 @@ message MonitoringData {
     string operator_id = 28; // TRADING_OPERATOR_ID; never a browser username
     string exposure_halt_reason = 29; // empty when new exposure is allowed
     string last_block_reason_code = 30; // stable ReasonCode; empty if none
+    // Source availability: "ok" or "unavailable". Empty means the field was not set.
+    string orderbook_source = 31;
+    string ledger_source = 32;
+    string indicators_source = 33;
+    string trades_source = 34;
+    bool working_orders_unfiltered = 35;
+}
+
+message GetRiskSnapshotRequest {}
+
+message GetRiskSnapshotResponse {
+    RiskSnapshot snapshot = 1;
+}
+
+message RiskSnapshot {
+    bool available = 1;
+    string unavailable_reason = 2;
+    int64 observed_at_unix_ms = 3;
+    string total_max_position = 4;
+    string max_total_orders = 5;
+    string max_notional = 6;
+    string max_order_qty = 7;
+    string daily_loss_limit_all_pairs = 8;
+    string position_qty = 9;
+    string working_qty = 10;
+    string reserved_qty = 11;
+    string daily_pnl = 12;
+    string daily_pnl_source = 13; // "ledger" | "unavailable"
+    string headroom = 14; // v1 always "unknown"
+    string instrument = 15;
 }
 
 message DexVenueSnapshot {

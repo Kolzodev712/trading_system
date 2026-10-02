@@ -1,0 +1,34 @@
+[package]
+name = "trading_report"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "One-shot read-only five-item trading report. Not a control plane."
+
+[[bin]]
+name = "trading-report"
+path = "src/main.rs"
+
+[build-dependencies]
+tonic-build = { workspace = true }
+
+[dependencies]
+anyhow = { workspace = true, default-features = false, features = ["std"] }
+chrono = { workspace = true }
+clap = { version = "4.4", features = ["derive"] }
+hex = { workspace = true }
+hmac = { workspace = true }
+prost = { workspace = true }
+reqwest = { workspace = true }
+rust_decimal = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+toml = "0.8"
+tonic = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"
+workflow_harness = { path = "../../tests/workflow_harness" }

@@ -453,11 +453,27 @@ pub async fn strategy_runner_with(
     .with_strategy_manager(strategy_manager_arc.clone())
     .with_instrument_type(instrument_type.clone())
     .with_exchange(format!("{:?}", bot_config.exchange_engine.exchange));
+    let risk_manager = Arc::new(RwLock::new(
+        RiskManager::new(
+            risk_limits.clone(),
+            Arc::new(trading_core::registry::symbol::SymbolRegistry::from_pairs(
+                all_symbols.clone(),
+            )),
+        )
+        .with_execution_ledger(
+            services
+                .trading_state_manager
+                .as_ref()
+                .and_then(|tsm| tsm.execution_ledger())
+                .ok_or("execution ledger is required")?,
+        ),
+    ));
     let grpc_service = grpc_service
         .with_execution_status(execution_mode, venue.clone(), environment.clone())
         .with_strategy_operator(operator)
         .with_strategy_caps(strategy_caps.clone())
-        .with_submission_journal(journal.clone());
+        .with_submission_journal(journal.clone())
+        .with_risk_manager(risk_manager.clone());
 
     let grpc_server = TradingGrpcServer::from_service(grpc_service);
     let mut shutdown_rx_grpc = services.shutdown_manager.subscribe();

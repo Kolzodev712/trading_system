@@ -142,6 +142,13 @@ impl TradingCliService for GatewayService {
         self.client().get_monitoring_data(request).await
     }
 
+    async fn get_risk_snapshot(
+        &self,
+        request: Request<trading_cli::GetRiskSnapshotRequest>,
+    ) -> Result<Response<trading_cli::GetRiskSnapshotResponse>, Status> {
+        self.client().get_risk_snapshot(request).await
+    }
+
     type StreamMonitoringDataStream = Pin<
         Box<
             dyn tokio_stream::Stream<Item = Result<trading_cli::MonitoringDataUpdate, Status>>

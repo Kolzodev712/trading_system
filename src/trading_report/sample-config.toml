@@ -1,0 +1,34 @@
+# Example collect config. Secrets stay in environment variables, never in the report.
+
+schema_version = "1"
+
+[freshness]
+max_book_age_ms = 5000
+max_source_age_ms = 10000
+qty_tolerance = "0.00000001"
+
+[mandate]
+advisory = true
+allowed_instruments = ["BTC/USDT"]
+allowed_direction = "both"
+max_leverage = "1"
+max_exposure = "0.01"
+max_loss_per_trade = "50"
+max_loss_per_day = "100"
+time_horizon = "intraday"
+
+[[runners]]
+label = "paper-levels"
+grpc_endpoint = "http://127.0.0.1:50051"
+mode = "levels"
+venue = "PAPER"
+environment = "LOCAL"
+execution_mode = "exchange"
+account_alias = "paper-lab"
+instrument = "BTC/USDT"
+instrument_type = "spot"
+journal_path = "runtime-data/paper/submission-journal.jsonl"
+
+[runners.venue_source]
+kind = "paper"
+rest_base = "http://127.0.0.1:19999"

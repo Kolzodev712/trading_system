@@ -174,7 +174,8 @@ pub async fn level_runner(
     let grpc_service = grpc_service
         .with_execution_status(exec_mode, venue, environment)
         .with_submission_journal(journal.clone())
-        .with_restart_flag_path(bot_config.restart_flag_path.clone());
+        .with_restart_flag_path(bot_config.restart_flag_path.clone())
+        .with_risk_manager(risk_manager.clone());
     let grpc_service = if let Some(dex_sm) = services.venue.dex_state_manager() {
         grpc_service.with_dex_state_manager(dex_sm, format!("{:?}", services.venue.mode()))
     } else {

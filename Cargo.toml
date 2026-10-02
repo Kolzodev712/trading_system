@@ -24,6 +24,7 @@ members = [
     "src/runner",
     "src/live_config",
     "src/asset_engine",
+    "src/trading_report",
     "cli",
     "libs/trading_trace",
     "scripts/deepbook",

@@ -348,6 +348,17 @@ impl TradingState {
         self.position_qty(symbol) + self.working_qty(symbol) + self.reserved_submission_qty(symbol)
     }
 
+    /// Account-level signed reserved quantity across all pairs.
+    pub fn reserved_submission_qty_all(&self) -> Decimal {
+        self.submissions
+            .values()
+            .map(|submission| match submission.side {
+                Side::Buy => submission.amount,
+                Side::Sell => -submission.amount,
+            })
+            .sum()
+    }
+
     /// Signed quantity reserved by submissions recorded before an ack.
     pub fn reserved_submission_qty(&self, symbol: &Pair) -> Decimal {
         self.submissions

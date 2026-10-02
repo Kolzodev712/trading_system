@@ -15,6 +15,11 @@ use trading_engine::strategies::strategy_manager::StrategyManager;
 
 use super::converters;
 
+/// Working orders are not age-filtered. A still-open order older than 24h stays visible.
+pub fn include_working_order_created_at(_created_at_ms: u64) -> bool {
+    true
+}
+
 fn display_avg_price(quantity: rust_decimal::Decimal, avg_price: rust_decimal::Decimal) -> String {
     if quantity.abs() > rust_decimal::Decimal::new(1, 6)
         && avg_price.abs() <= rust_decimal::Decimal::new(1, 6)
@@ -89,7 +94,7 @@ impl MonitoringService {
                         let order_timestamp = order
                             .exchange_created_at
                             .unwrap_or(order.internal_created_at);
-                        order_timestamp >= hours_ago(24)
+                        include_working_order_created_at(order_timestamp)
                     })
                     .map(|order| {
                         let order_id_str = order.order_id.as_str().to_string();
@@ -217,10 +222,27 @@ impl MonitoringService {
 
                 all_positions
             },
-            async { self.get_indicators().await.unwrap_or_default() },
-            async { self.get_trades().await.unwrap_or_default() },
-            async { self.get_orderbooks().await.unwrap_or_default() }
+            async { self.get_indicators().await },
+            async { self.get_trades().await },
+            async { self.get_orderbooks().await }
         );
+        let (indicators, indicators_source) = match indicators {
+            Ok(v) => (v, "ok"),
+            Err(_) => (Vec::new(), "unavailable"),
+        };
+        let (trades, trades_source) = match trades {
+            Ok(v) => (v, "ok"),
+            Err(_) => (Vec::new(), "unavailable"),
+        };
+        let (orderbooks, orderbook_source) = match orderbooks {
+            Ok(books) => {
+                let usable = books.iter().any(|book| {
+                    !book.best_bid.is_empty() && !book.best_ask.is_empty() && book.timestamp > 0
+                });
+                (books, if usable { "ok" } else { "unavailable" })
+            }
+            Err(_) => (Vec::new(), "unavailable"),
+        };
 
         let aggregated = trading_cli::AggregatedData {
             overall: Some(trading_cli::OverallStatistics {
@@ -327,6 +349,11 @@ impl MonitoringService {
             operator_id: crate::grpc::access::displayed_operator_id(&self.venue_label),
             exposure_halt_reason: String::new(),
             last_block_reason_code: String::new(),
+            orderbook_source: orderbook_source.to_string(),
+            ledger_source: String::new(),
+            indicators_source: indicators_source.to_string(),
+            trades_source: trades_source.to_string(),
+            working_orders_unfiltered: true,
         };
 
         {
@@ -350,15 +377,19 @@ impl MonitoringService {
                     data.fees_paid = snap.fees_paid.to_string();
                     data.funding_pnl = snap.funding_pnl.to_string();
                     data.ledger_equity = snap.equity.to_string();
+                    data.ledger_source = "ok".to_string();
                     if let Some(overall) = data.aggregated.as_mut().and_then(|a| a.overall.as_mut())
                     {
                         overall.total_pnl = snap.equity.to_string();
                     }
                 }
                 Err(err) => {
-                    tracing::warn!("execution ledger snapshot for monitoring failed: {err}")
+                    tracing::warn!("execution ledger snapshot for monitoring failed: {err}");
+                    data.ledger_source = "unavailable".to_string();
                 }
             }
+        } else {
+            data.ledger_source = "unavailable".to_string();
         }
 
         tracing::debug!("[gRPC] collect_monitoring_data: Returning data successfully");
@@ -857,7 +888,7 @@ impl MonitoringService {
         Ok(orderbooks)
     }
 
-    async fn ledger_marks(
+    pub(crate) async fn ledger_marks(
         &self,
     ) -> std::collections::HashMap<trading_core::types::common::Pair, rust_decimal::Decimal> {
         use rust_decimal::Decimal;
@@ -876,5 +907,18 @@ impl MonitoringService {
             }
         }
         marks
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::include_working_order_created_at;
+    use trading_core::utils::hours_ago;
+
+    #[test]
+    fn still_working_order_older_than_24_hours_is_included() {
+        assert!(include_working_order_created_at(hours_ago(48)));
+        assert!(include_working_order_created_at(hours_ago(72)));
+        assert!(include_working_order_created_at(hours_ago(1)));
     }
 }

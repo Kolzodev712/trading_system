@@ -51,6 +51,10 @@ DECIMAL_RE = re.compile(r"^-?\d+(?:\.\d+)?$")
 CANDIDATE_ID_RE = re.compile(r"^[A-Za-z][A-Za-z0-9]*V\d+$")
 ARTIFACT_ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
 DATASET_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_]*$")
+GIT_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+PROVENANCE_RECORDED = "recorded"
+PROVENANCE_LEGACY_UNRECORDED = "legacy_unrecorded"
+PROVENANCE_VALUES = (PROVENANCE_RECORDED, PROVENANCE_LEGACY_UNRECORDED)
 SECRET_PATH_RE = re.compile(
     r"(?:^|/)(?:"
     r"\.env(?:\..*)?|"
@@ -265,6 +269,59 @@ def validate_results(results: dict[str, Any]) -> None:
             raise ArtifactError(f"results.{key} must be an exact decimal string")
 
 
+def require_git_sha(value: Any, name: str) -> str:
+    revision = require_str(value, name)
+    if not GIT_SHA_RE.fullmatch(revision):
+        raise ArtifactError(f"{name} must be a 40-character SHA")
+    return revision
+
+
+def absent_or_null(mapping: dict[str, Any], key: str) -> bool:
+    return key not in mapping or mapping[key] is None
+
+
+def validate_scored_source(scored: dict[str, Any]) -> dict[str, Any]:
+    provenance = scored.get("provenance", PROVENANCE_RECORDED)
+    if provenance not in PROVENANCE_VALUES:
+        raise ArtifactError(
+            f"scored_source.provenance must be one of {', '.join(PROVENANCE_VALUES)}"
+        )
+    require_str(scored.get("reconstruction"), "scored_source.reconstruction")
+    if provenance == PROVENANCE_LEGACY_UNRECORDED:
+        if not absent_or_null(scored, "revision"):
+            raise ArtifactError(
+                "legacy_unrecorded scored_source.revision must be omitted; "
+                "an evidence commit is not a scoring SHA"
+            )
+        if not absent_or_null(scored, "dirty"):
+            raise ArtifactError(
+                "legacy_unrecorded scored_source.dirty must be omitted; "
+                "the original clean/dirty state was not recorded"
+            )
+        if not absent_or_null(scored, "command"):
+            raise ArtifactError(
+                "legacy_unrecorded scored_source.command must be omitted; "
+                "do not invent a verified scoring command"
+            )
+        require_git_sha(scored.get("ledger_revision"), "scored_source.ledger_revision")
+        contemporaneous = require_str(
+            scored.get("contemporaneous_command"),
+            "scored_source.contemporaneous_command",
+        )
+        if "research_cli" in contemporaneous:
+            raise ArtifactError(
+                "legacy contemporaneous_command cannot name research_cli; "
+                "that crate did not exist when the ledgers were first tracked"
+            )
+        return scored
+    require_git_sha(scored.get("revision"), "scored_source.revision")
+    dirty = require_bool(scored.get("dirty"), "scored_source.dirty")
+    if dirty:
+        raise ArtifactError("scored_source.dirty must be false for a recorded scoring run")
+    require_str(scored.get("command"), "scored_source.command")
+    return scored
+
+
 def validate_manifest(manifest: Any) -> dict[str, Any]:
     data = require_mapping(manifest, "manifest")
     if data.get("schema_version") != SCHEMA_VERSION:
@@ -285,13 +342,7 @@ def validate_manifest(manifest: Any) -> dict[str, Any]:
     normalize_sha(require_str(spec.get("experiment_plan_sha256"), "spec.experiment_plan_sha256"))
     require_str(spec.get("path"), "spec.path")
     require_str(spec.get("experiment_plan_path"), "spec.experiment_plan_path")
-    scored = require_mapping(data.get("scored_source"), "scored_source")
-    revision = require_str(scored.get("revision"), "scored_source.revision")
-    if not re.fullmatch(r"[0-9a-f]{40}", revision):
-        raise ArtifactError("scored_source.revision must be a 40-character SHA")
-    require_bool(scored.get("dirty"), "scored_source.dirty")
-    require_str(scored.get("command"), "scored_source.command")
-    require_str(scored.get("reconstruction"), "scored_source.reconstruction")
+    validate_scored_source(require_mapping(data.get("scored_source"), "scored_source"))
     datasets = require_list(data.get("datasets"), "datasets")
     for index, item in enumerate(datasets):
         row = require_mapping(item, f"datasets[{index}]")
@@ -334,6 +385,12 @@ def repo_root_from(start: Path) -> Path:
     return Path(output.strip())
 
 
+def scored_rev_for_index(scored: dict[str, Any]) -> str:
+    if scored.get("provenance") == PROVENANCE_LEGACY_UNRECORDED:
+        return "unrecorded"
+    return scored["revision"][:12]
+
+
 def generate_index(manifests: Iterable[dict[str, Any]]) -> str:
     rows = []
     for item in sorted(manifests, key=lambda row: (row["candidate_id"], row["candidate_version"])):
@@ -347,7 +404,7 @@ def generate_index(manifests: Iterable[dict[str, Any]]) -> str:
                 status=status,
                 start=window["start_utc"],
                 end=window["end_exclusive_utc"],
-                rev=item["scored_source"]["revision"][:12],
+                rev=scored_rev_for_index(item["scored_source"]),
                 art=artifact.get("id", ""),
                 sha=(artifact.get("sha256") or "")[:12],
             )

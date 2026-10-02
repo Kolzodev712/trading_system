@@ -69,7 +69,10 @@ Pass iff `primary_net > benchmark_net × f`.
 
 ## 3. Input artifacts (repository-relative)
 
-Assume repo root `trading_system/`. Run output lives under `data/btc_price_ma_long_flat_v1/` (gitignored; must exist locally from experiment).
+Assume repo root `trading_system/`. Decision logs, `gates.json`, warmup, and
+aux remain on HEAD under `data/btc_price_ma_long_flat_v1/`. Generated
+`backtest/` and `audit/` ledgers were removed from HEAD; restore artifact
+`btc_price_ma_long_flat_v1-v1-primary` before comparing those files.
 
 ```
 data/btc_price_ma_long_flat_v1/

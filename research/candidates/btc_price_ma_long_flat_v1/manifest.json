@@ -23,11 +23,14 @@
     "experiment_plan_sha256": "sha256:f0e25c74d8e7071f3be6398f1d1d49a7ea0422e4ed55717335302e705c7d1078"
   },
   "scored_source": {
-    "revision": "2cd8211f89aa543f504c13ef9a84051e350b7d62",
-    "results_revision": "08dab4b185afc5e7e55c4cb90c71b142ff41d948",
-    "dirty": false,
-    "command": "cargo run -p research_cli -- btc-price-ma run",
-    "reconstruction": "Summaries do not record a dirty/clean scoring SHA. 2cd8211 first tracked the ledgers; independent audit commits are 3f3f943c710c202721795d1eece3bcaeef1e7101 and 08dab4b185afc5e7e55c4cb90c71b142ff41d948. Git bundle inside artifact btc_price_ma_long_flat_v1-v1-primary covers ee4ccde..aca303c. After bulky data leave HEAD, restore that archive. strategy_core and btc_price_ma_app remain on master for Demo/Paper observation."
+    "provenance": "legacy_unrecorded",
+    "ledger_revision": "2cd8211f89aa543f504c13ef9a84051e350b7d62",
+    "contemporaneous_command": "cargo run -p runner --bin btc_price_ma_experiment -- run",
+    "audit_revisions": [
+      "3f3f943c710c202721795d1eece3bcaeef1e7101",
+      "08dab4b185afc5e7e55c4cb90c71b142ff41d948"
+    ],
+    "reconstruction": "The original scoring SHA and clean/dirty state were not recorded. 2cd8211 is the first commit that tracked the ledgers, not a verified scoring run. research_cli did not exist at that commit. The contemporaneous command family was the runner binary above; that is not a claim that this exact invocation produced the stored nets. Independent audit commits are 3f3f943 and 08dab4b. Git bundle inside artifact btc_price_ma_long_flat_v1-v1-primary covers ee4ccde..aca303c. After bulky data leave HEAD, restore that archive. Later stored-decision replay is recorded under replay, not here. strategy_core and btc_price_ma_app remain on master for Demo/Paper observation."
   },
   "datasets": [
     {

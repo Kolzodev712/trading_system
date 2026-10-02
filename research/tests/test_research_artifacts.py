@@ -119,6 +119,72 @@ class ManifestTests(unittest.TestCase):
         self.assertIn("ExampleShockV1", text)
         self.assertIn("REJECTED+ARCHIVED", text)
 
+    def test_legacy_unrecorded_provenance_is_valid(self):
+        data = valid_manifest()
+        data["scored_source"] = {
+            "provenance": "legacy_unrecorded",
+            "ledger_revision": "2cd8211f89aa543f504c13ef9a84051e350b7d62",
+            "contemporaneous_command": (
+                "cargo run -p runner --bin donchian_daily_replay -- evaluate"
+            ),
+            "reconstruction": (
+                "Ledgers first tracked at ledger_revision. "
+                "The original scoring SHA and dirty state were not recorded."
+            ),
+        }
+        ra.validate_manifest(data)
+
+    def test_legacy_unrecorded_rejects_evidence_commit_as_clean_score(self):
+        data = valid_manifest()
+        data["scored_source"] = {
+            "provenance": "legacy_unrecorded",
+            "revision": "2cd8211f89aa543f504c13ef9a84051e350b7d62",
+            "dirty": False,
+            "command": "cargo run -p research_cli -- donchian-daily evaluate",
+            "ledger_revision": "2cd8211f89aa543f504c13ef9a84051e350b7d62",
+            "reconstruction": "test",
+        }
+        with self.assertRaises(ra.ArtifactError):
+            ra.validate_manifest(data)
+
+    def test_legacy_unrecorded_rejects_research_cli_as_contemporaneous(self):
+        data = valid_manifest()
+        data["scored_source"] = {
+            "provenance": "legacy_unrecorded",
+            "ledger_revision": "2cd8211f89aa543f504c13ef9a84051e350b7d62",
+            "contemporaneous_command": "cargo run -p research_cli -- btc-price-ma run",
+            "reconstruction": "test",
+        }
+        with self.assertRaises(ra.ArtifactError):
+            ra.validate_manifest(data)
+
+    def test_legacy_unrecorded_rejects_missing_ledger_revision(self):
+        data = valid_manifest()
+        data["scored_source"] = {
+            "provenance": "legacy_unrecorded",
+            "contemporaneous_command": (
+                "cargo run -p runner --bin btc_price_ma_experiment -- run"
+            ),
+            "reconstruction": "test",
+        }
+        with self.assertRaises(ra.ArtifactError):
+            ra.validate_manifest(data)
+
+    def test_index_marks_legacy_score_unrecorded(self):
+        data = valid_manifest()
+        data["candidate_id"] = "LegacyScreenV1"
+        data["scored_source"] = {
+            "provenance": "legacy_unrecorded",
+            "ledger_revision": "2cd8211f89aa543f504c13ef9a84051e350b7d62",
+            "contemporaneous_command": (
+                "cargo run -p runner --bin donchian_daily_replay -- evaluate"
+            ),
+            "reconstruction": "ledger commit is not a scoring SHA",
+        }
+        text = ra.generate_index([data])
+        self.assertIn("`unrecorded`", text)
+        self.assertNotIn("2cd8211", text)
+
 
 class StoreTests(unittest.TestCase):
     def setUp(self):

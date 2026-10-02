@@ -25,10 +25,13 @@ Candidate #2 continues.
 ## Provenance
 
 Ledgers first tracked in `2cd8211f89aa543f504c13ef9a84051e350b7d62`. The
-audit names that commit as the audited snapshot. Summaries do not record a
-dirty/clean scoring SHA. Daily series dataset hash
+audit names that commit as the audited snapshot. It is not a verified
+scoring run. Summaries do not record a scoring SHA or a clean/dirty state.
+`research_cli` did not exist at `2cd8211`. The contemporaneous command family
+was `cargo run -p runner --bin btc_price_ma_experiment -- run`; that is not
+a claim that this exact invocation produced the stored nets. Daily series
+dataset hash
 `sha256:bb642e2c001a0df039b15fbad7a7032cab61ae41f29eef785823facb55265236`.
 
-Command: `cargo run -p research_cli -- btc-price-ma run`. Reconstruct
-historical ledgers from the local artifact after bulky `data/` files leave
-HEAD.
+Reconstruct historical ledgers from the local artifact. Later stored-decision
+replay is a check of the kept ledgers, not a replacement scoring SHA.

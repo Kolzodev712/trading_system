@@ -23,10 +23,10 @@
     "experiment_plan_sha256": "sha256:76d1b1cdcc5ffe1c42d27ee3e77b2d26354ff852dca2d5c42df88235cc3d185e"
   },
   "scored_source": {
-    "revision": "2cd8211f89aa543f504c13ef9a84051e350b7d62",
-    "dirty": false,
-    "command": "cargo run -p research_cli -- donchian-daily evaluate",
-    "reconstruction": "Summaries do not record a dirty/clean scoring SHA. 2cd8211 is the first commit that tracked the ledgers used here. Git bundle inside artifact donchian_daily_v1-v1-primary covers ee4ccde7959b3eab4d429d85bcf80ab3509f942d..aca303c9cac7c9e43fdb516998b0943127d9a036. After bulky data leave HEAD, restore that archive. Checkout aca303c for the DonchianDailyV1 research_engine module as it existed before cleanup. The model and donchian-daily CLI are not compiled on later master."
+    "provenance": "legacy_unrecorded",
+    "ledger_revision": "2cd8211f89aa543f504c13ef9a84051e350b7d62",
+    "contemporaneous_command": "cargo run -p runner --bin donchian_daily_replay -- evaluate",
+    "reconstruction": "The original scoring SHA and clean/dirty state were not recorded. 2cd8211 is the first commit that tracked the ledgers, not a verified scoring run. research_cli did not exist at that commit. The contemporaneous command family was the runner binary above; that is not a claim that this exact invocation produced the stored nets. Git bundle inside artifact donchian_daily_v1-v1-primary covers ee4ccde7959b3eab4d429d85bcf80ab3509f942d..aca303c9cac7c9e43fdb516998b0943127d9a036. After bulky data leave HEAD, restore that archive. Checkout aca303c for the DonchianDailyV1 research_engine module as it existed before cleanup. Later stored-decision replay is recorded under replay, not here."
   },
   "datasets": [
     {

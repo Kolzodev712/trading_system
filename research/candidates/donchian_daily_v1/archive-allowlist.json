@@ -57,11 +57,11 @@
   "source": {
     "base": "ee4ccde7959b3eab4d429d85bcf80ab3509f942d",
     "tip": "aca303c9cac7c9e43fdb516998b0943127d9a036",
-    "command": "cargo run -p research_cli -- donchian-daily evaluate",
-    "reconstruction": "Evidence snapshot 2cd8211f89aa543f504c13ef9a84051e350b7d62 on master; this bundle is ee4ccde..aca303c. After bulky data leave HEAD, restore this archive. git show 2cd8211:data/donchian_daily still works until history is rewritten. Checkout aca303c for the DonchianDailyV1 research_engine module as it existed before cleanup."
+    "command": "cargo run -p runner --bin donchian_daily_replay -- evaluate",
+    "reconstruction": "Ledger snapshot 2cd8211f89aa543f504c13ef9a84051e350b7d62 on master; original scoring SHA unknown. This bundle is ee4ccde..aca303c. After bulky data leave HEAD, restore this archive. git show 2cd8211:data/donchian_daily still works until history is rewritten. Checkout aca303c for the DonchianDailyV1 research_engine module as it existed before cleanup. The runner binary is the contemporaneous command family, not a verified scoring invocation."
   },
   "commands": {
-    "evaluate": "cargo run -p research_cli -- donchian-daily evaluate"
+    "contemporaneous_evaluate": "cargo run -p runner --bin donchian_daily_replay -- evaluate"
   },
   "pin": {
     "origin_master_at_archive": "aca303c9cac7c9e43fdb516998b0943127d9a036",

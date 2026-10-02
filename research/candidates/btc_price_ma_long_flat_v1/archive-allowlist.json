@@ -80,11 +80,11 @@
   "source": {
     "base": "ee4ccde7959b3eab4d429d85bcf80ab3509f942d",
     "tip": "aca303c9cac7c9e43fdb516998b0943127d9a036",
-    "command": "cargo run -p research_cli -- btc-price-ma run",
-    "reconstruction": "Evidence snapshot 2cd8211; C2 audit 3f3f943/08dab4b. Bundle ee4ccde..aca303c. Restore this archive after bulky data leave HEAD. Keep strategy_core and btc_price_ma_app on master for Demo."
+    "command": "cargo run -p runner --bin btc_price_ma_experiment -- run",
+    "reconstruction": "Ledger snapshot 2cd8211; original scoring SHA unknown. C2 audit 3f3f943/08dab4b. Bundle ee4ccde..aca303c. Restore this archive after bulky data leave HEAD. The runner binary is the contemporaneous command family, not a verified scoring invocation. Keep strategy_core and btc_price_ma_app on master for Demo."
   },
   "commands": {
-    "run": "cargo run -p research_cli -- btc-price-ma run"
+    "contemporaneous_run": "cargo run -p runner --bin btc_price_ma_experiment -- run"
   },
   "pin": {
     "origin_master_at_archive": "aca303c9cac7c9e43fdb516998b0943127d9a036",

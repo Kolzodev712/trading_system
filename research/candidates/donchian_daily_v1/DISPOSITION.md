@@ -25,10 +25,13 @@ implementation. `DonchianDailyV1` is not a live strategy.
 Stored ledgers were first tracked in Git as
 `2cd8211f89aa543f504c13ef9a84051e350b7d62`
 ("Track Donchian and BTCPriceMALongFlatV1 experiment data for independent
-audit."). Summaries do not record a dirty/clean scoring SHA. Dataset hash
+audit."). That commit is the ledger snapshot, not a verified scoring run.
+Summaries do not record a scoring SHA or a clean/dirty state.
+`research_cli` did not exist at `2cd8211`. The contemporaneous command family
+was `cargo run -p runner --bin donchian_daily_replay -- evaluate`; that is
+not a claim that this exact invocation produced the stored nets. Dataset hash
 `sha256:bb642e2c001a0df039b15fbad7a7032cab61ae41f29eef785823facb55265236`,
 signal config `sha256:8057b5024b6df11096bc7541e8f470e52794f5e2025503da45beedc0aab33114`.
 
-Command used in-tree: `cargo run -p research_cli -- donchian-daily evaluate`
-(retired after this archive). Reconstruct from the local artifact, not from
-HEAD after the data files are dropped.
+Reconstruct from the local artifact. Later stored-decision replay through the
+shared simulator is a check of the kept ledgers, not a replacement scoring SHA.

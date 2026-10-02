@@ -21,6 +21,9 @@ research/schema/manifest-v1.md
 ```
 
 `INDEX.md` is generated. `just research-index-check` fails if it drifts.
+Legacy rejected screens that predate this process use
+`scored_source.provenance=legacy_unrecorded`. Their ledger commit is not a
+scoring SHA.
 
 ## Future candidates
 

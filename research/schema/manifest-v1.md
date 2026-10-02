@@ -57,10 +57,13 @@ rule change after scoring is a new candidate version or a new experiment.
 | `experiment_window.semantics` | Must be `end_exclusive` |
 | `spec.path` / `spec.sha256` | Human spec file and SHA-256 |
 | `spec.experiment_plan_path` / `spec.experiment_plan_sha256` | Frozen plan |
-| `scored_source.revision` | 40-character Git SHA that produced the numbers |
-| `scored_source.dirty` | Must be false for a scored run |
-| `scored_source.command` | Exact scoring command |
-| `scored_source.reconstruction` | How to rebuild that source without the branch |
+| `scored_source.provenance` | `recorded` (default) or `legacy_unrecorded` |
+| `scored_source.revision` | For `recorded`: 40-character Git SHA that produced the numbers |
+| `scored_source.dirty` | For `recorded`: must be `false` |
+| `scored_source.command` | For `recorded`: exact scoring command |
+| `scored_source.ledger_revision` | For `legacy_unrecorded`: first commit that tracked the ledgers. Not a scoring SHA |
+| `scored_source.contemporaneous_command` | For `legacy_unrecorded`: command family then in the tree. Not a verified run |
+| `scored_source.reconstruction` | How to rebuild source or restore ledgers without the branch |
 | `datasets[]` | `id`, file `sha256`, engine `content_hash`, `content_hash_kind`, `role` |
 | `results` | Decimal PnL and costs as exact strings. Integers only for counts |
 | `cost_assumptions` | Named research scenarios, not venue fee quotes |
@@ -84,3 +87,17 @@ file digest.
 
 The outer archive digest lives in Git and in the artifact-store id record.
 It must not appear inside the archive.
+
+## Scoring provenance
+
+`recorded` is the later research-record process: a clean checkout SHA, `dirty`
+false, and the exact command that produced the numbers.
+
+`legacy_unrecorded` is for experiments scored before that process. The original
+scoring SHA and clean/dirty state were not written down. The known ledger
+commit (`ledger_revision`) is **not** that scoring run. A later `replay` of
+stored decisions is **not** that scoring run either. Do not fill `revision`,
+`dirty`, or `command` on a legacy record to make the row look complete.
+
+`research_cli` is not a contemporaneous command for ledgers first tracked
+before that crate existed. Those experiments used `runner` binaries.

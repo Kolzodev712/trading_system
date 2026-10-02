@@ -91,17 +91,21 @@ Store the writer URI in `runtime-data/report-stack/secrets/trading_report_mongo_
 
 ## Two-runner Compose stack
 
-The intended deployment is `docker-compose.report.yml`: `levels`, `strategies`, `k-paper-levels`, `k-paper-strategies`, authenticated `mongodb`, and a one-shot `trading-report`. Service names match `sample_config/report.toml`.
+`docker-compose.report.yml` is the Paper lab stack only: `levels`, `strategies`, `k-paper-levels`, `k-paper-strategies`, authenticated `mongodb`, and a one-shot `trading-report`. Service names match `sample_config/report.toml`. Do not reuse this file for Demo or another venue.
+
+Deployment identity is `TRADING_REPORT_DEPLOYMENT_ID` (default `paper-lab`). The reporter and reader Compose commands do not pass `--deployment-id`, so that environment value is not overridden.
+
+`scripts/trading-report-compose-gate.sh` starts a **fresh isolated** Compose project and data directory (`COMPOSE_PROJECT_NAME=tr-gate-<id>`, `runtime-data/report-gate-<id>`). It refuses if a named Paper report stack already exists. It never truncates or overwrites journals under `runtime-data/report-stack` or any other existing runner directory.
 
 ```bash
-# Build reporter image, start the two runners, collect with report_writer,
-# read back with report_reader, compare untrimmed bytes.
+# Isolated stack only. Does not collect and does not touch an existing Paper stack.
 ./scripts/trading-report-compose-gate.sh
 
-# Manual equivalent after the stack is up:
-docker compose -f docker-compose.report.yml up -d \
-  mongodb k-paper-levels k-paper-strategies levels strategies
-docker compose -f docker-compose.report.yml --profile report run --rm --no-deps trading-report
+# One-shot collect against that isolated stack (same entry as the systemd unit):
+export TRADING_REPORT_STACK_ENV=/path/from/gate/stack.env
+./scripts/trading-report-service.sh
+
+# Read-only user, untrimmed JSON on stdout:
 docker compose -f docker-compose.report.yml --profile report-read run --rm --no-deps trading-report-read
 ```
 
@@ -123,7 +127,7 @@ Copy `sample_config/report.toml` to `config/report.toml` and point gRPC/REST hos
 
 ## systemd timer
 
-Install on the host that runs Docker Compose for the stack:
+Install the units on the host that runs Docker Compose. **Do not enable the timer until one `trading-report-collect.service` invocation has succeeded against the intended stack.**
 
 ```bash
 sudo mkdir -p /opt/trading_system
@@ -131,12 +135,18 @@ sudo cp deploy/systemd/trading-report-collect.service /etc/systemd/system/
 sudo cp deploy/systemd/trading-report-collect.timer /etc/systemd/system/
 # WorkingDirectory in the unit is /opt/trading_system; keep compose files there
 # or edit WorkingDirectory.
-printf 'TRADING_REPORT_DEPLOYMENT_ID=paper-lab\n' | sudo tee /etc/trading-report.env
+printf '%s\n' \
+  'TRADING_REPORT_DEPLOYMENT_ID=paper-lab' \
+  'TRADING_REPORT_STACK_ENV=/opt/trading_system/runtime-data/report-stack/stack.env' \
+  | sudo tee /etc/trading-report.env
 sudo systemctl daemon-reload
-sudo systemctl enable --now trading-report-collect.timer
+# One timer-equivalent invocation. Does not start the 15-minute schedule.
+sudo systemctl start trading-report-collect.service
+# Only after that collect succeeds:
+# sudo systemctl enable --now trading-report-collect.timer
 ```
 
-The timer fires every 15 minutes (`*:0/15`). Each fire is a one-shot `docker compose run --rm --no-deps` with `TimeoutStartSec=180` and `flock -n` so overlapping runs are skipped. The binary also takes `/reports/.collect.lock`.
+`ExecStart` is `flock` plus `scripts/trading-report-service.sh`. That script sources `TRADING_REPORT_STACK_ENV` when set, then runs `docker compose --profile report run --rm --no-deps trading-report`. The timer is still every 15 minutes (`*:0/15`) with `TimeoutStartSec=180`. Overlapping fires are skipped by `flock -n`. The binary also takes `/reports/.collect.lock`.
 
 Inspect logs:
 

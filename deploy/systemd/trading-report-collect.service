@@ -9,7 +9,7 @@ Type=oneshot
 WorkingDirectory=/opt/trading_system
 EnvironmentFile=-/etc/trading-report.env
 # flock prevents overlapping timer fires. --no-deps never starts or restarts runners.
-ExecStart=/usr/bin/flock -n /run/trading-report-collect.lock /usr/bin/docker compose -f docker-compose.report.yml --profile report run --rm --no-deps trading-report
+ExecStart=/usr/bin/flock -n /run/trading-report-collect.lock /opt/trading_system/scripts/trading-report-service.sh
 TimeoutStartSec=180
 Nice=10
 StandardOutput=journal

@@ -1,12 +1,13 @@
-# Paper two-runner stack used by trading-report.
+# Paper lab only. Deployment identity comes from TRADING_REPORT_DEPLOYMENT_ID
+# (default paper-lab). Do not reuse this file for Demo or another venue.
 # levels + strategies + two k-paper venues + authenticated Mongo.
 # `docker compose -f docker-compose.report.yml up` does not start the reporter.
-# The reporter is one-shot: `docker compose -f docker-compose.report.yml run --rm --no-deps trading-report`
+# One-shot: scripts/trading-report-service.sh or
+# `docker compose -f docker-compose.report.yml --profile report run --rm --no-deps trading-report`
 
 services:
   mongodb:
     image: mongo:7.0
-    container_name: trading-report-mongodb
     restart: unless-stopped
     environment:
       MONGO_INITDB_ROOT_USERNAME: root
@@ -31,7 +32,6 @@ services:
     build:
       context: ${K_PAPER_DIR:-../k-paper}
       dockerfile: Dockerfile
-    container_name: k-paper-levels
     restart: unless-stopped
     environment:
       PAPER_EXCHANGE_HOST: "0.0.0.0"
@@ -48,7 +48,6 @@ services:
     build:
       context: ${K_PAPER_DIR:-../k-paper}
       dockerfile: Dockerfile
-    container_name: k-paper-strategies
     restart: unless-stopped
     environment:
       PAPER_EXCHANGE_HOST: "0.0.0.0"
@@ -65,7 +64,6 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.paper-bin
-    container_name: levels
     restart: unless-stopped
     depends_on:
       mongodb:
@@ -104,7 +102,6 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.paper-bin
-    container_name: strategies
     restart: unless-stopped
     depends_on:
       mongodb:
@@ -145,7 +142,6 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.report
-    container_name: trading-report
     restart: "no"
     profiles: ["report"]
     networks:
@@ -170,15 +166,12 @@ services:
         "/reports",
         "--timeout-secs",
         "120",
-        "--deployment-id",
-        "paper-lab",
       ]
 
   trading-report-read:
     build:
       context: .
       dockerfile: Dockerfile.report
-    container_name: trading-report-read
     restart: "no"
     profiles: ["report-read"]
     networks:
@@ -193,8 +186,6 @@ services:
       [
         "read-json",
         "--latest",
-        "--deployment-id",
-        "paper-lab",
         "--output",
         "-",
       ]

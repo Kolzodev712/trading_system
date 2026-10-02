@@ -1,4 +1,5 @@
 # Example collect config. Secrets stay in environment variables, never in the report.
+# Mongo: TRADING_REPORT_MONGO_URI or TRADING_REPORT_MONGO_URI_FILE, plus TRADING_REPORT_DEPLOYMENT_ID.
 
 schema_version = "1"
 

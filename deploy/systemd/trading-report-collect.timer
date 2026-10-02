@@ -1,0 +1,11 @@
+[Unit]
+Description=Collect a trading report every 15 minutes
+
+[Timer]
+OnCalendar=*:0/15
+Persistent=true
+AccuracySec=30s
+Unit=trading-report-collect.service
+
+[Install]
+WantedBy=timers.target

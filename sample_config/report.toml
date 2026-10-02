@@ -1,0 +1,51 @@
+# Collect config for the reporter container. Mongo URI is never stored here.
+# Set TRADING_REPORT_MONGO_URI or TRADING_REPORT_MONGO_URI_FILE in the environment.
+
+schema_version = "1"
+
+[freshness]
+max_book_age_ms = 5000
+max_source_age_ms = 10000
+qty_tolerance = "0.00000001"
+
+[mandate]
+advisory = true
+allowed_instruments = ["BTC/USDT"]
+allowed_direction = "both"
+max_leverage = "1"
+max_exposure = "0.01"
+max_loss_per_trade = "50"
+max_loss_per_day = "100"
+time_horizon = "intraday"
+
+[[runners]]
+label = "paper-levels"
+grpc_endpoint = "http://levels:50051"
+mode = "levels"
+venue = "PAPER"
+environment = "LOCAL"
+execution_mode = "exchange"
+account_alias = "paper-levels"
+instrument = "BTC/USDT"
+instrument_type = "spot"
+journal_path = "/journals/levels/submission-journal.jsonl"
+
+[runners.venue_source]
+kind = "paper"
+rest_base = "http://k-paper-levels:19999"
+
+[[runners]]
+label = "paper-strategies-shadow"
+grpc_endpoint = "http://strategies:50051"
+mode = "strategies"
+venue = "PAPER"
+environment = "LOCAL"
+execution_mode = "shadow"
+account_alias = "paper-strategies-shadow"
+instrument = "BTC/USDT"
+instrument_type = "spot"
+journal_path = "/journals/strategies/submission-journal.jsonl"
+
+[runners.venue_source]
+kind = "paper"
+rest_base = "http://k-paper-strategies:19999"

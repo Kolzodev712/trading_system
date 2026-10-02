@@ -1,8 +1,8 @@
 # Trading report v1: five-item decision brief
 
-**Status:** implementation design, not an implemented capability.  
-**Source baseline:** `trading_system` `837acdeab04df1622ab910ae90db8297c36acb90` (2026-10-01).  
-**First use:** a person runs a read-only command and copies its Markdown report into a conversation. Automatic delivery and model access are later work.
+**Status:** implemented for flat Paper Spot collect, plus Mongo persist/`read-json` and a one-shot 15-minute timer.  
+**Source baseline:** `trading_system` `d2d13bc` (2026-10-02) plus this scheduling change.  
+**First use:** a person runs a read-only command and copies its Markdown report into a conversation. Scheduled Mongo delivery stores that same JSON; `read-json` is suitable for a later AI consumer. There is no AI API call or automatic trading decision.
 
 ## Goal and boundary
 
@@ -82,9 +82,15 @@ One implementation pass is sufficient; no staged approval between small edits. B
 4. Run Bybit Demo **read-only** with a read-only credential and compare the signed REST snapshot to the report. No `Resume`, order create, cancel, flatten or Demo mutation is part of this gate. If that source is not configured, report it as unsupported/unverified and qualify Paper scope only.
 5. Inspect the JSON, Markdown and manifest for secrets. Verify `cargo tree` has no `trading_report` edge in runner/trading_engine and no research-crate edge introduced into them. Record commands, results, source SHA and any unsupported venue.
 
+## Mongo delivery (implemented)
+
+Scheduled collection writes the existing `report.json` / `report.md` / `manifest.json` files and one immutable Mongo document that embeds the **exact** `report.json` UTF-8 bytes plus indexed metadata (`report_id`, `deployment_id`, timestamps, schema, verdict, `actionable_for_analysis`, subject identifiers, SHA-256). It does not reserialize the five-item report into a different JSON shape. File-only `collect` remains for development. A scheduled run is not delivered until Mongo accepts the write. `trading-report persist --from <dir>` replays a leftover directory without recollecting. `trading-report read-json` uses Mongo only.
+
+See [TRADING_REPORT_OPERATOR.md](TRADING_REPORT_OPERATOR.md).
+
 ## Explicitly deferred
 
-No model API calls, automatic delivery, UI report viewer, continuous daemon, alert subscriptions, every-book-tick capture, separate ledger replay, full research artifact ingestion, strategy optimization, discretionary signal generation, order submission or config mutation. Those can be added when the one-shot report has proved useful. Do not turn V1 into a new event-sourcing or control-plane project.
+No model API calls, UI report viewer, continuous in-process daemon, alert subscriptions, every-book-tick capture, separate ledger replay, full research artifact ingestion, strategy optimization, discretionary signal generation, order submission or config mutation. Do not turn reporting into a new event-sourcing or control-plane project.
 
 ## Effort estimate and stop condition
 

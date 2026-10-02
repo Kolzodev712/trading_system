@@ -5,6 +5,7 @@
 /src/exchange_engine/config/
 /src/market_data_engine/config/
 /config
+/secrets/
 /runtime-data/
 /artifacts/workflows/
 /cli_debug.log

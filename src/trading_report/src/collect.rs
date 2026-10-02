@@ -71,7 +71,12 @@ pub async fn collect_report(cfg: &ReportConfig) -> Result<CollectOutputs> {
     })
 }
 
-pub fn write_outputs(out_dir: &Path, outputs: &CollectOutputs) -> Result<()> {
+#[derive(Debug)]
+pub struct WrittenOutputs {
+    pub report_json: String,
+}
+
+pub fn write_outputs(out_dir: &Path, outputs: &CollectOutputs) -> Result<WrittenOutputs> {
     let report_json = redact_secrets(&serde_json::to_string_pretty(&outputs.report)?);
     let markdown = redact_secrets(&outputs.markdown);
     let manifest_json = redact_secrets(&serde_json::to_string_pretty(&outputs.manifest)?);
@@ -82,11 +87,14 @@ pub fn write_outputs(out_dir: &Path, outputs: &CollectOutputs) -> Result<()> {
     atomic_write(out_dir.join("report.json"), report_json.as_bytes())?;
     atomic_write(out_dir.join("report.md"), markdown.as_bytes())?;
     atomic_write(out_dir.join("manifest.json"), manifest_json.as_bytes())?;
-    Ok(())
+    Ok(WrittenOutputs { report_json })
 }
 
-fn atomic_write(path: std::path::PathBuf, bytes: &[u8]) -> Result<()> {
-    let tmp = path.with_extension("tmp");
+pub fn atomic_write(path: std::path::PathBuf, bytes: &[u8]) -> Result<()> {
+    let tmp = path.with_file_name(format!(
+        "{}.tmp",
+        path.file_name().and_then(|s| s.to_str()).unwrap_or("out")
+    ));
     std::fs::write(&tmp, bytes).with_context(|| format!("write {}", tmp.display()))?;
     std::fs::rename(&tmp, &path).with_context(|| format!("rename {}", path.display()))?;
     Ok(())
@@ -100,10 +108,21 @@ pub fn redact_secrets(text: &str) -> String {
         "BYBIT_API_KEY",
         "BYBIT_API_SECRET",
         "TRADING_OPERATOR_TOKEN",
+        "TRADING_REPORT_MONGO_URI",
+        "MONGODB_URI",
+        "MONGO_URI",
     ] {
         if let Ok(val) = std::env::var(key) {
             if val.len() >= 8 {
                 out = out.replace(&val, "[REDACTED]");
+            }
+        }
+    }
+    if let Ok(path) = std::env::var("TRADING_REPORT_MONGO_URI_FILE") {
+        if let Ok(val) = std::fs::read_to_string(path) {
+            let val = val.trim();
+            if val.len() >= 8 {
+                out = out.replace(val, "[REDACTED]");
             }
         }
     }
@@ -153,8 +172,8 @@ mod tests {
     fn secrets_are_rejected_before_any_file_is_written() {
         let dir = tempfile::tempdir().unwrap();
         let out = dir.path().join("missing");
-        let err = write_outputs(&out, &outputs_with_text("leaked api_secret value"))
-            .expect_err("secret");
+        let err =
+            write_outputs(&out, &outputs_with_text("leaked api_secret value")).expect_err("secret");
         assert!(err.to_string().contains("api_secret"));
         assert!(!out.join("report.json").exists());
         assert!(!out.join("report.md").exists());

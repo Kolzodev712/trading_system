@@ -420,7 +420,10 @@ fn optional_str(v: &serde_json::Value, names: &[&str]) -> Option<String> {
     json_field(v, names).and_then(|raw| match raw {
         serde_json::Value::String(s) if !s.is_empty() => Some(s.clone()),
         serde_json::Value::Number(n) => Some(n.to_string()),
-        _ => raw.as_str().filter(|s| !s.is_empty()).map(|s| s.to_string()),
+        _ => raw
+            .as_str()
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string()),
     })
 }
 
@@ -443,11 +446,7 @@ pub fn parse_paper_order(v: &serde_json::Value) -> Result<OrderView, String> {
     Ok(OrderView {
         order_id: require_nonempty_str(v, &["order_id", "orderId"], "order_id")?,
         client_order_id: optional_str(v, &["client_order_id", "clientOrderId"]),
-        symbol: require_nonempty_str(
-            v,
-            &["instrument_id", "instrumentId", "symbol"],
-            "symbol",
-        )?,
+        symbol: require_nonempty_str(v, &["instrument_id", "instrumentId", "symbol"], "symbol")?,
         side: optional_side(v),
         price: optional_str(v, &["price"]).unwrap_or_default(),
         quantity: require_decimal_str(v, &["amount", "quantity", "qty"], "quantity")?,
@@ -475,7 +474,10 @@ pub fn parse_paper_position(v: &serde_json::Value) -> Result<PositionView, Strin
     })
 }
 
-pub fn parse_bybit_order(v: &serde_json::Value, fallback_symbol: &str) -> Result<OrderView, String> {
+pub fn parse_bybit_order(
+    v: &serde_json::Value,
+    fallback_symbol: &str,
+) -> Result<OrderView, String> {
     let symbol = match require_nonempty_str(v, &["symbol"], "symbol") {
         Ok(s) => s,
         Err(_) if !fallback_symbol.is_empty() => fallback_symbol.to_string(),
@@ -534,10 +536,7 @@ pub fn matches_instrument(symbol: &str, instrument: &str) -> bool {
 }
 
 pub fn instrument_base(instrument: &str) -> &str {
-    instrument
-        .split(['/', '-'])
-        .next()
-        .unwrap_or(instrument)
+    instrument.split(['/', '-']).next().unwrap_or(instrument)
 }
 
 /// Walk pages until the cursor is empty. A leftover cursor is an error, not a short list.
@@ -709,7 +708,10 @@ mod tests {
     #[test]
     fn later_response_does_not_replace_earliest_venue_time() {
         use chrono::TimeZone;
-        let first = Utc.timestamp_millis_opt(1_700_000_000_000).single().unwrap();
+        let first = Utc
+            .timestamp_millis_opt(1_700_000_000_000)
+            .single()
+            .unwrap();
         let later = first + chrono::Duration::milliseconds(20_000);
         let stamped = earliest_observed_at(&[later, first]).expect("times");
         assert_eq!(stamped, first);

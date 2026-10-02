@@ -11,11 +11,12 @@ A person can run one read-only command and copy a five-item JSON/Markdown brief 
 - Failed gRPC, missing monitoring payload, incomplete REST pagination, or absent Levels stay unavailable. They never become an empty account or a successful verdict.
 - Journal latest-state is a read-only projection. A missing file is not a known-empty journal.
 - Flatten/RPC success is not flat. Venue REST is the independent account check.
-- No AI calls, daemon, UI viewer, research-run ingestion, k-paper change, or Demo mutation.
+- No AI calls, resident daemon, UI viewer, research-run ingestion, k-paper change, or Demo mutation.
+- Mongo persistence is optional for local collect and required for scheduled delivery. `read-json` talks to Mongo only.
 
 ## Design
 
-New workspace crate `src/trading_report` with `trading-report collect`. It snapshots each configured runner over typed gRPC (`GetTradingStatus`, `GetMonitoringData`, `GetLevels` in Levels mode, `GetRiskSnapshot`) and independently walks Paper or Bybit Demo REST.
+Workspace crate `src/trading_report` with `trading-report collect`, `persist`, `read-json`, and `scheduled`. Collect snapshots each configured runner over typed gRPC (`GetTradingStatus`, `GetMonitoringData`, `GetLevels` in Levels mode, `GetRiskSnapshot`) and independently walks Paper or Bybit Demo REST. The same binary can write the exact `report.json` bytes to Mongo and later emit those bytes. A host systemd timer starts a one-shot reporter container; it does not live inside `runner` or `trading_engine`.
 
 Narrow production change: monitoring stops age-filtering working orders; monitoring records source availability instead of collapsing errors to `[]`; gateway exposes a live `GetRiskSnapshot` from the same `RiskManager` the runner uses.
 
@@ -25,4 +26,7 @@ Verdicts are `verified` | `stale` | `unverified` | `disagreement`. `actionable_f
 
 - Unit: schema, missing/default fields, freshness, decimal/symbol compare, pagination, Spot vs Futures truth, journal latest-state, verdict aggregation.
 - Process: Levels Exchange plus Strategies Shadow; REST-vs-runner set compare; saved combined overall verdict; missing GetTradingStatus; Spot inventory vs trading-state qty; freshness at collection completion; venue stamp is the earliest REST response (a later delayed call does not reset age to 0); unresolved journal; malformed REST; secret rejection before write.
+- Mongo: `report.json` → persist → `read-json` byte equality; latest scoped to a deployment; idempotent retry; conflicting ID; missing/corrupt/outage; `unverified` preserved; local leftover after Mongo failure then replay; JSON-only stdout; Paper two-container scheduled collect with readback.
 - Bybit Demo signed REST is `NOT_RUN` without credentials. No Resume or orders.
+
+Operator install, secrets, container mounts, and timer: [TRADING_REPORT_OPERATOR.md](../TRADING_REPORT_OPERATOR.md).

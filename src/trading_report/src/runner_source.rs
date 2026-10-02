@@ -69,8 +69,7 @@ pub async fn snapshot_runner(cfg: &RunnerConfig) -> RunnerSnapshot {
     {
         Ok(resp) => match resp.into_inner().data {
             Some(data) => {
-                let observed = epoch_ms_to_utc(data.snapshot_unix_ms)
-                    .unwrap_or_else(now_rfc3339);
+                let observed = epoch_ms_to_utc(data.snapshot_unix_ms).unwrap_or_else(now_rfc3339);
                 sources.push(ok_source("GetMonitoringData", &observed));
                 Ok(data)
             }

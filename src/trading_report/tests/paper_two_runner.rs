@@ -145,7 +145,10 @@ async fn two_runner_paper_and_negatives() {
             .unwrap();
     assert_eq!(combined_json["verdict"], "verified");
     assert_eq!(combined_json["actionable_for_analysis"], true);
-    assert_eq!(combined_json["subjects"].as_array().map(|a| a.len()), Some(2));
+    assert_eq!(
+        combined_json["subjects"].as_array().map(|a| a.len()),
+        Some(2)
+    );
     let strategies_subject = two
         .report
         .subjects
@@ -253,7 +256,8 @@ async fn two_runner_paper_and_negatives() {
     let healthy_dir = artifacts.join("healthy-report");
     trading_report::write_outputs(&healthy_dir, &healthy).expect("write healthy");
     let saved_json: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(healthy_dir.join("report.json")).unwrap()).unwrap();
+        serde_json::from_str(&fs::read_to_string(healthy_dir.join("report.json")).unwrap())
+            .unwrap();
     let saved_md = fs::read_to_string(healthy_dir.join("report.md")).unwrap();
     assert_eq!(saved_json["verdict"], "verified");
     assert_eq!(saved_json["actionable_for_analysis"], true);
@@ -317,7 +321,9 @@ async fn two_runner_paper_and_negatives() {
             || stale.report.subjects[0]
                 .reasons
                 .iter()
-                .any(|r| r.code == "BOOK_STALE" || r.code == "BOOK_UNAVAILABLE" || r.code == "SOURCE_STALE")
+                .any(|r| r.code == "BOOK_STALE"
+                    || r.code == "BOOK_UNAVAILABLE"
+                    || r.code == "SOURCE_STALE")
     );
     assert!(!stale.report.actionable_for_analysis);
 

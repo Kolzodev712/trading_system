@@ -16,8 +16,10 @@ tonic-build = { workspace = true }
 anyhow = { workspace = true, default-features = false, features = ["std"] }
 chrono = { workspace = true }
 clap = { version = "4.4", features = ["derive"] }
+fs4 = "0.13"
 hex = { workspace = true }
 hmac = { workspace = true }
+mongodb = { workspace = true }
 prost = { workspace = true }
 reqwest = { workspace = true }
 rust_decimal = { workspace = true }
@@ -28,6 +30,7 @@ thiserror = { workspace = true }
 tokio = { workspace = true }
 toml = "0.8"
 tonic = { workspace = true }
+uuid = { workspace = true }
 
 [dev-dependencies]
 tempfile = "3"

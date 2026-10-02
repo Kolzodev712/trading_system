@@ -391,7 +391,8 @@ fn exposure_section(
                 .find(|b| b.asset.eq_ignore_ascii_case(base))
                 .map(|b| b.total.as_str())
                 .unwrap_or("0");
-            let state_qty = trading_state_qty(risk, runner_positions.value.as_deref().unwrap_or(&[]));
+            let state_qty =
+                trading_state_qty(risk, runner_positions.value.as_deref().unwrap_or(&[]));
             match compare_qty(venue_qty, &state_qty, tol) {
                 Ok(false) => {
                     differences.push(format!(
@@ -667,9 +668,11 @@ mod tests {
             .reasons
             .iter()
             .any(|r| r.code == "EXPOSURE_DISAGREEMENT"));
-        assert!(report.exposure.differences.iter().any(|d| {
-            d.contains("trading_state 0") && d.contains("venue BTC=0.010")
-        }));
+        assert!(report
+            .exposure
+            .differences
+            .iter()
+            .any(|d| { d.contains("trading_state 0") && d.contains("venue BTC=0.010") }));
     }
 
     #[test]
@@ -716,7 +719,10 @@ mod tests {
         });
         assert_eq!(report.verdict, Verdict::Unverified);
         assert!(!report.actionable_for_analysis);
-        assert!(report.reasons.iter().any(|r| r.code == "JOURNAL_UNRESOLVED"));
+        assert!(report
+            .reasons
+            .iter()
+            .any(|r| r.code == "JOURNAL_UNRESOLVED"));
     }
 
     #[test]

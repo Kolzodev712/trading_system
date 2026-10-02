@@ -73,11 +73,48 @@ services:
     profiles:
       - cli  # Only start with --profile cli (prevents auto-start)
 
+  # One-shot observer. Never started by `docker compose up`. Does not start or restart runners.
+  trading-report:
+    build:
+      context: .
+      dockerfile: Dockerfile.report
+    container_name: trading-report
+    restart: "no"
+    profiles:
+      - report
+    networks:
+      - trading-network
+    environment:
+      TRADING_REPORT_MONGO_URI_FILE: /run/secrets/trading_report_mongo_uri
+      TRADING_REPORT_MONGO_DB: ${TRADING_REPORT_MONGO_DB:-trading_report}
+      TRADING_REPORT_DEPLOYMENT_ID: ${TRADING_REPORT_DEPLOYMENT_ID:-paper-lab}
+    secrets:
+      - trading_report_mongo_uri
+    volumes:
+      - ${TRADING_REPORT_CONFIG:-./config/report.toml}:/app/report.toml:ro
+      - ${TRADING_REPORT_LEVELS_JOURNAL:-./runtime-data/levels/submission-journal.jsonl}:/journals/levels/submission-journal.jsonl:ro
+      - ${TRADING_REPORT_STRATEGIES_JOURNAL:-./runtime-data/strategies/submission-journal.jsonl}:/journals/strategies/submission-journal.jsonl:ro
+      - ${TRADING_REPORTS_DIR:-./runtime-data/reports}:/reports
+    command:
+      [
+        "scheduled",
+        "--config",
+        "/app/report.toml",
+        "--reports-dir",
+        "/reports",
+        "--timeout-secs",
+        "120",
+      ]
+
 volumes:
   mongodb_data:
     driver: local
   trading-logs:
     driver: local
+
+secrets:
+  trading_report_mongo_uri:
+    file: ${TRADING_REPORT_MONGO_URI_FILE:-./secrets/trading_report_mongo_uri}
 
 networks:
   trading-network:

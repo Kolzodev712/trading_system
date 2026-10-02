@@ -69,6 +69,12 @@ FlattenAndPause latches first, REST-discovers working orders (including those mi
 
 `PauseEntries`, `CancelWorking`, `FlattenAndPause`, and `Resume` are distinct from legacy `SetTradingEnabled`. Mutating RPCs on non-Paper venues require `TRADING_OPERATOR_TOKEN` at the runner/proxy boundary; Envoy injects the token. Unset token is Paper/lab only.
 
+## Trading report observer
+
+`src/trading_report` / `trading-report` is a one-shot read-only observer of separately running Levels and Strategies processes. It is not imported by `runner` or `trading_engine` and does not live inside those containers. Optional Mongo persistence stores the exact `report.json` bytes. A host systemd timer starts a short-lived reporter container; there is no reporting daemon.
+
+Operator commands and timer install: [TRADING_REPORT_OPERATOR.md](TRADING_REPORT_OPERATOR.md). Feature note: [features/trading-report-v1.md](features/trading-report-v1.md).
+
 ## Related component docs
 
 Progression: [PROGRESSION.md](PROGRESSION.md). In-process engines: [architecture/README.md](../architecture/README.md). Venue labels: [VENUE_MODES.md](VENUE_MODES.md). Commands: [COMMAND_PLANE.md](COMMAND_PLANE.md). Data plane / Zenoh opt-in: [PLATFORM_DATA_PLANE.md](PLATFORM_DATA_PLANE.md).

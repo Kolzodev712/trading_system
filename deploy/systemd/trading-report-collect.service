@@ -1,0 +1,19 @@
+[Unit]
+Description=One-shot trading-report collect
+Documentation=file:///opt/trading_system/docs/TRADING_REPORT_OPERATOR.md
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/trading_system
+EnvironmentFile=-/etc/trading-report.env
+# flock prevents overlapping timer fires. --no-deps never starts or restarts runners.
+ExecStart=/usr/bin/flock -n /run/trading-report-collect.lock /usr/bin/docker compose --profile report run --rm --no-deps trading-report
+TimeoutStartSec=180
+Nice=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

@@ -9,6 +9,8 @@ pub mod journal_source;
 pub mod model;
 pub mod render;
 pub mod runner_source;
+pub mod schedule;
+pub mod store;
 pub mod venue_source;
 pub mod verify;
 

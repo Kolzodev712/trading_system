@@ -88,6 +88,8 @@ export TRADING_REPORT_MONGO_URI_FILE="$SECRETS/trading_report_mongo_uri"
 export TRADING_REPORT_MONGO_READ_URI_FILE="$SECRETS/trading_report_mongo_read_uri"
 export TRADING_REPORT_STACK_ENV="$ENV_FILE"
 
+# Paths and compose identity only. Passwords stay in the 0600 URI secret files
+# and in this process environment for `compose up`; they are not written here.
 cat > "$ENV_FILE" <<EOF
 COMPOSE_PROJECT_NAME=${COMPOSE_PROJECT_NAME}
 K_PAPER_DIR=${K_PAPER_DIR}
@@ -98,11 +100,8 @@ TRADING_REPORTS_DIR=${REPORTS}
 TRADING_REPORT_MONGO_URI_FILE=${SECRETS}/trading_report_mongo_uri
 TRADING_REPORT_MONGO_READ_URI_FILE=${SECRETS}/trading_report_mongo_read_uri
 TRADING_REPORT_DEPLOYMENT_ID=${TRADING_REPORT_DEPLOYMENT_ID}
-REPORT_WRITER_PASSWORD=${REPORT_WRITER_PASSWORD}
-REPORT_READER_PASSWORD=${REPORT_READER_PASSWORD}
-RUNNER_MONGO_PASSWORD=${RUNNER_MONGO_PASSWORD}
-MONGO_ROOT_PASSWORD=${MONGO_ROOT_PASSWORD}
 EOF
+chmod 600 "$ENV_FILE"
 
 COMPOSE=(docker compose -f docker-compose.report.yml)
 

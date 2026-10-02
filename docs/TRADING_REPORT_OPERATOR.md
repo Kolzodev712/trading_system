@@ -95,7 +95,7 @@ Store the writer URI in `runtime-data/report-stack/secrets/trading_report_mongo_
 
 Deployment identity is `TRADING_REPORT_DEPLOYMENT_ID` (default `paper-lab`). The reporter and reader Compose commands do not pass `--deployment-id`, so that environment value is not overridden.
 
-`scripts/trading-report-compose-gate.sh` starts a **fresh isolated** Compose project and data directory (`COMPOSE_PROJECT_NAME=tr-gate-<id>`, `runtime-data/report-gate-<id>`). It refuses if a named Paper report stack already exists. It never truncates or overwrites journals under `runtime-data/report-stack` or any other existing runner directory.
+`scripts/trading-report-compose-gate.sh` starts a **fresh isolated** Compose project and data directory (`COMPOSE_PROJECT_NAME=tr-gate-<id>`, `runtime-data/report-gate-<id>`). It refuses if a named Paper report stack already exists. It never truncates or overwrites journals under `runtime-data/report-stack` or any other existing runner directory. The generated `stack.env` is mode `0600` and does not contain Mongo passwords; those stay in the secret URI files.
 
 ```bash
 # Isolated stack only. Does not collect and does not touch an existing Paper stack.

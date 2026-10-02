@@ -143,7 +143,7 @@ impl HttpVenueReader {
                 "linear".into()
             }
         });
-        let symbol = instrument.replace('/', "").replace('-', "");
+        let symbol = instrument.replace(['/', '-'], "");
         let orders = self
             .bybit_open_orders(&mut methods, &category, &symbol)
             .await;
@@ -577,10 +577,7 @@ pub fn merge_order_pages(
 }
 
 pub fn normalize_symbol(symbol: &str) -> String {
-    symbol
-        .replace('/', "")
-        .replace('-', "")
-        .to_ascii_uppercase()
+    symbol.replace(['/', '-'], "").to_ascii_uppercase()
 }
 
 pub fn earliest_observed_at(times: &[DateTime<Utc>]) -> Option<DateTime<Utc>> {
@@ -738,13 +735,9 @@ mod tests {
                     let n = socket.read(&mut buf).await.unwrap_or(0);
                     let req = String::from_utf8_lossy(&buf[..n]);
                     let line = req.lines().next().unwrap_or("");
-                    let body = if line.contains("/open_orders") {
-                        "[]"
-                    } else if line.contains("/balances") {
+                    let body = if line.contains("/balances") {
                         tokio::time::sleep(Duration::from_millis(400)).await;
                         r#"[{"asset":"USDT","total":"0","available":"0","locked":"0"}]"#
-                    } else if line.contains("/positions") {
-                        "[]"
                     } else {
                         "[]"
                     };

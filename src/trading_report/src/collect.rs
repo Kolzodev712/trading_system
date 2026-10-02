@@ -7,7 +7,7 @@ use crate::model::{ReportManifest, SubjectReport, TradingReport, Verdict, SCHEMA
 use crate::render::render_markdown;
 use crate::runner_source::snapshot_runner;
 use crate::venue_source::HttpVenueReader;
-use crate::verify::subject_report;
+use crate::verify::{subject_report, SubjectInputs};
 
 pub struct CollectOutputs {
     pub report: TradingReport,
@@ -28,16 +28,17 @@ pub async fn collect_report(cfg: &ReportConfig) -> Result<CollectOutputs> {
         }
         let journal = load_latest_journal(&runner_cfg.journal_path).map_err(|e| e.to_string());
         let completed_at = chrono::Utc::now();
-        subjects.push(subject_report(
-            runner_cfg,
-            &cfg.freshness,
-            mandate.clone(),
-            &completed_at.to_rfc3339(),
-            completed_at.timestamp_millis(),
-            &runner,
-            &venue,
+        let generated_at_utc = completed_at.to_rfc3339();
+        subjects.push(subject_report(SubjectInputs {
+            cfg: runner_cfg,
+            freshness: &cfg.freshness,
+            mandate: mandate.clone(),
+            generated_at_utc: &generated_at_utc,
+            now_ms: completed_at.timestamp_millis(),
+            runner: &runner,
+            venue: &venue,
             journal,
-        ));
+        }));
     }
     let overall = subjects
         .iter()

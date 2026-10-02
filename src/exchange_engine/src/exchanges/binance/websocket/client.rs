@@ -270,7 +270,7 @@ impl BinanceWSClient {
                 }
                 let message = message_opt.unwrap();
                 message_count += 1;
-                debug!("[READER {}] Received message #{count}: type={type:?}", reader_id, count = message_count, type = match &message { Ok(Message::Text(_)) => "Text", Ok(Message::Binary(_)) => "Binary", Ok(Message::Ping(_)) => "Ping", Ok(Message::Pong(_)) => "Pong", Ok(Message::Close(_)) => "Close", Err(_) => "Error" });
+                debug!("[READER {}] Received message #{count}: type={type:?}", reader_id, count = message_count, type = match &message { Ok(Message::Text(_)) => "Text", Ok(Message::Binary(_)) => "Binary", Ok(Message::Ping(_)) => "Ping", Ok(Message::Pong(_)) => "Pong", Ok(Message::Close(_)) => "Close", Ok(Message::Frame(_)) => "Frame", Err(_) => "Error" });
                 match message {
                     Ok(Message::Text(txt)) => {
                         debug!(
@@ -298,7 +298,7 @@ impl BinanceWSClient {
                             );
                         }
                         let txt_clone = txt.clone();
-                        match handler.handle_text_message(txt.into()) {
+                        match handler.handle_text_message(txt.as_str().into()) {
                             Ok(BinanceInbound::Rpc(rpc)) => {
                                 tracing::info!("[READER {}] Parsed as RPC response (message #{count}), forwarding to rpc_response_tx...", reader_id, count = message_count);
                                 if rpc_response_tx.send(*rpc).await.is_err() {
@@ -332,7 +332,7 @@ impl BinanceWSClient {
                             count = message_count,
                             len = bin.len()
                         );
-                        handler.handle_binary(bin);
+                        handler.handle_binary(bin.to_vec());
                     }
                     Ok(Message::Ping(payload)) => {
                         debug!(
@@ -340,8 +340,8 @@ impl BinanceWSClient {
                             count = message_count,
                             len = payload.len()
                         );
-                        handler.handle_ping(payload.clone());
-                        if ping_tx.send(payload).await.is_err() {
+                        handler.handle_ping(payload.to_vec());
+                        if ping_tx.send(payload.to_vec()).await.is_err() {
                             warn!("Failed to send ping to ping channel");
                         }
                     }
@@ -351,8 +351,9 @@ impl BinanceWSClient {
                             count = message_count,
                             len = p.len()
                         );
-                        handler.handle_pong(p);
+                        handler.handle_pong(p.to_vec());
                     }
+                    Ok(Message::Frame(_)) => {}
                     Ok(Message::Close(c)) => {
                         if let Some(close_frame) = &c {
                             error!(
@@ -575,30 +576,33 @@ impl WebSocketClient<ParsedBinanceMessage> for BinanceWSClient {
         tokio::spawn(async move {
             while let Some(msg) = ws_stream.next().await {
                 match msg {
-                    Ok(Message::Text(txt)) => match handler.handle_text_message(txt.into()) {
-                        Ok(parsed) => {
-                            if let Err(e) = event_tx.send(parsed).await {
-                                error!("failed to forward parsed event: {e:?}");
+                    Ok(Message::Text(txt)) => {
+                        match handler.handle_text_message(txt.as_str().into()) {
+                            Ok(parsed) => {
+                                if let Err(e) = event_tx.send(parsed).await {
+                                    error!("failed to forward parsed event: {e:?}");
+                                }
+                            }
+                            Err(e) => {
+                                error!("WS parse error: {e:?}");
                             }
                         }
-                        Err(e) => {
-                            error!("WS parse error: {e:?}");
-                        }
-                    },
+                    }
 
-                    Ok(Message::Binary(bin)) => handler.handle_binary(bin),
+                    Ok(Message::Binary(bin)) => handler.handle_binary(bin.to_vec()),
 
                     Ok(Message::Ping(ping)) => {
-                        handler.handle_ping(ping.clone());
+                        handler.handle_ping(ping.to_vec());
                         // echo back
                         if let Err(e) = ws_stream.send(Message::Pong(ping)).await {
                             error!("error sending pong: {e:?}");
                         }
                     }
 
-                    Ok(Message::Pong(pong)) => handler.handle_pong(pong),
+                    Ok(Message::Pong(pong)) => handler.handle_pong(pong.to_vec()),
 
                     Ok(Message::Close(cf)) => handler.handle_close(cf),
+                    Ok(Message::Frame(_)) => {}
 
                     Err(e) => {
                         error!("error while receiving ws message: {e}");

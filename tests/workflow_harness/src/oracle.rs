@@ -192,29 +192,37 @@ fn canon(d: Decimal) -> String {
     qty_canon(d)
 }
 
-pub fn assert_spot_agreement(
-    result: &mut ScenarioResult,
-    tag: &str,
-    expect: Decimal,
-    paper_btc: Decimal,
-    runner: Decimal,
-    catalog: Option<Decimal>,
-    ledger: Option<Decimal>,
-    halt: &str,
-) {
-    result.assert_eq(&format!("{tag}.paper_btc"), canon(expect), canon(paper_btc));
-    result.assert_eq(&format!("{tag}.runner"), canon(expect), canon(runner));
-    if let Some(c) = catalog {
-        result.assert_eq(&format!("{tag}.catalog"), canon(expect), canon(c));
+pub struct SpotAgreement {
+    pub expect: Decimal,
+    pub paper_btc: Decimal,
+    pub runner: Decimal,
+    pub catalog: Option<Decimal>,
+    pub ledger: Option<Decimal>,
+    pub halt: String,
+}
+
+pub fn assert_spot_agreement(result: &mut ScenarioResult, tag: &str, qty: SpotAgreement) {
+    result.assert_eq(
+        &format!("{tag}.paper_btc"),
+        canon(qty.expect),
+        canon(qty.paper_btc),
+    );
+    result.assert_eq(
+        &format!("{tag}.runner"),
+        canon(qty.expect),
+        canon(qty.runner),
+    );
+    if let Some(c) = qty.catalog {
+        result.assert_eq(&format!("{tag}.catalog"), canon(qty.expect), canon(c));
     }
-    if let Some(l) = ledger {
-        result.assert_eq(&format!("{tag}.ledger"), canon(expect), canon(l));
+    if let Some(l) = qty.ledger {
+        result.assert_eq(&format!("{tag}.ledger"), canon(qty.expect), canon(l));
     }
-    if halt.to_lowercase().contains("spot position disagrees") {
+    if qty.halt.to_lowercase().contains("spot position disagrees") {
         result.fail(
             &format!("{tag}.no_disagreement"),
             "no disagreement halt",
-            halt,
+            qty.halt.as_str(),
         );
     }
 }

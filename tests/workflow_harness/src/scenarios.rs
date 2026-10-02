@@ -8,7 +8,7 @@ use crate::oracle::{
     assert_spot_agreement, btc_total, catalog_filled_qty, catalog_owns,
     distinct_level_client_order_ids, halt_is_disagreement, journal_has_state,
     journaled_client_id_after, latest_level_client_order_id, qty_canon, qty_close,
-    rest_btc_position, runner_btc_qty, unique_ledger_qty, working_ids,
+    rest_btc_position, runner_btc_qty, unique_ledger_qty, working_ids, SpotAgreement,
 };
 use crate::paper::{CatalogKind, PaperInstrument, PaperStack};
 use crate::process::ui_dir;
@@ -95,12 +95,14 @@ async fn wait_spot_qty(
             assert_spot_agreement(
                 result,
                 tag,
-                expect,
-                paper,
-                runner,
-                cat,
-                led,
-                &snap.exposure_halt_reason,
+                SpotAgreement {
+                    expect,
+                    paper_btc: paper,
+                    runner,
+                    catalog: cat,
+                    ledger: led,
+                    halt: snap.exposure_halt_reason.clone(),
+                },
             );
             require_truth(result, stack, tag).await;
             return;
@@ -1105,26 +1107,30 @@ async fn paper_fill_ask_above_last(artifacts: &Path) -> ScenarioResult {
         Some(o) => o,
         None => return r,
     };
-    r.assert_eq("amend_keeps_exchange_id", &second.1, &amended.order_id);
+    r.assert_eq(
+        "amend_keeps_exchange_id",
+        second.1.clone(),
+        amended.order_id.clone(),
+    );
     if !amended.client_order_id.is_empty() {
         r.assert_eq(
             "amend_keeps_rest_client_id",
-            &second.0,
-            &amended.client_order_id,
+            second.0.clone(),
+            amended.client_order_id.clone(),
         );
     }
     r.assert_eq(
         "amend_keeps_latest_journal_id",
-        &second.0,
-        &latest_level_client_order_id(&stack.journal_text(), &id).unwrap_or_default(),
+        second.0.clone(),
+        latest_level_client_order_id(&stack.journal_text(), &id).unwrap_or_default(),
     );
     let ids_after = distinct_level_client_order_ids(&stack.journal_text(), &id);
     r.assert_eq(
         "no_third_journal_id",
-        &ids_before.len().to_string(),
-        &ids_after.len().to_string(),
+        ids_before.len().to_string(),
+        ids_after.len().to_string(),
     );
-    r.assert_eq("two_creates_only", "2", &ids_after.len().to_string());
+    r.assert_eq("two_creates_only", "2", ids_after.len().to_string());
     let _ = grpc.toggle_level(&id, false).await;
     require_truth(&mut r, &stack, "ask_above_last").await;
     r
@@ -1847,7 +1853,7 @@ async fn paper_ui_envoy(artifacts: &Path) -> ScenarioResult {
     if require(&mut r, "write_envoy_yaml", std::fs::write(&yaml_path, yaml)).is_none() {
         return r;
     }
-    let name = format!("wf-envoy-{}", &stack.run_id.replace("wf-", ""));
+    let name = format!("wf-envoy-{}", stack.run_id.replace("wf-", ""));
     let docker = std::process::Command::new("docker")
         .args([
             "run",

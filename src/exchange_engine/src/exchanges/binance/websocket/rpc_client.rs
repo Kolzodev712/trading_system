@@ -452,6 +452,7 @@ impl BinanceRpcClient {
                         Some(Ok(Message::Binary(_))) => {
                             debug!("[RPC] Received binary message");
                         }
+                        Some(Ok(Message::Frame(_))) => {}
                         Some(Err(e)) => {
                             error!("[RPC] WebSocket error: {:?}", e);
                             break;

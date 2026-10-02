@@ -357,9 +357,9 @@ pub fn levels_disabled_proof(
     if !levels_verified || required_instance_id.is_empty() {
         return None;
     }
-    let Some((_, enabled, _)) = levels.iter().find(|(id, _, _)| id == required_instance_id) else {
-        return None;
-    };
+    let (_, enabled, _) = levels
+        .iter()
+        .find(|(id, _, _)| id == required_instance_id)?;
     Some(!*enabled && levels.iter().all(|(_, other, _)| !other))
 }
 
@@ -466,8 +466,8 @@ async fn run_inner(
             Ok(id) => {
                 r.assert_eq(
                     "paused_instance_id",
-                    &expanded_instance_id(LEVEL_ID, INSTRUMENT),
-                    &id,
+                    expanded_instance_id(LEVEL_ID, INSTRUMENT),
+                    id.clone(),
                 );
                 id
             }
@@ -487,11 +487,13 @@ async fn run_inner(
         ))
     } else {
         run_after_start(
-            r,
-            adapter,
-            &mut grpc,
-            &stack,
-            &instance_id,
+            &mut DemoLiveCtx {
+                result: r,
+                adapter,
+                grpc: &mut grpc,
+                stack: &stack,
+                instance_id: &instance_id,
+            },
             qty,
             rest_price,
             &rules,
@@ -596,93 +598,82 @@ async fn run_inner(
     Ok(())
 }
 
+struct DemoLiveCtx<'a> {
+    result: &'a mut ScenarioResult,
+    adapter: &'a DemoAdapter,
+    grpc: &'a mut GrpcCtl,
+    stack: &'a DemoLevelsRunner,
+    instance_id: &'a str,
+}
+
 async fn run_after_start(
-    r: &mut ScenarioResult,
-    adapter: &DemoAdapter,
-    grpc: &mut GrpcCtl,
-    stack: &DemoLevelsRunner,
-    instance_id: &str,
+    ctx: &mut DemoLiveCtx<'_>,
     qty: Decimal,
     rest_price: Decimal,
     rules: &InstrumentRules,
     entry_deadline: Instant,
 ) -> Result<Decimal> {
-    let snap = grpc.snapshot().await?;
-    r.assert_eq("venue", "BYBIT", snap.venue.to_uppercase());
-    r.assert_true(
+    let snap = ctx.grpc.snapshot().await?;
+    ctx.result
+        .assert_eq("venue", "BYBIT", snap.venue.to_uppercase());
+    ctx.result.assert_true(
         "environment_demo",
         snap.environment.to_uppercase().contains("DEMO"),
         "DEMO",
         &snap.environment,
     );
-    r.assert_eq(
+    ctx.result.assert_eq(
         "entries_paused_start",
         "true",
         snap.entries_paused.to_string(),
     );
-    r.assert_eq(
+    ctx.result.assert_eq(
         "execution_mode",
         "exchange",
         snap.execution_mode.to_lowercase(),
     );
-    if r.verdict == Verdict::Fail {
+    if ctx.result.verdict == Verdict::Fail {
         return Err(anyhow::anyhow!("pre-resume snapshot assertions failed"));
     }
 
-    grpc.enable().await.context("SetTradingEnabled")?;
-    grpc.resume_entries().await.context("ResumeEntries")?;
-    r.note("one authenticated entry-enable (ResumeEntries) after independent preflight");
+    ctx.grpc.enable().await.context("SetTradingEnabled")?;
+    ctx.grpc.resume_entries().await.context("ResumeEntries")?;
+    ctx.result
+        .note("one authenticated entry-enable (ResumeEntries) after independent preflight");
 
-    place_and_cancel(
-        r,
-        adapter,
-        grpc,
-        qty,
-        rest_price,
-        entry_deadline,
-        stack,
-        instance_id,
-    )
-    .await?;
-    if r.verdict == Verdict::Fail {
+    place_and_cancel(ctx, qty, rest_price, entry_deadline).await?;
+    if ctx.result.verdict == Verdict::Fail {
         return Err(anyhow::anyhow!("place/cancel assertions failed"));
     }
 
-    let mut filled = rest_btc_position(&adapter.signed_positions().await?);
+    let mut filled = rest_btc_position(&ctx.adapter.signed_positions().await?);
     if qty_close(filled, Decimal::ZERO) && Instant::now() < entry_deadline {
-        attempt_fill(
-            r,
-            adapter,
-            grpc,
-            qty,
-            rules,
-            entry_deadline,
-            stack,
-            instance_id,
-        )
-        .await?;
-        filled = rest_btc_position(&adapter.signed_positions().await?);
+        attempt_fill(ctx, qty, rules, entry_deadline).await?;
+        filled = rest_btc_position(&ctx.adapter.signed_positions().await?);
     }
     Ok(filled)
 }
 
 async fn place_and_cancel(
-    r: &mut ScenarioResult,
-    adapter: &DemoAdapter,
-    grpc: &mut GrpcCtl,
+    ctx: &mut DemoLiveCtx<'_>,
     qty: Decimal,
     rest_price: Decimal,
     entry_deadline: Instant,
-    stack: &DemoLevelsRunner,
-    instance_id: &str,
 ) -> Result<()> {
-    grpc.update_level_price(instance_id, &rest_price.normalize().to_string())
+    ctx.grpc
+        .update_level_price(ctx.instance_id, &rest_price.normalize().to_string())
         .await?;
-    let watermark = latest_level_client_order_id(&stack.journal_text(), instance_id);
-    grpc.toggle_level(instance_id, true).await?;
-    r.note(format!("create 1/2 rest qty={qty} price={rest_price}"));
-    let client_order_id =
-        wait_journaled_client_id(stack, instance_id, entry_deadline, watermark.as_deref()).await?;
+    let watermark = latest_level_client_order_id(&ctx.stack.journal_text(), ctx.instance_id);
+    ctx.grpc.toggle_level(ctx.instance_id, true).await?;
+    ctx.result
+        .note(format!("create 1/2 rest qty={qty} price={rest_price}"));
+    let client_order_id = wait_journaled_client_id(
+        ctx.stack,
+        ctx.instance_id,
+        entry_deadline,
+        watermark.as_deref(),
+    )
+    .await?;
     let spec = OwnedOrderSpec {
         client_order_id,
         instrument: INSTRUMENT.into(),
@@ -690,54 +681,53 @@ async fn place_and_cancel(
         qty,
         price: rest_price,
     };
-    let order = wait_owned_order(adapter, &spec, entry_deadline).await?;
-    r.assert_eq(
+    let order = wait_owned_order(ctx.adapter, &spec, entry_deadline).await?;
+    ctx.result.assert_eq(
         "rest_client_id",
-        &spec.client_order_id,
-        &order.client_order_id,
+        spec.client_order_id.clone(),
+        order.client_order_id.clone(),
     );
-    r.assert_eq("rest_side", SIDE, order.side.clone());
-    r.assert_eq("rest_instrument", INSTRUMENT, order.instrument.clone());
+    ctx.result.assert_eq("rest_side", SIDE, order.side.clone());
+    ctx.result
+        .assert_eq("rest_instrument", INSTRUMENT, order.instrument.clone());
     write_demo_truth(
-        &stack.artifacts,
+        &ctx.stack.artifacts,
         "resting",
         std::slice::from_ref(&order),
         &[],
         &[],
         None,
     )?;
-    grpc.toggle_level(instance_id, false).await?;
-    r.note("disable first level; CancelWorking is reserved for protective cleanup");
-    if !wait_order_gone(adapter, &order.order_id, Duration::from_secs(30)).await {
+    ctx.grpc.toggle_level(ctx.instance_id, false).await?;
+    ctx.result
+        .note("disable first level; CancelWorking is reserved for protective cleanup");
+    if !wait_order_gone(ctx.adapter, &order.order_id, Duration::from_secs(30)).await {
         bail!("REST still lists disabled order {}", order.order_id);
     }
-    r.assert_eq("rest_cancel_removed", "true", "true");
+    ctx.result.assert_eq("rest_cancel_removed", "true", "true");
     Ok(())
 }
 
 async fn attempt_fill(
-    r: &mut ScenarioResult,
-    adapter: &DemoAdapter,
-    grpc: &mut GrpcCtl,
+    ctx: &mut DemoLiveCtx<'_>,
     qty: Decimal,
     rules: &InstrumentRules,
     entry_deadline: Instant,
-    stack: &DemoLevelsRunner,
-    instance_id: &str,
 ) -> Result<()> {
-    let fill_price = match price_from_fresh_asks(adapter, qty, rules).await {
+    let fill_price = match price_from_fresh_asks(ctx.adapter, qty, rules).await {
         Ok(px) => px,
         Err(e) => {
-            r.note(format!(
+            ctx.result.note(format!(
                 "create 2 skipped; ask-depth price unavailable: {e}"
             ));
             return Ok(());
         }
     };
-    grpc.update_level_price(instance_id, &fill_price.normalize().to_string())
+    ctx.grpc
+        .update_level_price(ctx.instance_id, &fill_price.normalize().to_string())
         .await?;
-    let snap = grpc.snapshot().await?;
-    r.assert_eq(
+    let snap = ctx.grpc.snapshot().await?;
+    ctx.result.assert_eq(
         "entries_paused_before_second_create",
         "false",
         snap.entries_paused.to_string(),
@@ -747,13 +737,18 @@ async fn attempt_fill(
             "entries still paused before second create; CancelWorking must not run between attempts"
         ));
     }
-    let watermark = latest_level_client_order_id(&stack.journal_text(), instance_id);
-    grpc.toggle_level(instance_id, true).await?;
-    r.note(format!(
+    let watermark = latest_level_client_order_id(&ctx.stack.journal_text(), ctx.instance_id);
+    ctx.grpc.toggle_level(ctx.instance_id, true).await?;
+    ctx.result.note(format!(
         "create 2/2 from fresh ask depth qty={qty} price={fill_price}"
     ));
-    let client_order_id =
-        wait_journaled_client_id(stack, instance_id, entry_deadline, watermark.as_deref()).await?;
+    let client_order_id = wait_journaled_client_id(
+        ctx.stack,
+        ctx.instance_id,
+        entry_deadline,
+        watermark.as_deref(),
+    )
+    .await?;
     let mut spec = OwnedOrderSpec {
         client_order_id,
         instrument: INSTRUMENT.into(),
@@ -761,64 +756,75 @@ async fn attempt_fill(
         qty,
         price: fill_price,
     };
-    let mut order = wait_owned_order(adapter, &spec, entry_deadline).await?;
-    r.note(format!(
+    let mut order = wait_owned_order(ctx.adapter, &spec, entry_deadline).await?;
+    ctx.result.note(format!(
         "fill-leg owned client_id={} order={} status={} price={}",
         order.client_order_id, order.order_id, order.status, order.price
     ));
     if order.status == "Filled" || order.status == "PartiallyFilled" {
-        r.note(format!(
+        ctx.result.note(format!(
             "exact-id {} confirmed via open or history as {}",
             order.client_order_id, order.status
         ));
     } else if order.status == "New" && Instant::now() < entry_deadline {
-        let ids_before = distinct_level_client_order_ids(&stack.journal_text(), instance_id);
-        match price_from_fresh_asks(adapter, qty, rules).await {
+        let ids_before =
+            distinct_level_client_order_ids(&ctx.stack.journal_text(), ctx.instance_id);
+        match price_from_fresh_asks(ctx.adapter, qty, rules).await {
             Ok(amended) if !qty_close(amended, spec.price) => {
-                grpc.update_level_price(instance_id, &amended.normalize().to_string())
+                ctx.grpc
+                    .update_level_price(ctx.instance_id, &amended.normalize().to_string())
                     .await?;
                 spec.price = amended;
-                r.note(format!(
+                ctx.result.note(format!(
                     "one price amend of owned order {} to {amended}",
                     order.order_id
                 ));
-                let after = wait_owned_order(adapter, &spec, entry_deadline).await?;
-                r.assert_eq(
+                let after = wait_owned_order(ctx.adapter, &spec, entry_deadline).await?;
+                ctx.result.assert_eq(
                     "amend_keeps_client_id",
-                    &order.client_order_id,
-                    &after.client_order_id,
+                    order.client_order_id.clone(),
+                    after.client_order_id.clone(),
                 );
-                r.assert_eq("amend_keeps_exchange_id", &order.order_id, &after.order_id);
-                r.assert_eq(
+                ctx.result.assert_eq(
+                    "amend_keeps_exchange_id",
+                    order.order_id.clone(),
+                    after.order_id.clone(),
+                );
+                ctx.result.assert_eq(
                     "amend_keeps_latest_journal_id",
-                    &spec.client_order_id,
-                    &latest_level_client_order_id(&stack.journal_text(), instance_id)
+                    spec.client_order_id.clone(),
+                    latest_level_client_order_id(&ctx.stack.journal_text(), ctx.instance_id)
                         .unwrap_or_default(),
                 );
-                let ids_after = distinct_level_client_order_ids(&stack.journal_text(), instance_id);
-                r.assert_eq(
+                let ids_after =
+                    distinct_level_client_order_ids(&ctx.stack.journal_text(), ctx.instance_id);
+                ctx.result.assert_eq(
                     "no_third_journal_id",
-                    &ids_before.len().to_string(),
-                    &ids_after.len().to_string(),
+                    ids_before.len().to_string(),
+                    ids_after.len().to_string(),
                 );
                 order = after;
             }
-            Ok(_) => r.note("refreshed ask matches create-2 price; no amend"),
-            Err(e) => r.note(format!("amend skipped; refreshed ask unavailable: {e}")),
+            Ok(_) => ctx
+                .result
+                .note("refreshed ask matches create-2 price; no amend"),
+            Err(e) => ctx
+                .result
+                .note(format!("amend skipped; refreshed ask unavailable: {e}")),
         }
     }
     let deadline = entry_deadline.min(Instant::now() + Duration::from_secs(45));
     while Instant::now() < deadline {
-        let pos = rest_btc_position(&adapter.signed_positions().await?);
+        let pos = rest_btc_position(&ctx.adapter.signed_positions().await?);
         if pos > Decimal::ZERO {
-            r.assert_true(
+            ctx.result.assert_true(
                 "fill_qty_le_max",
                 pos <= d(MAX_QTY),
                 "<=0.001",
                 &qty_canon(pos),
             );
-            let ledger_qty = unique_ledger_qty(&stack.ledger_text());
-            r.note(format!(
+            let ledger_qty = unique_ledger_qty(&ctx.stack.ledger_text());
+            ctx.result.note(format!(
                 "filled rest qty={pos} ledger_qty={ledger_qty} client_id={}",
                 order.client_order_id
             ));
@@ -826,7 +832,7 @@ async fn attempt_fill(
         }
         tokio::time::sleep(Duration::from_millis(400)).await;
     }
-    grpc.toggle_level(instance_id, false).await?;
+    ctx.grpc.toggle_level(ctx.instance_id, false).await?;
     Ok(())
 }
 

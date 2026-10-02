@@ -5,7 +5,7 @@ use crate::demo_levels::{
     limit_buy_from_asks, next_cleanup_request_id, owned_order_from_open_or_history, parse_asks,
     resolve_paused_instance_id, rest_order_matches_owned, OwnedOrderSpec,
 };
-use crate::oracle::assert_spot_agreement;
+use crate::oracle::{assert_spot_agreement, SpotAgreement};
 use crate::types::{ScenarioResult, Verdict};
 use crate::venue::{RestOrder, RestPosition};
 use rust_decimal::Decimal;
@@ -16,12 +16,14 @@ fn poisoned_rest_qty_fails_closed() {
     assert_spot_agreement(
         &mut r,
         "poison",
-        Decimal::from_str_exact("0.001").unwrap(),
-        Decimal::from_str_exact("999").unwrap(),
-        Decimal::from_str_exact("0.001").unwrap(),
-        None,
-        None,
-        "",
+        SpotAgreement {
+            expect: Decimal::from_str_exact("0.001").unwrap(),
+            paper_btc: Decimal::from_str_exact("999").unwrap(),
+            runner: Decimal::from_str_exact("0.001").unwrap(),
+            catalog: None,
+            ledger: None,
+            halt: String::new(),
+        },
     );
     assert_eq!(r.verdict, Verdict::Fail);
     assert!(r.first_failure.is_some());
@@ -373,7 +375,18 @@ fn latest_level_client_order_id_uses_last_row() {
 fn matching_qty_passes() {
     let mut r = ScenarioResult::new("ok", "PAPER", "Spot", "exchange");
     let q = Decimal::from_str_exact("0.001").unwrap();
-    assert_spot_agreement(&mut r, "ok", q, q, q, Some(q), Some(q), "");
+    assert_spot_agreement(
+        &mut r,
+        "ok",
+        SpotAgreement {
+            expect: q,
+            paper_btc: q,
+            runner: q,
+            catalog: Some(q),
+            ledger: Some(q),
+            halt: String::new(),
+        },
+    );
     assert_eq!(r.verdict, Verdict::Pass);
 }
 

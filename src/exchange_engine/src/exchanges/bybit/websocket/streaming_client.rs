@@ -252,6 +252,7 @@ impl BybitStreamingClient {
                         Some(Ok(Message::Binary(_))) => {
                             debug!("Received binary message (ignoring)");
                         }
+                        Some(Ok(Message::Frame(_))) => {}
                         Some(Ok(Message::Close(frame))) => {
                             if let Some(close_frame) = frame {
                                 error!("WebSocket closed: code={}, reason={}", close_frame.code, close_frame.reason);

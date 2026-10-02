@@ -123,10 +123,8 @@ async fn handle_create_form_input(app: &mut App, key: KeyCode) -> Result<(), Cli
                     _ => {}
                 }
             }
-            KeyCode::Backspace => {
-                if form.editing {
-                    form.input_buffer.pop();
-                }
+            KeyCode::Backspace if form.editing => {
+                form.input_buffer.pop();
             }
             _ => {}
         }
@@ -240,11 +238,8 @@ async fn handle_edit_form_input(app: &mut App, key: KeyCode) -> Result<(), CliEr
                     }
                 }
             }
-            KeyCode::Backspace => {
-                // Delete character
-                if form.editing {
-                    form.input_buffer.pop();
-                }
+            KeyCode::Backspace if form.editing => {
+                form.input_buffer.pop();
             }
             _ => {}
         }
@@ -335,17 +330,11 @@ async fn handle_normal_input(app: &mut App, key: KeyCode) -> Result<(), CliError
                 app.toggle_level_details().await?;
             }
         }
-        KeyCode::Char('e') | KeyCode::Char('E') => {
-            // Open edit form (only in levels mode)
-            if !app.has_strategy() {
-                app.open_edit_form().await?;
-            }
+        KeyCode::Char('e') | KeyCode::Char('E') if !app.has_strategy() => {
+            app.open_edit_form().await?;
         }
-        KeyCode::Char('c') | KeyCode::Char('C') => {
-            // Open create form (only in levels mode)
-            if !app.has_strategy() {
-                app.open_create_form().await?;
-            }
+        KeyCode::Char('c') | KeyCode::Char('C') if !app.has_strategy() => {
+            app.open_create_form().await?;
         }
         _ => {}
     }

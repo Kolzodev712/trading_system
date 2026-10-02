@@ -14,16 +14,28 @@ use crate::venue_source::{
     instrument_base, matches_instrument, normalize_symbol, qty_close, VenueSnapshot,
 };
 
-pub fn subject_report(
-    cfg: &RunnerConfig,
-    freshness: &FreshnessConfig,
-    mandate: crate::model::MandateView,
-    generated_at_utc: &str,
-    now_ms: i64,
-    runner: &RunnerSnapshot,
-    venue: &VenueSnapshot,
-    journal: Result<Vec<JournalRow>, String>,
-) -> SubjectReport {
+pub struct SubjectInputs<'a> {
+    pub cfg: &'a RunnerConfig,
+    pub freshness: &'a FreshnessConfig,
+    pub mandate: crate::model::MandateView,
+    pub generated_at_utc: &'a str,
+    pub now_ms: i64,
+    pub runner: &'a RunnerSnapshot,
+    pub venue: &'a VenueSnapshot,
+    pub journal: Result<Vec<JournalRow>, String>,
+}
+
+pub fn subject_report(input: SubjectInputs<'_>) -> SubjectReport {
+    let SubjectInputs {
+        cfg,
+        freshness,
+        mandate,
+        generated_at_utc,
+        now_ms,
+        runner,
+        venue,
+        journal,
+    } = input;
     let mut reasons = Vec::new();
     let mut sources = runner.sources.clone();
     sources.push(SourceTime {
@@ -1019,10 +1031,10 @@ mod tests {
             positions: Err("spot /positions unsupported; not proof of flatness".into()),
             positions_supported: false,
         };
-        subject_report(
-            &cfg,
-            &freshness,
-            crate::model::MandateView {
+        subject_report(SubjectInputs {
+            cfg: &cfg,
+            freshness: &freshness,
+            mandate: crate::model::MandateView {
                 advisory: true,
                 allowed_instruments: vec!["BTC/USDT".into()],
                 allowed_direction: "both".into(),
@@ -1033,11 +1045,11 @@ mod tests {
                 time_horizon: "intraday".into(),
                 enforced_by_runner: false,
             },
-            &generated,
+            generated_at_utc: &generated,
             now_ms,
-            &runner,
-            &venue,
-            over.journal.unwrap_or_else(|| Ok(vec![])),
-        )
+            runner: &runner,
+            venue: &venue,
+            journal: over.journal.unwrap_or_else(|| Ok(vec![])),
+        })
     }
 }

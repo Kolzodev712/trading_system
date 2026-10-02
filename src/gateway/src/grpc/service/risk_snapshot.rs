@@ -48,7 +48,7 @@ fn instrument_matches(instrument: &str, pair: &trading_core::types::common::Pair
     if instrument.is_empty() || instrument.eq_ignore_ascii_case("account") {
         return false;
     }
-    let compact = instrument.replace('/', "").replace('-', "");
+    let compact = instrument.replace(['/', '-'], "");
     let slash = format!("{}/{}", pair.base, pair.quote);
     let dash = format!("{}-{}", pair.base, pair.quote);
     let joined = format!("{}{}", pair.base, pair.quote);
@@ -117,9 +117,11 @@ mod tests {
 
     #[test]
     fn snapshot_reflects_updated_live_limits() {
-        let mut limits = RiskLimits::default();
-        limits.total_max_position = Some(Decimal::from(1));
-        limits.max_order_qty = Some(Decimal::new(2, 3));
+        let mut limits = RiskLimits {
+            total_max_position: Some(Decimal::from(1)),
+            max_order_qty: Some(Decimal::new(2, 3)),
+            ..RiskLimits::default()
+        };
         let state = TradingState::new();
         let first = build_risk_snapshot(&limits, &state, "BTC/USDT", None, 1);
         assert_eq!(first.total_max_position, "1");
@@ -154,13 +156,7 @@ mod tests {
             Decimal::new(2, 3),
             Decimal::from(50_000),
         );
-        let snap = build_risk_snapshot(
-            &RiskLimits::default(),
-            &state,
-            "ETH/USDT",
-            None,
-            1,
-        );
+        let snap = build_risk_snapshot(&RiskLimits::default(), &state, "ETH/USDT", None, 1);
         assert_eq!(snap.instrument, "ETH/USDT");
         assert_eq!(snap.position_qty, "0");
         assert_ne!(snap.position_qty, "0.002");

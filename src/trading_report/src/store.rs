@@ -213,9 +213,7 @@ fn redact_mongo_uris(text: &str) -> String {
         out.push_str(scheme);
         out.push_str("[REDACTED]");
         let tail = &rest[pos + scheme.len()..];
-        let skip = tail
-            .find(|c: char| matches!(c, '/' | '?' | ' ' | '"' | '\n'))
-            .unwrap_or(tail.len());
+        let skip = tail.find(['/', '?', ' ', '"', '\n']).unwrap_or(tail.len());
         rest = &tail[skip..];
     }
     out.push_str(rest);

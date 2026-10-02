@@ -143,6 +143,7 @@ impl BinanceStreamingClient {
                         Some(Ok(Message::Binary(_))) => {
                             debug!("[STREAMING] Received binary message");
                         }
+                        Some(Ok(Message::Frame(_))) => {}
                         Some(Err(e)) => {
                             error!("[STREAMING] WebSocket error: {:?}", e);
                             break;

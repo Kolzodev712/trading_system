@@ -6,10 +6,8 @@ use serde_json::json;
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
-use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-static ENV_LOCK: Mutex<()> = Mutex::new(());
 use trading_report::model::{Reason, TradingReport, Verdict, SCHEMA_VERSION};
 use trading_report::store::{
     emit_json_bytes, meta_from_report, new_report_id, sha256_hex, write_store_meta, ReportStore,
@@ -177,7 +175,6 @@ async fn unverified_verdict_is_preserved() {
 
 #[tokio::test]
 async fn mongo_failure_leaves_recoverable_local_report() {
-    let _env = ENV_LOCK.lock().unwrap();
     let db = unique_db();
     let dir = tempfile::tempdir().unwrap();
     let (report, json) = fixture_report(Verdict::Verified, None);
@@ -220,7 +217,6 @@ async fn mongo_failure_leaves_recoverable_local_report() {
 
 #[tokio::test]
 async fn secrets_stay_off_stdout_and_stdout_is_json_only() {
-    let _env = ENV_LOCK.lock().unwrap();
     let db = unique_db();
     let store = connect(&db).await;
     let (report, json) = fixture_report(Verdict::Verified, None);
@@ -268,7 +264,6 @@ async fn secrets_stay_off_stdout_and_stdout_is_json_only() {
 
 #[tokio::test]
 async fn persist_rejects_changed_local_file() {
-    let _env = ENV_LOCK.lock().unwrap();
     let db = unique_db();
     let dir = tempfile::tempdir().unwrap();
     let (report, json) = fixture_report(Verdict::Verified, None);

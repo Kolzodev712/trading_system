@@ -6,6 +6,7 @@ use tonic::service::Interceptor;
 use tonic::transport::Channel;
 use tonic::{Request, Status};
 
+#[allow(clippy::all)]
 pub mod trading_cli {
     tonic::include_proto!("trading_cli");
 }

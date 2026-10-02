@@ -10,7 +10,7 @@ opentelemetry_sdk = { version = "0.21", features = ["rt-tokio", "trace", "metric
 
 # OpenTelemetry exporters
 opentelemetry-jaeger = { version = "0.20", features = ["rt-tokio"], optional = true }
-prometheus = { version = "0.13", optional = true }
+prometheus = { version = "0.14", optional = true }
 
 # Tracing integration
 tracing = "0.1"

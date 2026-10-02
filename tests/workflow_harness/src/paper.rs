@@ -169,16 +169,16 @@ impl PaperStack {
         let journal_path = run_dir.join("submission-journal.jsonl");
         fs::write(
             &bot_path,
-            bot_json(
+            bot_json(PaperBotSpec {
                 paper_port,
                 health_port,
-                &grpc_bind,
-                &run_dir,
-                &run_id,
+                grpc_bind: &grpc_bind,
+                run_dir: &run_dir,
+                run_id: &run_id,
                 instrument,
                 execution_mode,
                 recon_ms,
-            ),
+            }),
         )?;
         if let Some(catalog) = catalog {
             fs::write(&levels_path, catalog_json(catalog, &run_id))?;
@@ -549,24 +549,33 @@ fn instruments_yaml(kind: PaperInstrument) -> String {
     )
 }
 
-fn bot_json(
+struct PaperBotSpec<'a> {
     paper_port: u16,
     health_port: u16,
-    grpc_bind: &str,
-    run_dir: &Path,
-    run_id: &str,
+    grpc_bind: &'a str,
+    run_dir: &'a Path,
+    run_id: &'a str,
     instrument: PaperInstrument,
-    execution_mode: &str,
+    execution_mode: &'a str,
     recon_ms: u64,
-) -> String {
-    let inst = match instrument {
+}
+
+fn bot_json(spec: PaperBotSpec<'_>) -> String {
+    let inst = match spec.instrument {
         PaperInstrument::Spot => "Spot",
         PaperInstrument::Futures => "Futures",
     };
-    let lev = match instrument {
+    let lev = match spec.instrument {
         PaperInstrument::Futures => ",\n        \"leverage\": 10",
         PaperInstrument::Spot => "",
     };
+    let paper_port = spec.paper_port;
+    let health_port = spec.health_port;
+    let grpc_bind = spec.grpc_bind;
+    let run_dir = spec.run_dir;
+    let run_id = spec.run_id;
+    let execution_mode = spec.execution_mode;
+    let recon_ms = spec.recon_ms;
     format!(
         r#"{{
   "system": {{ "log_level": "info", "shutdown_timeout_secs": 10 }},

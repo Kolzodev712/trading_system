@@ -276,7 +276,7 @@ impl WebSocketClient<ParsedBybitMessage> for BybitWSClient {
             while let Some(message) = ws_stream.next().await {
                 match message {
                     Ok(Message::Text(text)) => {
-                        match handler.handle_text_message(text.clone().into()) {
+                        match handler.handle_text_message(text.as_str().into()) {
                             Ok(parsed_message) => {
                                 if let Err(e) = tx.send(parsed_message).await {
                                     // Channel closed - expected during shutdown
@@ -290,16 +290,16 @@ impl WebSocketClient<ParsedBybitMessage> for BybitWSClient {
                         }
                     }
                     Ok(Message::Binary(binary)) => {
-                        handler.handle_binary(binary);
+                        handler.handle_binary(binary.to_vec());
                     }
                     Ok(Message::Ping(ping)) => {
-                        handler.handle_ping(ping.clone());
+                        handler.handle_ping(ping.to_vec());
                         if let Err(e) = ws_stream.send(Message::Pong(ping)).await {
                             error!("Error sending pong: {e}");
                         }
                     }
                     Ok(Message::Pong(pong)) => {
-                        handler.handle_pong(pong);
+                        handler.handle_pong(pong.to_vec());
                     }
                     Err(e) => {
                         error!("Error while receiving a message: {e}");

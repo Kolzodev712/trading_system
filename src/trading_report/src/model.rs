@@ -208,6 +208,7 @@ pub struct RiskView {
     pub reserved_qty: String,
     pub daily_pnl: Availability<String>,
     pub headroom: String,
+    pub instrument: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

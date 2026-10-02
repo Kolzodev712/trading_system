@@ -24,5 +24,5 @@ Verdicts are `verified` | `stale` | `unverified` | `disagreement`. `actionable_f
 ## Tests
 
 - Unit: schema, missing/default fields, freshness, decimal/symbol compare, pagination, Spot vs Futures truth, journal latest-state, verdict aggregation.
-- Process: two Paper runners, REST compare, REST failure, stale book, missing gRPC, old working order visibility, live risk-limit change.
-- Bybit Demo read-only only when credentials exist. No Resume or orders.
+- Process: Levels Exchange plus Strategies Shadow; REST-vs-runner set compare; saved healthy report; unresolved journal; Spot mismatch; wrong-instrument risk; stale source; malformed REST; secret rejection before write.
+- Bybit Demo signed REST is `NOT_RUN` without credentials. No Resume or orders.

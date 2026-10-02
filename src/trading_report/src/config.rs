@@ -5,6 +5,14 @@ use std::path::{Path, PathBuf};
 
 use crate::model::MandateView;
 
+pub const BYBIT_DEMO_REST: &str = "https://api-demo.bybit.com";
+
+pub fn approved_demo_rest(url: &str) -> bool {
+    url.trim()
+        .trim_end_matches('/')
+        .eq_ignore_ascii_case(BYBIT_DEMO_REST)
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct ReportConfig {
     #[serde(default = "default_schema")]
@@ -130,14 +138,22 @@ impl ReportConfig {
                     runner.venue_source.kind
                 );
             }
-            if kind == "bybit_demo"
-                && (runner.venue_source.api_key_env.is_none()
-                    || runner.venue_source.api_secret_env.is_none())
-            {
-                bail!(
-                    "{}: bybit_demo requires api_key_env and api_secret_env",
-                    runner.label
-                );
+            if kind == "bybit_demo" {
+                if runner.venue_source.api_key_env.is_none()
+                    || runner.venue_source.api_secret_env.is_none()
+                {
+                    bail!(
+                        "{}: bybit_demo requires api_key_env and api_secret_env",
+                        runner.label
+                    );
+                }
+                if !approved_demo_rest(&runner.venue_source.rest_base) {
+                    bail!(
+                        "{}: bybit_demo rest_base must be {BYBIT_DEMO_REST}; refusing {}",
+                        runner.label,
+                        runner.venue_source.rest_base
+                    );
+                }
             }
             if runner.venue_source.rest_base.trim().is_empty() {
                 bail!("{}: venue rest_base is required", runner.label);
@@ -221,5 +237,16 @@ mod tests {
         second.label = "b".into();
         cfg.runners.push(second);
         assert!(cfg.validate().is_err());
+    }
+
+    #[test]
+    fn rejects_unapproved_demo_rest_base() {
+        let mut cfg = sample();
+        cfg.runners[0].venue_source.kind = "bybit_demo".into();
+        cfg.runners[0].venue_source.rest_base = "https://evil.example".into();
+        cfg.runners[0].venue_source.api_key_env = Some("BYBIT_DEMO_API_KEY".into());
+        cfg.runners[0].venue_source.api_secret_env = Some("BYBIT_DEMO_API_SECRET".into());
+        let err = cfg.validate().expect_err("unapproved host");
+        assert!(err.to_string().contains(BYBIT_DEMO_REST));
     }
 }

@@ -37,6 +37,7 @@ pub struct PaperStack {
     paper_port: u16,
     _instrument: PaperInstrument,
     bin: PaperBin,
+    execution_mode: String,
 }
 
 #[derive(Clone, Copy)]
@@ -102,6 +103,19 @@ impl PaperStack {
             PaperInstrument::Futures,
             None,
             "exchange",
+            1_000,
+            PaperBin::C2,
+        )
+        .await
+    }
+
+    /// Strategies Shadow without FORCE_PLACE. Read-only two-container partner.
+    pub async fn launch_c2_shadow_readonly(artifacts: &Path) -> Result<Self> {
+        Self::launch_inner(
+            artifacts,
+            PaperInstrument::Spot,
+            None,
+            "shadow",
             1_000,
             PaperBin::C2,
         )
@@ -205,6 +219,7 @@ impl PaperStack {
             paper_port,
             _instrument: instrument,
             bin,
+            execution_mode: execution_mode.to_string(),
         };
         match bin {
             PaperBin::Runner => stack.start_runner("runner.log").await?,
@@ -258,7 +273,7 @@ impl PaperStack {
             .env("TRADING_TEST_CANDLES_PATH", &candles)
             .env("TRADING_TEST_NOW_MS", "259200000")
             .current_dir(&self.workspace);
-        if log_name == "runner.log" {
+        if log_name == "runner.log" && self.execution_mode.eq_ignore_ascii_case("exchange") {
             cmd.env("TRADING_TEST_FORCE_PLACE", "1")
                 .env("TRADING_TEST_LIMIT_PRICE", "10000")
                 .env("TRADING_TEST_ORDER_QTY", "0.001");

@@ -630,8 +630,16 @@ impl TradingCliService for TradingCliServiceImpl {
 
     async fn get_risk_snapshot(
         &self,
-        _request: Request<trading_cli::GetRiskSnapshotRequest>,
+        request: Request<trading_cli::GetRiskSnapshotRequest>,
     ) -> Result<Response<trading_cli::GetRiskSnapshotResponse>, Status> {
+        let instrument = request.into_inner().instrument.trim().to_string();
+        if instrument.is_empty() {
+            return Ok(Response::new(trading_cli::GetRiskSnapshotResponse {
+                snapshot: Some(risk_snapshot::unavailable_risk_snapshot(
+                    "instrument_required",
+                )),
+            }));
+        }
         let Some(risk_manager) = &self.risk_manager else {
             return Ok(Response::new(trading_cli::GetRiskSnapshotResponse {
                 snapshot: Some(risk_snapshot::unavailable_risk_snapshot(
@@ -657,12 +665,6 @@ impl TradingCliService for TradingCliServiceImpl {
         } else {
             None
         };
-        let instrument = state
-            .positions
-            .keys()
-            .next()
-            .map(|p| format!("{}/{}", p.base, p.quote))
-            .unwrap_or_else(|| "account".to_string());
         Ok(Response::new(trading_cli::GetRiskSnapshotResponse {
             snapshot: Some(risk_snapshot::build_risk_snapshot(
                 &limits,

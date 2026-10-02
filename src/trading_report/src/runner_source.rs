@@ -69,7 +69,9 @@ pub async fn snapshot_runner(cfg: &RunnerConfig) -> RunnerSnapshot {
     {
         Ok(resp) => match resp.into_inner().data {
             Some(data) => {
-                sources.push(ok_source("GetMonitoringData", &observed_at_utc));
+                let observed = epoch_ms_to_utc(data.snapshot_unix_ms)
+                    .unwrap_or_else(|| observed_at_utc.clone());
+                sources.push(ok_source("GetMonitoringData", &observed));
                 Ok(data)
             }
             None => {
@@ -120,10 +122,20 @@ pub async fn snapshot_runner(cfg: &RunnerConfig) -> RunnerSnapshot {
         Ok(None)
     };
 
-    let risk = match client.get_risk_snapshot(GetRiskSnapshotRequest {}).await {
+    let risk = match client
+        .get_risk_snapshot(GetRiskSnapshotRequest {
+            instrument: cfg.instrument.clone(),
+        })
+        .await
+    {
         Ok(resp) => match resp.into_inner().snapshot {
             Some(snap) if snap.available => {
-                sources.push(ok_source("GetRiskSnapshot", &observed_at_utc));
+                let observed = if snap.observed_at_unix_ms > 0 {
+                    epoch_ms_to_utc(snap.observed_at_unix_ms).unwrap_or_else(|| observed_at_utc.clone())
+                } else {
+                    observed_at_utc.clone()
+                };
+                sources.push(ok_source("GetRiskSnapshot", &observed));
                 Ok(RiskView {
                     total_max_position: empty_to_none(snap.total_max_position),
                     max_total_orders: empty_to_none(snap.max_total_orders),
@@ -143,6 +155,7 @@ pub async fn snapshot_runner(cfg: &RunnerConfig) -> RunnerSnapshot {
                     } else {
                         snap.headroom
                     },
+                    instrument: snap.instrument,
                 })
             }
             Some(snap) => {

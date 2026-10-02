@@ -6,7 +6,7 @@ use sha2::Sha256;
 use std::collections::HashSet;
 use std::time::Duration;
 
-use crate::config::VenueSourceConfig;
+use crate::config::{approved_demo_rest, VenueSourceConfig, BYBIT_DEMO_REST};
 use crate::model::{BalanceView, OrderView, PositionView};
 
 #[derive(Debug, Clone)]
@@ -26,6 +26,12 @@ pub struct HttpVenueReader {
 
 impl HttpVenueReader {
     pub fn new(cfg: VenueSourceConfig) -> Result<Self> {
+        if cfg.kind.eq_ignore_ascii_case("bybit_demo") && !approved_demo_rest(&cfg.rest_base) {
+            return Err(anyhow!(
+                "bybit_demo rest_base must be {BYBIT_DEMO_REST}; refusing {}",
+                cfg.rest_base
+            ));
+        }
         Ok(Self {
             cfg,
             client: Client::builder().timeout(Duration::from_secs(15)).build()?,
@@ -89,39 +95,11 @@ impl HttpVenueReader {
             return Err("incomplete REST pagination: remaining cursor".into());
         }
         let items = as_array(&value)?;
-        Ok(items
-            .iter()
-            .filter_map(|v| {
-                Some(OrderView {
-                    order_id: v.get("order_id")?.as_str()?.to_string(),
-                    client_order_id: v
-                        .get("client_order_id")
-                        .and_then(|x| x.as_str())
-                        .map(|s| s.to_string()),
-                    symbol: v
-                        .get("instrument_id")
-                        .and_then(|x| x.as_str())
-                        .unwrap_or("")
-                        .to_string(),
-                    side: v
-                        .get("side")
-                        .and_then(|x| x.as_str())
-                        .unwrap_or("")
-                        .to_string(),
-                    price: json_dec(v.get("price")),
-                    quantity: json_dec(v.get("amount")),
-                    status: v
-                        .get("status")
-                        .and_then(|x| x.as_str())
-                        .unwrap_or("")
-                        .to_string(),
-                    created_at: v
-                        .get("created_at")
-                        .and_then(|x| x.as_str())
-                        .map(|s| s.to_string()),
-                })
-            })
-            .collect())
+        let mut out = Vec::new();
+        for (idx, v) in items.iter().enumerate() {
+            out.push(parse_paper_order(v).map_err(|e| format!("open_orders[{idx}]: {e}"))?);
+        }
+        Ok(out)
     }
 
     async fn paper_get_balances(
@@ -132,16 +110,11 @@ impl HttpVenueReader {
         let url = format!("{}/balances", self.cfg.rest_base.trim_end_matches('/'));
         let value = get_json(&self.client, &url).await?;
         let items = as_array(&value)?;
-        Ok(items
-            .iter()
-            .filter_map(|v| {
-                Some(BalanceView {
-                    asset: v.get("asset")?.as_str()?.to_string(),
-                    total: json_dec(v.get("total")),
-                    free: v.get("available").map(json_dec_value),
-                })
-            })
-            .collect())
+        let mut out = Vec::new();
+        for (idx, v) in items.iter().enumerate() {
+            out.push(parse_paper_balance(v).map_err(|e| format!("balances[{idx}]: {e}"))?);
+        }
+        Ok(out)
     }
 
     async fn paper_get_positions(
@@ -152,19 +125,11 @@ impl HttpVenueReader {
         let url = format!("{}/positions", self.cfg.rest_base.trim_end_matches('/'));
         let value = get_json(&self.client, &url).await?;
         let items = as_array(&value)?;
-        Ok(items
-            .iter()
-            .filter_map(|v| {
-                Some(PositionView {
-                    symbol: v
-                        .get("instrument_id")
-                        .or_else(|| v.get("symbol"))
-                        .and_then(|x| x.as_str())?
-                        .to_string(),
-                    quantity: json_dec(v.get("quantity").or_else(|| v.get("size"))),
-                })
-            })
-            .collect())
+        let mut out = Vec::new();
+        for (idx, v) in items.iter().enumerate() {
+            out.push(parse_paper_position(v).map_err(|e| format!("positions[{idx}]: {e}"))?);
+        }
+        Ok(out)
     }
 
     async fn bybit_snapshot(
@@ -243,41 +208,11 @@ impl HttpVenueReader {
                 .pointer("/result/list")
                 .and_then(|v| v.as_array())
                 .ok_or_else(|| format!("Bybit open-order page {page} missing list"))?;
-            for item in list {
-                let id = item
-                    .get("orderId")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
-                if seen.insert(id.clone()) {
-                    pages.push(OrderView {
-                        order_id: id,
-                        client_order_id: item
-                            .get("orderLinkId")
-                            .and_then(|v| v.as_str())
-                            .map(|s| s.to_string()),
-                        symbol: item
-                            .get("symbol")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or(symbol)
-                            .to_string(),
-                        side: item
-                            .get("side")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("")
-                            .to_string(),
-                        price: json_dec(item.get("price")),
-                        quantity: json_dec(item.get("qty")),
-                        status: item
-                            .get("orderStatus")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("")
-                            .to_string(),
-                        created_at: item
-                            .get("createdTime")
-                            .and_then(|v| v.as_str())
-                            .map(|s| s.to_string()),
-                    });
+            for (idx, item) in list.iter().enumerate() {
+                let order = parse_bybit_order(item, symbol)
+                    .map_err(|e| format!("Bybit open-order page {page}[{idx}]: {e}"))?;
+                if seen.insert(order.order_id.clone()) {
+                    pages.push(order);
                 }
             }
             let next = value
@@ -324,15 +259,11 @@ impl HttpVenueReader {
             .pointer("/result/list")
             .and_then(|v| v.as_array())
             .ok_or("Bybit position/list missing list")?;
-        Ok(list
-            .iter()
-            .filter_map(|item| {
-                Some(PositionView {
-                    symbol: item.get("symbol")?.as_str()?.to_string(),
-                    quantity: json_dec(item.get("size")),
-                })
-            })
-            .collect())
+        let mut out = Vec::new();
+        for (idx, item) in list.iter().enumerate() {
+            out.push(parse_bybit_position(item).map_err(|e| format!("position[{idx}]: {e}"))?);
+        }
+        Ok(out)
     }
 
     async fn bybit_wallet(&self, methods: &mut Vec<String>) -> Result<Vec<BalanceView>, String> {
@@ -355,20 +286,21 @@ impl HttpVenueReader {
                     .unwrap_or("error")
             ));
         }
+        let list = value
+            .pointer("/result/list")
+            .and_then(|v| v.as_array())
+            .ok_or("Bybit wallet-balance missing list")?;
         let mut out = Vec::new();
-        if let Some(list) = value.pointer("/result/list").and_then(|v| v.as_array()) {
-            for acct in list {
-                if let Some(coins) = acct.get("coin").and_then(|v| v.as_array()) {
-                    for coin in coins {
-                        if let Some(asset) = coin.get("coin").and_then(|v| v.as_str()) {
-                            out.push(BalanceView {
-                                asset: asset.to_string(),
-                                total: json_dec(coin.get("walletBalance")),
-                                free: coin.get("availableToWithdraw").map(json_dec_value),
-                            });
-                        }
-                    }
-                }
+        for (acct_idx, acct) in list.iter().enumerate() {
+            let coins = acct
+                .get("coin")
+                .and_then(|v| v.as_array())
+                .ok_or_else(|| format!("wallet list[{acct_idx}] missing coin array"))?;
+            for (idx, coin) in coins.iter().enumerate() {
+                out.push(
+                    parse_bybit_balance(coin)
+                        .map_err(|e| format!("wallet list[{acct_idx}].coin[{idx}]: {e}"))?,
+                );
             }
         }
         Ok(out)
@@ -446,10 +378,6 @@ fn remaining_cursor(value: &serde_json::Value) -> bool {
         .unwrap_or(false)
 }
 
-fn json_dec(v: Option<&serde_json::Value>) -> String {
-    v.map(json_dec_value).unwrap_or_default()
-}
-
 fn json_dec_value(v: &serde_json::Value) -> String {
     match v {
         serde_json::Value::String(s) => s.clone(),
@@ -458,11 +386,158 @@ fn json_dec_value(v: &serde_json::Value) -> String {
     }
 }
 
+fn json_field<'a>(v: &'a serde_json::Value, names: &[&str]) -> Option<&'a serde_json::Value> {
+    names.iter().find_map(|name| v.get(*name))
+}
+
+fn require_nonempty_str(
+    v: &serde_json::Value,
+    names: &[&str],
+    field: &str,
+) -> Result<String, String> {
+    let raw = json_field(v, names).ok_or_else(|| format!("missing {field}"))?;
+    let s = match raw {
+        serde_json::Value::String(s) => s.clone(),
+        other => other
+            .as_str()
+            .map(|s| s.to_string())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| {
+                if other.is_number() {
+                    other.to_string()
+                } else {
+                    String::new()
+                }
+            }),
+    };
+    if s.trim().is_empty() {
+        return Err(format!("empty {field}"));
+    }
+    Ok(s)
+}
+
+fn optional_str(v: &serde_json::Value, names: &[&str]) -> Option<String> {
+    json_field(v, names).and_then(|raw| match raw {
+        serde_json::Value::String(s) if !s.is_empty() => Some(s.clone()),
+        serde_json::Value::Number(n) => Some(n.to_string()),
+        _ => raw.as_str().filter(|s| !s.is_empty()).map(|s| s.to_string()),
+    })
+}
+
+fn require_decimal_str(
+    v: &serde_json::Value,
+    names: &[&str],
+    field: &str,
+) -> Result<String, String> {
+    let raw = json_field(v, names).ok_or_else(|| format!("missing {field}"))?;
+    let s = json_dec_value(raw);
+    parse_decimal(&s).map_err(|e| format!("malformed {field} '{s}': {e}"))?;
+    Ok(s)
+}
+
+fn optional_side(v: &serde_json::Value) -> String {
+    optional_str(v, &["side"]).unwrap_or_default()
+}
+
+pub fn parse_paper_order(v: &serde_json::Value) -> Result<OrderView, String> {
+    Ok(OrderView {
+        order_id: require_nonempty_str(v, &["order_id", "orderId"], "order_id")?,
+        client_order_id: optional_str(v, &["client_order_id", "clientOrderId"]),
+        symbol: require_nonempty_str(
+            v,
+            &["instrument_id", "instrumentId", "symbol"],
+            "symbol",
+        )?,
+        side: optional_side(v),
+        price: optional_str(v, &["price"]).unwrap_or_default(),
+        quantity: require_decimal_str(v, &["amount", "quantity", "qty"], "quantity")?,
+        status: optional_str(v, &["status"]).unwrap_or_default(),
+        created_at: optional_str(v, &["created_at", "createdAt"]),
+    })
+}
+
+pub fn parse_paper_balance(v: &serde_json::Value) -> Result<BalanceView, String> {
+    Ok(BalanceView {
+        asset: require_nonempty_str(v, &["asset", "coin"], "asset")?,
+        total: require_decimal_str(v, &["total", "walletBalance"], "total")?,
+        free: json_field(v, &["available", "free", "availableToWithdraw"])
+            .map(json_dec_value)
+            .filter(|s| parse_decimal(s).is_ok()),
+    })
+}
+
+pub fn parse_paper_position(v: &serde_json::Value) -> Result<PositionView, String> {
+    let symbol = require_nonempty_str(v, &["instrument_id", "instrumentId", "symbol"], "symbol")?;
+    let quantity = require_decimal_str(v, &["quantity", "size", "qty"], "quantity")?;
+    Ok(PositionView {
+        symbol,
+        quantity: signed_qty(&optional_side(v), &quantity)?,
+    })
+}
+
+pub fn parse_bybit_order(v: &serde_json::Value, fallback_symbol: &str) -> Result<OrderView, String> {
+    let symbol = match require_nonempty_str(v, &["symbol"], "symbol") {
+        Ok(s) => s,
+        Err(_) if !fallback_symbol.is_empty() => fallback_symbol.to_string(),
+        Err(e) => return Err(e),
+    };
+    Ok(OrderView {
+        order_id: require_nonempty_str(v, &["orderId", "order_id"], "orderId")?,
+        client_order_id: optional_str(v, &["orderLinkId", "client_order_id"]),
+        symbol,
+        side: optional_side(v),
+        price: optional_str(v, &["price"]).unwrap_or_default(),
+        quantity: require_decimal_str(v, &["qty", "quantity", "amount"], "qty")?,
+        status: optional_str(v, &["orderStatus", "status"]).unwrap_or_default(),
+        created_at: optional_str(v, &["createdTime", "created_at"]),
+    })
+}
+
+pub fn parse_bybit_position(v: &serde_json::Value) -> Result<PositionView, String> {
+    let symbol = require_nonempty_str(v, &["symbol"], "symbol")?;
+    let size = require_decimal_str(v, &["size", "quantity"], "size")?;
+    Ok(PositionView {
+        symbol,
+        quantity: signed_qty(&optional_side(v), &size)?,
+    })
+}
+
+pub fn parse_bybit_balance(v: &serde_json::Value) -> Result<BalanceView, String> {
+    Ok(BalanceView {
+        asset: require_nonempty_str(v, &["coin", "asset"], "coin")?,
+        total: require_decimal_str(v, &["walletBalance", "total"], "walletBalance")?,
+        free: json_field(v, &["availableToWithdraw", "available", "free"])
+            .map(json_dec_value)
+            .filter(|s| parse_decimal(s).is_ok()),
+    })
+}
+
+pub fn signed_qty(side: &str, size: &str) -> Result<String, String> {
+    let abs = parse_decimal(size).map_err(|e| format!("malformed size '{size}': {e}"))?;
+    let signed = if side.eq_ignore_ascii_case("Sell") || side.eq_ignore_ascii_case("Short") {
+        -abs
+    } else {
+        abs
+    };
+    Ok(signed.normalize().to_string())
+}
+
 pub fn parse_decimal(s: &str) -> Result<Decimal> {
     if s.trim().is_empty() {
         return Err(anyhow!("empty decimal"));
     }
     s.parse::<Decimal>().map_err(|e| anyhow!("{e}"))
+}
+
+pub fn matches_instrument(symbol: &str, instrument: &str) -> bool {
+    normalize_symbol(symbol) == normalize_symbol(instrument)
+}
+
+pub fn instrument_base(instrument: &str) -> &str {
+    instrument
+        .split(['/', '-'])
+        .next()
+        .unwrap_or(instrument)
 }
 
 /// Walk pages until the cursor is empty. A leftover cursor is an error, not a short list.
@@ -509,16 +584,16 @@ pub fn normalize_symbol(symbol: &str) -> String {
         .to_ascii_uppercase()
 }
 
-pub fn qty_close(a: &str, b: &str, tolerance: Decimal) -> bool {
-    match (parse_decimal(a), parse_decimal(b)) {
-        (Ok(x), Ok(y)) => (x - y).abs() <= tolerance,
-        _ => a == b,
-    }
+pub fn qty_close(a: &str, b: &str, tolerance: Decimal) -> Result<bool, String> {
+    let x = parse_decimal(a).map_err(|e| format!("malformed quantity '{a}': {e}"))?;
+    let y = parse_decimal(b).map_err(|e| format!("malformed quantity '{b}': {e}"))?;
+    Ok((x - y).abs() <= tolerance)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::VenueSourceConfig;
     use rust_decimal::Decimal;
 
     #[test]
@@ -562,7 +637,56 @@ mod tests {
 
     #[test]
     fn decimal_and_symbol_normalize() {
-        assert!(qty_close("0.00100", "0.001", Decimal::new(1, 8)));
+        assert!(qty_close("0.00100", "0.001", Decimal::new(1, 8)).unwrap());
         assert_eq!(normalize_symbol("btc/usdt"), "BTCUSDT");
+    }
+
+    #[test]
+    fn matching_empty_quantities_are_not_equal() {
+        let err = qty_close("", "", Decimal::new(1, 8)).expect_err("empty");
+        assert!(err.contains("malformed"));
+        assert!(qty_close("not-a-qty", "not-a-qty", Decimal::new(1, 8)).is_err());
+    }
+
+    #[test]
+    fn incomplete_rest_row_is_rejected() {
+        let missing_id = serde_json::json!({"instrumentId":"BTC-USDT","amount":"0.01"});
+        assert!(parse_paper_order(&missing_id).is_err());
+        let empty_qty = serde_json::json!({"orderId":"o1","instrumentId":"BTC-USDT","amount":""});
+        assert!(parse_paper_order(&empty_qty).is_err());
+        let dropped_shape = serde_json::json!({"symbol":"BTCUSDT"});
+        assert!(parse_paper_position(&dropped_shape).is_err());
+    }
+
+    #[test]
+    fn bybit_short_is_signed_negative() {
+        let pos = parse_bybit_position(&serde_json::json!({
+            "symbol": "BTCUSDT",
+            "side": "Sell",
+            "size": "0.010"
+        }))
+        .unwrap();
+        assert_eq!(pos.quantity, "-0.01");
+        let long = parse_bybit_position(&serde_json::json!({
+            "symbol": "BTCUSDT",
+            "side": "Buy",
+            "size": "0.010"
+        }))
+        .unwrap();
+        assert_eq!(long.quantity, "0.01");
+    }
+
+    #[test]
+    fn unapproved_demo_host_is_rejected() {
+        match HttpVenueReader::new(VenueSourceConfig {
+            kind: "bybit_demo".into(),
+            rest_base: "https://evil.example".into(),
+            api_key_env: Some("BYBIT_DEMO_API_KEY".into()),
+            api_secret_env: Some("BYBIT_DEMO_API_SECRET".into()),
+            category: Some("linear".into()),
+        }) {
+            Ok(_) => panic!("unapproved host must be rejected"),
+            Err(err) => assert!(err.to_string().contains(BYBIT_DEMO_REST)),
+        }
     }
 }

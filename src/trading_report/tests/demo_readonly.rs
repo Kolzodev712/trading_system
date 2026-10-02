@@ -1,6 +1,6 @@
 //! Bybit Demo read-only comparison. Never Resume or place orders.
 
-use trading_report::config::VenueSourceConfig;
+use trading_report::config::{VenueSourceConfig, BYBIT_DEMO_REST};
 use trading_report::venue_source::HttpVenueReader;
 
 #[tokio::test]
@@ -8,14 +8,12 @@ async fn bybit_demo_readonly_if_credentials_present() {
     let key = std::env::var("BYBIT_DEMO_API_KEY").unwrap_or_default();
     let secret = std::env::var("BYBIT_DEMO_API_SECRET").unwrap_or_default();
     if key.is_empty() || key.contains("REPLACE") || secret.is_empty() {
-        eprintln!(
-            "BYBIT_DEMO_API_KEY/SECRET not configured; Paper-only scope. Demo read-only not run."
-        );
+        eprintln!("NOT_RUN: Demo signed REST (credentials absent)");
         return;
     }
     let cfg = VenueSourceConfig {
         kind: "bybit_demo".into(),
-        rest_base: "https://api-demo.bybit.com".into(),
+        rest_base: BYBIT_DEMO_REST.into(),
         api_key_env: Some("BYBIT_DEMO_API_KEY".into()),
         api_secret_env: Some("BYBIT_DEMO_API_SECRET".into()),
         category: Some("linear".into()),

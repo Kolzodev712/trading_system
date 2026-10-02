@@ -308,7 +308,9 @@ message MonitoringData {
     bool working_orders_unfiltered = 35;
 }
 
-message GetRiskSnapshotRequest {}
+message GetRiskSnapshotRequest {
+    string instrument = 1; // e.g. BTC/USDT; empty is unbound and must not pick another pair
+}
 
 message GetRiskSnapshotResponse {
     RiskSnapshot snapshot = 1;

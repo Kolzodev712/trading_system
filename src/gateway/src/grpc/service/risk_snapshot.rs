@@ -33,15 +33,7 @@ pub fn usage_from_state(state: &TradingState, instrument: &str) -> (Decimal, Dec
         .filter(|pair| instrument_matches(instrument, pair))
         .collect();
     if selected.is_empty() {
-        return (
-            Decimal::ZERO,
-            Decimal::ZERO,
-            if instrument.is_empty() || instrument.eq_ignore_ascii_case("account") {
-                state.reserved_submission_qty_all()
-            } else {
-                Decimal::ZERO
-            },
-        );
+        return (Decimal::ZERO, Decimal::ZERO, Decimal::ZERO);
     }
     let position = selected.iter().map(|pair| state.position_qty(pair)).sum();
     let working = selected.iter().map(|pair| state.working_qty(pair)).sum();
@@ -54,7 +46,7 @@ pub fn usage_from_state(state: &TradingState, instrument: &str) -> (Decimal, Dec
 
 fn instrument_matches(instrument: &str, pair: &trading_core::types::common::Pair) -> bool {
     if instrument.is_empty() || instrument.eq_ignore_ascii_case("account") {
-        return true;
+        return false;
     }
     let compact = instrument.replace('/', "").replace('-', "");
     let slash = format!("{}/{}", pair.base, pair.quote);
@@ -152,5 +144,25 @@ mod tests {
         );
         assert_eq!(snap.daily_pnl_source, "unavailable");
         assert!(snap.daily_pnl.is_empty());
+    }
+
+    #[test]
+    fn requested_instrument_is_not_replaced_by_first_position() {
+        let mut state = TradingState::new();
+        state.set_position(
+            trading_core::types::common::Pair::new("BTC", "USDT"),
+            Decimal::new(2, 3),
+            Decimal::from(50_000),
+        );
+        let snap = build_risk_snapshot(
+            &RiskLimits::default(),
+            &state,
+            "ETH/USDT",
+            None,
+            1,
+        );
+        assert_eq!(snap.instrument, "ETH/USDT");
+        assert_eq!(snap.position_qty, "0");
+        assert_ne!(snap.position_qty, "0.002");
     }
 }

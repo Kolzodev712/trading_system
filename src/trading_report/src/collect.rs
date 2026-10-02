@@ -72,18 +72,16 @@ pub async fn collect_report(cfg: &ReportConfig) -> Result<CollectOutputs> {
 }
 
 pub fn write_outputs(out_dir: &Path, outputs: &CollectOutputs) -> Result<()> {
+    let report_json = redact_secrets(&serde_json::to_string_pretty(&outputs.report)?);
+    let markdown = redact_secrets(&outputs.markdown);
+    let manifest_json = redact_secrets(&serde_json::to_string_pretty(&outputs.manifest)?);
+    reject_secrets(&report_json)?;
+    reject_secrets(&markdown)?;
+    reject_secrets(&manifest_json)?;
     std::fs::create_dir_all(out_dir).with_context(|| format!("create {}", out_dir.display()))?;
-    atomic_write(
-        out_dir.join("report.json"),
-        &serde_json::to_vec_pretty(&outputs.report)?,
-    )?;
-    atomic_write(out_dir.join("report.md"), outputs.markdown.as_bytes())?;
-    atomic_write(
-        out_dir.join("manifest.json"),
-        &serde_json::to_vec_pretty(&outputs.manifest)?,
-    )?;
-    reject_secrets(&outputs.markdown)?;
-    reject_secrets(&serde_json::to_string(&outputs.report)?)?;
+    atomic_write(out_dir.join("report.json"), report_json.as_bytes())?;
+    atomic_write(out_dir.join("report.md"), markdown.as_bytes())?;
+    atomic_write(out_dir.join("manifest.json"), manifest_json.as_bytes())?;
     Ok(())
 }
 
@@ -94,7 +92,25 @@ fn atomic_write(path: std::path::PathBuf, bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 
-fn reject_secrets(text: &str) -> Result<()> {
+pub fn redact_secrets(text: &str) -> String {
+    let mut out = text.to_string();
+    for key in [
+        "BYBIT_DEMO_API_KEY",
+        "BYBIT_DEMO_API_SECRET",
+        "BYBIT_API_KEY",
+        "BYBIT_API_SECRET",
+        "TRADING_OPERATOR_TOKEN",
+    ] {
+        if let Ok(val) = std::env::var(key) {
+            if val.len() >= 8 {
+                out = out.replace(&val, "[REDACTED]");
+            }
+        }
+    }
+    out
+}
+
+pub fn reject_secrets(text: &str) -> Result<()> {
     let lowered = text.to_ascii_lowercase();
     for needle in ["api_secret", "x-operator-token", "begin rsa private"] {
         if lowered.contains(needle) {
@@ -106,4 +122,54 @@ fn reject_secrets(text: &str) -> Result<()> {
 
 pub fn subject_has_reason(subject: &SubjectReport, code: &str) -> bool {
     subject.reasons.iter().any(|r| r.code == code)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::{Reason, ReportManifest, TradingReport, SCHEMA_VERSION};
+
+    fn outputs_with_text(extra: &str) -> CollectOutputs {
+        CollectOutputs {
+            report: TradingReport {
+                schema_version: SCHEMA_VERSION.into(),
+                generated_at_utc: "2026-10-01T00:00:00Z".into(),
+                subjects: vec![],
+                verdict: Verdict::Verified,
+                actionable_for_analysis: true,
+                reasons: vec![Reason::new("NOTE", extra)],
+            },
+            markdown: format!("# report\n{extra}\n"),
+            manifest: ReportManifest {
+                schema_version: SCHEMA_VERSION.into(),
+                generated_at_utc: "2026-10-01T00:00:00Z".into(),
+                source_revisions: vec![],
+                config_hash: None,
+            },
+        }
+    }
+
+    #[test]
+    fn secrets_are_rejected_before_any_file_is_written() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("missing");
+        let err = write_outputs(&out, &outputs_with_text("leaked api_secret value"))
+            .expect_err("secret");
+        assert!(err.to_string().contains("api_secret"));
+        assert!(!out.join("report.json").exists());
+        assert!(!out.join("report.md").exists());
+        assert!(!out.join("manifest.json").exists());
+    }
+
+    #[test]
+    fn env_secret_values_are_redacted_before_write() {
+        std::env::set_var("BYBIT_DEMO_API_SECRET", "supersecretvalue");
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("ok");
+        write_outputs(&out, &outputs_with_text("token=supersecretvalue")).unwrap();
+        let md = std::fs::read_to_string(out.join("report.md")).unwrap();
+        assert!(!md.contains("supersecretvalue"));
+        assert!(md.contains("[REDACTED]"));
+        std::env::remove_var("BYBIT_DEMO_API_SECRET");
+    }
 }

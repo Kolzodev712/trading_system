@@ -1,0 +1,37 @@
+[
+  {
+    "gate": "completed_trades_at_least_20",
+    "passed": true,
+    "detail": "completed trades 416"
+  },
+  {
+    "gate": "cost_a_net_positive",
+    "passed": false,
+    "detail": "net -57.3483451072483"
+  },
+  {
+    "gate": "higher_cost_net_positive",
+    "passed": false,
+    "detail": "net -122.4164020528563"
+  },
+  {
+    "gate": "delayed_net_positive",
+    "passed": false,
+    "detail": "net -58.2887238598203"
+  },
+  {
+    "gate": "cost_a_beats_placebo",
+    "passed": false,
+    "detail": "reversal -57.3483451072483 vs continuation -29.4090476927517"
+  },
+  {
+    "gate": "not_one_trade",
+    "passed": false,
+    "detail": "net -57.3483451072483 after removing winner 4.226758372816 is -61.5751034800643"
+  },
+  {
+    "gate": "not_two_negative_entry_years",
+    "passed": false,
+    "detail": "3 of 2023/2024/2025 are negative"
+  }
+]

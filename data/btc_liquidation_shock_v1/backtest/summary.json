@@ -1,0 +1,118 @@
+{
+  "candidate_id": "BTCLiquidationShockV1",
+  "disposition": "reject",
+  "revision": "8e20b5f53b83101c2dba05e823d9ad69d91ccd9e",
+  "spec_sha256": "sha256:17a86c88d8c5f83ad0d8c3dc1b35390c891c868859073cb243e5737008e9d2a7",
+  "human_spec_sha256": "sha256:96d8c425b9e5cfc1414301ce394a76d633440be9948f18c1648c95d00b77ab9d",
+  "dataset_hash": "sha256:806a91c0afedee338bd2435a753e9a862e10279c9a9d12e969aabcfa839e415a",
+  "gates": [
+    {
+      "gate": "completed_trades_at_least_20",
+      "passed": true,
+      "detail": "completed trades 416"
+    },
+    {
+      "gate": "cost_a_net_positive",
+      "passed": false,
+      "detail": "net -57.3483451072483"
+    },
+    {
+      "gate": "higher_cost_net_positive",
+      "passed": false,
+      "detail": "net -122.4164020528563"
+    },
+    {
+      "gate": "delayed_net_positive",
+      "passed": false,
+      "detail": "net -58.2887238598203"
+    },
+    {
+      "gate": "cost_a_beats_placebo",
+      "passed": false,
+      "detail": "reversal -57.3483451072483 vs continuation -29.4090476927517"
+    },
+    {
+      "gate": "not_one_trade",
+      "passed": false,
+      "detail": "net -57.3483451072483 after removing winner 4.226758372816 is -61.5751034800643"
+    },
+    {
+      "gate": "not_two_negative_entry_years",
+      "passed": false,
+      "detail": "3 of 2023/2024/2025 are negative"
+    }
+  ],
+  "robustness_note": "primary promotion failed; the robustness neighborhood was not opened",
+  "robustness": null,
+  "terciles": {
+    "low_net": "-17.7141954249467",
+    "medium_net": "-29.0745958524754",
+    "high_net": "-10.5595538298262",
+    "low_max_sigma": 0.003722263924293456,
+    "medium_max_sigma": 0.004816570468493096
+  },
+  "reversal_cost_a": {
+    "net_pnl": "-57.3483451072483",
+    "annual_net_pnl": "-19.466991682548737523234200743",
+    "completed_trades": 416,
+    "win_rate": "0.4615384615384615384615384615",
+    "mean_trade_pnl": "-0.1378565988155007211538461538",
+    "median_trade_pnl": "-0.04761436630750",
+    "max_drawdown_usdt": "69.8788584640137",
+    "gross_turnover_usdt": "54223.37330582",
+    "time_in_market_ms": 8985600000,
+    "average_abs_notional_usdt": "6.2991469289448209099709583737",
+    "long_net_pnl": "-32.8969526705106",
+    "short_net_pnl": "-24.4513924367377",
+    "fees": "32.534023983492",
+    "funding": "0.0594529762437"
+  },
+  "placebo_cost_a": {
+    "net_pnl": "-29.4090476927517",
+    "annual_net_pnl": "-9.982950436596243889405204461",
+    "completed_trades": 416,
+    "win_rate": "0.4230769230769230769230769231",
+    "mean_trade_pnl": "-0.0706948261844992788461538462",
+    "median_trade_pnl": "-0.100885678062",
+    "max_drawdown_usdt": "30.5393859811887",
+    "gross_turnover_usdt": "54223.36769418",
+    "time_in_market_ms": 8985600000,
+    "average_abs_notional_usdt": "6.2991469289448209099709583737",
+    "long_net_pnl": "-14.8664138032623",
+    "short_net_pnl": "-14.5426338894894",
+    "fees": "32.534020616508",
+    "funding": "-0.0594529762437"
+  },
+  "passive_cost_a": {
+    "net_pnl": "48.3605429739360",
+    "annual_net_pnl": "16.416067213039148698884758364",
+    "completed_trades": 0,
+    "win_rate": "undefined_no_trades",
+    "mean_trade_pnl": "0",
+    "median_trade_pnl": "0",
+    "max_drawdown_usdt": "44.3887151092231",
+    "gross_turnover_usdt": "22.67903490",
+    "time_in_market_ms": 92966340000,
+    "average_abs_notional_usdt": "66.300609689448209099709583737",
+    "long_net_pnl": "0",
+    "short_net_pnl": "0",
+    "fees": "0.01360742094",
+    "funding": "-16.5433347051240"
+  },
+  "passive_scaled_net": "5.3603560048462392001251952068",
+  "candidate_2_cost_a_net_context": "20.6120701293059",
+  "entry_year_nets": [
+    {
+      "year": 2023,
+      "net": "-3.0370205363058"
+    },
+    {
+      "year": 2024,
+      "net": "-25.2664317449723"
+    },
+    {
+      "year": 2025,
+      "net": "-29.0448928259702"
+    }
+  ]
+}

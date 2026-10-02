@@ -20,7 +20,6 @@ members = [
     "src/btc_price_ma_app",
     "src/market_data_engine",
     "src/indicator_engine",
-    "src/strategy_engine",
     "src/runner",
     "src/live_config",
     "src/asset_engine",

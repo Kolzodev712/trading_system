@@ -1,2 +1,0 @@
-decision_id,source_start_ms,source_end_ms,decision_time_ms,available_at_ms,fill_time_ms,side,quantity,reference_open,fill_price,fee,position_before,position_after
-benchmark-fixed-long,,,1674259200000,1674259210000,1674259260000,buy,0.001,22674.5,22697.1745,0.0226971745,0,0.001

@@ -1,11 +1,11 @@
 //! Score BTCPriceMALongFlatV1 through the existing offline simulator.
 
 use super::position_qty;
-use crate::donchian_daily_v1::backtest::{FROZEN_EVALUATION_END_MS, FROZEN_EVALUATION_START_MS};
-use crate::donchian_daily_v1::offline::DecisionLog;
+use crate::daily_dataset::DecisionLog;
+use crate::simulation::{FROZEN_EVALUATION_END_MS, FROZEN_EVALUATION_START_MS};
 use rust_decimal::Decimal;
 
-use crate::donchian_daily_v1::backtest::{
+use crate::simulation::{
     changes_for, required_execution_minutes_for_target_changes, research_scenarios, simulate,
     target_changes, validate_coverage, BacktestError, Book, MarketInputs, SimulateRequest,
     Simulation, FILL_ASSUMPTION, RESULT_LABEL,

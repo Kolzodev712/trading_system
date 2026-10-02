@@ -16,6 +16,7 @@ __pycache__/
 # research git guard blocks new additions. A later delete does not drop
 # an earlier Git object, so these must never be committed on a new branch.
 /data/**/backtest/
+/data/**/audit/
 /data/**/decisions-*.json
 /data/**/events-*.json
 /data/**/coverage_gate.json

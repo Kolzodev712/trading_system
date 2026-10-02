@@ -1,1 +1,0 @@
-entry_decision_id,exit_decision_id,side,quantity,entry_time_ms,exit_time_ms,holding_period_ms,entry_fill,exit_fill,price_pnl,fees,funding,net_pnl

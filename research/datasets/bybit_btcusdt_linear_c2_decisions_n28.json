@@ -1,0 +1,13 @@
+{
+  "id": "bybit_btcusdt_linear_c2_decisions_n28",
+  "role": "decisions",
+  "venue": "bybit",
+  "environment": "mainnet",
+  "product": "linear",
+  "symbol": "BTCUSDT",
+  "lookback": 28,
+  "source_path": "data/btc_price_ma_long_flat_v1/decisions-n28.json",
+  "sha256": "658d506b894588c326430ad55ec54cb53ae8c33daa0e13437df37ff5f5d94ffe",
+  "content_hash": "sha256:bb642e2c001a0df039b15fbad7a7032cab61ae41f29eef785823facb55265236",
+  "content_hash_kind": "paired_daily_dataset_hash"
+}

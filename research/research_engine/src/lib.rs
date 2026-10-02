@@ -7,4 +7,6 @@
 pub mod btc_price_ma_long_flat_v1;
 pub mod bybit_public_klines;
 pub mod bybit_public_market;
-pub mod donchian_daily_v1;
+pub mod daily_dataset;
+pub mod market_inputs;
+pub mod simulation;

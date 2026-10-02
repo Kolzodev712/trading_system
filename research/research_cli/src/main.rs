@@ -14,13 +14,7 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
-    /// Frozen Candidate #1 — DonchianDailyV1
-    #[command(name = "donchian-daily")]
-    DonchianDaily {
-        #[command(subcommand)]
-        command: research_cli::donchian_daily::Command,
-    },
-    /// Frozen Candidate #2 — BTCPriceMALongFlatV1
+    /// Frozen Candidate #2 — BTCPriceMALongFlatV1 research screen
     #[command(name = "btc-price-ma")]
     BtcPriceMa {
         #[command(subcommand)]
@@ -31,7 +25,6 @@ enum Commands {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     match Cli::parse().command {
-        Commands::DonchianDaily { command } => research_cli::donchian_daily::execute(command).await,
         Commands::BtcPriceMa { command } => research_cli::btc_price_ma::execute(command).await,
     }
 }

@@ -1,0 +1,16 @@
+{
+  "id": "bybit_btcusdt_linear_trade_d_donchian_v1",
+  "role": "daily_trade",
+  "venue": "bybit",
+  "environment": "mainnet",
+  "product": "linear",
+  "symbol": "BTCUSDT",
+  "interval": "D",
+  "format": "donchian_daily_v1_candles",
+  "source_path": "data/donchian_daily/bybit-linear-BTCUSDT-D-2023-01-01_2026-01-01.json",
+  "sha256": "84d08058e5146fa1a5269df94b5b16c6f4ea30687d8e78309a0065c305e14e6f",
+  "content_hash": "sha256:bb642e2c001a0df039b15fbad7a7032cab61ae41f29eef785823facb55265236",
+  "content_hash_kind": "research_engine_dataset_hash",
+  "shared_with": "BTCPriceMALongFlatV1",
+  "notes": "Daily BTCUSDT trade candles used by both legacy candidates. Format name is historical."
+}

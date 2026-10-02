@@ -1,0 +1,13 @@
+{
+  "id": "bybit_btcusdt_linear_trade_1m_c2",
+  "role": "execution_minutes",
+  "venue": "bybit",
+  "environment": "mainnet",
+  "product": "linear",
+  "symbol": "BTCUSDT",
+  "interval": "1",
+  "source_path": "data/btc_price_ma_long_flat_v1/aux/trade-1m.json",
+  "sha256": "259c00ff6697bf6b5a7424b0ec3513a1ff9723ff724067394a7a9c6a4c64a3e6",
+  "content_hash": "sha256:9f965e602437960fc54f5c6793193dd76fea2561eb253e6e0de32330fe7575ca",
+  "content_hash_kind": "research_engine_dataset_hash"
+}

@@ -1,0 +1,134 @@
+{
+  "schema_version": 1,
+  "candidate_id": "BTCPriceMALongFlatV1",
+  "candidate_version": "1",
+  "status": [
+    "REJECTED",
+    "ARCHIVED"
+  ],
+  "lifecycle": {
+    "reached": "INDEPENDENT_AUDIT",
+    "preregistered_on_master": false,
+    "preregistration_note": "Legacy Candidate #2 research screen. SPEC.md and experiment.json were written after scoring, during the 2026-10-02 archive cleanup. They were never committed to master as PREREGISTERED. Rejecting the historical alpha screen is not an instruction to delete strategy_core::btc_price_ma_long_flat_v1 or btc_price_ma_app."
+  },
+  "experiment_window": {
+    "start_utc": "2023-01-21T00:00:00Z",
+    "end_exclusive_utc": "2026-01-01T00:00:00Z",
+    "semantics": "end_exclusive"
+  },
+  "spec": {
+    "path": "research/candidates/btc_price_ma_long_flat_v1/SPEC.md",
+    "sha256": "sha256:1cd80f5c60d9a8f1152b0b2a9a847ea12d931958d67de12610dc266fbed2a168",
+    "experiment_plan_path": "research/candidates/btc_price_ma_long_flat_v1/experiment.json",
+    "experiment_plan_sha256": "sha256:f0e25c74d8e7071f3be6398f1d1d49a7ea0422e4ed55717335302e705c7d1078"
+  },
+  "scored_source": {
+    "revision": "2cd8211f89aa543f504c13ef9a84051e350b7d62",
+    "results_revision": "08dab4b185afc5e7e55c4cb90c71b142ff41d948",
+    "dirty": false,
+    "command": "cargo run -p research_cli -- btc-price-ma run",
+    "reconstruction": "Summaries do not record a dirty/clean scoring SHA. 2cd8211 first tracked the ledgers; independent audit commits are 3f3f943c710c202721795d1eece3bcaeef1e7101 and 08dab4b185afc5e7e55c4cb90c71b142ff41d948. Git bundle inside artifact btc_price_ma_long_flat_v1-v1-primary covers ee4ccde..aca303c. After bulky data leave HEAD, restore that archive. strategy_core and btc_price_ma_app remain on master for Demo/Paper observation."
+  },
+  "datasets": [
+    {
+      "id": "bybit_btcusdt_linear_trade_d_donchian_v1",
+      "sha256": "84d08058e5146fa1a5269df94b5b16c6f4ea30687d8e78309a0065c305e14e6f",
+      "content_hash": "sha256:bb642e2c001a0df039b15fbad7a7032cab61ae41f29eef785823facb55265236",
+      "content_hash_kind": "research_engine_dataset_hash",
+      "role": "daily_trade"
+    },
+    {
+      "id": "bybit_btcusdt_linear_warmup_2022_c2",
+      "sha256": "d564e34addb0611c0ad2f2f1921e32fb78bcbc1b54775fa962cda04b590e4dee",
+      "content_hash": "sha256:26500004aa49295686187293325fc6d29dfdb61f05a82252fdaf1b6f349dabcf",
+      "content_hash_kind": "research_engine_dataset_hash",
+      "role": "warmup_daily"
+    },
+    {
+      "id": "bybit_btcusdt_linear_c2_decisions_n14",
+      "sha256": "a543c2ae38c869c1dfcb983ddc6477b290d016cebe0223ed6392655ecd5cf47b",
+      "content_hash": "sha256:bb642e2c001a0df039b15fbad7a7032cab61ae41f29eef785823facb55265236",
+      "content_hash_kind": "paired_daily_dataset_hash",
+      "role": "decisions"
+    },
+    {
+      "id": "bybit_btcusdt_linear_c2_decisions_n28",
+      "sha256": "658d506b894588c326430ad55ec54cb53ae8c33daa0e13437df37ff5f5d94ffe",
+      "content_hash": "sha256:bb642e2c001a0df039b15fbad7a7032cab61ae41f29eef785823facb55265236",
+      "content_hash_kind": "paired_daily_dataset_hash",
+      "role": "decisions"
+    },
+    {
+      "id": "bybit_btcusdt_linear_c2_decisions_n70",
+      "sha256": "1fd63eff3eb11b1b1a204cca00dc2ab65f5e0ca51e14c94ce396a841a1dc5a4d",
+      "content_hash": "sha256:bb642e2c001a0df039b15fbad7a7032cab61ae41f29eef785823facb55265236",
+      "content_hash_kind": "paired_daily_dataset_hash",
+      "role": "decisions"
+    },
+    {
+      "id": "bybit_btcusdt_linear_trade_1m_c2",
+      "sha256": "259c00ff6697bf6b5a7424b0ec3513a1ff9723ff724067394a7a9c6a4c64a3e6",
+      "content_hash": "sha256:9f965e602437960fc54f5c6793193dd76fea2561eb253e6e0de32330fe7575ca",
+      "content_hash_kind": "research_engine_dataset_hash",
+      "role": "execution_minutes"
+    },
+    {
+      "id": "bybit_btcusdt_linear_mark_60_c2",
+      "sha256": "0cfc51ddfab98ba1c4152498286e22472143b0219ec5c7eb0e8b8fa65d8c37b2",
+      "content_hash": "sha256:993ea03c9d15acf1b9c305e5686e4cd5c4e7b243b83d559a61d7cb96a3febccd",
+      "content_hash_kind": "research_engine_dataset_hash",
+      "role": "hourly_mark"
+    },
+    {
+      "id": "bybit_btcusdt_linear_funding_c2",
+      "sha256": "76ff5f5e08bc8487203d77646288d1beb061a290b6492ac1afc78c746437c0f1",
+      "content_hash": "sha256:a461acf4b952fe2e59e2166610707ef21cbcee0c88b92eb474f816bfa24e361f",
+      "content_hash_kind": "research_engine_dataset_hash",
+      "role": "funding"
+    }
+  ],
+  "results": {
+    "completed_trades": 55,
+    "primary_n28_zero_cost_net": "26.4553879050099",
+    "primary_n28_cost_a_net": "20.6120701293059",
+    "primary_n28_higher_cost_net": "11.8471204408099",
+    "primary_n28_delayed_net": "20.5469761215179",
+    "diagnostic_n14_cost_a_net": "20.7799676409438",
+    "diagnostic_n70_cost_a_net": "42.2272621972557",
+    "cost_a_fixed_long_net": "48.3605429739360"
+  },
+  "cost_assumptions": {
+    "zero_cost_diagnostic": "0 bps fee, 0 bps adverse, 10 s delay",
+    "cost_a": "6 bps fee, 2 bps adverse, 10 s delay",
+    "higher_cost": "10 bps fee, 10 bps adverse, 10 s delay",
+    "delayed_execution": "6 bps fee, 2 bps adverse, 300 s delay",
+    "note": "Research simulator assumptions, not a Bybit fee-tier quote. Same simulator as Candidate #1."
+  },
+  "artifact": {
+    "id": "btc_price_ma_long_flat_v1-v1-primary",
+    "sha256": "01685cc84e07da8fae09a5d161120e81207def7046a0490e0606e5c06929d611"
+  },
+  "gates": {
+    "primary": {
+      "state": "FAILED",
+      "note": "N=28 Cost A net 20.6120701293059 failed cost_a_profit_retention_80pct and beats_notional_matched_passive."
+    },
+    "robustness": {
+      "state": "NOT_OPENED",
+      "note": "No later-process robustness matrix was opened under that name."
+    },
+    "independent_audit": {
+      "state": "PASSED",
+      "note": "Audit 3f3f943/08dab4b reported 0 economic decision discrepancies on N=14/28/70; Cost A ledgers matched. The promotion screen still fails."
+    },
+    "holdout": {
+      "state": "UNOPENED",
+      "note": "2026 remains sealed. An unopened holdout is not validation.",
+      "used_as_validation": false
+    }
+  },
+  "replay": {
+    "state": "PASSED",
+    "note": "Fresh restore from the second-device copy reproduced gates.json disposition reject. In-tree parity replays the kept strategy_core model against stored decisions and scores Cost A 20.6120701293059."
+  }
+}

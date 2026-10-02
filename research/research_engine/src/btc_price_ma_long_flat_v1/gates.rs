@@ -3,7 +3,7 @@
 use rust_decimal::Decimal;
 use serde::Serialize;
 
-use crate::donchian_daily_v1::backtest::Simulation;
+use crate::simulation::Simulation;
 
 pub const BENCHMARK_COST_A_NET: &str = "48.360542973936";
 pub const BENCHMARK_COST_A_DRAWDOWN: &str = "44.3887151092231";

@@ -1,0 +1,17 @@
+{
+  "candidate_id": "BTCPriceMALongFlatV1",
+  "candidate_version": "1",
+  "venue": "bybit",
+  "environment": "mainnet",
+  "product": "linear",
+  "symbol": "BTCUSDT",
+  "interval": "D",
+  "performance_start_ms": 1674259200000,
+  "performance_end_exclusive_ms": 1767225600000,
+  "primary_lookback": 28,
+  "diagnostic_lookbacks": [14, 70],
+  "position_qty_btc": "0.001",
+  "allow_short": false,
+  "legacy": true,
+  "preregistered_on_master": false
+}

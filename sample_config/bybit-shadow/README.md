@@ -12,5 +12,7 @@ cargo run -p btc_price_ma_app -- --mode strategies \
 
 ```text
 cargo run -p research_cli -- btc-price-ma run ...
-cargo run -p research_cli -- donchian-daily evaluate ...
 ```
+
+DonchianDailyV1 research scoring was archived; `donchian-daily` is no longer a
+`research_cli` command. Live factory `Donchian` is a different implementation.

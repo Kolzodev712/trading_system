@@ -16,6 +16,7 @@ research/candidates/<candidate_id>/
 
 research/datasets/<dataset_id>.json
 research/INDEX.md          # generated from manifests
+research/LIVE_STRATEGIES.md
 research/schema/manifest-v1.md
 ```
 
@@ -80,3 +81,9 @@ does not change your Git config.
 Rejected models, candidate-specific CLI commands, and candidate-specific
 replay stay off `master`. `runner` and `trading_engine` must not depend on
 `strategy_core` or the research crates.
+
+Legacy DonchianDailyV1 and BTCPriceMALongFlatV1 *research* screens are
+`REJECTED+ARCHIVED` with local artifacts. Shared loaders live in
+`daily_dataset`, `market_inputs`, and `simulation`. The live factory types
+`Donchian` and `BuyLowSellHigh`, and the Candidate #2 `strategy_core` model,
+are decided in `LIVE_STRATEGIES.md`.

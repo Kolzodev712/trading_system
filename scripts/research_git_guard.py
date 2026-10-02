@@ -16,6 +16,7 @@ GENERATED_PREFIXES = (
 )
 GENERATED_NAME_MARKERS = (
     "/backtest/",
+    "/audit/",
     "/decisions-",
     "/events-",
     "/coverage_gate.json",
@@ -28,6 +29,7 @@ ALLOWED_NEW = (
     "research/schema/",
     "research/tests/",
     "research/README.md",
+    "research/LIVE_STRATEGIES.md",
     "research/INDEX.md",
     "scripts/research_artifacts.py",
     "scripts/research_git_guard.py",

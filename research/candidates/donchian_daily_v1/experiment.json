@@ -1,0 +1,17 @@
+{
+  "candidate_id": "DonchianDailyV1",
+  "candidate_version": "1",
+  "venue": "bybit",
+  "environment": "mainnet",
+  "product": "linear",
+  "symbol": "BTCUSDT",
+  "interval": "D",
+  "performance_start_ms": 1674259200000,
+  "performance_end_exclusive_ms": 1767225600000,
+  "entry_lookback": 20,
+  "exit_lookback": 10,
+  "position_qty_btc": "0.001",
+  "allow_short": true,
+  "legacy": true,
+  "preregistered_on_master": false
+}

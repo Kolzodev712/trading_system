@@ -1,0 +1,14 @@
+{
+  "id": "bybit_btcusdt_linear_trade_1m_donchian_v1",
+  "role": "execution_minutes",
+  "venue": "bybit",
+  "environment": "mainnet",
+  "product": "linear",
+  "symbol": "BTCUSDT",
+  "interval": "1",
+  "source_path": "data/donchian_daily/aux/trade-1m.json",
+  "sha256": "2fdd87d4c46ab5d436a85ab4824fcd84cf25316a6af81159490db86c1d099811",
+  "content_hash": "sha256:d68ed735b4c06eb6f758b0a9afa24859d2f23276f4ca4c93fa62f8575f578d84",
+  "content_hash_kind": "research_engine_dataset_hash",
+  "notes": "DonchianDailyV1 execution minutes. Distinct file from the Candidate #2 1m series."
+}

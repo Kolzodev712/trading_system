@@ -15,17 +15,17 @@ use research_engine::btc_price_ma_long_flat_v1::offline::{
 use research_engine::btc_price_ma_long_flat_v1::{
     position_qty, DIAGNOSTIC_LOOKBACKS, PRIMARY_LOOKBACK,
 };
-use research_engine::donchian_daily_v1::aux::{
+use research_engine::daily_dataset::{
+    download_daily_dataset, load_historical_dataset, save_historical_dataset, DownloadRequest,
+    MarketDataEnvironment,
+};
+use research_engine::market_inputs::{
     download_trade_minutes_for, load_funding_file, load_price_series, market_inputs_from_files,
     AuxDownloadRequest,
 };
-use research_engine::donchian_daily_v1::backtest::{
+use research_engine::simulation::{
     required_execution_minutes_for_target_changes, target_changes, write_simulation, Simulation,
     FROZEN_EVALUATION_END_MS, FROZEN_EVALUATION_START_MS,
-};
-use research_engine::donchian_daily_v1::offline::{
-    download_donchian_daily_dataset, load_historical_dataset, save_historical_dataset,
-    DownloadRequest, MarketDataEnvironment,
 };
 
 #[derive(Parser, Debug)]
@@ -76,7 +76,7 @@ async fn download_warmup(output: PathBuf) -> Result<(), Box<dyn std::error::Erro
         end_exclusive_ms: parse_utc_date("2023-01-01")?,
         retrieved_at_ms: now_ms(),
     };
-    let dataset = download_donchian_daily_dataset(&request).await?;
+    let dataset = download_daily_dataset(&request).await?;
     save_historical_dataset(&output, &dataset)?;
     println!(
         "warmup candles={} hash={} wrote={}",

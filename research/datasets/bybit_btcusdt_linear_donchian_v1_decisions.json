@@ -1,0 +1,14 @@
+{
+  "id": "bybit_btcusdt_linear_donchian_v1_decisions",
+  "role": "decisions",
+  "venue": "bybit",
+  "environment": "mainnet",
+  "product": "linear",
+  "symbol": "BTCUSDT",
+  "interval": "D",
+  "source_path": "data/donchian_daily/bybit-linear-BTCUSDT-D-2023-01-01_2026-01-01-decisions.json",
+  "sha256": "88617c91d2b7547ce5a2e4e477be4bc4410e2b9017f1096caffef86edf68bca1",
+  "content_hash": "sha256:bb642e2c001a0df039b15fbad7a7032cab61ae41f29eef785823facb55265236",
+  "content_hash_kind": "paired_daily_dataset_hash",
+  "notes": "Frozen DonchianDailyV1 decision log. Kept as a parity fixture after the model left the tree."
+}

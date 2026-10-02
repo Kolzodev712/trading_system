@@ -1,2 +1,0 @@
-area,timestamp_ms,field,expected,recorded,observation
-close_cost_definition,1767225600000,estimated_close_cost_usdt,on unadjusted mark 0.070077216; on adjusted close fill 0.0700667044176,0.0700667044176,stored figure matches adjusted close fill. Difference between the formulas is -0.0000105115824. The figure is disclosed only and is not part of net PnL. Terminal mark and position are in the fixed_long_cost_a ledger.

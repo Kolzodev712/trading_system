@@ -1,41 +1,41 @@
-//! Reproduce frozen Candidate #1/#2 identity and Cost A nets through research_cli wiring.
+//! Stored-decision and Candidate #2 model parity. Does not require archived ledgers.
 
 use research_engine::btc_price_ma_long_flat_v1::experiment::{scenario_by_name, score_lookback};
 use research_engine::btc_price_ma_long_flat_v1::offline::{
     default_replay_request, merge_datasets, replay,
 };
 use research_engine::btc_price_ma_long_flat_v1::PRIMARY_LOOKBACK;
-use research_engine::donchian_daily_v1::aux::{
+use research_engine::daily_dataset::load_historical_dataset;
+use research_engine::market_inputs::{
     load_funding_file, load_price_series, market_inputs_from_files,
 };
-use research_engine::donchian_daily_v1::backtest::{
-    evaluate_experiment, load_decision_log, reproduce_frozen_decisions, EvaluateRequest,
-};
-use research_engine::donchian_daily_v1::offline::load_historical_dataset;
-use serde_json::Value;
+use research_engine::simulation::{evaluate_experiment, load_decision_log, EvaluateRequest};
 use std::path::PathBuf;
 
 fn root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
+const DONCHIAN_COST_A: &str = "-41.4028767858150";
+const DONCHIAN_CONFIG: &str =
+    "sha256:8057b5024b6df11096bc7541e8f470e52794f5e2025503da45beedc0aab33114";
+const DONCHIAN_SCENARIO: &str =
+    "sha256:8d60a72a99883fd12c3ce06628d51d644b7fa15c4dbc770d1289f48050734636";
+const MA_COST_A: &str = "20.6120701293059";
+const MA_CONFIG: &str = "sha256:6e02ddef41a418dc26f5ea8acfd592417846362211b3f70de3ab553d41c3559a";
+const MA_SCENARIO: &str = "sha256:80603e448c62b8e225bdd2ce12d0a3e503e666097c04b3025d884f5fad9d1fbf";
+
 #[test]
-fn frozen_donchian_replay_and_cost_a_match_stored_artifacts() {
+fn frozen_donchian_stored_decisions_score_cost_a() {
     let root = root();
-    let dataset = load_historical_dataset(
-        &root.join("data/donchian_daily/bybit-linear-BTCUSDT-D-2023-01-01_2026-01-01.json"),
-    )
-    .unwrap();
     let saved =
         load_decision_log(&root.join(
             "data/donchian_daily/bybit-linear-BTCUSDT-D-2023-01-01_2026-01-01-decisions.json",
         ))
         .unwrap();
-    let fresh = reproduce_frozen_decisions(&dataset, &saved).unwrap();
-    assert_eq!(fresh.run.config_hash, saved.run.config_hash);
-    assert_eq!(fresh.run.dataset_hash, saved.run.dataset_hash);
-    assert_eq!(fresh.run.entries, 29);
-    assert_eq!(fresh.run.exits, 29);
+    assert_eq!(saved.run.config_hash, DONCHIAN_CONFIG);
+    assert_eq!(saved.run.entries, 29);
+    assert_eq!(saved.run.exits, 29);
 
     let aux = root.join("data/donchian_daily/aux");
     let market = market_inputs_from_files(
@@ -46,11 +46,11 @@ fn frozen_donchian_replay_and_cost_a_match_stored_artifacts() {
     )
     .unwrap();
     let evaluation = evaluate_experiment(&EvaluateRequest {
-        decisions: &fresh.decisions,
-        final_direction: &fresh.run.final_direction,
-        signal_config_hash: &fresh.run.config_hash,
-        daily_dataset_hash: &fresh.run.dataset_hash,
-        position_qty: fresh.run.position_qty,
+        decisions: &saved.decisions,
+        final_direction: &saved.run.final_direction,
+        signal_config_hash: &saved.run.config_hash,
+        daily_dataset_hash: &saved.run.dataset_hash,
+        position_qty: saved.run.position_qty,
         market: &market,
     })
     .unwrap();
@@ -59,25 +59,9 @@ fn frozen_donchian_replay_and_cost_a_match_stored_artifacts() {
         .iter()
         .find(|pair| pair.scenario.name == "cost_a")
         .unwrap();
-    let stored: Value = serde_json::from_slice(
-        &std::fs::read(
-            root.join("data/donchian_daily/backtest/donchian_daily_v1/cost_a/summary.json"),
-        )
-        .unwrap(),
-    )
-    .unwrap();
-    assert_eq!(
-        cost_a.donchian.summary.net_pnl.to_string(),
-        stored["net_pnl"].as_str().unwrap()
-    );
-    assert_eq!(
-        cost_a.donchian.summary.signal_config_hash,
-        stored["signal_config_hash"].as_str().unwrap()
-    );
-    assert_eq!(
-        cost_a.donchian.summary.scenario_hash,
-        stored["scenario_hash"].as_str().unwrap()
-    );
+    assert_eq!(cost_a.donchian.summary.net_pnl.to_string(), DONCHIAN_COST_A);
+    assert_eq!(cost_a.donchian.summary.signal_config_hash, DONCHIAN_CONFIG);
+    assert_eq!(cost_a.donchian.summary.scenario_hash, DONCHIAN_SCENARIO);
 }
 
 #[test]
@@ -110,24 +94,7 @@ fn frozen_ma_n28_replay_and_cost_a_match_stored_artifacts() {
     .unwrap();
     let sims = score_lookback(&log, PRIMARY_LOOKBACK, &market).unwrap();
     let cost_a = scenario_by_name(&sims, "cost_a").unwrap();
-    let stored_summary: Value =
-        serde_json::from_slice(
-            &std::fs::read(root.join(
-                "data/btc_price_ma_long_flat_v1/backtest/primary_n28/n28/cost_a/summary.json",
-            ))
-            .unwrap(),
-        )
-        .unwrap();
-    assert_eq!(
-        cost_a.summary.net_pnl.to_string(),
-        stored_summary["net_pnl"].as_str().unwrap()
-    );
-    assert_eq!(
-        cost_a.summary.signal_config_hash,
-        stored_summary["signal_config_hash"].as_str().unwrap()
-    );
-    assert_eq!(
-        cost_a.summary.scenario_hash,
-        stored_summary["scenario_hash"].as_str().unwrap()
-    );
+    assert_eq!(cost_a.summary.net_pnl.to_string(), MA_COST_A);
+    assert_eq!(cost_a.summary.signal_config_hash, MA_CONFIG);
+    assert_eq!(cost_a.summary.scenario_hash, MA_SCENARIO);
 }

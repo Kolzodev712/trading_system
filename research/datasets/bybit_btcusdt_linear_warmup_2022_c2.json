@@ -1,0 +1,14 @@
+{
+  "id": "bybit_btcusdt_linear_warmup_2022_c2",
+  "role": "warmup_daily",
+  "venue": "bybit",
+  "environment": "mainnet",
+  "product": "linear",
+  "symbol": "BTCUSDT",
+  "interval": "D",
+  "source_path": "data/btc_price_ma_long_flat_v1/warmup-2022-11-01_2023-01-01.json",
+  "sha256": "d564e34addb0611c0ad2f2f1921e32fb78bcbc1b54775fa962cda04b590e4dee",
+  "content_hash": "sha256:26500004aa49295686187293325fc6d29dfdb61f05a82252fdaf1b6f349dabcf",
+  "content_hash_kind": "research_engine_dataset_hash",
+  "notes": "Daily warmup from 2022-11-01 merged in front of the shared daily series for Candidate #2."
+}

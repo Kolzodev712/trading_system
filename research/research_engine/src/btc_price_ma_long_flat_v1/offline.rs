@@ -4,7 +4,7 @@ use super::{
     model_config_hash, on_candle, position_qty, Direction, ModelState, Step,
     PERFORMANCE_END_EXCLUSIVE_MS, PERFORMANCE_START_MS, STRATEGY_NAME, STRATEGY_VERSION,
 };
-use crate::donchian_daily_v1::offline::{
+use crate::daily_dataset::{
     completed_series, window_series, DatasetCandle, DatasetMetadata, DecisionLog, DecisionRow,
     EmittedTarget, HistoricalDataset, OfflineError, RunMetadata,
 };

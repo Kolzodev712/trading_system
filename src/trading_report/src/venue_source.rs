@@ -1,4 +1,5 @@
 use anyhow::{anyhow, Result};
+use chrono::{DateTime, Utc};
 use hmac::{Hmac, Mac};
 use reqwest::Client;
 use rust_decimal::Decimal;
@@ -55,8 +56,11 @@ impl HttpVenueReader {
 
     async fn paper_snapshot(&self, instrument_type: &str) -> VenueSnapshot {
         let mut methods = Vec::new();
+        let mut earliest = None;
         let orders = self.paper_get_orders(&mut methods).await;
+        retain_earliest(&mut earliest);
         let balances = self.paper_get_balances(&mut methods).await;
+        retain_earliest(&mut earliest);
         let (positions, positions_supported) = if instrument_type.eq_ignore_ascii_case("spot") {
             match self.paper_get_positions(&mut methods).await {
                 Ok(v) => (Ok(v), true),
@@ -73,8 +77,9 @@ impl HttpVenueReader {
         } else {
             (self.paper_get_positions(&mut methods).await, true)
         };
+        retain_earliest(&mut earliest);
         VenueSnapshot {
-            observed_at_utc: chrono::Utc::now().to_rfc3339(),
+            observed_at_utc: observed_rfc3339(earliest),
             http_methods: methods,
             orders,
             balances,
@@ -130,6 +135,7 @@ impl HttpVenueReader {
 
     async fn bybit_snapshot(&self, instrument: &str, instrument_type: &str) -> VenueSnapshot {
         let mut methods = Vec::new();
+        let mut earliest = None;
         let category = self.cfg.category.clone().unwrap_or_else(|| {
             if instrument_type.eq_ignore_ascii_case("spot") {
                 "spot".into()
@@ -141,22 +147,25 @@ impl HttpVenueReader {
         let orders = self
             .bybit_open_orders(&mut methods, &category, &symbol)
             .await;
+        retain_earliest(&mut earliest);
         let (balances, positions, positions_supported) =
             if instrument_type.eq_ignore_ascii_case("spot") {
+                let balances = self.bybit_wallet(&mut methods).await;
+                retain_earliest(&mut earliest);
                 (
-                    self.bybit_wallet(&mut methods).await,
+                    balances,
                     Err("spot uses balances; /positions is not proof of flatness".into()),
                     false,
                 )
             } else {
-                (
-                    self.bybit_wallet(&mut methods).await,
-                    self.bybit_positions(&mut methods, &category, &symbol).await,
-                    true,
-                )
+                let balances = self.bybit_wallet(&mut methods).await;
+                retain_earliest(&mut earliest);
+                let positions = self.bybit_positions(&mut methods, &category, &symbol).await;
+                retain_earliest(&mut earliest);
+                (balances, positions, true)
             };
         VenueSnapshot {
-            observed_at_utc: chrono::Utc::now().to_rfc3339(),
+            observed_at_utc: observed_rfc3339(earliest),
             http_methods: methods,
             orders,
             balances,
@@ -575,6 +584,22 @@ pub fn normalize_symbol(symbol: &str) -> String {
         .to_ascii_uppercase()
 }
 
+pub fn earliest_observed_at(times: &[DateTime<Utc>]) -> Option<DateTime<Utc>> {
+    times.iter().copied().min()
+}
+
+fn retain_earliest(slot: &mut Option<DateTime<Utc>>) {
+    let now = Utc::now();
+    *slot = Some(match *slot {
+        Some(prev) => prev.min(now),
+        None => now,
+    });
+}
+
+fn observed_rfc3339(earliest: Option<DateTime<Utc>>) -> String {
+    earliest.unwrap_or_else(Utc::now).to_rfc3339()
+}
+
 pub fn qty_close(a: &str, b: &str, tolerance: Decimal) -> Result<bool, String> {
     let x = parse_decimal(a).map_err(|e| format!("malformed quantity '{a}': {e}"))?;
     let y = parse_decimal(b).map_err(|e| format!("malformed quantity '{b}': {e}"))?;
@@ -679,5 +704,76 @@ mod tests {
             Ok(_) => panic!("unapproved host must be rejected"),
             Err(err) => assert!(err.to_string().contains(BYBIT_DEMO_REST)),
         }
+    }
+
+    #[test]
+    fn later_response_does_not_replace_earliest_venue_time() {
+        use chrono::TimeZone;
+        let first = Utc.timestamp_millis_opt(1_700_000_000_000).single().unwrap();
+        let later = first + chrono::Duration::milliseconds(20_000);
+        let stamped = earliest_observed_at(&[later, first]).expect("times");
+        assert_eq!(stamped, first);
+        let age = (later.timestamp_millis() - stamped.timestamp_millis()).max(0);
+        assert_eq!(age, 20_000);
+        assert_ne!(age, 0);
+    }
+
+    #[tokio::test]
+    async fn delayed_later_rest_call_keeps_earliest_venue_stamp() {
+        use chrono::DateTime;
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut socket, _)) = listener.accept().await else {
+                    break;
+                };
+                tokio::spawn(async move {
+                    let mut buf = vec![0u8; 4096];
+                    let n = socket.read(&mut buf).await.unwrap_or(0);
+                    let req = String::from_utf8_lossy(&buf[..n]);
+                    let line = req.lines().next().unwrap_or("");
+                    let body = if line.contains("/open_orders") {
+                        "[]"
+                    } else if line.contains("/balances") {
+                        tokio::time::sleep(Duration::from_millis(400)).await;
+                        r#"[{"asset":"USDT","total":"0","available":"0","locked":"0"}]"#
+                    } else if line.contains("/positions") {
+                        "[]"
+                    } else {
+                        "[]"
+                    };
+                    let resp = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                    let _ = socket.write_all(resp.as_bytes()).await;
+                });
+            }
+        });
+
+        let snap = HttpVenueReader::new(VenueSourceConfig {
+            kind: "paper".into(),
+            rest_base: format!("http://{addr}"),
+            api_key_env: None,
+            api_secret_env: None,
+            category: None,
+        })
+        .unwrap()
+        .snapshot("BTC/USDT", "spot")
+        .await;
+        assert!(snap.orders.is_ok(), "{:?}", snap.orders.err());
+        assert!(snap.balances.is_ok(), "{:?}", snap.balances.err());
+        let observed = DateTime::parse_from_rfc3339(&snap.observed_at_utc).unwrap();
+        let completed = Utc::now();
+        let age_ms = (completed.timestamp_millis() - observed.timestamp_millis()).max(0);
+        assert!(
+            age_ms >= 250,
+            "later balances delay must keep the orders stamp; age was {age_ms}ms (observed {})",
+            snap.observed_at_utc
+        );
     }
 }

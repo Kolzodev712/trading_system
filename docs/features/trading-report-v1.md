@@ -24,5 +24,5 @@ Verdicts are `verified` | `stale` | `unverified` | `disagreement`. `actionable_f
 ## Tests
 
 - Unit: schema, missing/default fields, freshness, decimal/symbol compare, pagination, Spot vs Futures truth, journal latest-state, verdict aggregation.
-- Process: Levels Exchange plus Strategies Shadow; REST-vs-runner set compare; saved combined overall verdict; missing GetTradingStatus; Spot inventory vs trading-state qty; freshness at collection completion; unresolved journal; malformed REST; secret rejection before write.
+- Process: Levels Exchange plus Strategies Shadow; REST-vs-runner set compare; saved combined overall verdict; missing GetTradingStatus; Spot inventory vs trading-state qty; freshness at collection completion; venue stamp is the earliest REST response (a later delayed call does not reset age to 0); unresolved journal; malformed REST; secret rejection before write.
 - Bybit Demo signed REST is `NOT_RUN` without credentials. No Resume or orders.

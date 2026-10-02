@@ -7,6 +7,7 @@ default-run = "research_cli"
 
 [dependencies]
 research_engine = { path = "../research_engine" }
+strategy_core = { path = "../../libs/strategy_core" }
 anyhow = { workspace = true }
 chrono = { workspace = true }
 clap = { version = "4.4", features = ["derive"] }

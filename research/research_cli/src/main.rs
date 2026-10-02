@@ -26,6 +26,12 @@ enum Commands {
         #[command(subcommand)]
         command: research_cli::btc_price_ma::Command,
     },
+    /// Candidate #3 primary experiment — BTCLiquidationShockV1
+    #[command(name = "btc-liquidation-shock")]
+    BtcLiquidationShock {
+        #[command(subcommand)]
+        command: research_cli::btc_liquidation_shock::Command,
+    },
 }
 
 #[tokio::main]
@@ -33,5 +39,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     match Cli::parse().command {
         Commands::DonchianDaily { command } => research_cli::donchian_daily::execute(command).await,
         Commands::BtcPriceMa { command } => research_cli::btc_price_ma::execute(command).await,
+        Commands::BtcLiquidationShock { command } => {
+            research_cli::btc_liquidation_shock::execute(command).await
+        }
     }
 }

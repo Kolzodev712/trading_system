@@ -1,0 +1,25 @@
+{
+  "disposition": "fail",
+  "checks": [
+    {
+      "name": "mark_60",
+      "passed": true,
+      "detail": "frozen hash, 25825 hourly marks, gaps 0"
+    },
+    {
+      "name": "funding",
+      "passed": true,
+      "detail": "frozen hash, 3235 settlements on an 8h grid"
+    },
+    {
+      "name": "trade_1m_execution_tape",
+      "passed": false,
+      "detail": "known sparse file has 1560 opens and is not a minute observation after every hourly close; one-minute trade opens for 520 execution minutes across 260 merged windows; not a full three-year tape"
+    },
+    {
+      "name": "hourly_trade_ohlcv",
+      "passed": false,
+      "detail": "no hourly trade-price OHLCV file is part of the committed BTC linear set"
+    }
+  ]
+}

@@ -4,6 +4,7 @@
 //! logic lives in `strategy_core`; this crate owns datasets, replay, simulation,
 //! gates, and public-data loaders.
 
+pub mod btc_liquidation_shock_v1;
 pub mod btc_price_ma_long_flat_v1;
 pub mod bybit_public_klines;
 pub mod bybit_public_market;

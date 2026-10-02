@@ -1,0 +1,49 @@
+{
+  "candidate_id": "BTCLiquidationShockV1",
+  "candidate_version": "1",
+  "venue": "bybit",
+  "environment": "mainnet",
+  "product": "linear",
+  "symbol": "BTCUSDT",
+  "interval": "60",
+  "performance_start_ms": 1674259200000,
+  "performance_end_exclusive_ms": 1767225600000,
+  "prior_returns": 168,
+  "volatility": "sample_stdev_divisor_n_minus_1",
+  "position_qty_btc": "0.001",
+  "primary": {
+    "sigma_multiple": "3",
+    "hold_completed_hours": 6,
+    "sign": "reversal"
+  },
+  "placebo_sign": "continuation",
+  "scenarios": [
+    "zero_cost_diagnostic",
+    "cost_a",
+    "higher_cost",
+    "delayed_execution"
+  ],
+  "promotion": {
+    "min_completed_trades": 20,
+    "require_cost_a_net_positive": true,
+    "require_higher_cost_net_positive": true,
+    "require_delayed_net_positive": true,
+    "require_cost_a_beats_placebo": true,
+    "reject_if_removing_largest_winner_leaves_non_positive": true,
+    "reject_if_negative_entry_years_at_least": 2
+  },
+  "robustness": {
+    "sigma_multiples": ["2.5", "3", "3.5"],
+    "hold_completed_hours": [3, 6, 12],
+    "min_single_knob_supporters": 3,
+    "min_completed_trades": 20,
+    "single_knob_neighbors": [
+      {"sigma_multiple": "2.5", "hold_completed_hours": 6},
+      {"sigma_multiple": "3.5", "hold_completed_hours": 6},
+      {"sigma_multiple": "3", "hold_completed_hours": 3},
+      {"sigma_multiple": "3", "hold_completed_hours": 12}
+    ]
+  },
+  "volatility_terciles": "descriptive_only",
+  "holdout": "sealed_2026"
+}

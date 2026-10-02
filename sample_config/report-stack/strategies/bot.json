@@ -1,0 +1,32 @@
+{
+  "system": { "log_level": "info", "shutdown_timeout_secs": 10 },
+  "venue": { "mode": "cex" },
+  "execution_mode": "shadow",
+  "exchange_engine": {
+    "exchange": "Paper",
+    "config": {
+      "paper_exchange_url": "ws://k-paper-strategies:19999/ws/trade",
+      "pairs": [{ "base": "BTC", "quote": "USDT" }],
+      "instrument_type": "Spot"
+    }
+  },
+  "server": { "bind_address": "0.0.0.0", "port": 8080, "grpc_bind": "0.0.0.0:50051" },
+  "redis": { "url": "", "enabled": false },
+  "features": { "enable_reconciliation": true },
+  "reconciliation": {
+    "exchange_level_interval_ms": 1000,
+    "trading_level_interval_ms": 1000,
+    "enabled": true
+  },
+  "mongo": {
+    "connection_string": "mongodb://runner:lab-runner-pass@mongodb:27017/trading_system?authSource=trading_system",
+    "database": "trading_system",
+    "bot_id": "paper-strategies-shadow",
+    "enabled": true
+  },
+  "submission_journal_path": "/data/submission-journal.jsonl",
+  "execution_ledger_path": "/data/execution-ledger.jsonl",
+  "shadow_journal_path": "/data/shadow-journal.jsonl",
+  "runtime_snapshot_path": "/data/runtime-snapshot.json",
+  "restart_flag_path": "/data/restart.requested"
+}

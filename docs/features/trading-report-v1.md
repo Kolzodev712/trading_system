@@ -12,7 +12,7 @@ A person can run one read-only command and copy a five-item JSON/Markdown brief 
 - Journal latest-state is a read-only projection. A missing file is not a known-empty journal.
 - Flatten/RPC success is not flat. Venue REST is the independent account check.
 - No AI calls, resident daemon, UI viewer, research-run ingestion, k-paper change, or Demo mutation.
-- Mongo persistence is optional for local collect and required for scheduled delivery. `read-json` talks to Mongo only.
+- Mongo persistence is optional for local collect and required for scheduled delivery. `read-json` talks to Mongo only and uses a reader connection that does not create indexes.
 
 ## Design
 

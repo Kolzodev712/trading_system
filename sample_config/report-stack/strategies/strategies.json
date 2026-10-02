@@ -1,0 +1,27 @@
+{
+  "strategies": [{
+    "strategy_type": "BTCPriceMALongFlatV1",
+    "symbol": { "base": "BTC", "quote": "USDT" },
+    "position_size": "0.001",
+    "max_position": "0.001",
+    "buy_threshold_percent": "0.5",
+    "sell_threshold_percent": "0.5",
+    "max_active_orders": 1,
+    "price_history_size": 10,
+    "min_price_history": 2,
+    "min_order_size": "0.001",
+    "step_size": "0.001",
+    "tick_size": "0.01",
+    "min_notional": "10.0",
+    "lookback": 2,
+    "max_entry_age_secs": 86400000,
+    "max_market_data_age_ms": 5000,
+    "initially_enabled": true
+  }],
+  "risk_limits": {
+    "total_max_position": "0.01",
+    "max_total_orders": 4,
+    "max_notional": "1000",
+    "max_order_qty": "0.01"
+  }
+}

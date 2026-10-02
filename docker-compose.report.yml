@@ -1,0 +1,213 @@
+# Paper two-runner stack used by trading-report.
+# levels + strategies + two k-paper venues + authenticated Mongo.
+# `docker compose -f docker-compose.report.yml up` does not start the reporter.
+# The reporter is one-shot: `docker compose -f docker-compose.report.yml run --rm --no-deps trading-report`
+
+services:
+  mongodb:
+    image: mongo:7.0
+    container_name: trading-report-mongodb
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:-lab-root-pass}
+      MONGO_INITDB_DATABASE: admin
+      REPORT_WRITER_PASSWORD: ${REPORT_WRITER_PASSWORD:-lab-writer-pass}
+      REPORT_READER_PASSWORD: ${REPORT_READER_PASSWORD:-lab-reader-pass}
+      RUNNER_MONGO_PASSWORD: ${RUNNER_MONGO_PASSWORD:-lab-runner-pass}
+    volumes:
+      - report_mongodb_data:/data/db
+      - ./deploy/report-stack/mongo-init.sh:/docker-entrypoint-initdb.d/mongo-init.sh:ro
+    healthcheck:
+      test: ["CMD", "mongosh", "-u", "root", "-p", "${MONGO_ROOT_PASSWORD:-lab-root-pass}", "--authenticationDatabase", "admin", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    networks:
+      trading-network:
+        aliases: [mongodb]
+
+  k-paper-levels:
+    build:
+      context: ${K_PAPER_DIR:-../k-paper}
+      dockerfile: Dockerfile
+    container_name: k-paper-levels
+    restart: unless-stopped
+    environment:
+      PAPER_EXCHANGE_HOST: "0.0.0.0"
+      PAPER_EXCHANGE_PORT: "19999"
+      PAPER_EXCHANGE_PROFILE: lab
+      PAPER_EXCHANGE_CONFIG: /config/instruments.yaml
+    volumes:
+      - ./sample_config/report-stack/instruments.yaml:/config/instruments.yaml:ro
+    networks:
+      trading-network:
+        aliases: [k-paper-levels]
+
+  k-paper-strategies:
+    build:
+      context: ${K_PAPER_DIR:-../k-paper}
+      dockerfile: Dockerfile
+    container_name: k-paper-strategies
+    restart: unless-stopped
+    environment:
+      PAPER_EXCHANGE_HOST: "0.0.0.0"
+      PAPER_EXCHANGE_PORT: "19999"
+      PAPER_EXCHANGE_PROFILE: lab
+      PAPER_EXCHANGE_CONFIG: /config/instruments.yaml
+    volumes:
+      - ./sample_config/report-stack/instruments.yaml:/config/instruments.yaml:ro
+    networks:
+      trading-network:
+        aliases: [k-paper-strategies]
+
+  levels:
+    build:
+      context: .
+      dockerfile: Dockerfile.paper-bin
+    container_name: levels
+    restart: unless-stopped
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      k-paper-levels:
+        condition: service_started
+    environment:
+      TRACE_JAEGER_DISABLED: "1"
+      TRADING_LOG_JSON: "1"
+      TRADING_RUN_ID: paper-levels
+      TRADING_GRPC: http://0.0.0.0:50051
+    volumes:
+      - ${REPORT_STACK_BIN_DIR:-./runtime-data/report-stack/bin}/runner:/usr/local/bin/runner:ro
+      - ${REPORT_STACK_LEVELS_DIR:-./runtime-data/report-stack/levels}:/data
+    command:
+      [
+        "/usr/local/bin/runner",
+        "--mode",
+        "levels",
+        "--config",
+        "/data/bot.json",
+        "--levels-config",
+        "/data/levels.json",
+      ]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8080/health"]
+      interval: 10s
+      timeout: 5s
+      start_period: 40s
+      retries: 12
+    networks:
+      trading-network:
+        aliases: [levels]
+
+  strategies:
+    build:
+      context: .
+      dockerfile: Dockerfile.paper-bin
+    container_name: strategies
+    restart: unless-stopped
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      k-paper-strategies:
+        condition: service_started
+    environment:
+      TRACE_JAEGER_DISABLED: "1"
+      TRADING_LOG_JSON: "1"
+      TRADING_RUN_ID: paper-strategies-shadow
+      TRADING_GRPC: http://0.0.0.0:50051
+      TRADING_TEST_CANDLES_PATH: /data/candles.json
+      TRADING_TEST_NOW_MS: "259200000"
+    volumes:
+      - ${REPORT_STACK_BIN_DIR:-./runtime-data/report-stack/bin}/btc_price_ma_app:/usr/local/bin/btc_price_ma_app:ro
+      - ${REPORT_STACK_STRATEGIES_DIR:-./runtime-data/report-stack/strategies}:/data
+    command:
+      [
+        "/usr/local/bin/btc_price_ma_app",
+        "--mode",
+        "strategies",
+        "--config",
+        "/data/bot.json",
+        "--strategies-config",
+        "/data/strategies.json",
+      ]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8080/health"]
+      interval: 10s
+      timeout: 5s
+      start_period: 60s
+      retries: 12
+    networks:
+      trading-network:
+        aliases: [strategies]
+
+  trading-report:
+    build:
+      context: .
+      dockerfile: Dockerfile.report
+    container_name: trading-report
+    restart: "no"
+    profiles: ["report"]
+    networks:
+      - trading-network
+    environment:
+      TRADING_REPORT_MONGO_URI_FILE: /run/secrets/trading_report_mongo_uri
+      TRADING_REPORT_MONGO_DB: trading_report
+      TRADING_REPORT_DEPLOYMENT_ID: ${TRADING_REPORT_DEPLOYMENT_ID:-paper-lab}
+    secrets:
+      - trading_report_mongo_uri
+    volumes:
+      - ${TRADING_REPORT_CONFIG:-./sample_config/report.toml}:/app/report.toml:ro
+      - ${REPORT_STACK_LEVELS_DIR:-./runtime-data/report-stack/levels}/submission-journal.jsonl:/journals/levels/submission-journal.jsonl:ro
+      - ${REPORT_STACK_STRATEGIES_DIR:-./runtime-data/report-stack/strategies}/submission-journal.jsonl:/journals/strategies/submission-journal.jsonl:ro
+      - ${TRADING_REPORTS_DIR:-./runtime-data/report-stack/reports}:/reports
+    command:
+      [
+        "scheduled",
+        "--config",
+        "/app/report.toml",
+        "--reports-dir",
+        "/reports",
+        "--timeout-secs",
+        "120",
+        "--deployment-id",
+        "paper-lab",
+      ]
+
+  trading-report-read:
+    build:
+      context: .
+      dockerfile: Dockerfile.report
+    container_name: trading-report-read
+    restart: "no"
+    profiles: ["report-read"]
+    networks:
+      - trading-network
+    environment:
+      TRADING_REPORT_MONGO_URI_FILE: /run/secrets/trading_report_mongo_read_uri
+      TRADING_REPORT_MONGO_DB: trading_report
+      TRADING_REPORT_DEPLOYMENT_ID: ${TRADING_REPORT_DEPLOYMENT_ID:-paper-lab}
+    secrets:
+      - trading_report_mongo_read_uri
+    command:
+      [
+        "read-json",
+        "--latest",
+        "--deployment-id",
+        "paper-lab",
+        "--output",
+        "-",
+      ]
+
+volumes:
+  report_mongodb_data:
+
+secrets:
+  trading_report_mongo_uri:
+    file: ${TRADING_REPORT_MONGO_URI_FILE:-./runtime-data/report-stack/secrets/trading_report_mongo_uri}
+  trading_report_mongo_read_uri:
+    file: ${TRADING_REPORT_MONGO_READ_URI_FILE:-./runtime-data/report-stack/secrets/trading_report_mongo_read_uri}
+
+networks:
+  trading-network:
+    driver: bridge

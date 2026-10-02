@@ -6,7 +6,7 @@ use std::time::Duration;
 use trading_report::collect::{collect_report, write_outputs};
 use trading_report::schedule::{publish_latest, try_acquire_lock, unique_utc_dir};
 use trading_report::store::{
-    deployment_id_from, emit_json_bytes, load_saved_report_json, load_store_meta, meta_from_report,
+    deployment_id_from, emit_json_bytes, load_replay_payload, load_store_meta, meta_from_report,
     new_report_id, write_store_meta, ReportStore, StoreError, StoreMeta,
 };
 use trading_report::ReportConfig;
@@ -37,10 +37,6 @@ enum Commands {
     Persist {
         #[arg(long)]
         from: PathBuf,
-        #[arg(long)]
-        report_id: Option<String>,
-        #[arg(long)]
-        deployment_id: Option<String>,
     },
     /// Read stored report.json bytes from Mongo only. No gRPC, REST, journal, or collect.
     ReadJson {
@@ -94,11 +90,7 @@ async fn run() -> Result<()> {
             report_id,
             deployment_id,
         } => collect_cmd(config, out, persist_mongo, report_id, deployment_id).await,
-        Commands::Persist {
-            from,
-            report_id,
-            deployment_id,
-        } => persist_cmd(from, report_id, deployment_id).await,
+        Commands::Persist { from } => persist_cmd(from).await,
         Commands::ReadJson {
             report_id,
             latest,
@@ -159,14 +151,8 @@ async fn collect_cmd(
     Ok(())
 }
 
-async fn persist_cmd(
-    from: PathBuf,
-    report_id: Option<String>,
-    deployment_id: Option<String>,
-) -> Result<()> {
-    let json = load_saved_report_json(&from)?;
-    let meta = resolve_persist_meta(&from, report_id, deployment_id, &json)?;
-    write_store_meta(&from, &meta)?;
+async fn persist_cmd(from: PathBuf) -> Result<()> {
+    let (meta, json) = load_replay_payload(&from)?;
     persist_saved(&meta, &json)
         .await
         .map_err(|e| persist_failed(&from, e))?;
@@ -177,38 +163,6 @@ async fn persist_cmd(
         from.display()
     );
     Ok(())
-}
-
-fn resolve_persist_meta(
-    from: &std::path::Path,
-    report_id: Option<String>,
-    deployment_id: Option<String>,
-    json: &str,
-) -> Result<StoreMeta> {
-    let mut meta = match load_store_meta(from) {
-        Ok(meta) => meta,
-        Err(_) => {
-            let report: trading_report::TradingReport =
-                serde_json::from_str(json).context("parse saved report.json")?;
-            let report_id = report_id
-                .clone()
-                .filter(|s| !s.trim().is_empty())
-                .unwrap_or_else(new_report_id);
-            let deployment = deployment_id_from(deployment_id.as_deref())?;
-            meta_from_report(report_id, deployment, &report, json)
-        }
-    };
-    if let Some(id) = report_id.filter(|s| !s.trim().is_empty()) {
-        meta.report_id = id;
-    }
-    if let Some(id) = deployment_id.filter(|s| !s.trim().is_empty()) {
-        meta.deployment_id = id;
-    }
-    meta.report_json_sha256 = trading_report::store::sha256_hex(json.as_bytes());
-    if meta.deployment_id.trim().is_empty() || meta.deployment_id == "local-dev" {
-        meta.deployment_id = deployment_id_from(None).unwrap_or(meta.deployment_id);
-    }
-    Ok(meta)
 }
 
 async fn persist_saved(meta: &StoreMeta, report_json: &str) -> Result<(), StoreError> {
@@ -243,7 +197,7 @@ async fn read_json_cmd(
     if latest && deployment_id.as_deref().unwrap_or("").trim().is_empty() {
         let _ = deployment_id_from(None)?;
     }
-    let store = ReportStore::connect_from_env().await?;
+    let store = ReportStore::connect_reader_from_env().await?;
     let json = if latest {
         let deployment = deployment_id_from(deployment_id.as_deref())?;
         let (_id, json) = store.read_latest_json(&deployment).await?;

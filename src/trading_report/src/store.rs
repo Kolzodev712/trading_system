@@ -229,7 +229,7 @@ fn collected_at_bson(rfc3339: &str) -> BsonDateTime {
 }
 
 impl ReportStore {
-    pub async fn connect(uri: &str, database: &str, collection: &str) -> Result<Self, StoreError> {
+    async fn connect_base(uri: &str, database: &str, collection: &str) -> Result<Self, StoreError> {
         let mut opts = tokio::time::timeout(CONNECT_TIMEOUT, ClientOptions::parse(uri))
             .await
             .map_err(|_| StoreError::Unavailable("Mongo URI parse timed out".into()))?
@@ -238,24 +238,53 @@ impl ReportStore {
         opts.connect_timeout = Some(CONNECT_TIMEOUT);
         let client = Client::with_options(opts)
             .map_err(|e| StoreError::Unavailable(sanitize_error(&e.to_string())))?;
+        // Ping the application database. A read-only user cannot use admin.
         tokio::time::timeout(
             CONNECT_TIMEOUT,
-            client.database("admin").run_command(doc! { "ping": 1 }),
+            client.database(database).run_command(doc! { "ping": 1 }),
         )
         .await
         .map_err(|_| StoreError::Unavailable("Mongo connect timed out".into()))?
         .map_err(|e| StoreError::Unavailable(sanitize_error(&e.to_string())))?;
-        let coll = client.database(database).collection::<Document>(collection);
-        let store = Self { collection: coll };
+        Ok(Self {
+            collection: client.database(database).collection::<Document>(collection),
+        })
+    }
+
+    /// Writer path: ping + create the identity/latest indexes.
+    pub async fn connect_writer(
+        uri: &str,
+        database: &str,
+        collection: &str,
+    ) -> Result<Self, StoreError> {
+        let store = Self::connect_base(uri, database, collection).await?;
         tokio::time::timeout(CONNECT_TIMEOUT, store.ensure_indexes())
             .await
             .map_err(|_| StoreError::Unavailable("Mongo index setup timed out".into()))??;
         Ok(store)
     }
 
+    /// Reader path: ping and find only. Never create indexes.
+    pub async fn connect_reader(
+        uri: &str,
+        database: &str,
+        collection: &str,
+    ) -> Result<Self, StoreError> {
+        Self::connect_base(uri, database, collection).await
+    }
+
+    pub async fn connect(uri: &str, database: &str, collection: &str) -> Result<Self, StoreError> {
+        Self::connect_writer(uri, database, collection).await
+    }
+
     pub async fn connect_from_env() -> Result<Self, StoreError> {
         let uri = mongo_uri_from_env()?;
-        Self::connect(&uri, &mongo_db_name(), &mongo_collection_name()).await
+        Self::connect_writer(&uri, &mongo_db_name(), &mongo_collection_name()).await
+    }
+
+    pub async fn connect_reader_from_env() -> Result<Self, StoreError> {
+        let uri = mongo_uri_from_env()?;
+        Self::connect_reader(&uri, &mongo_db_name(), &mongo_collection_name()).await
     }
 
     async fn ensure_indexes(&self) -> Result<(), StoreError> {
@@ -331,36 +360,35 @@ impl ReportStore {
         let doc = Self::document(meta, report_json);
         match self.collection.insert_one(doc).await {
             Ok(_) => Ok(()),
-            Err(e) if is_duplicate_key(&e) => {
-                self.confirm_idempotent(&meta.report_id, report_json).await
-            }
+            Err(e) if is_duplicate_key(&e) => self.confirm_idempotent(meta, report_json).await,
             Err(e) => Err(StoreError::Unavailable(sanitize_error(&e.to_string()))),
         }
     }
 
     async fn confirm_idempotent(
         &self,
-        report_id: &str,
+        meta: &StoreMeta,
         report_json: &str,
     ) -> Result<(), StoreError> {
         let existing = self
             .collection
-            .find_one(doc! { "report_id": report_id })
+            .find_one(doc! { "report_id": &meta.report_id })
             .await
             .map_err(|e| StoreError::Unavailable(sanitize_error(&e.to_string())))?
             .ok_or_else(|| {
                 StoreError::Unavailable(format!(
-                    "duplicate key for {report_id} but document is missing"
+                    "duplicate key for {} but document is missing",
+                    meta.report_id
                 ))
             })?;
         let stored = existing
             .get_str("report_json")
             .map_err(|_| StoreError::Corrupt)?;
-        if stored == report_json {
+        if stored == report_json && metadata_matches(&existing, meta) {
             Ok(())
         } else {
             Err(StoreError::Conflict {
-                id: report_id.to_string(),
+                id: meta.report_id.clone(),
             })
         }
     }
@@ -431,14 +459,46 @@ fn is_duplicate_key(err: &mongodb::error::Error) -> bool {
     }
 }
 
+pub fn load_replay_payload(dir: &Path) -> Result<(StoreMeta, String), StoreError> {
+    let meta = load_store_meta(dir).map_err(|e| {
+        StoreError::Invalid(format!("replay requires unmodified store-meta.json: {e:#}"))
+    })?;
+    let json = load_saved_report_json(dir)
+        .map_err(|e| StoreError::Invalid(format!("replay requires saved report.json: {e:#}")))?;
+    if sha256_hex(json.as_bytes()) != meta.report_json_sha256 {
+        return Err(StoreError::Invalid(
+            "report.json bytes do not match store-meta SHA-256; refusing to persist a changed snapshot"
+                .into(),
+        ));
+    }
+    Ok((meta, json))
+}
+
+fn metadata_matches(doc: &Document, meta: &StoreMeta) -> bool {
+    let ids = doc
+        .get_array("subject_ids")
+        .ok()
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(ToOwned::to_owned))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    doc.get_str("report_id").ok() == Some(meta.report_id.as_str())
+        && doc.get_str("deployment_id").ok() == Some(meta.deployment_id.as_str())
+        && doc.get_str("collected_at_utc").ok() == Some(meta.collected_at_utc.as_str())
+        && doc.get_str("schema_version").ok() == Some(meta.schema_version.as_str())
+        && doc.get_str("verdict").ok() == Some(meta.verdict.as_str())
+        && doc.get_bool("actionable_for_analysis").ok() == Some(meta.actionable_for_analysis)
+        && doc.get_str("report_json_sha256").ok() == Some(meta.report_json_sha256.as_str())
+        && ids == meta.subject_ids
+}
+
 pub fn emit_json_bytes(output: &str, json: &str) -> anyhow::Result<()> {
     if output == "-" {
         use std::io::Write;
         let mut stdout = std::io::stdout().lock();
         stdout.write_all(json.as_bytes())?;
-        if !json.ends_with('\n') {
-            stdout.write_all(b"\n")?;
-        }
         stdout.flush()?;
         return Ok(());
     }
@@ -496,5 +556,25 @@ mod tests {
             sha256_hex(b"{\"verdict\":\"unverified\"}"),
             sha256_hex(b"{\"verdict\":\"verified\"}")
         );
+    }
+
+    #[test]
+    fn replay_rejects_changed_report_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        let json = "{\"verdict\":\"verified\"}";
+        let meta = StoreMeta {
+            report_id: "tr-replay".into(),
+            deployment_id: "paper-lab".into(),
+            collected_at_utc: "2026-10-02T00:00:00Z".into(),
+            schema_version: "trading-report-v1".into(),
+            verdict: "verified".into(),
+            actionable_for_analysis: true,
+            subject_ids: vec![],
+            report_json_sha256: sha256_hex(json.as_bytes()),
+        };
+        write_store_meta(dir.path(), &meta).unwrap();
+        std::fs::write(dir.path().join("report.json"), "{\"verdict\":\"changed\"}").unwrap();
+        let err = load_replay_payload(dir.path()).unwrap_err();
+        assert!(matches!(err, StoreError::Invalid(msg) if msg.contains("do not match")));
     }
 }

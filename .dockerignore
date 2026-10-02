@@ -28,11 +28,12 @@ proposals/
 logs/
 cli_debug.log
 
-# Test files
-tests/
+# Test files, but keep workspace members cargo needs to parse the workspace.
+tests/*
+!tests/workflow_harness/
+!tests/workflow_harness/**
 **/*_test.rs
 **/test_*.rs
-# Exclude test binaries from Docker build
 **/bin/test_*.rs
 
 # Build artifacts
@@ -54,11 +55,19 @@ docker-compose*.yml
 # CI/CD
 .github/
 
-# Config (will be mounted as volume)
-# config/
+# Runtime config, secrets, and report exports are mounted at run time.
+# Gitignore does not keep them out of `docker build` context.
+config/
+secrets/
+runtime-data/
+**/.env
+**/*.pem
+**/*secret*
 
-# Scripts
-scripts/
+# Scripts, but keep the workspace member.
+scripts/*
+!scripts/deepbook/
+!scripts/deepbook/**
 
 # Temporary files
 tmp/

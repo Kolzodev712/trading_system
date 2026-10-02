@@ -1,0 +1,51 @@
+{
+  "levels": [
+    {
+      "id": "wf_rest_a",
+      "name": "rest A",
+      "side": "Buy",
+      "order_type": "Limit",
+      "quantity": { "type": "Fixed", "value": "0.01" },
+      "price": { "Fixed": "1000" },
+      "risk": { "max_position": "0.02", "max_orders": 1 },
+      "lifecycle": {
+        "auto_repost": false,
+        "auto_repost_on_cancel": false,
+        "max_reposts": 0,
+        "repost_delay_secs": 1,
+        "repost_conditions": []
+      },
+      "enabled": false,
+      "group": "workflow"
+    },
+    {
+      "id": "wf_rest_b",
+      "name": "rest B",
+      "side": "Buy",
+      "order_type": "Limit",
+      "quantity": { "type": "Fixed", "value": "0.01" },
+      "price": { "Fixed": "1010" },
+      "risk": { "max_position": "0.02", "max_orders": 1 },
+      "lifecycle": {
+        "auto_repost": false,
+        "auto_repost_on_cancel": false,
+        "max_reposts": 0,
+        "repost_delay_secs": 1,
+        "repost_conditions": []
+      },
+      "enabled": false,
+      "group": "workflow"
+    }
+  ],
+  "instances": [],
+  "tombstones": [],
+  "risk_limits": {
+    "total_max_position": "0.05",
+    "max_total_orders": 8,
+    "max_notional": "200",
+    "max_order_qty": "0.01"
+  },
+  "venue": "Paper",
+  "instrument": "Spot",
+  "account": "paper-levels"
+}

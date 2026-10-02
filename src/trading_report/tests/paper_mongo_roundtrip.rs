@@ -150,9 +150,13 @@ rest_base = "{}"
         "{}",
         String::from_utf8_lossy(&read.stderr)
     );
-    let stdout = String::from_utf8(read.stdout).unwrap();
-    assert_eq!(stdout.trim_end(), saved.trim_end());
-    let parsed: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+    let stdout = read.stdout;
+    assert_eq!(
+        stdout,
+        saved.as_bytes(),
+        "read-json stdout must match report.json bytes"
+    );
+    let parsed: serde_json::Value = serde_json::from_slice(&stdout).unwrap();
     assert_eq!(parsed["subjects"].as_array().map(|a| a.len()), Some(2));
 
     let latest_read = Command::new(bin())
@@ -169,8 +173,5 @@ rest_base = "{}"
         .output()
         .expect("read latest");
     assert!(latest_read.status.success());
-    assert_eq!(
-        String::from_utf8(latest_read.stdout).unwrap().trim_end(),
-        saved.trim_end()
-    );
+    assert_eq!(latest_read.stdout, saved.as_bytes());
 }

@@ -26,12 +26,11 @@ cargo run -p trading_report --bin trading-report -- collect \
   --deployment-id paper-lab
 ```
 
-Replay a saved report after a Mongo outage. This stores the original `report.json` bytes and `report_id`. It does not recollect venue state:
+Replay a saved report after a Mongo outage. This stores the original `report.json` bytes and the identity in `store-meta.json`. A changed file is rejected. Identity cannot be overridden:
 
 ```bash
 cargo run -p trading_report --bin trading-report -- persist \
-  --from runtime-data/reports/2026-10-02T10-00-28Z \
-  --deployment-id paper-lab
+  --from runtime-data/reports/2026-10-02T10-00-28Z
 ```
 
 Read from Mongo only (no gRPC, REST, journal, or collect). stdout is JSON only; diagnostics go to stderr:
@@ -76,7 +75,7 @@ db.getSiblingDB("trading_report").createUser({
 })
 ```
 
-Read-only credential for `read-json` and any future AI consumer:
+Read-only credential for `read-json` and any future AI consumer. This user has `read` only and **cannot** create indexes. `read-json` uses `connect_reader` and never calls `createIndex`.
 
 ```javascript
 db.getSiblingDB("trading_report").createUser({
@@ -86,16 +85,29 @@ db.getSiblingDB("trading_report").createUser({
 })
 ```
 
-Store the writer URI in `secrets/trading_report_mongo_uri` or `/etc/trading-report.env`. The host Mongo in this lab is often `mongodb://127.0.0.1:27017` with no auth; still keep the value out of git.
+Store the writer URI in `runtime-data/report-stack/secrets/trading_report_mongo_uri` (gitignored; also excluded from the Docker build context). Lab defaults used by `scripts/trading-report-compose-gate.sh` are not production secrets.
 
-## Container
+`read-json` must be given the reader URI. Do not point it at the writer URI in production.
 
-`Dockerfile.report` builds the same `trading-report` binary. Compose service `trading-report` is on profile `report` and the `trading-network` stack network. It publishes no port and is not started by `docker compose up`.
+## Two-runner Compose stack
+
+The intended deployment is `docker-compose.report.yml`: `levels`, `strategies`, `k-paper-levels`, `k-paper-strategies`, authenticated `mongodb`, and a one-shot `trading-report`. Service names match `sample_config/report.toml`.
 
 ```bash
-# Does not start or restart either runner (--no-deps).
-docker compose --profile report run --rm --no-deps trading-report
+# Build reporter image, start the two runners, collect with report_writer,
+# read back with report_reader, compare untrimmed bytes.
+./scripts/trading-report-compose-gate.sh
+
+# Manual equivalent after the stack is up:
+docker compose -f docker-compose.report.yml up -d \
+  mongodb k-paper-levels k-paper-strategies levels strategies
+docker compose -f docker-compose.report.yml --profile report run --rm --no-deps trading-report
+docker compose -f docker-compose.report.yml --profile report-read run --rm --no-deps trading-report-read
 ```
+
+`--no-deps` never starts or restarts either runner. `docker compose up` does not start the reporter.
+
+`Dockerfile.report` uses `COPY . .`. `.dockerignore` excludes `secrets/`, `config/`, `runtime-data/`, and `*.env` so those files are not in the build context.
 
 Mounts:
 
@@ -142,13 +154,13 @@ Each successful log line includes `report_id`, source `verdict`, `mongo=delivere
 Replay that failed write:
 
 ```bash
-trading-report persist --from runtime-data/reports/<utc-dir> --deployment-id paper-lab
+trading-report persist --from runtime-data/report-stack/reports/<utc-dir>
 # After Mongo accepts the original bytes, optionally:
-ln -sfn <utc-dir> runtime-data/reports/latest
+ln -sfn <utc-dir> runtime-data/report-stack/reports/latest
 ```
 
 ## Stored document
 
-One immutable Mongo document per combined collection: `report_id`, `deployment_id`, `collected_at_utc`, `schema_version`, `verdict`, `actionable_for_analysis`, `subject_ids`, the exact UTF-8 `report.json`, and `report_json_sha256`. Indexes: unique `report_id`, and `(deployment_id, collected_at desc)` for latest-in-deployment. Same ID and identical JSON is idempotent. Same ID and different JSON fails. There is no TTL or overwrite. Documents larger than Mongo's 16 MiB BSON limit fail before insert.
+One immutable Mongo document per combined collection: `report_id`, `deployment_id`, `collected_at_utc`, `schema_version`, `verdict`, `actionable_for_analysis`, `subject_ids`, the exact UTF-8 `report.json`, and `report_json_sha256`. Indexes: unique `report_id`, and `(deployment_id, collected_at desc)` for latest-in-deployment. Same ID, identical JSON, **and** identical metadata is idempotent. Same ID with different JSON or different metadata fails. `read-json --output -` writes the stored bytes with no added newline. There is no TTL or overwrite. Documents larger than Mongo's 16 MiB BSON limit fail before insert.
 
 Collection and persistence failures do not contact runner control RPCs and cannot start, stop, or restart the trading containers.

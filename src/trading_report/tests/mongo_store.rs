@@ -103,6 +103,13 @@ async fn idempotent_retry_and_conflicting_id() {
     let meta = meta_from_report("tr-dup".into(), "paper-lab".into(), &report, &json);
     store.persist(&meta, &json).await.unwrap();
     store.persist(&meta, &json).await.expect("identical retry");
+    let mut other_dep = meta.clone();
+    other_dep.deployment_id = "other-deploy".into();
+    let meta_err = store.persist(&other_dep, &json).await.unwrap_err();
+    assert!(
+        matches!(meta_err, StoreError::Conflict { id } if id == "tr-dup"),
+        "same JSON with different metadata must conflict"
+    );
     let other = json!({
         "schema_version": "trading-report-v1",
         "generated_at_utc": "2026-10-02T12:00:00+00:00",
@@ -197,15 +204,7 @@ async fn mongo_failure_leaves_recoverable_local_report() {
         .env(MONGO_URI_ENV, test_mongo_uri())
         .env("TRADING_REPORT_MONGO_DB", &db)
         .env("TRADING_REPORT_DEPLOYMENT_ID", "paper-lab")
-        .args([
-            "persist",
-            "--from",
-            dir.path().to_str().unwrap(),
-            "--report-id",
-            "tr-replay",
-            "--deployment-id",
-            "paper-lab",
-        ])
+        .args(["persist", "--from", dir.path().to_str().unwrap()])
         .output()
         .unwrap();
     assert!(
@@ -241,7 +240,12 @@ async fn secrets_stay_off_stdout_and_stdout_is_json_only() {
     );
     let stdout = String::from_utf8_lossy(&ok.stdout);
     assert!(!stdout.contains("report_id="));
-    let parsed: serde_json::Value = serde_json::from_str(stdout.trim()).expect("stdout JSON only");
+    assert_eq!(
+        ok.stdout,
+        json.as_bytes(),
+        "stdout must be the stored JSON bytes with no added newline"
+    );
+    let parsed: serde_json::Value = serde_json::from_slice(&ok.stdout).expect("stdout JSON only");
     assert_eq!(parsed["verdict"], "verified");
 
     let fail = Command::new(bin())
@@ -259,6 +263,28 @@ async fn secrets_stay_off_stdout_and_stdout_is_json_only() {
     assert!(!fail_out.contains("supersecretvalue"));
     assert!(!fail_err.contains("supersecretvalue"));
     assert!(fail_err.contains("STORAGE_FAILED") || fail_err.contains("[REDACTED]"));
+    drop_db(&db).await;
+}
+
+#[tokio::test]
+async fn persist_rejects_changed_local_file() {
+    let _env = ENV_LOCK.lock().unwrap();
+    let db = unique_db();
+    let dir = tempfile::tempdir().unwrap();
+    let (report, json) = fixture_report(Verdict::Verified, None);
+    fs::write(dir.path().join("report.json"), &json).unwrap();
+    let meta = meta_from_report("tr-changed".into(), "paper-lab".into(), &report, &json);
+    write_store_meta(dir.path(), &meta).unwrap();
+    fs::write(dir.path().join("report.json"), "{\"verdict\":\"changed\"}").unwrap();
+    let fail = Command::new(bin())
+        .env(MONGO_URI_ENV, test_mongo_uri())
+        .env("TRADING_REPORT_MONGO_DB", &db)
+        .args(["persist", "--from", dir.path().to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(!fail.status.success());
+    let err = String::from_utf8_lossy(&fail.stderr);
+    assert!(err.contains("do not match") || err.contains("changed snapshot"));
     drop_db(&db).await;
 }
 

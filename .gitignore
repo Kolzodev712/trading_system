@@ -11,3 +11,13 @@
 /cli_debug.log
 __pycache__/
 *.pyc
+
+# Generated research outputs. Existing tracked files stay tracked; the
+# research git guard blocks new additions. A later delete does not drop
+# an earlier Git object, so these must never be committed on a new branch.
+/data/**/backtest/
+/data/**/decisions-*.json
+/data/**/events-*.json
+/data/**/coverage_gate.json
+/data/**/trade-60.json
+/data/**/trade-1m.json

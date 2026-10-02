@@ -67,6 +67,9 @@ test-fast:
     cargo test -p strategy_core -p research_engine -p research_cli -p trading_engine -p runner -p btc_price_ma_app --all-targets
     cargo test --test integration integration::internal -- --test-threads=1
     cargo test --test integration helpers::external -- --test-threads=1
+    python3 -m unittest discover -s research/tests -q
+    python3 scripts/research_artifacts.py check-index --repo .
+    python3 scripts/research_git_guard.py --repo .
     echo "LAYER fast-component: PASS"
     echo "LAYER paper-process: NOT_RUN"
     echo "LAYER ui-envoy: NOT_RUN"
@@ -237,6 +240,32 @@ run-cli:
 
 cli:
     just run-cli
+
+# Research record + local artifact store (no venue, no Demo).
+research-record-test:
+    python3 -m unittest discover -s research/tests -v
+
+research-git-guard:
+    python3 scripts/research_git_guard.py --repo .
+
+research-index:
+    python3 scripts/research_artifacts.py generate-index --repo .
+
+research-index-check:
+    python3 scripts/research_artifacts.py check-index --repo .
+
+research-manifests:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    shopt -s nullglob
+    files=(research/candidates/*/manifest.json)
+    if [ "${#files[@]}" -eq 0 ]; then
+      echo "no research manifests"
+      exit 0
+    fi
+    for path in "${files[@]}"; do
+      python3 scripts/research_artifacts.py validate-manifest "$path"
+    done
 
 # Clean build artifacts
 clean:

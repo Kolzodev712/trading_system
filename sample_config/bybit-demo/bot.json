@@ -23,7 +23,8 @@
         "apiSecret": "REPLACE_WITH_BYBIT_DEMO_API_SECRET"
       },
       "demo": true,
-      "testnet": false
+      "testnet": false,
+      "leverage": 1
     }
   },
   "server": {

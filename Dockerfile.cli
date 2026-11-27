@@ -1,5 +1,6 @@
-# Multi-stage build for TUI CLI
-FROM rust:1.75-slim as builder
+# OBSOLETE (2026-11-27): Incomplete workspace COPY vs current crate graph; previously
+# suppressed a failed dependency build with `|| true`. Not a supported release path.
+FROM rust:1.98-slim AS builder
 
 # Install build dependencies
 RUN apt-get update && apt-get install -y \
@@ -20,13 +21,9 @@ COPY rust-toolchain.toml ./
 COPY libs/trading_core ./libs/trading_core
 COPY cli ./cli
 
-# Build dependencies first (caching layer)
-RUN cargo build --release --package cli --bin trading-cli || true
-
-# Copy source code (this invalidates cache if source changes)
 COPY . .
 
-# Build the CLI binary (from cli package)
+# Fail the image build if the package cannot compile (do not suppress errors).
 RUN cargo build --release --package cli --bin trading-cli
 
 # Runtime stage

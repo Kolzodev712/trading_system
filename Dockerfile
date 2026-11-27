@@ -1,5 +1,9 @@
-# Multi-stage build for Trading System Runner
-FROM rust:1.75-slim as builder
+# OBSOLETE (2026-11-27): This Dockerfile does not match the current workspace
+# (missing crates such as gateway/trading_proto/trading_networking, and previously
+# suppressed a failed dependency build with `|| true`). Do not use for release or
+# clean-checkout verification. Prefer Dockerfile.paper-bin or
+# trading-system-showcase-demo. Kept only so historical compose references resolve.
+FROM rust:1.98-slim AS builder
 
 # Install build dependencies
 RUN apt-get update && apt-get install -y \
@@ -28,16 +32,11 @@ COPY src/asset_engine ./src/asset_engine
 COPY src/live_config ./src/live_config
 COPY src/runner ./src/runner
 
-# Build dependencies first (caching layer)
-RUN cargo build --release --package runner || true
-
-# Copy source code (this invalidates cache if source changes)
+# Full tree required for a real build; the selective COPY above is incomplete.
 COPY . .
 
-# Build only the main runner binary (exclude test_runner)
-# Remove test_runner binary definition from Cargo.toml since the file is excluded
-RUN sed -i '/^\[\[bin\]\]$/,/^path = "src\/bin\/test_runner.rs"$/d' src/runner/Cargo.toml && \
-    cargo build --release --package runner
+# Fail the image build if the package cannot compile (do not suppress errors).
+RUN cargo build --release --package runner
 
 # Runtime stage
 FROM debian:bookworm-slim

@@ -1,9 +1,9 @@
 # Trading System
 
 **Version**: 0.1  
-**Last Updated**: 2026-09-29  
-**License**: MIT License  
-**Copyright**: © 2024 Trading System Contributors
+**Last Updated**: 2026-11-27  
+**License**: Apache License 2.0 (see [LICENSE](LICENSE) and [NOTICE](NOTICE))  
+**Copyright**: © 2024–2026 T.L.P. Arc Entertainment Ltd.
 
 A modular, exchange-agnostic trading system built in Rust with support for real-time market data, order execution, level-based trading, and strategy-based trading.
 
@@ -505,14 +505,18 @@ cargo build
 
 ### 4. Docker Installation (Alternative)
 
-The system can be run using Docker containers, which simplifies deployment and dependency management.
+**Status (2026-11-27):** The root [`Dockerfile`](Dockerfile) and [`Dockerfile.cli`](Dockerfile.cli) are **out of date** relative to the current workspace (toolchain and crate graph). They are not a supported clean-checkout path. Prefer:
 
-**📖 For detailed Docker instructions, see [DOCKER.md](architecture/DOCKER.md)**
+- Local: `cargo build -p runner` (or `btc_price_ma_app`) with [`rust-toolchain.toml`](rust-toolchain.toml) (`1.98.1`)
+- Host-built binary + thin runtime: [`Dockerfile.paper-bin`](Dockerfile.paper-bin)
+- Integrated paper lab: private sibling `trading-system-showcase-demo` (`make demo`)
+
+**📖 Historical notes:** [DOCKER.md](architecture/DOCKER.md) (verify against the note above before trusting build steps).
 
 #### Prerequisites
 - Docker 20.10+ and Docker Compose 2.0+
 
-#### Quick Start with Docker Compose
+#### Quick Start with Docker Compose (legacy / unsupported)
 
 ```bash
 # Start all services (MongoDB + Trading System)
@@ -1434,35 +1438,15 @@ For detailed architecture information, see the [architecture/](architecture/) di
 
 ## Authors
 
-**Trading System Contributors** (2024)
-
-For a complete list of contributors, see the [LICENSE](LICENSE) file.
+Copyright © 2024–2026 T.L.P. Arc Entertainment Ltd.
 
 ## License
 
-This project is licensed under the **MIT License**.
-
-Copyright © 2024 Trading System Contributors
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-
-See the [LICENSE](LICENSE) file for the full license text.
+Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE) and
+[NOTICE](NOTICE). You may not use this file except in compliance with the License.
+Unless required by applicable law or agreed to in writing, software distributed
+under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
+CONDITIONS OF ANY KIND, either express or implied.
 
 ## Contributing
 

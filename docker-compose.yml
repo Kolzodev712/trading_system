@@ -23,8 +23,10 @@ services:
     networks:
       - trading-network
 
-  # Trading System Runner (main service)
+  # Trading System Runner — root Dockerfile is obsolete (see Dockerfile header).
+  # Opt in explicitly: docker compose --profile legacy-dockerfile up --build
   trading-system:
+    profiles: ["legacy-dockerfile"]
     build:
       context: .
       dockerfile: Dockerfile

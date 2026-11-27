@@ -1,5 +1,10 @@
 # Docker Guide
 
+> **Obsolete for current workspace (2026-11-27).** The root `Dockerfile` / `Dockerfile.cli`
+> and the default `docker-compose.yml` runner service do not match today's crate graph or
+> toolchain. Prefer local `cargo build -p runner`, `Dockerfile.paper-bin`, or the private
+> `trading-system-showcase-demo` lab. The steps below are retained as historical reference only.
+
 This guide explains how to run the Trading System using Docker containers.
 
 ## Prerequisites

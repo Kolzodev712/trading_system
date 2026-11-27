@@ -3,6 +3,8 @@
 /.cursor/*
 !/.cursor/doctrine/
 !/.cursor/doctrine/**
+!/.cursor/design-log/
+!/.cursor/design-log/**
 /trading_keys/binance
 /src/exchange_engine/config/
 /src/market_data_engine/config/

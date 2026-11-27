@@ -99,3 +99,19 @@ Private retained:
 - https://github.com/Kolzodev712/trading-system-showcase-demo
 
 Desktop checkouts `origin` retargeted to `*-private`.
+
+## Visibility flip (executed 2026-11-27)
+
+Owner elected to rotate credentials and publish **full history** (including `research/`) instead of the reviewed single-commit exports.
+
+1. Deleted clean-export public remotes: `trading_system`, `k-paper`, `trading-system-ui`.
+2. Renamed `*-private` back to original names and set **visibility public**.
+3. Confirmed `research/` present on public `trading_system` (candidates, datasets, research_cli, research_engine, schema, tests, docs).
+4. Desktop `origin` remotes retargeted to:
+   - https://github.com/Kolzodev712/trading_system
+   - https://github.com/Kolzodev712/k-paper
+   - https://github.com/Kolzodev712/trading-system-ui
+
+Still private: https://github.com/Kolzodev712/trading-system-showcase-demo
+
+**Prerequisite (owner):** credential rotation for any secrets that appeared in historical commits (gitleaks: 18 history hits on trading_system).

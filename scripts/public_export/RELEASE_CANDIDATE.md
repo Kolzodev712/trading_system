@@ -81,3 +81,21 @@ Exact SHAs: record at publish time with `git rev-parse HEAD` in each repo after 
 ## Post-release backlog
 
 See Design Log / Increment 10 list (demand-driven only).
+
+## Publication (executed 2026-11-27)
+
+Private originals renamed to `*-private`. Reviewed-export public remotes created and tagged `v0.1.0` on `main`:
+
+- https://github.com/Kolzodev712/trading_system
+- https://github.com/Kolzodev712/k-paper
+- https://github.com/Kolzodev712/trading-system-ui
+- https://github.com/Kolzodev712/trading-system-showcase (docs + lab; already public)
+
+Private retained:
+
+- https://github.com/Kolzodev712/trading_system-private
+- https://github.com/Kolzodev712/k-paper-private
+- https://github.com/Kolzodev712/trading-system-ui-private
+- https://github.com/Kolzodev712/trading-system-showcase-demo
+
+Desktop checkouts `origin` retargeted to `*-private`.

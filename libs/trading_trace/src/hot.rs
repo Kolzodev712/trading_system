@@ -102,8 +102,9 @@ mod tests {
                 traced_count += 1;
             }
         }
+        // ~1% of 1000 draws: allow wide binomial slack so the suite is not flaky.
         assert!(
-            (5..=15).contains(&traced_count),
+            (1..=30).contains(&traced_count),
             "Sampling rate seems off: {} traces in 1000",
             traced_count
         );

@@ -293,7 +293,7 @@ impl LevelService {
             .map(|l| l.config.enabled)
             .ok_or_else(|| Status::not_found(format!("Level {level_id} not found")))?;
 
-        let global_trading_enabled = self.trading_control.is_enabled().await;
+        let global_trading_enabled = self.trading_control.is_enabled();
         if !global_trading_enabled && enabled {
             return Err(Status::failed_precondition(
                 "Cannot enable individual level when global trading is disabled. Enable global trading first.",
@@ -826,7 +826,7 @@ mod tests {
         }
         async fn fetch_open_orders(&self) -> Result<Vec<Order>, EngineError> {
             if *self.fail.lock().unwrap() {
-                return Err(EngineError::CustomError(anyhow::anyhow!(
+                return Err(EngineError::CustomError(smol_str::format_smolstr!(
                     "REST GET /open_orders: 503"
                 )));
             }

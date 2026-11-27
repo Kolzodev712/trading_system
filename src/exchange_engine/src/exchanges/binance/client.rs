@@ -438,7 +438,7 @@ impl TradingClient<OrderRequest, Pair> for BinanceClient {
         let server_time = time_response
             .flatten()
             .ok_or_else(|| {
-                EngineError::CustomError(anyhow::anyhow!(
+                EngineError::CustomError(smol_str::format_smolstr!(
                     "Failed to get server time for balance request"
                 ))
             })?
@@ -464,7 +464,9 @@ impl TradingClient<OrderRequest, Pair> for BinanceClient {
             .flatten();
 
         let account_info = response.ok_or_else(|| {
-            EngineError::CustomError(anyhow::anyhow!("Expected account info, but received None"))
+            EngineError::CustomError(smol_str::format_smolstr!(
+                "Expected account info, but received None"
+            ))
         })?;
 
         let balances: Vec<Balance> = account_info
@@ -496,7 +498,7 @@ impl TradingClient<OrderRequest, Pair> for BinanceClient {
         let server_time = time_response
             .flatten()
             .ok_or_else(|| {
-                EngineError::CustomError(anyhow::anyhow!(
+                EngineError::CustomError(smol_str::format_smolstr!(
                     "Failed to get server time for open orders request"
                 ))
             })?
@@ -550,7 +552,7 @@ impl TradingClient<OrderRequest, Pair> for BinanceClient {
         let server_time = time_response
             .flatten()
             .ok_or_else(|| {
-                EngineError::CustomError(anyhow::anyhow!(
+                EngineError::CustomError(smol_str::format_smolstr!(
                     "Failed to get server time for trades request"
                 ))
             })?

@@ -31,8 +31,9 @@ impl BybitMessageMapper {
     }
 
     pub fn parse_message(&self, text: &str) -> Result<BybitStreamingMessage, EngineError> {
-        let value: serde_json::Value = serde_json::from_str(text)
-            .map_err(|e| EngineError::CustomError(anyhow::anyhow!("Invalid JSON: {}", e)))?;
+        let value: serde_json::Value = serde_json::from_str(text).map_err(|e| {
+            EngineError::CustomError(smol_str::format_smolstr!("Invalid JSON: {}", e))
+        })?;
 
         if let Some(op_value) = value.get("op") {
             if let Ok(op) = serde_json::from_value::<BybitWebSocketOp>(op_value.clone()) {

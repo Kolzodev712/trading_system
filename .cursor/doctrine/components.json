@@ -1,0 +1,41 @@
+{
+  "components": [
+    {
+      "id": "market-data-path",
+      "patterns": ["src/market_data_engine/**", "libs/trading_core/src/channels/market_data.rs"],
+      "required_project_files": [
+        ".cursor/doctrine/objectives.md",
+        ".cursor/doctrine/invariants.md",
+        ".cursor/doctrine/workload.md"
+      ],
+      "required_doctrine_refs": [
+        ".cursor/skills/engineering-doctrine/decision/allocation.md",
+        ".cursor/skills/engineering-doctrine/decision/concurrency.md"
+      ]
+    },
+    {
+      "id": "trading-execution",
+      "patterns": ["src/trading_engine/**", "libs/trading_core/src/grpc/trading_control.rs"],
+      "required_project_files": [
+        ".cursor/doctrine/objectives.md",
+        ".cursor/doctrine/invariants.md",
+        ".cursor/doctrine/workload.md"
+      ],
+      "required_doctrine_refs": [
+        ".cursor/skills/engineering-doctrine/decision/concurrency.md",
+        ".cursor/skills/engineering-doctrine/decision/evidence.md"
+      ]
+    },
+    {
+      "id": "venue-adapters",
+      "patterns": ["src/exchange_engine/**"],
+      "required_project_files": [
+        ".cursor/doctrine/objectives.md",
+        ".cursor/doctrine/invariants.md"
+      ],
+      "required_doctrine_refs": [
+        ".cursor/skills/engineering-doctrine/decision/io.md"
+      ]
+    }
+  ]
+}

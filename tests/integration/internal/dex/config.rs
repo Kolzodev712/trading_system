@@ -62,7 +62,7 @@ async fn dex_levels_example_builds_place_commands_with_pool_meta() {
         update_kind: Default::default(),
         sequence: None,
     };
-    engine.on_orderbook(book).await;
+    engine.on_orderbook(&book).await;
 
     let pool = sui_dbusdc_pool();
     let mut pool_meta = HashMap::new();

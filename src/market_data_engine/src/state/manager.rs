@@ -84,7 +84,7 @@ impl MarketDataStateManager {
                 "Orderbook validation failed: symbol={}, orderbook_pair={}, expected_pair={}",
                 symbol, orderbook.pair, expected_pair
             );
-            return Err(EngineError::CustomError(anyhow::anyhow!(
+            return Err(EngineError::CustomError(smol_str::format_smolstr!(
                 "Symbol {} does not match orderbook pair {} (expected {})",
                 symbol,
                 orderbook.pair,
@@ -101,22 +101,23 @@ impl MarketDataStateManager {
             orderbook.asks.len()
         );
 
-        // Clone before lock to minimize lock time
-        let pair_for_log = orderbook.pair.clone();
-        let orderbook_for_state = orderbook.clone();
-        let pair_for_state = orderbook_for_state.pair.clone();
+        // Move the validated book into state (no extra clone); keep only the pair for the
+        // lookup after the move.
+        let pair_for_state = orderbook.pair.clone();
 
         // 1. Apply snapshot (replace) or delta (merge). A gap drops the book and is not published.
+        // The single deep copy of the maintained book happens here, under the lock; every
+        // downstream consumer shares it via `Arc`.
         let published = {
             let mut state = self.state.write().await;
-            if !state.update_orderbook(pair_for_state.clone(), orderbook_for_state) {
+            if !state.update_orderbook(pair_for_state.clone(), orderbook) {
                 warn!(
                     "Dropped orderbook delta for {} (no snapshot or sequence gap); waiting for the next snapshot",
                     pair_for_state
                 );
                 None
             } else {
-                state.get_orderbook(&pair_for_state).cloned()
+                state.get_orderbook(&pair_for_state).cloned().map(Arc::new)
             }
         };
 
@@ -127,7 +128,11 @@ impl MarketDataStateManager {
         // 2. Publish the maintained book, not the raw delta.
         // Note: Publishing failures are logged but don't fail the state update
         // In tests, channels may be closed (no consumers), which is fine
-        if let Err(e) = self.publisher.publish_orderbook(&published).await {
+        if let Err(e) = self
+            .publisher
+            .publish_orderbook(Arc::clone(&published))
+            .await
+        {
             warn!(
                 "Failed to publish orderbook update (channel may have no consumers): {}",
                 e
@@ -135,7 +140,7 @@ impl MarketDataStateManager {
             // Don't fail - state is still updated correctly
         } else {
             info!(
-                pair = %pair_for_log,
+                pair = %published.pair,
                 ts_ms = published.timestamp,
                 "market data: published orderbook to cache+channel"
             );
@@ -158,11 +163,14 @@ impl MarketDataStateManager {
     ) -> Result<(), EngineError> {
         // Validate that symbol matches trade pair
         let expected_pair = self.symbol_registry.get_pair(symbol).ok_or_else(|| {
-            EngineError::CustomError(anyhow::anyhow!("Symbol {} not found in registry", symbol))
+            EngineError::CustomError(smol_str::format_smolstr!(
+                "Symbol {} not found in registry",
+                symbol
+            ))
         })?;
 
         if trade.pair != *expected_pair {
-            return Err(EngineError::CustomError(anyhow::anyhow!(
+            return Err(EngineError::CustomError(smol_str::format_smolstr!(
                 "Symbol {} does not match trade pair {}",
                 symbol,
                 trade.pair

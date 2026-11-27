@@ -59,7 +59,7 @@ impl IndicatorResolver {
                     .get(level_template_id)
                     .cloned()
                     .ok_or_else(|| {
-                        EngineError::CustomError(anyhow::anyhow!(
+                        EngineError::CustomError(smol_str::format_smolstr!(
                             "No level_pricing binding for level template {}",
                             level_template_id
                         ))
@@ -78,34 +78,40 @@ impl IndicatorResolver {
 
             PriceConfig::BestBid { offset } => {
                 let orderbook = orderbook.ok_or_else(|| {
-                    EngineError::CustomError(anyhow::anyhow!(
+                    EngineError::CustomError(smol_str::format_smolstr!(
                         "Orderbook required for BestBid price"
                     ))
                 })?;
                 let best_bid = orderbook.best_bid_price().ok_or_else(|| {
-                    EngineError::CustomError(anyhow::anyhow!("No best bid price in orderbook"))
+                    EngineError::CustomError(smol_str::format_smolstr!(
+                        "No best bid price in orderbook"
+                    ))
                 })?;
                 best_bid - offset
             }
 
             PriceConfig::BestAsk { offset } => {
                 let orderbook = orderbook.ok_or_else(|| {
-                    EngineError::CustomError(anyhow::anyhow!(
+                    EngineError::CustomError(smol_str::format_smolstr!(
                         "Orderbook required for BestAsk price"
                     ))
                 })?;
                 let best_ask = orderbook.best_ask_price().ok_or_else(|| {
-                    EngineError::CustomError(anyhow::anyhow!("No best ask price in orderbook"))
+                    EngineError::CustomError(smol_str::format_smolstr!(
+                        "No best ask price in orderbook"
+                    ))
                 })?;
                 best_ask + offset
             }
 
             PriceConfig::MidPrice { offset_percent } => {
                 let orderbook = orderbook.ok_or_else(|| {
-                    EngineError::CustomError(anyhow::anyhow!("Orderbook required for MidPrice"))
+                    EngineError::CustomError(smol_str::format_smolstr!(
+                        "Orderbook required for MidPrice"
+                    ))
                 })?;
                 let mid_price = orderbook.mid_price().ok_or_else(|| {
-                    EngineError::CustomError(anyhow::anyhow!(
+                    EngineError::CustomError(smol_str::format_smolstr!(
                         "Cannot calculate mid price from orderbook: missing bids or asks"
                     ))
                 })?;
@@ -148,7 +154,7 @@ impl IndicatorResolver {
 
             QuantityConfig::Notional(notional) => {
                 if current_price <= Decimal::ZERO {
-                    return Err(EngineError::CustomError(anyhow::anyhow!(
+                    return Err(EngineError::CustomError(smol_str::format_smolstr!(
                         "Notional sizing requires a valid price"
                     )));
                 }
@@ -205,7 +211,7 @@ fn resolve_indicator_price(
         })
         .ok_or_else(|| {
             let available: Vec<_> = indicators.keys().map(|k| k.as_str()).collect();
-            EngineError::CustomError(anyhow::anyhow!(
+            EngineError::CustomError(smol_str::format_smolstr!(
                 "Indicator not found: {} (resolved as: {}, available: {:?})",
                 indicator_name,
                 resolved_indicator_id,
@@ -234,7 +240,7 @@ pub(crate) fn balance_percent_quantity(
     instrument: &trading_core::types::common::InstrumentType,
 ) -> Result<Decimal, EngineError> {
     if percent <= Decimal::ZERO {
-        return Err(EngineError::CustomError(anyhow::anyhow!(
+        return Err(EngineError::CustomError(smol_str::format_smolstr!(
             "BalancePercent must be strictly positive"
         )));
     }
@@ -243,7 +249,7 @@ pub(crate) fn balance_percent_quantity(
         trading_core::types::common::InstrumentType::Futures
         | trading_core::types::common::InstrumentType::Derivitives => {
             if current_price <= Decimal::ZERO {
-                return Err(EngineError::CustomError(anyhow::anyhow!(
+                return Err(EngineError::CustomError(smol_str::format_smolstr!(
                     "Futures BalancePercent requires a valid price"
                 )));
             }
@@ -253,7 +259,7 @@ pub(crate) fn balance_percent_quantity(
             trading_core::types::common::Side::Sell => Ok(balance * fraction),
             trading_core::types::common::Side::Buy => {
                 if current_price <= Decimal::ZERO {
-                    return Err(EngineError::CustomError(anyhow::anyhow!(
+                    return Err(EngineError::CustomError(smol_str::format_smolstr!(
                         "Spot buy BalancePercent requires a valid price"
                     )));
                 }

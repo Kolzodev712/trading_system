@@ -157,7 +157,7 @@ impl ExchangeDriver for BinanceDriver {
                 if let Err(e) = result {
                     warn!("Binance WebSocket task error: {}", e);
                     self.set_connection_state(ConnectionState::Failed).await;
-                    return Err(EngineError::CustomError(anyhow::anyhow!(
+                    return Err(EngineError::CustomError(smol_str::format_smolstr!(
                         "WebSocket task failed: {}", e
                     )));
                 }

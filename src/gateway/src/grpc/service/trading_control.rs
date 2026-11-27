@@ -130,7 +130,7 @@ impl TradingControlService {
         if let Some(cached) = self.cached(&req.request_id).await {
             return Ok(Response::new(cached));
         }
-        self.trading_control.pause_entries().await;
+        self.trading_control.pause_entries();
         let response = trading_cli::OperatorCommandResponse {
             accepted: true,
             state: "completed".into(),
@@ -154,7 +154,7 @@ impl TradingControlService {
         if let Some(cached) = self.cached(&req.request_id).await {
             return Ok(Response::new(cached));
         }
-        self.trading_control.resume_entries().await;
+        self.trading_control.resume_entries();
         let response = trading_cli::OperatorCommandResponse {
             accepted: true,
             state: "completed".into(),
@@ -179,7 +179,7 @@ impl TradingControlService {
         if let Some(cached) = self.cached(&req.request_id).await {
             return Ok(Response::new(cached));
         }
-        self.trading_control.pause_entries().await;
+        self.trading_control.pause_entries();
         let (order_ids, pairs) = self.collect_working().await;
         let cancelled = match self.trading_control.cancel_working(order_ids, pairs).await {
             Ok(cancelled) => Ok(cancelled),
@@ -267,7 +267,7 @@ impl TradingControlService {
         if let Some(cached) = self.cached(&req.request_id).await {
             return Ok(Response::new(cached));
         }
-        self.trading_control.latch_flatten_and_pause().await;
+        self.trading_control.latch_flatten_and_pause();
         let rest_before = {
             let client = self.trading_control.trading_client();
             let client = client.read().await;
@@ -583,7 +583,7 @@ mod tests {
         }
 
         async fn cancel_all_orders(&self, _pair: &Pair) -> Result<(), EngineError> {
-            Err(EngineError::CustomError(anyhow::anyhow!(
+            Err(EngineError::CustomError(smol_str::format_smolstr!(
                 "REST GET /open_orders: 503"
             )))
         }
@@ -593,7 +593,7 @@ mod tests {
         }
 
         async fn fetch_open_orders(&self) -> Result<Vec<Order>, EngineError> {
-            Err(EngineError::CustomError(anyhow::anyhow!(
+            Err(EngineError::CustomError(smol_str::format_smolstr!(
                 "REST GET /open_orders: 503"
             )))
         }
@@ -694,8 +694,8 @@ mod tests {
         );
         assert!(response.message.contains("not treated as cancelled"));
         assert!(response.message.contains("Reduce-only exit was not sent"));
-        assert!(service.trading_control.flatten_latched().await);
-        assert!(service.trading_control.entries_paused().await);
+        assert!(service.trading_control.flatten_latched());
+        assert!(service.trading_control.entries_paused());
         assert_eq!(placed.load(Ordering::SeqCst), 0);
     }
 
@@ -815,7 +815,7 @@ mod tests {
             .into_inner();
         assert!(!response.accepted);
         assert!(response.message.contains("working orders after cancel"));
-        assert!(service.trading_control.flatten_latched().await);
+        assert!(service.trading_control.flatten_latched());
         assert_eq!(placed.load(Ordering::SeqCst), 0);
     }
 
@@ -948,8 +948,8 @@ mod tests {
             "unexpected message: {}",
             response.message
         );
-        assert!(service.trading_control.flatten_latched().await);
-        assert!(service.trading_control.entries_paused().await);
+        assert!(service.trading_control.flatten_latched());
+        assert!(service.trading_control.entries_paused());
     }
 
     #[tokio::test]
@@ -979,7 +979,7 @@ mod tests {
             "unexpected message: {}",
             response.message
         );
-        assert!(service.trading_control.entries_paused().await);
+        assert!(service.trading_control.entries_paused());
     }
 
     #[derive(Debug)]
@@ -1205,7 +1205,7 @@ mod tests {
             "unexpected message: {}",
             response.message
         );
-        assert!(service.trading_control.flatten_latched().await);
-        assert!(service.trading_control.entries_paused().await);
+        assert!(service.trading_control.flatten_latched());
+        assert!(service.trading_control.entries_paused());
     }
 }

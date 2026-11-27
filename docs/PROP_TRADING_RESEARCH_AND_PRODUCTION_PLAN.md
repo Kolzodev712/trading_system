@@ -1282,7 +1282,7 @@ In the separate `trading-system-ui` repository, add a strategy view that answers
 
 Make venue/environment and `ExecutionMode` unmistakable in a persistent header on every control screen. For example, `BYBIT MAINNET + SHADOW` and `BYBIT DEMO + EXCHANGE` are different states. Do not collapse them into one green “Trading On” indicator. On gRPC stream loss, stale snapshots or partial data, show degraded/unknown rather than retaining a healthy appearance.
 
-`trading_system/libs/trading_core/proto/trading_cli.proto` owns the API. For each additive backend change, sync `trading-system-ui/proto/trading_cli.proto`, regenerate `src/gen/`, then update typed RPC wrappers, store/hooks, views and tests. Verify a UI build and an end-to-end connection to the matching runner version. Do not read exchange configuration in the browser to guess its venue.
+`trading_system/libs/trading_proto/proto/trading_cli.proto` owns the API. For each additive backend change, sync `trading-system-ui/proto/trading_cli.proto`, regenerate `src/gen/`, then update typed RPC wrappers, store/hooks, views and tests. Verify a UI build and an end-to-end connection to the matching runner version. Do not read exchange configuration in the browser to guess its venue.
 
 ---
 

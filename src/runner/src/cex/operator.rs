@@ -285,15 +285,17 @@ impl StrategyOperator for FileStrategyOperator {
         drop(manager);
         let snap = RuntimeSnapshot {
             mode: "strategies".into(),
-            global_trading: self.trading_control.is_enabled().await,
+            global_trading: self.trading_control.is_enabled(),
             strategies,
             on_stop: on_stop.to_string(),
         };
         snap.save(&self.snapshot_path)?;
         write_restart_flag(&self.restart_flag_path)?;
-        *self.trading_control.enabled_flag().write().await = false;
+        self.trading_control
+            .enabled_flag()
+            .store(false, std::sync::atomic::Ordering::Release);
         if on_stop == "flatten" {
-            self.trading_control.latch_flatten_and_pause().await;
+            self.trading_control.latch_flatten_and_pause();
             let ctx = self.flatten_path.as_ref().ok_or_else(|| {
                 "flatten on_stop: journaled reduce-only path required; latch held".to_string()
             })?;

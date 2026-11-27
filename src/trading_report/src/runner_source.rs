@@ -6,10 +6,7 @@ use crate::model::{
     SourceTime, StrategyView,
 };
 
-pub mod proto {
-    #![allow(clippy::all)]
-    tonic::include_proto!("trading_cli");
-}
+pub use trading_proto::trading_cli as proto;
 
 use proto::trading_cli_service_client::TradingCliServiceClient;
 use proto::{

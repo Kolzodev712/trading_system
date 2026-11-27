@@ -50,3 +50,6 @@ redis = { version = "0.27.6", features = ["tokio-comp"] }
 # MongoDB (for configuration persistence)
 mongodb = { workspace = true }
 
+
+[lints]
+workspace = true

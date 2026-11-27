@@ -99,9 +99,9 @@ impl LevelBasedEventLoop {
     }
 
     async fn log_control_snapshot(&self, at: &str) {
-        let trading = self.level_executor.is_trading_enabled().await;
-        let paused = self.level_executor.entries_paused().await;
-        let flatten = self.level_executor.flatten_latched().await;
+        let trading = self.level_executor.is_trading_enabled();
+        let paused = self.level_executor.entries_paused();
+        let flatten = self.level_executor.flatten_latched();
         let manager = self.level_manager.read().await;
         let ready = manager
             .get_all_levels()
@@ -206,7 +206,7 @@ impl LevelBasedEventLoop {
         tracing::info!(
             "[LEVELS EVENT LOOP] Starting event loop, waiting for market data and exchange updates..."
         );
-        let mut trading_was_enabled = self.level_executor.is_trading_enabled().await;
+        let mut trading_was_enabled = self.level_executor.is_trading_enabled();
         if trading_was_enabled {
             self.log_control_snapshot("loop_start").await;
             self.seed_from_cached_books(&subscriber_cache).await?;
@@ -225,6 +225,7 @@ impl LevelBasedEventLoop {
                         Ok(_) => { /* ignore Balance, Trade, Position */ }
                         Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
                             tracing::warn!("Exchange update receiver lagged, skipped {} messages; requesting reconcile", skipped);
+                            trading_core::metrics::record_broadcast_lag_cex(skipped);
                             // Missed updates may include fills; the periodic tick below reconciles.
                             self.trading_state_manager.request_reconcile();
                         }
@@ -265,7 +266,7 @@ impl LevelBasedEventLoop {
                             tracing::warn!(
                                 "Market data receiver lagged, skipped {skipped} messages. This may indicate slow processing."
                             );
-                            // Continue receiving - broadcast channels automatically skip lagged messages
+                            trading_core::metrics::record_broadcast_lag_md(skipped);
                         }
                         Err(tokio::sync::broadcast::error::RecvError::Closed) => {
                             tracing::warn!("Market data channel closed - shutting down level-based event loop");
@@ -276,7 +277,7 @@ impl LevelBasedEventLoop {
 
                 // Periodic tasks
                 _ = periodic_timer.tick() => {
-                    let enabled = self.level_executor.is_trading_enabled().await;
+                    let enabled = self.level_executor.is_trading_enabled();
                     heartbeat = heartbeat.saturating_add(1);
                     if heartbeat.is_multiple_of(10) {
                         self.log_control_snapshot("heartbeat").await;
@@ -316,7 +317,7 @@ impl LevelBasedEventLoop {
                 .write()
                 .await
                 .halt_new_exposure("submission journal is required for levels");
-            return Err(EngineError::CustomError(anyhow::anyhow!(
+            return Err(EngineError::CustomError(smol_str::format_smolstr!(
                 "submission journal is required for levels"
             )));
         };
@@ -396,9 +397,9 @@ impl LevelBasedEventLoop {
         orderbook: &StructuredOrderbook,
         indicator_cache: &Arc<RwLock<HashMap<SmolStr, IndicatorValue>>>,
     ) -> Result<(), EngineError> {
-        let flatten = self.level_executor.flatten_latched().await;
-        let paused = self.level_executor.entries_paused().await;
-        let trading = self.level_executor.is_trading_enabled().await;
+        let flatten = self.level_executor.flatten_latched();
+        let paused = self.level_executor.entries_paused();
+        let trading = self.level_executor.is_trading_enabled();
         let pair_key = format!("{}/{}", orderbook.pair.base, orderbook.pair.quote);
         if flatten {
             self.hold_agg
@@ -790,15 +791,15 @@ impl LevelBasedEventLoop {
         }
 
         // Check trading control before batching
-        if self.level_executor.flatten_latched().await
-            || self.level_executor.entries_paused().await
-            || !self.level_executor.is_trading_enabled().await
+        if self.level_executor.flatten_latched()
+            || self.level_executor.entries_paused()
+            || !self.level_executor.is_trading_enabled()
         {
             // Only log periodically to avoid spam
             static SKIP_COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
             let skip_count = SKIP_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             if skip_count.is_multiple_of(100) {
-                if self.level_executor.flatten_latched().await
+                if self.level_executor.flatten_latched()
                     && matches!(
                         self.level_executor.instrument_type(),
                         trading_core::types::common::InstrumentType::Spot
@@ -823,7 +824,7 @@ impl LevelBasedEventLoop {
                     .write()
                     .await
                     .halt_new_exposure("submission journal is required for levels");
-                return Err(EngineError::CustomError(anyhow::anyhow!(
+                return Err(EngineError::CustomError(smol_str::format_smolstr!(
                     "submission journal is required for levels"
                 )));
             };
@@ -889,9 +890,9 @@ impl LevelBasedEventLoop {
                         }
                     }
                 };
-                if self.level_executor.flatten_latched().await
-                    || self.level_executor.entries_paused().await
-                    || !self.level_executor.is_trading_enabled().await
+                if self.level_executor.flatten_latched()
+                    || self.level_executor.entries_paused()
+                    || !self.level_executor.is_trading_enabled()
                     || !{
                         let manager = self.level_manager.read().await;
                         manager.submit_still_allowed(&expanded_id, prepared.generation)

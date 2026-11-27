@@ -52,14 +52,16 @@ impl BinanceError {
 impl From<BinanceError> for EngineError {
     fn from(err: BinanceError) -> Self {
         match &err {
-            BinanceError::OrderNotFound(_) => EngineError::OrderNotFound(anyhow::anyhow!("{err}")),
+            BinanceError::OrderNotFound(_) => {
+                EngineError::OrderNotFound(smol_str::format_smolstr!("{err}"))
+            }
             BinanceError::AuthenticationError(_) => {
-                EngineError::AuthenticationError(anyhow::anyhow!("{err}"))
+                EngineError::AuthenticationError(smol_str::format_smolstr!("{err}"))
             }
             BinanceError::RateLimitExceeded(_) => {
-                EngineError::RateLimitError(anyhow::anyhow!("{err}"))
+                EngineError::RateLimitError(smol_str::format_smolstr!("{err}"))
             }
-            _ => EngineError::CustomError(anyhow::anyhow!("{err}")),
+            _ => EngineError::CustomError(smol_str::format_smolstr!("{err}")),
         }
     }
 }

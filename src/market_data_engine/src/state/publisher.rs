@@ -3,6 +3,7 @@
 //! This module provides the `MarketDataStatePublisher` which publishes state updates
 //! via broadcast channels for ultra-low latency fan-out to multiple consumers.
 
+use std::sync::Arc;
 use tracing::{debug, warn};
 use trading_core::{
     channels::market_data::{MarketDataUpdate, MarketDataUpdateSender},
@@ -44,13 +45,13 @@ impl MarketDataStatePublisher {
     /// Publish an orderbook update via broadcast channel
     ///
     /// # Arguments
-    /// * `orderbook` - Orderbook data (already contains pair)
+    /// * `orderbook` - Shared orderbook snapshot (already contains pair); fan-out is by `Arc` clone
     ///
     /// # Errors
     /// Returns an error if the channel is closed (all receivers dropped)
     pub async fn publish_orderbook(
         &self,
-        orderbook: &StructuredOrderbook,
+        orderbook: Arc<StructuredOrderbook>,
     ) -> Result<(), EngineError> {
         let trace_context = if self.hot_sample_rate > 0 && should_trace_hot(self.hot_sample_rate) {
             Some(HotTraceContext::new())
@@ -58,9 +59,11 @@ impl MarketDataStatePublisher {
             None
         };
 
+        let (bids, asks) = (orderbook.bids.len(), orderbook.asks.len());
+        let pair = orderbook.pair.clone();
         self.market_data_tx
             .send(MarketDataUpdate::Orderbook {
-                orderbook: orderbook.clone(),
+                orderbook,
                 trace_context,
             })
             .map_err(|e| {
@@ -68,16 +71,14 @@ impl MarketDataStatePublisher {
                     "Failed to publish orderbook update: channel closed or lagged ({} receivers)",
                     e
                 );
-                EngineError::CustomError(anyhow::anyhow!(
+                EngineError::CustomError(smol_str::format_smolstr!(
                     "Failed to publish orderbook: channel closed"
                 ))
             })?;
 
         debug!(
             "Published orderbook update for pair: {} ({} bids, {} asks)",
-            orderbook.pair,
-            orderbook.bids.len(),
-            orderbook.asks.len()
+            pair, bids, asks
         );
         Ok(())
     }
@@ -106,7 +107,9 @@ impl MarketDataStatePublisher {
                     "Failed to publish trade update: channel closed or lagged ({} receivers)",
                     e
                 );
-                EngineError::CustomError(anyhow::anyhow!("Failed to publish trade: channel closed"))
+                EngineError::CustomError(smol_str::format_smolstr!(
+                    "Failed to publish trade: channel closed"
+                ))
             })?;
 
         debug!("Published trade update for pair: {}", trade.pair);
@@ -152,7 +155,10 @@ mod tests {
         let publisher = MarketDataStatePublisher::new(tx);
         let orderbook = create_test_orderbook();
 
-        publisher.publish_orderbook(&orderbook).await.unwrap();
+        publisher
+            .publish_orderbook(Arc::new(orderbook.clone()))
+            .await
+            .unwrap();
 
         let update = timeout(Duration::from_millis(100), rx.recv())
             .await
@@ -164,7 +170,7 @@ mod tests {
                 orderbook: published_orderbook,
                 ..
             } => {
-                assert_eq!(published_orderbook, orderbook);
+                assert_eq!(*published_orderbook, orderbook);
             }
             _ => panic!("Expected Orderbook update"),
         }

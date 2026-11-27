@@ -112,11 +112,11 @@ impl WSMessageHandler for ChannelMessageHandler {
         // ChannelMessageHandler is legacy - structured orderbook already has pair
         self.market_data_tx
             .send(MarketDataUpdate::Orderbook {
-                orderbook,
+                orderbook: Arc::new(orderbook),
                 trace_context: None,
             })
             .map_err(|e| {
-                EngineError::CustomError(anyhow::anyhow!(
+                EngineError::CustomError(smol_str::format_smolstr!(
                     "Failed to send orderbook to channel: {error}",
                     error = e
                 ))
@@ -134,7 +134,7 @@ impl WSMessageHandler for ChannelMessageHandler {
                 trace_context: None,
             })
             .map_err(|e| {
-                EngineError::CustomError(anyhow::anyhow!(
+                EngineError::CustomError(smol_str::format_smolstr!(
                     "Failed to send trade to channel: {error}",
                     error = e
                 ))
@@ -215,7 +215,7 @@ mod tests {
 
         let received = rx.recv().await.unwrap();
         match received {
-            MarketDataUpdate::Orderbook { orderbook: ob, .. } => assert_eq!(ob, orderbook),
+            MarketDataUpdate::Orderbook { orderbook: ob, .. } => assert_eq!(*ob, orderbook),
             _ => panic!("Expected Orderbook variant"),
         }
     }

@@ -38,28 +38,24 @@ impl BinancePublicClient {
         let url = format!("{}/api/v3/exchangeInfo", self.base_url);
         info!("Fetching exchange info from {}", url);
 
-        let response = self
-            .http_client
-            .get(&url)
-            .send()
-            .await
-            .map_err(|e| EngineError::CustomError(anyhow::anyhow!("HTTP error: {}", e)))?;
+        let response = self.http_client.get(&url).send().await.map_err(|e| {
+            EngineError::CustomError(smol_str::format_smolstr!("HTTP error: {}", e))
+        })?;
 
         if !response.status().is_success() {
             let status = response.status();
             let text = response.text().await.unwrap_or_default();
             error!("Exchange info request failed: {} - {}", status, text);
-            return Err(EngineError::CustomError(anyhow::anyhow!(
+            return Err(EngineError::CustomError(smol_str::format_smolstr!(
                 "Exchange info request failed: {} - {}",
                 status,
                 text
             )));
         }
 
-        let exchange_info: BinanceExchangeInfo = response
-            .json()
-            .await
-            .map_err(|e| EngineError::CustomError(anyhow::anyhow!("JSON parse error: {}", e)))?;
+        let exchange_info: BinanceExchangeInfo = response.json().await.map_err(|e| {
+            EngineError::CustomError(smol_str::format_smolstr!("JSON parse error: {}", e))
+        })?;
 
         info!(
             "Fetched exchange info: {} symbols, {} rate limits",

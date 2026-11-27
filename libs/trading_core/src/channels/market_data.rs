@@ -3,6 +3,7 @@
 //! Uses broadcast channels for fan-out to multiple consumers (Trading Engine, Indicator Engine, etc.)
 use crate::types::market_data::{StructuredOrderbook, StructuredPublicTrade};
 use crate::venue::dex::market_data::DexAccountHealth;
+use std::sync::Arc;
 use tokio::sync::broadcast;
 use trading_trace::HotTraceContext;
 
@@ -11,8 +12,8 @@ use trading_trace::HotTraceContext;
 pub enum MarketDataUpdate {
     /// Orderbook update (already contains pair information)
     Orderbook {
-        /// Orderbook data with pair
-        orderbook: StructuredOrderbook,
+        /// Shared orderbook snapshot with pair (cheap `Arc` clone per broadcast receiver)
+        orderbook: Arc<StructuredOrderbook>,
         /// Optional trace context (hot path, sampled)
         #[allow(clippy::type_complexity)]
         trace_context: Option<HotTraceContext>,
@@ -74,7 +75,7 @@ mod tests {
 
         // Send orderbook update
         tx.send(MarketDataUpdate::Orderbook {
-            orderbook: orderbook.clone(),
+            orderbook: Arc::new(orderbook.clone()),
             trace_context: None,
         })
         .unwrap();
@@ -88,8 +89,8 @@ mod tests {
                 MarketDataUpdate::Orderbook { orderbook: ob1, .. },
                 MarketDataUpdate::Orderbook { orderbook: ob2, .. },
             ) => {
-                assert_eq!(ob1, orderbook);
-                assert_eq!(ob2, orderbook);
+                assert_eq!(*ob1, orderbook);
+                assert_eq!(*ob2, orderbook);
             }
             _ => panic!("Expected Orderbook variant"),
         }
@@ -144,7 +145,7 @@ mod tests {
         };
 
         tx.send(MarketDataUpdate::Orderbook {
-            orderbook: orderbook.clone(),
+            orderbook: Arc::new(orderbook.clone()),
             trace_context: None,
         })
         .unwrap();

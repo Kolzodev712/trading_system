@@ -123,7 +123,7 @@ impl BybitStreamingClient {
         shutdown_rx: &mut tokio::sync::broadcast::Receiver<()>,
     ) -> Result<(), EngineError> {
         let (ws_stream, _) = connect_async(url).await.map_err(|e| {
-            EngineError::CustomError(anyhow::anyhow!("WebSocket connect failed: {}", e))
+            EngineError::CustomError(smol_str::format_smolstr!("WebSocket connect failed: {}", e))
         })?;
 
         info!("WebSocket connected, authenticating...");
@@ -136,7 +136,10 @@ impl BybitStreamingClient {
 
         let auth_request = self.create_auth_request()?;
         let auth_json = serde_json::to_string(&auth_request).map_err(|e| {
-            EngineError::CustomError(anyhow::anyhow!("Auth serialization failed: {}", e))
+            EngineError::CustomError(smol_str::format_smolstr!(
+                "Auth serialization failed: {}",
+                e
+            ))
         })?;
 
         write
@@ -144,7 +147,9 @@ impl BybitStreamingClient {
             .await
             .send(Message::Text(auth_json))
             .await
-            .map_err(|e| EngineError::CustomError(anyhow::anyhow!("Auth send failed: {}", e)))?;
+            .map_err(|e| {
+                EngineError::CustomError(smol_str::format_smolstr!("Auth send failed: {}", e))
+            })?;
 
         let mut authenticated = false;
         let mut message_count = 0u64;
@@ -161,10 +166,10 @@ impl BybitStreamingClient {
                 _ = heartbeat_interval.tick() => {
                     let ping = BybitSubscriber::create_ping_request(Some(generate_custom_uuid().into()));
                     let ping_json = serde_json::to_string(&ping)
-                        .map_err(|e| EngineError::CustomError(anyhow::anyhow!("Ping serialization failed: {}", e)))?;
+                        .map_err(|e| EngineError::CustomError(smol_str::format_smolstr!("Ping serialization failed: {}", e)))?;
                     if let Err(e) = write.lock().await.send(Message::Text(ping_json)).await {
                         error!("Failed to send ping: {}", e);
-                        return Err(EngineError::CustomError(anyhow::anyhow!("Ping send failed: {}", e)));
+                        return Err(EngineError::CustomError(smol_str::format_smolstr!("Ping send failed: {}", e)));
                     }
                     debug!("Sent heartbeat ping");
                 }
@@ -184,13 +189,13 @@ impl BybitStreamingClient {
                                         let topics = vec![TOPIC_POSITION, TOPIC_EXECUTION, TOPIC_ORDER, TOPIC_WALLET];
                                         let subscribe = BybitSubscriber::create_subscribe_request(topics, Some(generate_custom_uuid().into()));
                                         let subscribe_json = serde_json::to_string(&subscribe)
-                                            .map_err(|e| EngineError::CustomError(anyhow::anyhow!("Subscribe serialization failed: {}", e)))?;
+                                            .map_err(|e| EngineError::CustomError(smol_str::format_smolstr!("Subscribe serialization failed: {}", e)))?;
 
                                         write.lock().await.send(Message::Text(subscribe_json)).await
-                                            .map_err(|e| EngineError::CustomError(anyhow::anyhow!("Subscribe send failed: {}", e)))?;
+                                            .map_err(|e| EngineError::CustomError(smol_str::format_smolstr!("Subscribe send failed: {}", e)))?;
                                         info!("Subscribed to all topics");
                                     } else {
-                                        return Err(EngineError::AuthenticationError(anyhow::anyhow!("Auth failed: {}", resp.ret_msg)));
+                                        return Err(EngineError::AuthenticationError(smol_str::format_smolstr!("Auth failed: {}", resp.ret_msg)));
                                     }
                                 }
                                 Ok(BybitStreamingMessage::PongResponse(_)) => {
@@ -249,7 +254,7 @@ impl BybitStreamingClient {
                             debug!("Received ping from server, sending pong");
                             if let Err(e) = write.lock().await.send(Message::Pong(payload)).await {
                                 error!("Failed to send pong: {}", e);
-                                return Err(EngineError::CustomError(anyhow::anyhow!("Pong send failed: {}", e)));
+                                return Err(EngineError::CustomError(smol_str::format_smolstr!("Pong send failed: {}", e)));
                             }
                         }
                         Some(Ok(Message::Pong(_))) => {
@@ -265,15 +270,15 @@ impl BybitStreamingClient {
                             } else {
                                 error!("WebSocket closed without close frame");
                             }
-                            return Err(EngineError::CustomError(anyhow::anyhow!("WebSocket closed")));
+                            return Err(EngineError::CustomError(smol_str::format_smolstr!("WebSocket closed")));
                         }
                         Some(Err(e)) => {
                             error!("WebSocket read error: {}", e);
-                            return Err(EngineError::CustomError(anyhow::anyhow!("WebSocket read error: {}", e)));
+                            return Err(EngineError::CustomError(smol_str::format_smolstr!("WebSocket read error: {}", e)));
                         }
                         None => {
                             warn!("WebSocket stream ended");
-                            return Err(EngineError::CustomError(anyhow::anyhow!("WebSocket stream ended")));
+                            return Err(EngineError::CustomError(smol_str::format_smolstr!("WebSocket stream ended")));
                         }
                     }
                 }

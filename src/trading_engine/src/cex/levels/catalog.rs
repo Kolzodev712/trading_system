@@ -61,10 +61,12 @@ pub struct LevelInstanceRecord {
 impl LevelsCatalog {
     pub fn load_from_path(path: &Path) -> Result<Self, EngineError> {
         let content = fs::read_to_string(path).map_err(|e| {
-            EngineError::CustomError(anyhow::anyhow!("Failed to read levels file: {e}"))
+            EngineError::CustomError(smol_str::format_smolstr!("Failed to read levels file: {e}"))
         })?;
         serde_json::from_str(&content).map_err(|e| {
-            EngineError::CustomError(anyhow::anyhow!("Failed to parse levels file: {e}"))
+            EngineError::CustomError(smol_str::format_smolstr!(
+                "Failed to parse levels file: {e}"
+            ))
         })
     }
 
@@ -72,12 +74,14 @@ impl LevelsCatalog {
     pub fn save_atomic(&self, path: &Path) -> Result<(), EngineError> {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).map_err(|e| {
-                EngineError::CustomError(anyhow::anyhow!("Failed to create levels dir: {e}"))
+                EngineError::CustomError(smol_str::format_smolstr!(
+                    "Failed to create levels dir: {e}"
+                ))
             })?;
         }
         let tmp = path.with_extension("json.tmp");
         let payload = serde_json::to_vec_pretty(self).map_err(|e| {
-            EngineError::CustomError(anyhow::anyhow!("Failed to serialize levels: {e}"))
+            EngineError::CustomError(smol_str::format_smolstr!("Failed to serialize levels: {e}"))
         })?;
         {
             let mut file = OpenOptions::new()
@@ -86,20 +90,30 @@ impl LevelsCatalog {
                 .truncate(true)
                 .open(&tmp)
                 .map_err(|e| {
-                    EngineError::CustomError(anyhow::anyhow!("Failed to open levels temp: {e}"))
+                    EngineError::CustomError(smol_str::format_smolstr!(
+                        "Failed to open levels temp: {e}"
+                    ))
                 })?;
             file.write_all(&payload).map_err(|e| {
-                EngineError::CustomError(anyhow::anyhow!("Failed to write levels temp: {e}"))
+                EngineError::CustomError(smol_str::format_smolstr!(
+                    "Failed to write levels temp: {e}"
+                ))
             })?;
             file.write_all(b"\n").map_err(|e| {
-                EngineError::CustomError(anyhow::anyhow!("Failed to write levels temp: {e}"))
+                EngineError::CustomError(smol_str::format_smolstr!(
+                    "Failed to write levels temp: {e}"
+                ))
             })?;
             file.sync_all().map_err(|e| {
-                EngineError::CustomError(anyhow::anyhow!("Failed to fsync levels temp: {e}"))
+                EngineError::CustomError(smol_str::format_smolstr!(
+                    "Failed to fsync levels temp: {e}"
+                ))
             })?;
         }
         fs::rename(&tmp, path).map_err(|e| {
-            EngineError::CustomError(anyhow::anyhow!("Failed to replace levels file: {e}"))
+            EngineError::CustomError(smol_str::format_smolstr!(
+                "Failed to replace levels file: {e}"
+            ))
         })?;
         Ok(())
     }
@@ -117,7 +131,7 @@ impl LevelsCatalog {
     ) -> Result<(), EngineError> {
         if let Some(stored) = &self.venue {
             if stored != venue {
-                return Err(EngineError::CustomError(anyhow::anyhow!(
+                return Err(EngineError::CustomError(smol_str::format_smolstr!(
                     "levels catalog venue {:?} does not match runtime {:?}",
                     stored,
                     venue
@@ -126,7 +140,7 @@ impl LevelsCatalog {
         }
         if let Some(stored) = &self.instrument {
             if stored != instrument {
-                return Err(EngineError::CustomError(anyhow::anyhow!(
+                return Err(EngineError::CustomError(smol_str::format_smolstr!(
                     "levels catalog instrument {:?} does not match runtime {:?}",
                     stored,
                     instrument
@@ -135,7 +149,7 @@ impl LevelsCatalog {
         }
         if let Some(stored) = &self.account {
             if stored != account {
-                return Err(EngineError::CustomError(anyhow::anyhow!(
+                return Err(EngineError::CustomError(smol_str::format_smolstr!(
                     "levels catalog account {stored} does not match runtime {account}"
                 )));
             }
@@ -151,7 +165,7 @@ impl LevelsCatalog {
         account: &str,
     ) -> Result<HashMap<SmolStr, Level>, EngineError> {
         if pairs.is_empty() {
-            return Err(EngineError::CustomError(anyhow::anyhow!(
+            return Err(EngineError::CustomError(smol_str::format_smolstr!(
                 "No pairs provided - cannot expand levels"
             )));
         }
@@ -167,7 +181,7 @@ impl LevelsCatalog {
                 SmolStr::new(&record.template_id),
             );
             if identity.instance_id.as_str() != record.id {
-                return Err(EngineError::CustomError(anyhow::anyhow!(
+                return Err(EngineError::CustomError(smol_str::format_smolstr!(
                     "instance id {} does not match template {} on {}",
                     record.id,
                     record.template_id,

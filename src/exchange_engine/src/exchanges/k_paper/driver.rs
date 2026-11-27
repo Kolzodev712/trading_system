@@ -55,10 +55,9 @@ impl ExchangeDriver for PaperDriver {
     async fn run(&mut self, mut shutdown_rx: broadcast::Receiver<()>) -> Result<(), EngineError> {
         info!("Starting k-paper exchange driver...");
 
-        let command_rx = self
-            .command_rx
-            .take()
-            .ok_or_else(|| EngineError::CustomError(anyhow::anyhow!("Paper driver already run")))?;
+        let command_rx = self.command_rx.take().ok_or_else(|| {
+            EngineError::CustomError(smol_str::format_smolstr!("Paper driver already run"))
+        })?;
 
         {
             let mut guard = self.connection_state.write().await;
@@ -96,13 +95,13 @@ impl ExchangeDriver for PaperDriver {
                     Ok(Ok(())) => {}
                     Ok(Err(e)) => {
                         *self.connection_state.write().await = ConnectionState::Failed;
-                        return Err(EngineError::CustomError(anyhow::anyhow!(
+                        return Err(EngineError::CustomError(smol_str::format_smolstr!(
                             "k-paper WebSocket loop error: {}", e
                         )));
                     }
                     Err(e) => {
                         *self.connection_state.write().await = ConnectionState::Failed;
-                        return Err(EngineError::CustomError(anyhow::anyhow!(
+                        return Err(EngineError::CustomError(smol_str::format_smolstr!(
                             "k-paper WebSocket loop task failed: {}", e
                         )));
                     }

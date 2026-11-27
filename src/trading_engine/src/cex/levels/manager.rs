@@ -194,7 +194,7 @@ impl LevelManager {
         let level_id = identity.instance_id.clone();
 
         if self.levels.contains_key(&level_id) {
-            return Err(EngineError::CustomError(anyhow::anyhow!(
+            return Err(EngineError::CustomError(smol_str::format_smolstr!(
                 "Level with ID {} already exists for pair {}",
                 config.id,
                 pair.convert_to_smolstr()
@@ -221,7 +221,7 @@ impl LevelManager {
             return Ok(());
         }
         let Some(mut level) = self.levels.remove(level_id) else {
-            return Err(EngineError::CustomError(anyhow::anyhow!(
+            return Err(EngineError::CustomError(smol_str::format_smolstr!(
                 "Level {} not found",
                 level_id
             )));
@@ -241,12 +241,12 @@ impl LevelManager {
     pub async fn enable_level(&mut self, level_id: &SmolStr) -> Result<(), EngineError> {
         let (pair, prev_enabled, prev_state) = {
             let level = self.levels.get_mut(level_id).ok_or_else(|| {
-                EngineError::CustomError(anyhow::anyhow!("Level {} not found", level_id))
+                EngineError::CustomError(smol_str::format_smolstr!("Level {} not found", level_id))
             })?;
             let prev_enabled = level.config.enabled;
             let prev_state = level.state.clone();
             if matches!(level.state, LevelState::Deleting) {
-                return Err(EngineError::CustomError(anyhow::anyhow!(
+                return Err(EngineError::CustomError(smol_str::format_smolstr!(
                     "Level {level_id} is deleting"
                 )));
             }
@@ -271,7 +271,7 @@ impl LevelManager {
     pub async fn disable_level(&mut self, level_id: &SmolStr) -> Result<(), EngineError> {
         let (pair, prev_enabled, prev_state, prev_generation) = {
             let level = self.levels.get_mut(level_id).ok_or_else(|| {
-                EngineError::CustomError(anyhow::anyhow!("Level {} not found", level_id))
+                EngineError::CustomError(smol_str::format_smolstr!("Level {} not found", level_id))
             })?;
             let prev_enabled = level.config.enabled;
             let prev_state = level.state.clone();
@@ -309,7 +309,7 @@ impl LevelManager {
     ) -> Result<(), EngineError> {
         let (pair, prev_config) = {
             let level = self.levels.get_mut(level_id).ok_or_else(|| {
-                EngineError::CustomError(anyhow::anyhow!("Level {} not found", level_id))
+                EngineError::CustomError(smol_str::format_smolstr!("Level {} not found", level_id))
             })?;
             let prev_config = std::mem::replace(&mut level.config, config);
             (level.pair.clone(), prev_config)
@@ -327,15 +327,15 @@ impl LevelManager {
     /// Latch submitting before persist-before-send. Returns the generation to recheck.
     pub fn begin_submit(&mut self, level_id: &SmolStr) -> Result<u64, EngineError> {
         let level = self.levels.get_mut(level_id).ok_or_else(|| {
-            EngineError::CustomError(anyhow::anyhow!("Level {} not found", level_id))
+            EngineError::CustomError(smol_str::format_smolstr!("Level {} not found", level_id))
         })?;
         if !level.config.enabled || matches!(level.state, LevelState::Deleting) {
-            return Err(EngineError::CustomError(anyhow::anyhow!(
+            return Err(EngineError::CustomError(smol_str::format_smolstr!(
                 "Level {level_id} is disabled"
             )));
         }
         if !matches!(level.state, LevelState::Created) || !level.active_orders.is_empty() {
-            return Err(EngineError::CustomError(anyhow::anyhow!(
+            return Err(EngineError::CustomError(smol_str::format_smolstr!(
                 "Level {level_id} is not ready to submit"
             )));
         }
@@ -367,7 +367,7 @@ impl LevelManager {
     ) -> Result<(), EngineError> {
         let (pair, prev_inflight, prev_owned) = {
             let level = self.levels.get_mut(level_id).ok_or_else(|| {
-                EngineError::CustomError(anyhow::anyhow!("Level {} not found", level_id))
+                EngineError::CustomError(smol_str::format_smolstr!("Level {} not found", level_id))
             })?;
             let prev_inflight = level.inflight_client_order_id.clone();
             let prev_owned = level.owned_client_ids.clone();
@@ -434,7 +434,7 @@ impl LevelManager {
     ) -> Result<(), EngineError> {
         if let Some(owner) = self.owns_exchange_id(order_id) {
             if owner != *level_id {
-                return Err(EngineError::CustomError(anyhow::anyhow!(
+                return Err(EngineError::CustomError(smol_str::format_smolstr!(
                     "duplicate exchange-id ownership: {} already owned by {owner}, not {level_id}",
                     order_id.as_str()
                 )));
@@ -442,7 +442,7 @@ impl LevelManager {
         }
         let pair = {
             let level = self.levels.get_mut(level_id).ok_or_else(|| {
-                EngineError::CustomError(anyhow::anyhow!("Level {} not found", level_id))
+                EngineError::CustomError(smol_str::format_smolstr!("Level {} not found", level_id))
             })?;
             if !level
                 .owned_client_ids
@@ -472,7 +472,7 @@ impl LevelManager {
             for order_id in &level.active_orders {
                 if let Some(other) = seen.insert(order_id.clone(), level_id.clone()) {
                     if other != *level_id {
-                        return Err(EngineError::CustomError(anyhow::anyhow!(
+                        return Err(EngineError::CustomError(smol_str::format_smolstr!(
                             "duplicate exchange-id ownership: {} owned by {other} and {level_id}",
                             order_id.as_str()
                         )));
@@ -492,7 +492,7 @@ impl LevelManager {
         if previous != next {
             if let Some(owner) = self.owns_exchange_id(next) {
                 if owner != *level_id {
-                    return Err(EngineError::CustomError(anyhow::anyhow!(
+                    return Err(EngineError::CustomError(smol_str::format_smolstr!(
                         "amend would assign {} already owned by {owner}",
                         next.as_str()
                     )));
@@ -501,7 +501,7 @@ impl LevelManager {
         }
         let pair = {
             let level = self.levels.get_mut(level_id).ok_or_else(|| {
-                EngineError::CustomError(anyhow::anyhow!("Level {} not found", level_id))
+                EngineError::CustomError(smol_str::format_smolstr!("Level {} not found", level_id))
             })?;
             level
                 .active_orders
@@ -576,7 +576,7 @@ impl LevelManager {
             level.state = state;
             Ok(())
         } else {
-            Err(EngineError::CustomError(anyhow::anyhow!(
+            Err(EngineError::CustomError(smol_str::format_smolstr!(
                 "Level {} not found",
                 level_id
             )))
@@ -592,7 +592,7 @@ impl LevelManager {
     ) -> Result<(), EngineError> {
         let pair = {
             let level = self.levels.get_mut(level_id).ok_or_else(|| {
-                EngineError::CustomError(anyhow::anyhow!("Level {} not found", level_id))
+                EngineError::CustomError(smol_str::format_smolstr!("Level {} not found", level_id))
             })?;
             let delta = level.apply_reported_fill(order_id, filled_qty, true, true);
             if delta > rust_decimal::Decimal::ZERO {
@@ -619,7 +619,7 @@ impl LevelManager {
     ) -> Result<(), EngineError> {
         let pair = {
             let level = self.levels.get_mut(level_id).ok_or_else(|| {
-                EngineError::CustomError(anyhow::anyhow!("Level {} not found", level_id))
+                EngineError::CustomError(smol_str::format_smolstr!("Level {} not found", level_id))
             })?;
             let delta = level.apply_reported_fill(order_id, filled_qty, true, false);
             if delta > rust_decimal::Decimal::ZERO {
@@ -641,7 +641,7 @@ impl LevelManager {
     ) -> Result<(), EngineError> {
         let pair = {
             let level = self.levels.get_mut(level_id).ok_or_else(|| {
-                EngineError::CustomError(anyhow::anyhow!("Level {} not found", level_id))
+                EngineError::CustomError(smol_str::format_smolstr!("Level {} not found", level_id))
             })?;
             level.apply_reported_fill(order_id, filled_qty, false, true);
             if level.config.enabled
@@ -659,7 +659,7 @@ impl LevelManager {
     /// Check if level should repost
     pub fn should_repost(&self, level_id: &SmolStr) -> Result<bool, EngineError> {
         let level = self.levels.get(level_id).ok_or_else(|| {
-            EngineError::CustomError(anyhow::anyhow!("Level {} not found", level_id))
+            EngineError::CustomError(smol_str::format_smolstr!("Level {} not found", level_id))
         })?;
 
         if !level.config.enabled
@@ -728,7 +728,7 @@ impl LevelManager {
         }
         let (owned, prev_enabled, prev_state, prev_generation) = {
             let level = self.levels.get_mut(level_id).ok_or_else(|| {
-                EngineError::CustomError(anyhow::anyhow!("Level {} not found", level_id))
+                EngineError::CustomError(smol_str::format_smolstr!("Level {} not found", level_id))
             })?;
             let prev_enabled = level.config.enabled;
             let prev_state = level.state.clone();
@@ -760,12 +760,12 @@ impl LevelManager {
         }
         if let Some(level) = self.levels.get(level_id) {
             if level.inflight_client_order_id.is_some() {
-                return Err(EngineError::CustomError(anyhow::anyhow!(
+                return Err(EngineError::CustomError(smol_str::format_smolstr!(
                     "delete latched; pending submission unresolved"
                 )));
             }
             if !level.active_orders.is_empty() {
-                return Err(EngineError::CustomError(anyhow::anyhow!(
+                return Err(EngineError::CustomError(smol_str::format_smolstr!(
                     "delete latched; owned orders not REST-verified gone"
                 )));
             }
@@ -792,7 +792,7 @@ impl LevelManager {
     ) -> Result<(), EngineError> {
         let pair = {
             let level = self.levels.get_mut(level_id).ok_or_else(|| {
-                EngineError::CustomError(anyhow::anyhow!("Level {} not found", level_id))
+                EngineError::CustomError(smol_str::format_smolstr!("Level {} not found", level_id))
             })?;
             for order_id in order_ids {
                 level.active_orders.retain(|id| id != order_id);
@@ -866,7 +866,7 @@ impl LevelManager {
                 .save_levels(&self.templates, risk_limits, configured_pairs)
                 .await
                 .map_err(|e| {
-                    EngineError::CustomError(anyhow::anyhow!(
+                    EngineError::CustomError(smol_str::format_smolstr!(
                         "Failed to save levels to MongoDB: {}",
                         e
                     ))

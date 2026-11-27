@@ -76,7 +76,7 @@ impl CommandHandler for RunnerCommandHandler {
                 })
             }
             CommandPayload::GetTradingStatus => {
-                let enabled = self.trading_control.is_enabled().await;
+                let enabled = self.trading_control.is_enabled();
                 Ok(CommandResponse {
                     success: true,
                     message: Some(format!("enabled={}", enabled)),
@@ -99,7 +99,7 @@ impl CommandHandler for RunnerCommandHandler {
                 let pair = trading_core::types::common::Pair::new(parts[0], parts[1]);
                 let strategy_id = StrategyManager::make_strategy_id(&strategy_name, &pair);
 
-                let global_trading_enabled = self.trading_control.is_enabled().await;
+                let global_trading_enabled = self.trading_control.is_enabled();
                 if !global_trading_enabled && enabled {
                     return Err(
                         "Cannot enable strategy when global trading is disabled".to_string()

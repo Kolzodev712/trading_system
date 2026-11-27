@@ -52,7 +52,7 @@ pub fn prepare_level_submission(
     mut request: OrderRequest,
 ) -> Result<PreparedLevelSubmit, EngineError> {
     if trading_state.blocks_new_exposure(&request.instrument.pair) {
-        return Err(EngineError::CustomError(anyhow::anyhow!(
+        return Err(EngineError::CustomError(smol_str::format_smolstr!(
             "new exposure blocked for {}",
             request.instrument.pair
         )));
@@ -229,7 +229,7 @@ pub fn attach_recovered_level_orders(
             if order.client_order_id.as_ref().map(|c| c.as_str())
                 != Some(record.client_order_id.as_str())
             {
-                return Err(EngineError::CustomError(anyhow::anyhow!(
+                return Err(EngineError::CustomError(smol_str::format_smolstr!(
                     "ambiguous recovery: journal {} does not match order client id",
                     record.client_order_id
                 )));
@@ -281,7 +281,9 @@ pub fn classify_open_orders(
                     order.order_id.as_str()
                 );
                 trading_state.halt_new_exposure(reason.clone());
-                return Err(EngineError::CustomError(anyhow::anyhow!(reason)));
+                return Err(EngineError::CustomError(smol_str::format_smolstr!(
+                    "{}", reason
+                )));
             }
         }
         let owned_level = by_client.or(by_exchange);
@@ -388,8 +390,12 @@ mod tests {
             self.placed.fetch_add(1, Ordering::SeqCst);
             match self.place_result.lock().unwrap().clone() {
                 Some(Ok(order)) => Ok(order),
-                Some(Err(msg)) => Err(EngineError::CustomError(anyhow::anyhow!(msg))),
-                None => Err(EngineError::CustomError(anyhow::anyhow!("no place script"))),
+                Some(Err(msg)) => Err(EngineError::CustomError(smol_str::format_smolstr!(
+                    "{}", msg
+                ))),
+                None => Err(EngineError::CustomError(smol_str::format_smolstr!(
+                    "no place script"
+                ))),
             }
         }
 
@@ -876,7 +882,7 @@ mod tests {
             &mut state,
             &prepared,
             &level_id,
-            Err(EngineError::CustomError(anyhow::anyhow!(
+            Err(EngineError::CustomError(smol_str::format_smolstr!(
                 "k-paper: open_order timeout (15s)"
             ))),
         );

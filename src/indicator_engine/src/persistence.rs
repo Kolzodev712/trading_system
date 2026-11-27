@@ -58,7 +58,7 @@ impl IndicatorPersistence {
 
         let filter = doc! { "_id": &indicator_doc.indicator_id };
         let update_doc = mongodb::bson::to_document(&indicator_doc).map_err(|e| {
-            PersistenceError::EngineError(EngineError::CustomError(anyhow::anyhow!(
+            PersistenceError::EngineError(EngineError::CustomError(smol_str::format_smolstr!(
                 "BSON conversion error: {}",
                 e
             )))
@@ -92,7 +92,7 @@ impl IndicatorPersistence {
 
         let filter = doc! { "_id": &indicator.indicator_id };
         let update_doc = mongodb::bson::to_document(indicator).map_err(|e| {
-            PersistenceError::EngineError(EngineError::CustomError(anyhow::anyhow!(
+            PersistenceError::EngineError(EngineError::CustomError(smol_str::format_smolstr!(
                 "BSON conversion error: {}",
                 e
             )))
@@ -216,7 +216,9 @@ impl IndicatorPersistence {
         }
 
         LevelPricingRegistry::from_rules(rules).map_err(|e| {
-            PersistenceError::EngineError(EngineError::CustomError(anyhow::anyhow!(e)))
+            PersistenceError::EngineError(EngineError::CustomError(smol_str::format_smolstr!(
+                "{}", e
+            )))
         })
     }
 
@@ -245,7 +247,7 @@ impl IndicatorPersistence {
 
             let filter = doc! { "_id": &document_id };
             let update_doc = mongodb::bson::to_document(&doc).map_err(|e| {
-                PersistenceError::EngineError(EngineError::CustomError(anyhow::anyhow!(
+                PersistenceError::EngineError(EngineError::CustomError(smol_str::format_smolstr!(
                     "BSON conversion error: {}",
                     e
                 )))
@@ -352,7 +354,7 @@ impl IndicatorPersistence {
             "TypicalPrice" => Ok(PriceSource::TypicalPrice),
             "WeightedPrice" => Ok(PriceSource::WeightedPrice),
             _ => Err(PersistenceError::EngineError(EngineError::CustomError(
-                anyhow::anyhow!("Unknown price source: {}", source),
+                smol_str::format_smolstr!("Unknown price source: {}", source),
             ))),
         }
     }
@@ -365,7 +367,7 @@ fn parse_pricing_offset_type(s: &str) -> Result<PricingOffsetType, PersistenceEr
         "PercentBelow" => Ok(PricingOffsetType::PercentBelow),
         "PercentAbove" => Ok(PricingOffsetType::PercentAbove),
         _ => Err(PersistenceError::EngineError(EngineError::CustomError(
-            anyhow::anyhow!("Unknown pricing offset type: {}", s),
+            smol_str::format_smolstr!("Unknown pricing offset type: {}", s),
         ))),
     }
 }

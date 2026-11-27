@@ -32,9 +32,8 @@ impl ConnectionPool {
     }
 
     pub async fn acquire(&self) -> Result<tokio::sync::SemaphorePermit<'_>, EngineError> {
-        self.semaphore
-            .acquire()
-            .await
-            .map_err(|_| EngineError::CustomError(anyhow::anyhow!("Failed to acquire connection")))
+        self.semaphore.acquire().await.map_err(|_| {
+            EngineError::CustomError(smol_str::format_smolstr!("Failed to acquire connection"))
+        })
     }
 }

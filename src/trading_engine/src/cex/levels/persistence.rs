@@ -87,7 +87,7 @@ impl LevelPersistence {
 
         // Serialize to BSON document
         let bson_doc = mongodb::bson::to_document(&bot_config_doc).map_err(|e| {
-            PersistenceError::EngineError(EngineError::CustomError(anyhow::anyhow!(
+            PersistenceError::EngineError(EngineError::CustomError(smol_str::format_smolstr!(
                 "BSON conversion error: {}",
                 e
             )))
@@ -137,7 +137,7 @@ impl LevelPersistence {
 
         let level_doc = self.level_config_to_document(level)?;
         let bson_doc = mongodb::bson::to_document(&level_doc).map_err(|e| {
-            PersistenceError::EngineError(EngineError::CustomError(anyhow::anyhow!(
+            PersistenceError::EngineError(EngineError::CustomError(smol_str::format_smolstr!(
                 "BSON conversion error: {}",
                 e
             )))
@@ -218,7 +218,7 @@ impl LevelPersistence {
         };
 
         let bson_doc = mongodb::bson::to_document(&risk_limits_doc).map_err(|e| {
-            PersistenceError::EngineError(EngineError::CustomError(anyhow::anyhow!(
+            PersistenceError::EngineError(EngineError::CustomError(smol_str::format_smolstr!(
                 "BSON conversion error: {}",
                 e
             )))
@@ -287,13 +287,13 @@ impl LevelPersistence {
         // Deserialize quantity and price from JSON
         let quantity: QuantityConfig =
             serde_json::from_value(doc.quantity.clone()).map_err(|e| {
-                PersistenceError::EngineError(EngineError::CustomError(anyhow::anyhow!(
+                PersistenceError::EngineError(EngineError::CustomError(smol_str::format_smolstr!(
                     "Failed to deserialize quantity: {}",
                     e
                 )))
             })?;
         let price: PriceConfig = serde_json::from_value(doc.price.clone()).map_err(|e| {
-            PersistenceError::EngineError(EngineError::CustomError(anyhow::anyhow!(
+            PersistenceError::EngineError(EngineError::CustomError(smol_str::format_smolstr!(
                 "Failed to deserialize price: {}",
                 e
             )))
@@ -305,7 +305,7 @@ impl LevelPersistence {
             "Sell" => trading_core::types::common::Side::Sell,
             _ => {
                 return Err(PersistenceError::EngineError(EngineError::CustomError(
-                    anyhow::anyhow!("Invalid side: {}", doc.side),
+                    smol_str::format_smolstr!("Invalid side: {}", doc.side),
                 )));
             }
         };
@@ -319,7 +319,7 @@ impl LevelPersistence {
             "FoK" => OrderTypeConfig::FoK,
             _ => {
                 return Err(PersistenceError::EngineError(EngineError::CustomError(
-                    anyhow::anyhow!("Invalid order type: {}", doc.order_type),
+                    smol_str::format_smolstr!("Invalid order type: {}", doc.order_type),
                 )));
             }
         };

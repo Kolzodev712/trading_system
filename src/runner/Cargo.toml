@@ -81,3 +81,6 @@ path = "src/bin/prop_replay.rs"
 [features]
 default = []
 redis = ["dep:redis"]
+
+[lints]
+workspace = true

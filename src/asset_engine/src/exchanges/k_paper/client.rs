@@ -85,16 +85,13 @@ impl KPaperPublicClient {
     async fn fetch_exchange_info(&self) -> Result<KPaperExchangeInfo, EngineError> {
         let url = format!("{}/exchange_info", self.base_url);
         info!("Fetching k-paper exchange info from {}", url);
-        let res = self
-            .http_client
-            .get(&url)
-            .send()
-            .await
-            .map_err(|e| EngineError::CustomError(anyhow::anyhow!("HTTP error: {}", e)))?;
+        let res = self.http_client.get(&url).send().await.map_err(|e| {
+            EngineError::CustomError(smol_str::format_smolstr!("HTTP error: {}", e))
+        })?;
         if !res.status().is_success() {
             let status = res.status();
             let text = res.text().await.unwrap_or_default();
-            return Err(EngineError::CustomError(anyhow::anyhow!(
+            return Err(EngineError::CustomError(smol_str::format_smolstr!(
                 "GET /exchange_info failed: {} - {}",
                 status,
                 text
@@ -103,7 +100,7 @@ impl KPaperPublicClient {
         let info: KPaperExchangeInfo = res
             .json()
             .await
-            .map_err(|e| EngineError::CustomError(anyhow::anyhow!("JSON: {}", e)))?;
+            .map_err(|e| EngineError::CustomError(smol_str::format_smolstr!("JSON: {}", e)))?;
         Ok(info)
     }
 

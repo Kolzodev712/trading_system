@@ -6,6 +6,7 @@ use indicator_engine::data::IndicatorValue;
 use indicator_engine::level_pricing::LevelPricingRegistry;
 use smol_str::SmolStr;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use trading_core::error::EngineError;
@@ -30,9 +31,9 @@ pub struct LevelExecutor {
     config_tick_size: rust_decimal::Decimal,
     config_min_notional: rust_decimal::Decimal,
     /// Trading control - checks if trading is enabled (optional, for TUI control)
-    trading_enabled: Option<Arc<tokio::sync::RwLock<bool>>>,
-    entries_paused: Option<Arc<tokio::sync::RwLock<bool>>>,
-    flatten_latched: Option<Arc<tokio::sync::RwLock<bool>>>,
+    trading_enabled: Option<Arc<AtomicBool>>,
+    entries_paused: Option<Arc<AtomicBool>>,
+    flatten_latched: Option<Arc<AtomicBool>>,
     execution_mode: ExecutionMode,
 }
 
@@ -80,15 +81,15 @@ impl LevelExecutor {
     }
 
     /// Set trading enabled flag (for TUI control)
-    pub fn with_trading_control(mut self, trading_enabled: Arc<tokio::sync::RwLock<bool>>) -> Self {
+    pub fn with_trading_control(mut self, trading_enabled: Arc<AtomicBool>) -> Self {
         self.trading_enabled = Some(trading_enabled);
         self
     }
 
     pub fn with_operator_flags(
         mut self,
-        entries_paused: Arc<tokio::sync::RwLock<bool>>,
-        flatten_latched: Arc<tokio::sync::RwLock<bool>>,
+        entries_paused: Arc<AtomicBool>,
+        flatten_latched: Arc<AtomicBool>,
     ) -> Self {
         self.entries_paused = Some(entries_paused);
         self.flatten_latched = Some(flatten_latched);
@@ -101,24 +102,24 @@ impl LevelExecutor {
     }
 
     /// Get trading enabled state (for batch operations)
-    pub async fn is_trading_enabled(&self) -> bool {
+    pub fn is_trading_enabled(&self) -> bool {
         if let Some(ref trading_enabled) = self.trading_enabled {
-            *trading_enabled.read().await
+            trading_enabled.load(Ordering::Acquire)
         } else {
             true // Default to enabled if no control set
         }
     }
 
-    pub async fn entries_paused(&self) -> bool {
+    pub fn entries_paused(&self) -> bool {
         match &self.entries_paused {
-            Some(flag) => *flag.read().await,
+            Some(flag) => flag.load(Ordering::Acquire),
             None => false,
         }
     }
 
-    pub async fn flatten_latched(&self) -> bool {
+    pub fn flatten_latched(&self) -> bool {
         match &self.flatten_latched {
-            Some(flag) => *flag.read().await,
+            Some(flag) => flag.load(Ordering::Acquire),
             None => false,
         }
     }
@@ -134,12 +135,12 @@ impl LevelExecutor {
         // Get current price for quantity calculations
         let current_price = if let Some(ob) = orderbook {
             ob.mid_price().ok_or_else(|| {
-                EngineError::CustomError(anyhow::anyhow!(
+                EngineError::CustomError(smol_str::format_smolstr!(
                     "Cannot determine current price from orderbook"
                 ))
             })?
         } else {
-            return Err(EngineError::CustomError(anyhow::anyhow!(
+            return Err(EngineError::CustomError(smol_str::format_smolstr!(
                 "Orderbook required for level resolution"
             )));
         };
@@ -198,7 +199,7 @@ impl LevelExecutor {
 
         if self.execution_mode == ExecutionMode::Exchange && self.exchange != Exchange::Paper {
             let Some(asset_service) = &self.asset_service else {
-                return Err(EngineError::CustomError(anyhow::anyhow!(
+                return Err(EngineError::CustomError(smol_str::format_smolstr!(
                     "Exchange mode requires venue trading rules; AssetService is missing"
                 )));
             };
@@ -207,7 +208,7 @@ impl LevelExecutor {
                 .await
                 .is_none()
             {
-                return Err(EngineError::CustomError(anyhow::anyhow!(
+                return Err(EngineError::CustomError(smol_str::format_smolstr!(
                     "Exchange mode missing venue trading rules for {}",
                     level.pair
                 )));
@@ -294,7 +295,7 @@ impl LevelExecutor {
         );
 
         if failed_count > 0 {
-            Err(EngineError::CustomError(anyhow::anyhow!(
+            Err(EngineError::CustomError(smol_str::format_smolstr!(
                 "Failed to cancel {} order(s) for level {}",
                 failed_count,
                 level.config.id

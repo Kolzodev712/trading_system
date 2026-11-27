@@ -791,7 +791,9 @@ pub async fn strategy_runner_with(
     .await?;
     if let Some(snap) = snap.filter(|s| s.mode == "strategies") {
         if snap.global_trading {
-            *trading_control.enabled_flag().write().await = true;
+            trading_control
+                .enabled_flag()
+                .store(true, std::sync::atomic::Ordering::Release);
         }
         info!(
             "Restored runtime snapshot ({} strategies, trading={})",

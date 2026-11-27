@@ -35,7 +35,7 @@ impl ConfigGetter<BinanceConfig> for ExchangeConfig {
     fn get_config(self) -> Result<BinanceConfig, EngineError> {
         match self {
             ExchangeConfig::Binance(config) => Ok(config),
-            _ => Err(EngineError::CustomError(anyhow::anyhow!(
+            _ => Err(EngineError::CustomError(smol_str::format_smolstr!(
                 "Expected Binance config"
             ))),
         }
@@ -46,7 +46,7 @@ impl ConfigGetter<BybitConfig> for ExchangeConfig {
     fn get_config(self) -> Result<BybitConfig, EngineError> {
         match self {
             ExchangeConfig::Bybit(config) => Ok(config),
-            _ => Err(EngineError::CustomError(anyhow::anyhow!(
+            _ => Err(EngineError::CustomError(smol_str::format_smolstr!(
                 "Expected Bybit config"
             ))),
         }
@@ -57,7 +57,7 @@ impl ConfigGetter<PaperConfig> for ExchangeConfig {
     fn get_config(self) -> Result<PaperConfig, EngineError> {
         match self {
             ExchangeConfig::Paper(config) => Ok(config),
-            _ => Err(EngineError::CustomError(anyhow::anyhow!(
+            _ => Err(EngineError::CustomError(smol_str::format_smolstr!(
                 "Expected Paper config"
             ))),
         }

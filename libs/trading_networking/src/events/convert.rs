@@ -107,6 +107,7 @@ mod tests {
     use super::*;
     use rust_decimal::Decimal;
     use smol_str::SmolStr;
+    use std::sync::Arc;
     use trading_core::types::common::Pair;
     use trading_core::types::market_data::StructuredOrderbook;
     use trading_core::venue::cex::types::exchange::Balance;
@@ -123,7 +124,7 @@ mod tests {
             sequence: None,
         };
         let hot = hot_event_from_market_data(MarketDataUpdate::Orderbook {
-            orderbook: ob,
+            orderbook: Arc::new(ob),
             trace_context: None,
         })
         .expect("orderbook");

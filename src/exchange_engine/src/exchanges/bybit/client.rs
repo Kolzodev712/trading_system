@@ -185,8 +185,9 @@ impl BybitClient {
                 if self.config.pairs.is_empty() {
                     Ok(vec![self.open_order_params(
                         category.clone(),
-                        linear_list_selector(category, None, self.linear_settle_coin())
-                            .map_err(|err| EngineError::CustomError(anyhow::anyhow!("{err}")))?,
+                        linear_list_selector(category, None, self.linear_settle_coin()).map_err(
+                            |err| EngineError::CustomError(smol_str::format_smolstr!("{err}")),
+                        )?,
                     )])
                 } else {
                     self.config
@@ -198,7 +199,9 @@ impl BybitClient {
                                 Some(pair.convert_to_smolstr()),
                                 self.linear_settle_coin(),
                             )
-                            .map_err(|err| EngineError::CustomError(anyhow::anyhow!("{err}")))?;
+                            .map_err(|err| {
+                                EngineError::CustomError(smol_str::format_smolstr!("{err}"))
+                            })?;
                             Ok(self.open_order_params(category.clone(), selector))
                         })
                         .collect()
@@ -255,13 +258,13 @@ impl BybitClient {
             )
             .await?
             .ok_or_else(|| {
-                EngineError::CustomError(anyhow::anyhow!(
+                EngineError::CustomError(smol_str::format_smolstr!(
                     "No response from {BYBIT_OPEN_ORDERS_PATH}"
                 ))
             })?;
 
         if response.ret_code != 0 {
-            return Err(EngineError::CustomError(anyhow::anyhow!(
+            return Err(EngineError::CustomError(smol_str::format_smolstr!(
                 "Failed to fetch open orders: {}",
                 response.ret_msg
             )));
@@ -299,7 +302,7 @@ impl BybitClient {
                 .map(|pair| pair.convert_to_smolstr()),
             self.linear_settle_coin(),
         )
-        .map_err(|err| EngineError::CustomError(anyhow::anyhow!("{err}")))?;
+        .map_err(|err| EngineError::CustomError(smol_str::format_smolstr!("{err}")))?;
         let params = BybitOpenOrderParams {
             category,
             symbol: selector.symbol,
@@ -362,7 +365,9 @@ impl BybitClient {
             )
             .await?
             .ok_or_else(|| {
-                EngineError::CustomError(anyhow::anyhow!("No response from position/list"))
+                EngineError::CustomError(smol_str::format_smolstr!(
+                    "No response from position/list"
+                ))
             })
     }
 }
@@ -403,11 +408,11 @@ impl TradingClient<OrderRequest> for BybitClient {
             )
             .await?
             .ok_or_else(|| {
-                EngineError::CustomError(anyhow::anyhow!("No response from test order"))
+                EngineError::CustomError(smol_str::format_smolstr!("No response from test order"))
             })?;
 
         if response.ret_code != 0 {
-            return Err(EngineError::CustomError(anyhow::anyhow!(
+            return Err(EngineError::CustomError(smol_str::format_smolstr!(
                 "Test order failed: {}",
                 response.ret_msg
             )));
@@ -437,14 +442,14 @@ impl TradingClient<OrderRequest> for BybitClient {
         {
             RpcResponse::CreateOrder(resp) => {
                 if resp.ret_code != 0 {
-                    return Err(EngineError::CustomError(anyhow::anyhow!(
+                    return Err(EngineError::CustomError(smol_str::format_smolstr!(
                         "Order creation failed: {}",
                         resp.ret_msg
                     )));
                 }
 
                 let data = resp.data.ok_or_else(|| {
-                    EngineError::CustomError(anyhow::anyhow!("No order data in response"))
+                    EngineError::CustomError(smol_str::format_smolstr!("No order data in response"))
                 })?;
 
                 let order_id = OrderId::new(data.order_id);
@@ -462,7 +467,7 @@ impl TradingClient<OrderRequest> for BybitClient {
                     filled_amount: rust_decimal::Decimal::ZERO,
                 })
             }
-            _ => Err(EngineError::CustomError(anyhow::anyhow!(
+            _ => Err(EngineError::CustomError(smol_str::format_smolstr!(
                 "Unexpected response type"
             ))),
         }
@@ -534,14 +539,14 @@ impl TradingClient<OrderRequest> for BybitClient {
         {
             RpcResponse::CancelOrder(resp) => {
                 if resp.ret_code != 0 {
-                    return Err(EngineError::CustomError(anyhow::anyhow!(
+                    return Err(EngineError::CustomError(smol_str::format_smolstr!(
                         "Order cancellation failed: {}",
                         resp.ret_msg
                     )));
                 }
                 Ok(())
             }
-            _ => Err(EngineError::CustomError(anyhow::anyhow!(
+            _ => Err(EngineError::CustomError(smol_str::format_smolstr!(
                 "Unexpected response type"
             ))),
         }
@@ -580,13 +585,13 @@ impl TradingClient<OrderRequest> for BybitClient {
         {
             RpcResponse::CancelAllOrders(resp) => {
                 if resp.ret_code != 0 {
-                    return Err(EngineError::CustomError(anyhow::anyhow!(
+                    return Err(EngineError::CustomError(smol_str::format_smolstr!(
                         "Cancel all orders failed: {}",
                         resp.ret_msg
                     )));
                 }
                 let remaining = self.fetch_open_orders().await.map_err(|err| {
-                    EngineError::CustomError(anyhow::anyhow!(
+                    EngineError::CustomError(smol_str::format_smolstr!(
                         "CancelWorking unverified: REST GET open orders after cancelAll failed: {err}"
                     ))
                 })?;
@@ -596,14 +601,14 @@ impl TradingClient<OrderRequest> for BybitClient {
                     .map(|order| order.order_id.as_str().to_string())
                     .collect();
                 if !still.is_empty() {
-                    return Err(EngineError::CustomError(anyhow::anyhow!(
+                    return Err(EngineError::CustomError(smol_str::format_smolstr!(
                         "CancelWorking unverified: working orders remain after cancelAll ({})",
                         still.join(",")
                     )));
                 }
                 Ok(())
             }
-            _ => Err(EngineError::CustomError(anyhow::anyhow!(
+            _ => Err(EngineError::CustomError(smol_str::format_smolstr!(
                 "Unexpected response type"
             ))),
         }
@@ -643,7 +648,9 @@ impl TradingClient<OrderRequest> for BybitClient {
             )
             .await?
             .ok_or_else(|| {
-                EngineError::CustomError(anyhow::anyhow!("No response from balance fetch"))
+                EngineError::CustomError(smol_str::format_smolstr!(
+                    "No response from balance fetch"
+                ))
             })?;
 
         if response.ret_code != 0 {
@@ -653,7 +660,7 @@ impl TradingClient<OrderRequest> for BybitClient {
                 response.ret_msg,
                 category_str
             );
-            return Err(EngineError::CustomError(anyhow::anyhow!(
+            return Err(EngineError::CustomError(smol_str::format_smolstr!(
                 "Failed to fetch balance: retCode={}, retMsg={}",
                 response.ret_code,
                 response.ret_msg
@@ -674,7 +681,7 @@ impl TradingClient<OrderRequest> for BybitClient {
                 BYBIT_OPEN_ORDER_MAX_PAGES,
             )
             .await
-            .map_err(|err| EngineError::CustomError(anyhow::anyhow!("{err}")))?;
+            .map_err(|err| EngineError::CustomError(smol_str::format_smolstr!("{err}")))?;
             for item in paged {
                 if seen.insert(item.id.clone()) {
                     all.push(item.order);
@@ -744,11 +751,11 @@ impl TradingClient<OrderRequest> for BybitClient {
             )
             .await?
             .ok_or_else(|| {
-                EngineError::CustomError(anyhow::anyhow!("No response from trades fetch"))
+                EngineError::CustomError(smol_str::format_smolstr!("No response from trades fetch"))
             })?;
 
         if response.ret_code != 0 {
-            return Err(EngineError::CustomError(anyhow::anyhow!(
+            return Err(EngineError::CustomError(smol_str::format_smolstr!(
                 "Failed to fetch trades: {}",
                 response.ret_msg
             )));
@@ -801,14 +808,14 @@ impl TradingClient<OrderRequest> for BybitClient {
         {
             RpcResponse::AmendOrder(resp) => {
                 if resp.ret_code != 0 {
-                    return Err(EngineError::CustomError(anyhow::anyhow!(
+                    return Err(EngineError::CustomError(smol_str::format_smolstr!(
                         "Order amendment failed: {}",
                         resp.ret_msg
                     )));
                 }
 
                 let data = resp.data.ok_or_else(|| {
-                    EngineError::CustomError(anyhow::anyhow!("No order data in response"))
+                    EngineError::CustomError(smol_str::format_smolstr!("No order data in response"))
                 })?;
 
                 Ok(Order {
@@ -824,7 +831,7 @@ impl TradingClient<OrderRequest> for BybitClient {
                     filled_amount: rust_decimal::Decimal::ZERO,
                 })
             }
-            _ => Err(EngineError::CustomError(anyhow::anyhow!(
+            _ => Err(EngineError::CustomError(smol_str::format_smolstr!(
                 "Unexpected response type"
             ))),
         }
@@ -957,7 +964,7 @@ impl TradingClient<OrderRequest> for BybitClient {
                     }
                 }
                 _ => {
-                    return Err(EngineError::CustomError(anyhow::anyhow!(
+                    return Err(EngineError::CustomError(smol_str::format_smolstr!(
                         "Unexpected response type for batch create"
                     )));
                 }
@@ -1015,7 +1022,7 @@ impl TradingClient<OrderRequest> for BybitClient {
                 }
             }
         } else {
-            return Err(EngineError::CustomError(anyhow::anyhow!(
+            return Err(EngineError::CustomError(smol_str::format_smolstr!(
                 "State manager not available for bulk cancel"
             )));
         }
@@ -1138,7 +1145,7 @@ impl TradingClient<OrderRequest> for BybitClient {
                 }
             }
             _ => {
-                return Err(EngineError::CustomError(anyhow::anyhow!(
+                return Err(EngineError::CustomError(smol_str::format_smolstr!(
                     "Unexpected response type for batch cancel"
                 )));
             }
@@ -1296,7 +1303,7 @@ impl TradingClient<OrderRequest> for BybitClient {
                     }
                 }
                 _ => {
-                    return Err(EngineError::CustomError(anyhow::anyhow!(
+                    return Err(EngineError::CustomError(smol_str::format_smolstr!(
                         "Unexpected response type for batch amend"
                     )));
                 }
@@ -1361,7 +1368,9 @@ impl TradingClient<OrderRequest> for BybitClient {
             )
             .await?
             .ok_or_else(|| {
-                EngineError::CustomError(anyhow::anyhow!("No response from wallet-balance"))
+                EngineError::CustomError(smol_str::format_smolstr!(
+                    "No response from wallet-balance"
+                ))
             })?;
         Ok(response.into())
     }
@@ -1404,13 +1413,13 @@ impl TradingClient<OrderRequest> for BybitClient {
             }
             Err(e) => return Err(e),
             Ok(None) => {
-                return Err(EngineError::CustomError(anyhow::anyhow!(
+                return Err(EngineError::CustomError(smol_str::format_smolstr!(
                     "No response from set-leverage"
                 )));
             }
         };
         if ack.ret_code != 0 {
-            return Err(EngineError::CustomError(anyhow::anyhow!(
+            return Err(EngineError::CustomError(smol_str::format_smolstr!(
                 "set-leverage failed: {}",
                 ack.ret_msg
             )));
@@ -1442,7 +1451,7 @@ impl TradingClient<OrderRequest> for BybitClient {
                         && pos.settle_coin == pair.quote)
             })
             .ok_or_else(|| {
-                EngineError::CustomError(anyhow::anyhow!("No leverage row for {}", pair))
+                EngineError::CustomError(smol_str::format_smolstr!("No leverage row for {}", pair))
             })?;
         let leverage = row.leverage.parse::<u32>().unwrap_or(0);
         Ok(LeverageInfo {
@@ -1488,13 +1497,13 @@ impl TradingClient<OrderRequest> for BybitClient {
             }
             Err(e) => return Err(e),
             Ok(None) => {
-                return Err(EngineError::CustomError(anyhow::anyhow!(
+                return Err(EngineError::CustomError(smol_str::format_smolstr!(
                     "No response from switch-mode"
                 )));
             }
         };
         if ack.ret_code != 0 {
-            return Err(EngineError::CustomError(anyhow::anyhow!(
+            return Err(EngineError::CustomError(smol_str::format_smolstr!(
                 "switch-mode failed: {}",
                 ack.ret_msg
             )));

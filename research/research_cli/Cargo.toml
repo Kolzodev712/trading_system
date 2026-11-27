@@ -17,3 +17,6 @@ tokio = { workspace = true }
 [dev-dependencies]
 research_engine = { path = "../research_engine" }
 serde_json = { workspace = true }
+
+[lints]
+workspace = true

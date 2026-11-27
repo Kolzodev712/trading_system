@@ -1,5 +1,4 @@
 //! Common error types for the trading system
-use anyhow::Error;
 use reqwest::header::{InvalidHeaderName, InvalidHeaderValue};
 use smol_str::SmolStr;
 use thiserror::Error;
@@ -38,7 +37,7 @@ pub enum EngineError {
     UrlParseError(#[from] ParseError),
 
     #[error("Authentication error: {0}")]
-    AuthenticationError(Error),
+    AuthenticationError(SmolStr),
 
     #[error("HTTP request error: {0}")]
     HttpRequestError(#[from] reqwest::Error),
@@ -65,22 +64,22 @@ pub enum EngineError {
     JsonUrlEncodedSerError(#[from] serde_urlencoded::ser::Error),
 
     #[error("Order not found error: {0}")]
-    OrderNotFound(Error),
+    OrderNotFound(SmolStr),
 
     #[error("Order already filled error: {0}")]
-    OrderAlreadyFilled(Error),
+    OrderAlreadyFilled(SmolStr),
 
     #[error("Order already cancelled error: {0}")]
-    OrderAlreadyCanceled(Error),
+    OrderAlreadyCanceled(SmolStr),
 
     #[error("Rate limit exceeded: {0}")]
-    RateLimitError(Error),
+    RateLimitError(SmolStr),
 
     #[error("Invalid config")]
     InvalidConfig,
 
     #[error("Config error: {0}")]
-    ConfigError(Error),
+    ConfigError(SmolStr),
 
     #[error("Unsupported Exchange")]
     UnsupportedExchange,
@@ -89,12 +88,12 @@ pub enum EngineError {
     NotSupported(SmolStr),
 
     #[error("Custom error: {0}")]
-    CustomError(Error),
+    CustomError(SmolStr),
 }
 
 impl EngineError {
     pub fn new_custom_error(msg: SmolStr) -> Self {
-        EngineError::CustomError(anyhow::anyhow!(msg))
+        EngineError::CustomError(msg)
     }
 }
 

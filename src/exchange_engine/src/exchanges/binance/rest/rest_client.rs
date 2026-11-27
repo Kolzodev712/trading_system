@@ -32,7 +32,7 @@ impl BinanceRestClient {
             .await?;
 
         response.flatten().ok_or_else(|| {
-            EngineError::CustomError(anyhow::anyhow!(
+            EngineError::CustomError(smol_str::format_smolstr!(
                 "Expected BinanceServerTime, but received None"
             ))
         })
@@ -59,7 +59,7 @@ impl BinanceRestClient {
             .await?;
 
         let binance_account_info = response.flatten().ok_or_else(|| {
-            EngineError::CustomError(anyhow::anyhow!(
+            EngineError::CustomError(smol_str::format_smolstr!(
                 "Expected order response, but received None"
             ))
         })?;

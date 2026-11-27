@@ -82,16 +82,16 @@ impl SubmissionRecord {
         let amount = self
             .amount
             .parse::<Decimal>()
-            .map_err(|err| EngineError::CustomError(anyhow::anyhow!("amount: {err}")))?;
+            .map_err(|err| EngineError::CustomError(smol_str::format_smolstr!("amount: {err}")))?;
         let price = self
             .price
             .parse::<Decimal>()
-            .map_err(|err| EngineError::CustomError(anyhow::anyhow!("price: {err}")))?;
+            .map_err(|err| EngineError::CustomError(smol_str::format_smolstr!("price: {err}")))?;
         let side = match self.side.to_ascii_lowercase().as_str() {
             "buy" => Side::Buy,
             "sell" => Side::Sell,
             other => {
-                return Err(EngineError::CustomError(anyhow::anyhow!(
+                return Err(EngineError::CustomError(smol_str::format_smolstr!(
                     "unknown side {other}"
                 )))
             }
@@ -127,7 +127,7 @@ impl SubmissionJournal {
         if let Some(parent) = path.parent() {
             if !parent.as_os_str().is_empty() {
                 create_dir_all(parent).map_err(|err| {
-                    EngineError::CustomError(anyhow::anyhow!(
+                    EngineError::CustomError(smol_str::format_smolstr!(
                         "submission journal dir {}: {err}",
                         parent.display()
                     ))
@@ -151,21 +151,23 @@ impl SubmissionJournal {
             .append(true)
             .open(&self.path)
             .map_err(|err| {
-                EngineError::CustomError(anyhow::anyhow!(
+                EngineError::CustomError(smol_str::format_smolstr!(
                     "open submission journal {}: {err}",
                     self.path.display()
                 ))
             })?;
         let line = serde_json::to_string(record).map_err(|err| {
-            EngineError::CustomError(anyhow::anyhow!("serialize submission: {err}"))
+            EngineError::CustomError(smol_str::format_smolstr!("serialize submission: {err}"))
         })?;
         writeln!(file, "{line}").map_err(|err| {
-            EngineError::CustomError(anyhow::anyhow!("write submission journal: {err}"))
+            EngineError::CustomError(smol_str::format_smolstr!("write submission journal: {err}"))
         })?;
-        file.flush()
-            .map_err(|err| EngineError::CustomError(anyhow::anyhow!("flush journal: {err}")))?;
-        file.sync_all()
-            .map_err(|err| EngineError::CustomError(anyhow::anyhow!("fsync journal: {err}")))?;
+        file.flush().map_err(|err| {
+            EngineError::CustomError(smol_str::format_smolstr!("flush journal: {err}"))
+        })?;
+        file.sync_all().map_err(|err| {
+            EngineError::CustomError(smol_str::format_smolstr!("fsync journal: {err}"))
+        })?;
         Ok(())
     }
 
@@ -179,20 +181,23 @@ impl SubmissionJournal {
             .read(true)
             .open(&self.path)
             .map_err(|err| {
-                EngineError::CustomError(anyhow::anyhow!(
+                EngineError::CustomError(smol_str::format_smolstr!(
                     "read submission journal {}: {err}",
                     self.path.display()
                 ))
             })?;
         let mut latest = HashMap::new();
         for line in BufReader::new(file).lines() {
-            let line = line
-                .map_err(|err| EngineError::CustomError(anyhow::anyhow!("journal line: {err}")))?;
+            let line = line.map_err(|err| {
+                EngineError::CustomError(smol_str::format_smolstr!("journal line: {err}"))
+            })?;
             if line.trim().is_empty() {
                 continue;
             }
             let record: SubmissionRecord = serde_json::from_str(&line).map_err(|err| {
-                EngineError::CustomError(anyhow::anyhow!("parse submission journal: {err}"))
+                EngineError::CustomError(smol_str::format_smolstr!(
+                    "parse submission journal: {err}"
+                ))
             })?;
             latest.insert(record.client_order_id.clone(), record);
         }
@@ -365,7 +370,7 @@ mod tests {
 
         async fn open_order(&self, _req: OrderRequest) -> Result<Order, EngineError> {
             self.placed.fetch_add(1, Ordering::SeqCst);
-            Err(EngineError::CustomError(anyhow::anyhow!(
+            Err(EngineError::CustomError(smol_str::format_smolstr!(
                 "recovery must not send replacement exposure"
             )))
         }
@@ -419,7 +424,7 @@ mod tests {
             _req: BulkOrderRequest,
         ) -> Result<BulkOrderResponse, EngineError> {
             self.placed.fetch_add(1, Ordering::SeqCst);
-            Err(EngineError::CustomError(anyhow::anyhow!(
+            Err(EngineError::CustomError(smol_str::format_smolstr!(
                 "recovery must not send replacement exposure"
             )))
         }
@@ -428,7 +433,7 @@ mod tests {
             &self,
             _req: trading_core::types::exchange::BulkAmendRequest,
         ) -> Result<trading_core::types::exchange::BulkAmendResponse, EngineError> {
-            Err(EngineError::CustomError(anyhow::anyhow!(
+            Err(EngineError::CustomError(smol_str::format_smolstr!(
                 "recovery must not amend"
             )))
         }

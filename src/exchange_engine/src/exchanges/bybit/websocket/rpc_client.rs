@@ -98,7 +98,7 @@ impl BybitRpcClient {
 
     fn get_ws_url(&self) -> Result<&str, EngineError> {
         self.config.trade_ws_url().ok_or_else(|| {
-            EngineError::CustomError(anyhow::anyhow!(
+            EngineError::CustomError(smol_str::format_smolstr!(
                 "Bybit demo does not support WS Trade; orders must go through REST"
             ))
         })
@@ -109,7 +109,7 @@ impl BybitRpcClient {
         match request {
             RpcRequest::CreateOrder(req) => {
                 let args = req.args.into_iter().next().ok_or_else(|| {
-                    EngineError::CustomError(anyhow::anyhow!("CreateOrder missing args"))
+                    EngineError::CustomError(smol_str::format_smolstr!("CreateOrder missing args"))
                 })?;
                 let data: Option<BybitRpcCreateOrderData> = self
                     .rest_client
@@ -129,7 +129,7 @@ impl BybitRpcClient {
             }
             RpcRequest::CancelOrder(req) => {
                 let args = req.args.into_iter().next().ok_or_else(|| {
-                    EngineError::CustomError(anyhow::anyhow!("CancelOrder missing args"))
+                    EngineError::CustomError(smol_str::format_smolstr!("CancelOrder missing args"))
                 })?;
                 let data: Option<BybitRpcCancelOrderData> = self
                     .rest_client
@@ -149,7 +149,7 @@ impl BybitRpcClient {
             }
             RpcRequest::AmendOrder(req) => {
                 let args = req.args.into_iter().next().ok_or_else(|| {
-                    EngineError::CustomError(anyhow::anyhow!("AmendOrder missing args"))
+                    EngineError::CustomError(smol_str::format_smolstr!("AmendOrder missing args"))
                 })?;
                 let data: Option<BybitRpcAmendOrderData> = self
                     .rest_client
@@ -169,7 +169,9 @@ impl BybitRpcClient {
             }
             RpcRequest::CancelAllOrders(req) => {
                 let args = req.args.into_iter().next().ok_or_else(|| {
-                    EngineError::CustomError(anyhow::anyhow!("CancelAllOrders missing args"))
+                    EngineError::CustomError(smol_str::format_smolstr!(
+                        "CancelAllOrders missing args"
+                    ))
                 })?;
                 let data: Option<BybitRpcCancelAllOrdersData> = self
                     .rest_client
@@ -189,7 +191,9 @@ impl BybitRpcClient {
             }
             RpcRequest::BatchCreateOrder(req) => {
                 let args = req.args.into_iter().next().ok_or_else(|| {
-                    EngineError::CustomError(anyhow::anyhow!("BatchCreateOrder missing args"))
+                    EngineError::CustomError(smol_str::format_smolstr!(
+                        "BatchCreateOrder missing args"
+                    ))
                 })?;
                 let data = self
                     .rest_client
@@ -209,7 +213,9 @@ impl BybitRpcClient {
             }
             RpcRequest::BatchAmendOrder(req) => {
                 let args = req.args.into_iter().next().ok_or_else(|| {
-                    EngineError::CustomError(anyhow::anyhow!("BatchAmendOrder missing args"))
+                    EngineError::CustomError(smol_str::format_smolstr!(
+                        "BatchAmendOrder missing args"
+                    ))
                 })?;
                 let data = self
                     .rest_client
@@ -229,7 +235,9 @@ impl BybitRpcClient {
             }
             RpcRequest::BatchCancelOrder(req) => {
                 let args = req.args.into_iter().next().ok_or_else(|| {
-                    EngineError::CustomError(anyhow::anyhow!("BatchCancelOrder missing args"))
+                    EngineError::CustomError(smol_str::format_smolstr!(
+                        "BatchCancelOrder missing args"
+                    ))
                 })?;
                 let data = self
                     .rest_client
@@ -313,9 +321,9 @@ impl BybitRpcClient {
 
         let auth_response = timeout(Duration::from_secs(5), read.next())
             .await
-            .map_err(|_| EngineError::CustomError(anyhow::anyhow!("Auth timeout")))?
+            .map_err(|_| EngineError::CustomError(smol_str::format_smolstr!("Auth timeout")))?
             .ok_or_else(|| {
-                EngineError::CustomError(anyhow::anyhow!("Connection closed during auth"))
+                EngineError::CustomError(smol_str::format_smolstr!("Connection closed during auth"))
             })?
             .map_err(|e| EngineError::WsConnectionError(Box::new(e)))?;
 
@@ -325,7 +333,7 @@ impl BybitRpcClient {
                     serde_json::from_str(&text).map_err(EngineError::from)?;
 
                 if !auth_resp.success {
-                    return Err(EngineError::AuthenticationError(anyhow::anyhow!(
+                    return Err(EngineError::AuthenticationError(smol_str::format_smolstr!(
                         "Authentication failed: {}",
                         auth_resp.ret_msg
                     )));
@@ -333,7 +341,7 @@ impl BybitRpcClient {
                 info!("RPC authentication successful");
             }
             _ => {
-                return Err(EngineError::AuthenticationError(anyhow::anyhow!(
+                return Err(EngineError::AuthenticationError(smol_str::format_smolstr!(
                     "Unexpected auth response type"
                 )));
             }
@@ -423,9 +431,13 @@ impl BybitRpcClient {
         let response_text = loop {
             let response = timeout(Duration::from_secs(RPC_TIMEOUT_SECS), read.next())
                 .await
-                .map_err(|_| EngineError::CustomError(anyhow::anyhow!("RPC response timeout")))?
+                .map_err(|_| {
+                    EngineError::CustomError(smol_str::format_smolstr!("RPC response timeout"))
+                })?
                 .ok_or_else(|| {
-                    EngineError::CustomError(anyhow::anyhow!("Connection closed during RPC"))
+                    EngineError::CustomError(smol_str::format_smolstr!(
+                        "Connection closed during RPC"
+                    ))
                 })?
                 .map_err(|e| EngineError::WsConnectionError(Box::new(e)))?;
 
@@ -493,14 +505,16 @@ impl BybitRpcClient {
                 "Missing 'op' field in RPC response. Raw text: {}",
                 response_text
             );
-            EngineError::CustomError(anyhow::anyhow!("Missing 'op' field in response"))
+            EngineError::CustomError(smol_str::format_smolstr!("Missing 'op' field in response"))
         })?;
 
         let ret_code = value
             .get("retCode")
             .and_then(|v| v.as_i64())
             .ok_or_else(|| {
-                EngineError::CustomError(anyhow::anyhow!("Missing 'retCode' field in response"))
+                EngineError::CustomError(smol_str::format_smolstr!(
+                    "Missing 'retCode' field in response"
+                ))
             })?;
 
         if ret_code != 0 {
@@ -539,7 +553,10 @@ impl BybitRpcClient {
         }
 
         let op = BybitRpcOperation::try_from(op_str).map_err(|_| {
-            EngineError::CustomError(anyhow::anyhow!("Unknown RPC operation: {}", op_str))
+            EngineError::CustomError(smol_str::format_smolstr!(
+                "Unknown RPC operation: {}",
+                op_str
+            ))
         })?;
 
         match op {

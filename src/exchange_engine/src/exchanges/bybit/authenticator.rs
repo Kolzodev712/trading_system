@@ -32,7 +32,9 @@ impl BybitAuthenticator {
     fn generate_hmac_signature(&self, payload: &str) -> Result<String, EngineError> {
         let mut mac =
             Hmac::<Sha256>::new_from_slice(self.api_secret.expose().as_bytes()).map_err(|e| {
-                EngineError::AuthenticationError(anyhow::anyhow!("Invalid secret key: {e}"))
+                EngineError::AuthenticationError(smol_str::format_smolstr!(
+                    "Invalid secret key: {e}"
+                ))
             })?;
         mac.update(payload.as_bytes());
         let signature = hex::encode(mac.finalize().into_bytes());
@@ -76,7 +78,9 @@ pub mod rest {
     ) -> Result<BTreeMap<String, String>, EngineError> {
         let mut mac =
             Hmac::<Sha256>::new_from_slice(api_secret.expose().as_bytes()).map_err(|e| {
-                EngineError::AuthenticationError(anyhow::anyhow!("Invalid secret key: {e}"))
+                EngineError::AuthenticationError(smol_str::format_smolstr!(
+                    "Invalid secret key: {e}"
+                ))
             })?;
         mac.update(payload.as_bytes());
         let signature = hex::encode(mac.finalize().into_bytes());
@@ -105,7 +109,9 @@ pub mod websocket {
         let payload = format!("GET/realtime{}", expires);
         let mut mac =
             Hmac::<Sha256>::new_from_slice(api_secret.expose().as_bytes()).map_err(|e| {
-                EngineError::AuthenticationError(anyhow::anyhow!("Invalid secret key: {e}"))
+                EngineError::AuthenticationError(smol_str::format_smolstr!(
+                    "Invalid secret key: {e}"
+                ))
             })?;
         mac.update(payload.as_bytes());
         let signature = hex::encode(mac.finalize().into_bytes());

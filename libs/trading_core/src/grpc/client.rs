@@ -27,8 +27,12 @@ impl Default for GrpcClientConfig {
 /// Create a gRPC channel with default configuration
 pub async fn create_channel(endpoint: &str) -> Result<Channel, EngineError> {
     Channel::from_shared(endpoint.to_string())
-        .map_err(|e| EngineError::CustomError(anyhow::anyhow!("Invalid endpoint: {}", e)))?
+        .map_err(|e| {
+            EngineError::CustomError(smol_str::format_smolstr!("Invalid endpoint: {}", e))
+        })?
         .connect()
         .await
-        .map_err(|e| EngineError::CustomError(anyhow::anyhow!("Connection failed: {}", e)))
+        .map_err(|e| {
+            EngineError::CustomError(smol_str::format_smolstr!("Connection failed: {}", e))
+        })
 }

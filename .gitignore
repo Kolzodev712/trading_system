@@ -1,6 +1,8 @@
 /target
 /legacy
-/.cursor
+/.cursor/*
+!/.cursor/doctrine/
+!/.cursor/doctrine/**
 /trading_keys/binance
 /src/exchange_engine/config/
 /src/market_data_engine/config/

@@ -44,13 +44,13 @@ pub async fn verify_owned_ids_absent(
             if still.is_empty() {
                 Ok(())
             } else {
-                Err(EngineError::CustomError(anyhow::anyhow!(
+                Err(EngineError::CustomError(smol_str::format_smolstr!(
                     "owned-order cancel unverified: REST still shows {}",
                     still.join(",")
                 )))
             }
         }
-        Err(err) => Err(EngineError::CustomError(anyhow::anyhow!(
+        Err(err) => Err(EngineError::CustomError(smol_str::format_smolstr!(
             "owned-order cancel unverified: REST open orders failed: {err}"
         ))),
     }
@@ -131,7 +131,7 @@ mod tests {
         async fn fetch_open_orders(&self) -> Result<Vec<Order>, EngineError> {
             match &*self.open.lock().unwrap() {
                 Ok(orders) => Ok(orders.clone()),
-                Err(err) => Err(EngineError::CustomError(anyhow::anyhow!("{err}"))),
+                Err(err) => Err(EngineError::CustomError(smol_str::format_smolstr!("{err}"))),
             }
         }
         async fn fetch_trades(&self, _pair: Option<&Pair>) -> Result<Vec<Trade>, EngineError> {

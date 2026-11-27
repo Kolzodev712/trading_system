@@ -43,13 +43,13 @@ impl DexIndicatorEngine {
         self.values.read().await.clone()
     }
 
-    pub async fn on_orderbook(&self, orderbook: StructuredOrderbook) {
-        let pool = pool_name_from_orderbook(&orderbook);
+    pub async fn on_orderbook(&self, orderbook: &StructuredOrderbook) {
+        let pool = pool_name_from_orderbook(orderbook);
         {
             let mut books = self.orderbooks.write().await;
             books.insert(SmolStr::new(&pool), orderbook.clone());
         }
-        self.refresh_indicators_for_pool(&pool, &orderbook).await;
+        self.refresh_indicators_for_pool(&pool, orderbook).await;
     }
 
     async fn refresh_indicators_for_pool(&self, pool: &str, orderbook: &StructuredOrderbook) {
@@ -95,7 +95,7 @@ pub fn spawn_market_data_listener(
                 update = market_data_rx.recv() => {
                     match update {
                         Ok(MarketDataUpdate::Orderbook { orderbook, .. }) => {
-                            engine.on_orderbook(orderbook).await;
+                            engine.on_orderbook(&orderbook).await;
                         }
                         Ok(_) => {}
                         Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
@@ -165,7 +165,7 @@ mod tests {
             update_kind: Default::default(),
             sequence: None,
         };
-        engine.on_orderbook(book).await;
+        engine.on_orderbook(&book).await;
         let values = engine.values().await;
         assert_eq!(
             values.get(&SmolStr::new("mid_sui")).unwrap().value,

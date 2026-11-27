@@ -43,7 +43,7 @@ impl MarketDataDriver {
         pairs: Vec<Pair>,
     ) -> Result<Self, EngineError> {
         if pairs.is_empty() {
-            return Err(EngineError::CustomError(anyhow::anyhow!(
+            return Err(EngineError::CustomError(smol_str::format_smolstr!(
                 "No pairs provided to MarketDataDriver"
             )));
         }

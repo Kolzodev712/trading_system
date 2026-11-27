@@ -58,7 +58,7 @@ pub async fn run(
     EngineError,
 > {
     if pairs.is_empty() {
-        return Err(EngineError::CustomError(anyhow::anyhow!(
+        return Err(EngineError::CustomError(smol_str::format_smolstr!(
             "No pairs provided to exchange engine"
         )));
     }
@@ -135,13 +135,13 @@ pub async fn run(
             {
                 Ok(()) => tracing::info!("Bybit position mode set to one-way"),
                 Err(e) => {
-                    return Err(EngineError::CustomError(anyhow::anyhow!(
+                    return Err(EngineError::CustomError(smol_str::format_smolstr!(
                         "startup set_position_mode failed (fail-closed): {e}"
                     )));
                 }
             }
             let leverage = bybit_config.leverage.ok_or_else(|| {
-                EngineError::CustomError(anyhow::anyhow!(
+                EngineError::CustomError(smol_str::format_smolstr!(
                     "Bybit futures leverage must be set explicitly; no default is invented"
                 ))
             })?;
@@ -151,7 +151,7 @@ pub async fn run(
                         tracing::info!("Bybit leverage for {} set to {}x", pair, info.leverage)
                     }
                     Err(e) => {
-                        return Err(EngineError::CustomError(anyhow::anyhow!(
+                        return Err(EngineError::CustomError(smol_str::format_smolstr!(
                             "startup set_leverage failed for {pair} (fail-closed): {e}"
                         )));
                     }
@@ -170,18 +170,18 @@ pub async fn run(
                 .set_position_mode(trading_core::types::futures::PositionMode::OneWay)
                 .await
                 .map_err(|e| {
-                    EngineError::CustomError(anyhow::anyhow!(
+                    EngineError::CustomError(smol_str::format_smolstr!(
                         "startup set_position_mode failed (fail-closed): {e}"
                     ))
                 })?;
             let leverage = paper_config.leverage.ok_or_else(|| {
-                EngineError::CustomError(anyhow::anyhow!(
+                EngineError::CustomError(smol_str::format_smolstr!(
                     "Paper futures leverage must be set explicitly; no default is invented"
                 ))
             })?;
             for pair in &pairs {
                 client.set_leverage(pair, leverage).await.map_err(|e| {
-                    EngineError::CustomError(anyhow::anyhow!(
+                    EngineError::CustomError(smol_str::format_smolstr!(
                         "startup set_leverage failed for {pair} (fail-closed): {e}"
                     ))
                 })?;

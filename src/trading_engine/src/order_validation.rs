@@ -135,7 +135,7 @@ pub fn validate_order(
 ) -> Result<(), EngineError> {
     // Check min order size
     if quantity < rules.min_order_size {
-        return Err(EngineError::CustomError(anyhow::anyhow!(
+        return Err(EngineError::CustomError(smol_str::format_smolstr!(
             "Order quantity {} is below minimum {}",
             quantity,
             rules.min_order_size
@@ -145,7 +145,7 @@ pub fn validate_order(
     // Check max order size
     if let Some(max_size) = rules.max_order_size {
         if quantity > max_size {
-            return Err(EngineError::CustomError(anyhow::anyhow!(
+            return Err(EngineError::CustomError(smol_str::format_smolstr!(
                 "Order quantity {} exceeds maximum {}",
                 quantity,
                 max_size
@@ -156,7 +156,7 @@ pub fn validate_order(
     // Check min price
     if let Some(min_price) = rules.min_price {
         if price < min_price {
-            return Err(EngineError::CustomError(anyhow::anyhow!(
+            return Err(EngineError::CustomError(smol_str::format_smolstr!(
                 "Order price {} is below minimum {}",
                 price,
                 min_price
@@ -167,7 +167,7 @@ pub fn validate_order(
     // Check max price
     if let Some(max_price) = rules.max_price {
         if price > max_price {
-            return Err(EngineError::CustomError(anyhow::anyhow!(
+            return Err(EngineError::CustomError(smol_str::format_smolstr!(
                 "Order price {} exceeds maximum {}",
                 price,
                 max_price
@@ -178,7 +178,7 @@ pub fn validate_order(
     // Check min notional
     let notional = price * quantity;
     if notional < rules.min_notional {
-        return Err(EngineError::CustomError(anyhow::anyhow!(
+        return Err(EngineError::CustomError(smol_str::format_smolstr!(
             "Order notional {} is below minimum {} (price: {}, quantity: {})",
             notional,
             rules.min_notional,
@@ -190,7 +190,7 @@ pub fn validate_order(
     // Check max notional
     if let Some(max_notional) = rules.max_notional {
         if notional > max_notional {
-            return Err(EngineError::CustomError(anyhow::anyhow!(
+            return Err(EngineError::CustomError(smol_str::format_smolstr!(
                 "Order notional {} exceeds maximum {}",
                 notional,
                 max_notional

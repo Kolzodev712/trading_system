@@ -68,7 +68,7 @@ impl AssetService {
             clients
                 .get(&exchange)
                 .ok_or_else(|| {
-                    EngineError::CustomError(anyhow::anyhow!(
+                    EngineError::CustomError(smol_str::format_smolstr!(
                         "Exchange {:?} not registered",
                         exchange
                     ))

@@ -50,7 +50,9 @@ impl ExchangeStatePublisher {
                     "Failed to publish order update: channel closed or lagged ({} receivers)",
                     e
                 );
-                EngineError::CustomError(anyhow::anyhow!("Failed to publish order: channel closed"))
+                EngineError::CustomError(smol_str::format_smolstr!(
+                    "Failed to publish order: channel closed"
+                ))
             })?;
 
         debug!(
@@ -83,7 +85,7 @@ impl ExchangeStatePublisher {
                     "Failed to publish balance update: channel closed or lagged ({} receivers)",
                     e
                 );
-                EngineError::CustomError(anyhow::anyhow!(
+                EngineError::CustomError(smol_str::format_smolstr!(
                     "Failed to publish balance: channel closed"
                 ))
             })?;
@@ -115,7 +117,9 @@ impl ExchangeStatePublisher {
                     "Failed to publish trade update: channel closed or lagged ({} receivers)",
                     e
                 );
-                EngineError::CustomError(anyhow::anyhow!("Failed to publish trade: channel closed"))
+                EngineError::CustomError(smol_str::format_smolstr!(
+                    "Failed to publish trade: channel closed"
+                ))
             })?;
 
         debug!("Published trade update: trade_id={}", trade.trade_id);
@@ -151,7 +155,7 @@ impl ExchangeStatePublisher {
                     "Failed to publish position update: channel closed or lagged ({} receivers)",
                     e
                 );
-                EngineError::CustomError(anyhow::anyhow!(
+                EngineError::CustomError(smol_str::format_smolstr!(
                     "Failed to publish position: channel closed"
                 ))
             })?;

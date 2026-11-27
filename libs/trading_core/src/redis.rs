@@ -24,7 +24,10 @@ pub struct RedisClient {
 impl RedisClient {
     pub fn new(url: &str) -> Result<Self, EngineError> {
         let client = redis::Client::open(url).map_err(|e| {
-            EngineError::CustomError(anyhow::anyhow!("Failed to create Redis client: {}", e))
+            EngineError::CustomError(smol_str::format_smolstr!(
+                "Failed to create Redis client: {}",
+                e
+            ))
         })?;
         Ok(Self { client })
     }
@@ -35,7 +38,10 @@ impl RedisClient {
             .get_multiplexed_tokio_connection()
             .await
             .map_err(|e| {
-                EngineError::CustomError(anyhow::anyhow!("Failed to get Redis connection: {}", e))
+                EngineError::CustomError(smol_str::format_smolstr!(
+                    "Failed to get Redis connection: {}",
+                    e
+                ))
             })?;
 
         let serialized_message = serde_json::to_string(&message)?;
@@ -44,7 +50,10 @@ impl RedisClient {
             .publish(channel, serialized_message)
             .await
             .map_err(|e| {
-                EngineError::CustomError(anyhow::anyhow!("Failed to publish to Redis: {}", e))
+                EngineError::CustomError(smol_str::format_smolstr!(
+                    "Failed to publish to Redis: {}",
+                    e
+                ))
             })?;
 
         Ok(())
@@ -55,10 +64,13 @@ impl RedisClient {
         F: FnMut(RedisMessage) -> Result<(), EngineError> + Send + 'static,
     {
         let mut pubsub_conn = self.client.get_async_pubsub().await.map_err(|e| {
-            EngineError::CustomError(anyhow::anyhow!("Failed to get Redis pubsub: {}", e))
+            EngineError::CustomError(smol_str::format_smolstr!(
+                "Failed to get Redis pubsub: {}",
+                e
+            ))
         })?;
         pubsub_conn.subscribe(channel).await.map_err(|e| {
-            EngineError::CustomError(anyhow::anyhow!(
+            EngineError::CustomError(smol_str::format_smolstr!(
                 "Failed to subscribe to Redis channel: {}",
                 e
             ))
@@ -67,7 +79,7 @@ impl RedisClient {
         let mut stream = pubsub_conn.on_message();
         while let Some(message) = stream.next().await {
             let payload: String = message.get_payload().map_err(|e| {
-                EngineError::CustomError(anyhow::anyhow!(
+                EngineError::CustomError(smol_str::format_smolstr!(
                     "Failed to get Redis message payload: {}",
                     e
                 ))

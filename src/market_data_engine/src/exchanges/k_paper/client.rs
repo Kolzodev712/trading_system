@@ -61,9 +61,9 @@ impl PaperClient {
         };
         let url = to_market_ws_url(&self.config.url);
         info!("k-paper market data: connecting to {}", url);
-        let (ws_stream, _) = tokio_tungstenite::connect_async(&url)
-            .await
-            .map_err(|e| EngineError::CustomError(anyhow::anyhow!("k-paper connect: {}", e)))?;
+        let (ws_stream, _) = tokio_tungstenite::connect_async(&url).await.map_err(|e| {
+            EngineError::CustomError(smol_str::format_smolstr!("k-paper connect: {}", e))
+        })?;
         info!("k-paper market data: connected to {}", url);
         let (mut _write, mut read) = ws_stream.split();
 
@@ -76,7 +76,7 @@ impl PaperClient {
                 }
                 Err(e) => {
                     error!("k-paper market data: WebSocket error: {}", e);
-                    return Err(EngineError::CustomError(anyhow::anyhow!(
+                    return Err(EngineError::CustomError(smol_str::format_smolstr!(
                         "WebSocket: {}",
                         e
                     )));

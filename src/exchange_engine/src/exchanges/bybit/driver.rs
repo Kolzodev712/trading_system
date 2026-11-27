@@ -180,7 +180,7 @@ impl ExchangeDriver for BybitDriver {
                 if let Err(e) = result {
                     error!("Streaming client task error: {}", e);
                     self.set_connection_state(ConnectionState::Failed).await;
-                    return Err(EngineError::CustomError(anyhow::anyhow!(
+                    return Err(EngineError::CustomError(smol_str::format_smolstr!(
                         "Streaming client task failed: {}", e
                     )));
                 }
@@ -189,7 +189,7 @@ impl ExchangeDriver for BybitDriver {
                 if let Err(e) = result {
                     error!("Event processing task error: {}", e);
                     self.set_connection_state(ConnectionState::Failed).await;
-                    return Err(EngineError::CustomError(anyhow::anyhow!(
+                    return Err(EngineError::CustomError(smol_str::format_smolstr!(
                         "Event processing task failed: {}", e
                     )));
                 }

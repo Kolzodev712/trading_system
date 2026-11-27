@@ -3,7 +3,6 @@
 //! Shared authenticator for both REST and WebSocket APIs.
 //! Binance supports ED25519 for both REST and WebSocket, and it's the recommended method.
 
-use anyhow::anyhow;
 use async_trait::async_trait;
 use base64::{engine::general_purpose, Engine as _};
 use ed25519_dalek::{Signer, SigningKey};
@@ -35,10 +34,10 @@ impl ExchangeAuthenticator for BinanceAuthenticator {
     fn generate_signature(&self, payload: &str) -> Result<Option<SmolStr>, EngineError> {
         let private_key_bytes = general_purpose::STANDARD
             .decode(self.secret_key.expose())
-            .map_err(|e| EngineError::AuthenticationError(anyhow!(e)))?;
+            .map_err(|e| EngineError::AuthenticationError(smol_str::format_smolstr!("{}", e)))?;
 
         if private_key_bytes.len() != 32 {
-            return Err(EngineError::AuthenticationError(anyhow!(
+            return Err(EngineError::AuthenticationError(smol_str::format_smolstr!(
                 "ED25519 private key must be 32 bytes when decoded, got {}",
                 private_key_bytes.len()
             )));

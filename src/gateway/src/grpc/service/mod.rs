@@ -341,7 +341,7 @@ impl TradingCliService for TradingCliServiceImpl {
         &self,
         _request: Request<trading_cli::GetTradingStatusRequest>,
     ) -> Result<Response<trading_cli::GetTradingStatusResponse>, Status> {
-        let enabled = self.trading_control.is_enabled().await;
+        let enabled = self.trading_control.is_enabled();
         let (halt, code) = {
             let ts = self.trading_state_manager.get_state();
             let guard = ts.read().await;
@@ -358,8 +358,8 @@ impl TradingCliService for TradingCliServiceImpl {
             execution_mode: self.execution_mode.as_str().to_string(),
             venue: self.venue_label.clone(),
             environment: self.environment.clone(),
-            entries_paused: self.trading_control.entries_paused().await,
-            flatten_latched: self.trading_control.flatten_latched().await,
+            entries_paused: self.trading_control.entries_paused(),
+            flatten_latched: self.trading_control.flatten_latched(),
             global_toggle_semantics: GLOBAL_TOGGLE_SEMANTICS.to_string(),
             operator_id: crate::grpc::access::displayed_operator_id(&self.venue_label),
             exposure_halt_reason: halt,
@@ -519,7 +519,7 @@ impl TradingCliService for TradingCliServiceImpl {
         let symbol = trading_core::types::common::Pair::new(parts[0], parts[1]);
         let strategy_id = StrategyManager::make_strategy_id(&req.strategy_name, &symbol);
 
-        let global_trading_enabled = self.trading_control.is_enabled().await;
+        let global_trading_enabled = self.trading_control.is_enabled();
         if !global_trading_enabled && req.enabled {
             return Err(Status::failed_precondition(
                 "Cannot enable individual strategy when global trading is disabled. Enable global trading first.",
@@ -845,7 +845,9 @@ impl TradingCliService for TradingCliServiceImpl {
             }
             std::fs::write(path, "1\n")
                 .map_err(|e| Status::failed_precondition(format!("write restart flag: {e}")))?;
-            *self.trading_control.enabled_flag().write().await = false;
+            self.trading_control
+                .enabled_flag()
+                .store(false, std::sync::atomic::Ordering::Release);
         }
         Ok(Response::new(trading_cli::RequestRestartResponse {
             success: true,

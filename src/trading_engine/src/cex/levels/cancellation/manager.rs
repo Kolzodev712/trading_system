@@ -199,7 +199,7 @@ impl CancellationManager {
                         );
 
                         if failed_count > 0 {
-                            return Err(EngineError::CustomError(anyhow::anyhow!(
+                            return Err(EngineError::CustomError(smol_str::format_smolstr!(
                                 "Failed to cancel {} order(s) in group {}",
                                 failed_count,
                                 group

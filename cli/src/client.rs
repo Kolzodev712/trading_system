@@ -3,11 +3,8 @@ use crate::error::CliError;
 use std::time::Duration;
 use tonic::transport::Channel;
 
-// Include the generated protobuf code
-#[allow(clippy::all)]
-pub mod trading_cli {
-    include!(concat!(env!("OUT_DIR"), "/trading_cli.rs"));
-}
+// Generated protobuf code lives in `trading_proto`.
+pub use trading_proto::trading_cli;
 
 use trading_cli::trading_cli_service_client::TradingCliServiceClient;
 use trading_cli::{

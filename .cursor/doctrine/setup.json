@@ -1,0 +1,16 @@
+{
+  "schema_version": 2,
+  "status": "COMPLETE_WITH_UNKNOWNS",
+  "sections": {
+    "repository": "complete",
+    "objectives": "complete",
+    "invariants": "complete",
+    "workload": "complete",
+    "components": "complete"
+  },
+  "unknown_count": 7,
+  "last_reviewed": "2026-11-27",
+  "awaiting_final_approval": false,
+  "approved_at": "2026-11-27T00:00:00+00:00",
+  "approval_revision": 1
+}

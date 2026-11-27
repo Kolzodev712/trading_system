@@ -77,12 +77,12 @@ pub fn build_strategy(args: StrategyFactoryArgs) -> Result<Arc<RwLock<dyn Strate
             args.config_min_notional,
         )))),
         "BTCPriceMALongFlatV1" | "btc_price_ma_long_flat_v1" => Err(EngineError::CustomError(
-            anyhow::anyhow!("{UNSUPPORTED_CANDIDATE_2}"),
+            smol_str::format_smolstr!("{UNSUPPORTED_CANDIDATE_2}"),
         )),
         rejected @ ("DonchianDailyV1" | "donchian_daily_v1") => Err(EngineError::CustomError(
-            anyhow::anyhow!("{rejected} is not a live strategy"),
+            smol_str::format_smolstr!("{rejected} is not a live strategy"),
         )),
-        other => Err(EngineError::CustomError(anyhow::anyhow!(
+        other => Err(EngineError::CustomError(smol_str::format_smolstr!(
             "Unknown strategy type: {other}"
         ))),
     }

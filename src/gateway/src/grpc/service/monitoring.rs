@@ -330,10 +330,10 @@ impl MonitoringService {
             venue: self.venue_label.clone(),
             environment: self.environment.clone(),
             snapshot_unix_ms,
-            trading_enabled: self.trading_control.is_enabled().await,
+            trading_enabled: self.trading_control.is_enabled(),
             runner_mode: runner_mode.to_string(),
-            entries_paused: self.trading_control.entries_paused().await,
-            flatten_latched: self.trading_control.flatten_latched().await,
+            entries_paused: self.trading_control.entries_paused(),
+            flatten_latched: self.trading_control.flatten_latched(),
             global_toggle_semantics: trading_core::grpc::GLOBAL_TOGGLE_SEMANTICS.to_string(),
             economic_source: trading_engine::state::economic_source(
                 &self.venue_label,

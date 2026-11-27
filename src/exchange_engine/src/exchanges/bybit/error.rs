@@ -246,26 +246,28 @@ impl BybitError {
 impl From<BybitError> for EngineError {
     fn from(err: BybitError) -> Self {
         match &err {
-            BybitError::OrderNotFound => EngineError::OrderNotFound(anyhow::anyhow!("{err}")),
+            BybitError::OrderNotFound => {
+                EngineError::OrderNotFound(smol_str::format_smolstr!("{err}"))
+            }
             BybitError::OrderCompletedOrCancelled => {
-                EngineError::OrderAlreadyFilled(anyhow::anyhow!("{err}"))
+                EngineError::OrderAlreadyFilled(smol_str::format_smolstr!("{err}"))
             }
             BybitError::OrderCancelled => {
-                EngineError::OrderAlreadyCanceled(anyhow::anyhow!("{err}"))
+                EngineError::OrderAlreadyCanceled(smol_str::format_smolstr!("{err}"))
             }
             BybitError::Unauthorized
             | BybitError::ApiKeyInvalid
             | BybitError::SignatureError
             | BybitError::AuthenticationFailed => {
-                EngineError::AuthenticationError(anyhow::anyhow!("{err}"))
+                EngineError::AuthenticationError(smol_str::format_smolstr!("{err}"))
             }
             BybitError::TooManyRequests
             | BybitError::RateLimitExceeded
             | BybitError::WsRateLimit
             | BybitError::WsIpRateLimitExceeded => {
-                EngineError::RateLimitError(anyhow::anyhow!("{err}"))
+                EngineError::RateLimitError(smol_str::format_smolstr!("{err}"))
             }
-            _ => EngineError::CustomError(anyhow::anyhow!("{err}")),
+            _ => EngineError::CustomError(smol_str::format_smolstr!("{err}")),
         }
     }
 }

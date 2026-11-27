@@ -263,7 +263,7 @@ User Input → TUI
 
 - **TUI Rendering**: `ratatui` for terminal UI
 - **gRPC Client**: `tonic` for communication
-- **Protocol**: Protocol Buffers (`.proto` in `libs/trading_core/proto/`); gRPC server implementation in the **gateway** crate (runner spawns it)
+- **Protocol**: Protocol Buffers (`.proto` in `libs/trading_proto/proto/`); gRPC server implementation in the **gateway** crate (runner spawns it)
 
 ### State Management
 

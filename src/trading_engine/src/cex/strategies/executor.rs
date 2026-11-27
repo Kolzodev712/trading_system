@@ -22,6 +22,7 @@ use trading_core::{
 };
 // ExecutionReport removed - use Order directly from channels
 use rust_decimal::Decimal;
+use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
 use tokio::time::{interval, Duration};
@@ -53,9 +54,9 @@ pub struct StrategyExecutor<S: Strategy + 'static> {
     config_tick_size: Decimal,
     config_min_notional: Decimal,
     /// Trading control - checks if trading is enabled (optional, for TUI control)
-    trading_enabled: Option<Arc<tokio::sync::RwLock<bool>>>,
-    entries_paused: Option<Arc<tokio::sync::RwLock<bool>>>,
-    flatten_latched: Option<Arc<tokio::sync::RwLock<bool>>>,
+    trading_enabled: Option<Arc<AtomicBool>>,
+    entries_paused: Option<Arc<AtomicBool>>,
+    flatten_latched: Option<Arc<AtomicBool>>,
     execution_mode: ExecutionMode,
     /// Optional StrategyManager for batching (only set when using StrategyManagerWrapper)
     strategy_manager:
@@ -154,15 +155,15 @@ impl<S: Strategy> StrategyExecutor<S> {
     }
 
     /// Set trading enabled flag (for TUI control)
-    pub fn with_trading_control(mut self, trading_enabled: Arc<tokio::sync::RwLock<bool>>) -> Self {
+    pub fn with_trading_control(mut self, trading_enabled: Arc<AtomicBool>) -> Self {
         self.trading_enabled = Some(trading_enabled);
         self
     }
 
     pub fn with_operator_flags(
         mut self,
-        entries_paused: Arc<tokio::sync::RwLock<bool>>,
-        flatten_latched: Arc<tokio::sync::RwLock<bool>>,
+        entries_paused: Arc<AtomicBool>,
+        flatten_latched: Arc<AtomicBool>,
     ) -> Self {
         self.entries_paused = Some(entries_paused);
         self.flatten_latched = Some(flatten_latched);
@@ -202,14 +203,16 @@ impl<S: Strategy> StrategyExecutor<S> {
         state: crate::cex::state::SubmissionState,
     ) -> Result<(), EngineError> {
         let journal = self.submission_journal.as_ref().ok_or_else(|| {
-            EngineError::CustomError(anyhow::anyhow!("submission journal is required"))
+            EngineError::CustomError(smol_str::format_smolstr!("submission journal is required"))
         })?;
         journal
             .append(&crate::cex::state::SubmissionRecord::from_pending(
                 pending, state,
             ))
             .map_err(|err| {
-                EngineError::CustomError(anyhow::anyhow!("submission journal append failed: {err}"))
+                EngineError::CustomError(smol_str::format_smolstr!(
+                    "submission journal append failed: {err}"
+                ))
             })
     }
 
@@ -492,17 +495,17 @@ impl<S: Strategy> StrategyExecutor<S> {
 
                     // Evaluate even when exchange execution is forbidden (Shadow / paused).
                     let trading_enabled = if let Some(ref trading_enabled) = self.trading_enabled {
-                        *trading_enabled.read().await
+                        trading_enabled.load(std::sync::atomic::Ordering::Acquire)
                     } else {
                         true
                     };
                     let entries_paused = if let Some(ref flag) = self.entries_paused {
-                        *flag.read().await
+                        flag.load(std::sync::atomic::Ordering::Acquire)
                     } else {
                         false
                     };
                     let flatten_latched = if let Some(ref flag) = self.flatten_latched {
-                        *flag.read().await
+                        flag.load(std::sync::atomic::Ordering::Acquire)
                     } else {
                         false
                     };
@@ -975,7 +978,7 @@ impl<S: Strategy> StrategyExecutor<S> {
                                     let result = &results[idx];
                                     let order_result = if result.success {
                                         result.data.clone().ok_or_else(|| {
-                                            EngineError::CustomError(anyhow::anyhow!(
+                                            EngineError::CustomError(smol_str::format_smolstr!(
                                                 "Bulk operation succeeded but no data returned"
                                             ))
                                         })
@@ -984,7 +987,9 @@ impl<S: Strategy> StrategyExecutor<S> {
                                             .error
                                             .clone()
                                             .unwrap_or_else(|| "Unknown error".to_string());
-                                        Err(EngineError::CustomError(anyhow::anyhow!(error_msg)))
+                                        Err(EngineError::CustomError(smol_str::format_smolstr!(
+                                            "{}", error_msg
+                                        )))
                                     };
 
                                     match order_result {
@@ -1111,7 +1116,7 @@ impl<S: Strategy> StrategyExecutor<S> {
                                     let result = &results[idx];
                                     let amended_order_result = if result.success {
                                         result.data.clone().ok_or_else(|| {
-                                            EngineError::CustomError(anyhow::anyhow!(
+                                            EngineError::CustomError(smol_str::format_smolstr!(
                                                 "Bulk operation succeeded but no data returned"
                                             ))
                                         })
@@ -1120,7 +1125,9 @@ impl<S: Strategy> StrategyExecutor<S> {
                                             .error
                                             .clone()
                                             .unwrap_or_else(|| "Unknown error".to_string());
-                                        Err(EngineError::CustomError(anyhow::anyhow!(error_msg)))
+                                        Err(EngineError::CustomError(smol_str::format_smolstr!(
+                                            "{}", error_msg
+                                        )))
                                     };
 
                                     match amended_order_result {
@@ -1300,16 +1307,18 @@ mod tests {
 
     #[test]
     fn timeout_place_error_stays_unknown() {
-        let timeout =
-            EngineError::CustomError(anyhow::anyhow!("k-paper: open_order timeout (15s)"));
+        let timeout = EngineError::CustomError(smol_str::format_smolstr!(
+            "k-paper: open_order timeout (15s)"
+        ));
         assert!(place_error_is_unknown(&timeout));
-        let reject = EngineError::CustomError(anyhow::anyhow!("lab_reject"));
+        let reject = EngineError::CustomError(smol_str::format_smolstr!("lab_reject"));
         assert!(!place_error_is_unknown(&reject));
-        let dup = EngineError::CustomError(anyhow::anyhow!("duplicate client_order_id"));
+        let dup = EngineError::CustomError(smol_str::format_smolstr!("duplicate client_order_id"));
         assert!(!place_error_is_unknown(&dup));
-        let missing = EngineError::CustomError(anyhow::anyhow!("Response missing order data"));
+        let missing =
+            EngineError::CustomError(smol_str::format_smolstr!("Response missing order data"));
         assert!(place_error_is_unknown(&missing));
-        let generic = EngineError::CustomError(anyhow::anyhow!("something went wrong"));
+        let generic = EngineError::CustomError(smol_str::format_smolstr!("something went wrong"));
         assert!(place_error_is_unknown(&generic));
     }
 }

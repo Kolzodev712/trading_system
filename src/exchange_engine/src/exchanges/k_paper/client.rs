@@ -128,7 +128,10 @@ impl KPaperClient {
     /// Send a command (used by TradingClient methods).
     fn send_command(&self, cmd: KPaperCommand) -> Result<(), EngineError> {
         self.command_tx.send(cmd).map_err(|e| {
-            EngineError::CustomError(anyhow::anyhow!("k-paper command channel closed: {}", e))
+            EngineError::CustomError(smol_str::format_smolstr!(
+                "k-paper command channel closed: {}",
+                e
+            ))
         })
     }
 
@@ -145,7 +148,7 @@ impl KPaperClient {
             .get("orderLinkId")
             .filter(|id| !id.is_empty())
         else {
-            return Err(EngineError::CustomError(anyhow::anyhow!(
+            return Err(EngineError::CustomError(smol_str::format_smolstr!(
                 "k-paper: place ACK missing client-order-id correlation"
             )));
         };
@@ -157,7 +160,7 @@ impl KPaperClient {
         match self.fetch_order_by_client_id(cid).await {
             Ok(ClientOrderLookup::Working(found) | ClientOrderLookup::Terminal(found)) => {
                 if found.order_id != order.order_id {
-                    return Err(EngineError::CustomError(anyhow::anyhow!(
+                    return Err(EngineError::CustomError(smol_str::format_smolstr!(
                         "k-paper: place ACK exchange id {} does not match REST lookup {} for client id {}",
                         order.order_id.as_str(),
                         found.order_id.as_str(),
@@ -166,10 +169,12 @@ impl KPaperClient {
                 }
                 Ok(order)
             }
-            Ok(ClientOrderLookup::Inconclusive) => Err(EngineError::CustomError(anyhow::anyhow!(
-                "k-paper: place ACK client-id lookup inconclusive for {cid}"
-            ))),
-            Err(err) => Err(EngineError::CustomError(anyhow::anyhow!(
+            Ok(ClientOrderLookup::Inconclusive) => {
+                Err(EngineError::CustomError(smol_str::format_smolstr!(
+                    "k-paper: place ACK client-id lookup inconclusive for {cid}"
+                )))
+            }
+            Err(err) => Err(EngineError::CustomError(smol_str::format_smolstr!(
                 "k-paper: place ACK client-id lookup failed for {cid}: {err}"
             ))),
         }
@@ -191,7 +196,7 @@ impl TradingClient<OrderRequest> for KPaperClient {
         {
             let mut state = self.state.write().await;
             if state.pending_place.is_some() {
-                return Err(EngineError::CustomError(anyhow::anyhow!(
+                return Err(EngineError::CustomError(smol_str::format_smolstr!(
                     "k-paper: only one in-flight place_order supported"
                 )));
             }
@@ -239,13 +244,13 @@ impl TradingClient<OrderRequest> for KPaperClient {
         match tokio::time::timeout(timeout_dur, rx).await {
             Ok(Ok(Ok(order))) => self.verify_place_ack_exchange_id(order, &req).await,
             Ok(Ok(Err(e))) => Err(e),
-            Ok(Err(_)) => Err(EngineError::CustomError(anyhow::anyhow!(
+            Ok(Err(_)) => Err(EngineError::CustomError(smol_str::format_smolstr!(
                 "k-paper: pending place dropped"
             ))),
             Err(_) => {
                 let mut state = self.state.write().await;
                 state.pending_place = None;
-                Err(EngineError::CustomError(anyhow::anyhow!(
+                Err(EngineError::CustomError(smol_str::format_smolstr!(
                     "k-paper: open_order timeout (15s)"
                 )))
             }
@@ -257,7 +262,7 @@ impl TradingClient<OrderRequest> for KPaperClient {
         {
             let mut state = self.state.write().await;
             if state.pending_cancel.is_some() {
-                return Err(EngineError::CustomError(anyhow::anyhow!(
+                return Err(EngineError::CustomError(smol_str::format_smolstr!(
                     "k-paper: only one in-flight cancel supported"
                 )));
             }
@@ -273,14 +278,14 @@ impl TradingClient<OrderRequest> for KPaperClient {
             Ok(Err(_)) => {
                 let mut state = self.state.write().await;
                 state.pending_cancel = None;
-                Err(EngineError::CustomError(anyhow::anyhow!(
+                Err(EngineError::CustomError(smol_str::format_smolstr!(
                     "k-paper: cancel ack channel dropped"
                 )))
             }
             Err(_) => {
                 let mut state = self.state.write().await;
                 state.pending_cancel = None;
-                Err(EngineError::CustomError(anyhow::anyhow!(
+                Err(EngineError::CustomError(smol_str::format_smolstr!(
                     "k-paper: cancel_order timeout (10s) waiting for CancelAck"
                 )))
             }
@@ -321,10 +326,14 @@ impl TradingClient<OrderRequest> for KPaperClient {
         }
         match cancel_all_after_rest(rest_ok, first_err) {
             Ok(()) => {}
-            Err(msg) => return Err(EngineError::CustomError(anyhow::anyhow!(msg))),
+            Err(msg) => {
+                return Err(EngineError::CustomError(smol_str::format_smolstr!(
+                    "{}", msg
+                )))
+            }
         }
         let remaining = self.fetch_open_orders().await.map_err(|e| {
-            EngineError::CustomError(anyhow::anyhow!(
+            EngineError::CustomError(smol_str::format_smolstr!(
                 "CancelWorking unverified: REST GET /open_orders after cancel failed: {e}"
             ))
         })?;
@@ -334,7 +343,7 @@ impl TradingClient<OrderRequest> for KPaperClient {
             .map(|order| order.order_id.as_str().to_string())
             .collect();
         if !still.is_empty() {
-            return Err(EngineError::CustomError(anyhow::anyhow!(
+            return Err(EngineError::CustomError(smol_str::format_smolstr!(
                 "CancelWorking unverified: working orders remain after cancel ({})",
                 still.join(",")
             )));
@@ -344,42 +353,40 @@ impl TradingClient<OrderRequest> for KPaperClient {
 
     async fn fetch_balance(&self) -> Result<Vec<Balance>, EngineError> {
         let url = format!("{}/balances", self.rest_base);
-        let res =
-            self.http_client.get(&url).send().await.map_err(|e| {
-                EngineError::CustomError(anyhow::anyhow!("REST GET /balances: {}", e))
-            })?;
+        let res = self.http_client.get(&url).send().await.map_err(|e| {
+            EngineError::CustomError(smol_str::format_smolstr!("REST GET /balances: {}", e))
+        })?;
         if !res.status().is_success() {
             let status = res.status();
             let body = res.text().await.unwrap_or_default();
-            return Err(EngineError::CustomError(anyhow::anyhow!(
+            return Err(EngineError::CustomError(smol_str::format_smolstr!(
                 "REST GET /balances: {} {}",
                 status,
                 body
             )));
         }
-        let rest_balances: Vec<RestBalance> = res
-            .json()
-            .await
-            .map_err(|e| EngineError::CustomError(anyhow::anyhow!("REST balances JSON: {}", e)))?;
+        let rest_balances: Vec<RestBalance> = res.json().await.map_err(|e| {
+            EngineError::CustomError(smol_str::format_smolstr!("REST balances JSON: {}", e))
+        })?;
         Ok(rest_balances.iter().map(rest_balance_to_core).collect())
     }
 
     async fn fetch_open_orders(&self) -> Result<Vec<Order>, EngineError> {
         let url = format!("{}/open_orders", self.rest_base);
         let res = self.http_client.get(&url).send().await.map_err(|e| {
-            EngineError::CustomError(anyhow::anyhow!("REST GET /open_orders: {}", e))
+            EngineError::CustomError(smol_str::format_smolstr!("REST GET /open_orders: {}", e))
         })?;
         if !res.status().is_success() {
             let status = res.status();
             let body = res.text().await.unwrap_or_default();
-            return Err(EngineError::CustomError(anyhow::anyhow!(
+            return Err(EngineError::CustomError(smol_str::format_smolstr!(
                 "REST GET /open_orders: {} {}",
                 status,
                 body
             )));
         }
         let rest_orders: Vec<RestOrder> = res.json().await.map_err(|e| {
-            EngineError::CustomError(anyhow::anyhow!("REST open_orders JSON: {}", e))
+            EngineError::CustomError(smol_str::format_smolstr!("REST open_orders JSON: {}", e))
         })?;
         let instrument_type = self.config.instrument_type.clone();
         Ok(rest_orders
@@ -437,23 +444,21 @@ impl TradingClient<OrderRequest> for KPaperClient {
                 urlencoding::encode(&instrument_id)
             ));
         }
-        let res =
-            self.http_client.get(&url).send().await.map_err(|e| {
-                EngineError::CustomError(anyhow::anyhow!("REST GET /trades: {}", e))
-            })?;
+        let res = self.http_client.get(&url).send().await.map_err(|e| {
+            EngineError::CustomError(smol_str::format_smolstr!("REST GET /trades: {}", e))
+        })?;
         if !res.status().is_success() {
             let status = res.status();
             let body = res.text().await.unwrap_or_default();
-            return Err(EngineError::CustomError(anyhow::anyhow!(
+            return Err(EngineError::CustomError(smol_str::format_smolstr!(
                 "REST GET /trades: {} {}",
                 status,
                 body
             )));
         }
-        let rest_trades: Vec<RestTrade> = res
-            .json()
-            .await
-            .map_err(|e| EngineError::CustomError(anyhow::anyhow!("REST trades JSON: {}", e)))?;
+        let rest_trades: Vec<RestTrade> = res.json().await.map_err(|e| {
+            EngineError::CustomError(smol_str::format_smolstr!("REST trades JSON: {}", e))
+        })?;
         Ok(rest_trades.iter().filter_map(rest_trade_to_core).collect())
     }
 
@@ -466,14 +471,13 @@ impl TradingClient<OrderRequest> for KPaperClient {
             ));
         }
         let url = format!("{}/positions", self.rest_base);
-        let res =
-            self.http_client.get(&url).send().await.map_err(|e| {
-                EngineError::CustomError(anyhow::anyhow!("REST GET /positions: {}", e))
-            })?;
+        let res = self.http_client.get(&url).send().await.map_err(|e| {
+            EngineError::CustomError(smol_str::format_smolstr!("REST GET /positions: {}", e))
+        })?;
         if !res.status().is_success() {
             let status = res.status();
             let body = res.text().await.unwrap_or_default();
-            return Err(EngineError::CustomError(anyhow::anyhow!(
+            return Err(EngineError::CustomError(smol_str::format_smolstr!(
                 "REST GET /positions: {} {}",
                 status,
                 body
@@ -481,7 +485,7 @@ impl TradingClient<OrderRequest> for KPaperClient {
         }
         let rest_positions: Vec<crate::exchanges::k_paper::rest::RestPosition> =
             res.json().await.map_err(|e| {
-                EngineError::CustomError(anyhow::anyhow!("REST positions JSON: {}", e))
+                EngineError::CustomError(smol_str::format_smolstr!("REST positions JSON: {}", e))
             })?;
         Ok(rest_positions
             .iter()
@@ -508,10 +512,10 @@ impl TradingClient<OrderRequest> for KPaperClient {
                     last_update: 0,
                 })
             }
-            Some(expected) => Err(EngineError::CustomError(anyhow::anyhow!(
+            Some(expected) => Err(EngineError::CustomError(smol_str::format_smolstr!(
                 "k-paper leverage {expected}x does not match requested {leverage}x"
             ))),
-            None => Err(EngineError::CustomError(anyhow::anyhow!(
+            None => Err(EngineError::CustomError(smol_str::format_smolstr!(
                 "k-paper futures leverage must be set explicitly in bot.json"
             ))),
         }
@@ -522,7 +526,7 @@ impl TradingClient<OrderRequest> for KPaperClient {
         mode: trading_core::types::futures::PositionMode,
     ) -> Result<(), EngineError> {
         if !matches!(mode, trading_core::types::futures::PositionMode::OneWay) {
-            return Err(EngineError::CustomError(anyhow::anyhow!(
+            return Err(EngineError::CustomError(smol_str::format_smolstr!(
                 "k-paper linear contract is one-way only"
             )));
         }
@@ -542,7 +546,7 @@ impl TradingClient<OrderRequest> for KPaperClient {
         {
             let mut state = self.state.write().await;
             if state.pending_amend.is_some() {
-                return Err(EngineError::CustomError(anyhow::anyhow!(
+                return Err(EngineError::CustomError(smol_str::format_smolstr!(
                     "k-paper: only one in-flight amend supported"
                 )));
             }
@@ -560,14 +564,14 @@ impl TradingClient<OrderRequest> for KPaperClient {
             Ok(Err(_)) => {
                 let mut state = self.state.write().await;
                 state.pending_amend = None;
-                Err(EngineError::CustomError(anyhow::anyhow!(
+                Err(EngineError::CustomError(smol_str::format_smolstr!(
                     "k-paper: amend ack channel dropped"
                 )))
             }
             Err(_) => {
                 let mut state = self.state.write().await;
                 state.pending_amend = None;
-                Err(EngineError::CustomError(anyhow::anyhow!(
+                Err(EngineError::CustomError(smol_str::format_smolstr!(
                     "k-paper: amend_order timeout (10s) waiting for AmendAck"
                 )))
             }
@@ -663,13 +667,19 @@ pub type BalanceReadySender =
 async fn fail_inflight(state: &Arc<RwLock<KPaperState>>, reason: &str) {
     let mut st = state.write().await;
     if let Some((tx, _)) = st.pending_place.take() {
-        let _ = tx.send(Err(EngineError::CustomError(anyhow::anyhow!("{reason}"))));
+        let _ = tx.send(Err(EngineError::CustomError(smol_str::format_smolstr!(
+            "{reason}"
+        ))));
     }
     if let Some(tx) = st.pending_cancel.take() {
-        let _ = tx.send(Err(EngineError::CustomError(anyhow::anyhow!("{reason}"))));
+        let _ = tx.send(Err(EngineError::CustomError(smol_str::format_smolstr!(
+            "{reason}"
+        ))));
     }
     if let Some((tx, _, _)) = st.pending_amend.take() {
-        let _ = tx.send(Err(EngineError::CustomError(anyhow::anyhow!("{reason}"))));
+        let _ = tx.send(Err(EngineError::CustomError(smol_str::format_smolstr!(
+            "{reason}"
+        ))));
     }
 }
 
@@ -880,7 +890,7 @@ async fn handle_message(
             if let Some(tx) = market_data_tx {
                 if let Some(book) = orderbook_to_structured(&ob) {
                     let _ = tx.send(MarketDataUpdate::Orderbook {
-                        orderbook: book,
+                        orderbook: Arc::new(book),
                         trace_context: None,
                     });
                 }
@@ -1003,7 +1013,7 @@ async fn handle_message(
             }
             if let Some(tx) = pending_tx {
                 let result = order.map(Ok).unwrap_or_else(|| {
-                    Err(EngineError::CustomError(anyhow::anyhow!(
+                    Err(EngineError::CustomError(smol_str::format_smolstr!(
                         "{}",
                         exec.reject_reason.as_deref().unwrap_or("rejected")
                     )))
@@ -1069,7 +1079,7 @@ async fn handle_message(
                 return Ok(HandleOutcome::Continue);
             };
             if expected_id != order_id {
-                let _ = pending.send(Err(EngineError::CustomError(anyhow::anyhow!(
+                let _ = pending.send(Err(EngineError::CustomError(smol_str::format_smolstr!(
                     "k-paper: AmendAck order id {} does not match in-flight {}",
                     order_id.as_str(),
                     expected_id.as_str()
@@ -1102,17 +1112,17 @@ async fn handle_message(
             warn!("k-paper error: {}", e.message);
             let mut st = state.write().await;
             if let Some((tx, _)) = st.pending_place.take() {
-                let _ = tx.send(Err(EngineError::CustomError(anyhow::anyhow!(
+                let _ = tx.send(Err(EngineError::CustomError(smol_str::format_smolstr!(
                     "{}", e.message
                 ))));
             }
             if let Some(pending) = st.pending_cancel.take() {
-                let _ = pending.send(Err(EngineError::CustomError(anyhow::anyhow!(
+                let _ = pending.send(Err(EngineError::CustomError(smol_str::format_smolstr!(
                     "{}", e.message
                 ))));
             }
             if let Some((pending, _, _)) = st.pending_amend.take() {
-                let _ = pending.send(Err(EngineError::CustomError(anyhow::anyhow!(
+                let _ = pending.send(Err(EngineError::CustomError(smol_str::format_smolstr!(
                     "{}", e.message
                 ))));
             }

@@ -3,10 +3,8 @@ name = "gateway"
 version = "0.1.0"
 edition = "2021"
 
-[build-dependencies]
-tonic-build = { workspace = true }
-
 [dependencies]
+trading_proto = { path = "../../libs/trading_proto" }
 anyhow = { workspace = true }
 async-trait = { workspace = true }
 clap = { version = "4.4", features = ["derive"] }
@@ -28,3 +26,6 @@ market_data_engine = { path = "../market_data_engine" }
 indicator_engine = { path = "../indicator_engine" }
 dex_engine = { path = "../dex_engine" }
 
+
+[lints]
+workspace = true

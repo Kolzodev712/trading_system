@@ -12,10 +12,8 @@ path = "src/lib.rs"
 name = "workflow_gate"
 path = "src/bin/workflow_gate.rs"
 
-[build-dependencies]
-tonic-build = { workspace = true }
-
 [dependencies]
+trading_proto = { path = "../../libs/trading_proto" }
 anyhow = { workspace = true, default-features = false, features = ["std"] }
 chrono = { workspace = true }
 clap = { version = "4.4", features = ["derive"] }
@@ -33,3 +31,6 @@ tonic = { workspace = true }
 tracing = { workspace = true }
 uuid = { workspace = true }
 async-trait = { workspace = true }
+
+[lints]
+workspace = true

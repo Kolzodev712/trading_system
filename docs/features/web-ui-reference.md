@@ -4,7 +4,7 @@
 
 **Repository:** [github.com/Kolzodev712/trading-system-ui](https://github.com/Kolzodev712/trading-system-ui) (local clone: `~/Desktop/trading-system-ui`)
 
-**Related:** TUI reference → `docs/features/tui-grpc-reference.md` (if present) · Backend proto → `libs/trading_core/proto/trading_cli.proto`
+**Related:** TUI reference → `docs/features/tui-grpc-reference.md` (if present) · Backend proto → `libs/trading_proto/proto/trading_cli.proto`
 
 ---
 
@@ -117,13 +117,13 @@ The connect URL is stored in **`localStorage`** key `trading.grpc.endpoint` (`sr
 `proto/trading_cli.proto` in the UI repo should stay in sync with:
 
 ```
-trading_system/libs/trading_core/proto/trading_cli.proto
+trading_system/libs/trading_proto/proto/trading_cli.proto
 ```
 
 Regenerate after changes:
 
 ```bash
-cp ../trading_system/libs/trading_core/proto/trading_cli.proto proto/
+cp ../trading_system/libs/trading_proto/proto/trading_cli.proto proto/
 npm run generate
 ```
 
@@ -404,7 +404,7 @@ Shared (not inside `dex`):
 Regenerate proto after backend changes:
 
 ```bash
-cp ../trading_system/libs/trading_core/proto/trading_cli.proto proto/
+cp ../trading_system/libs/trading_proto/proto/trading_cli.proto proto/
 npm run generate
 ```
 
@@ -736,4 +736,4 @@ Covers: `transforms.test.ts` (display rules), `App.test.tsx` (boot render).
 | Local dev (k-paper + runner) | `trading_system/docs/LOCAL_DEV_GUIDE.md` |
 | TUI DEX monitor | `trading_system/cli/src/screens/dex_monitor/` |
 | DEX config | `trading_system/config/dex/levels.json`, `config/dex/indicators.json` |
-| Proto source of truth | `trading_system/libs/trading_core/proto/trading_cli.proto` |
+| Proto source of truth | `trading_system/libs/trading_proto/proto/trading_cli.proto` |

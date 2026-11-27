@@ -1,11 +1,13 @@
 //! Subscribes to in-process `trading_core` channels and fans out to `trading_networking` buses.
 
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use tokio::task::JoinHandle;
 use tracing::warn;
 use trading_core::channels::market_data::MarketDataUpdateReceiver;
+use trading_core::metrics::{
+    record_broadcast_lag_cex, record_broadcast_lag_dex, record_broadcast_lag_md,
+};
 use trading_core::venue::cex::channels::CexVenueUpdateReceiver;
 use trading_core::venue::dex::channels::DexVenueUpdateReceiver;
 use trading_networking::events::{
@@ -16,9 +18,8 @@ use trading_networking::events::{
 
 use crate::platform::shutdown::ShutdownManager;
 
-pub static BROADCAST_LAG_MD: AtomicU64 = AtomicU64::new(0);
-pub static BROADCAST_LAG_CEX: AtomicU64 = AtomicU64::new(0);
-pub static BROADCAST_LAG_DEX: AtomicU64 = AtomicU64::new(0);
+// Re-export for existing scrape/import paths.
+pub use trading_core::metrics::{BROADCAST_LAG_CEX, BROADCAST_LAG_DEX, BROADCAST_LAG_MD};
 
 pub struct EventBridgeHandles {
     pub hot_tx: HotEventTx,
@@ -60,7 +61,7 @@ pub fn start_event_bridge(inputs: EventBridgeInputs<'_>) -> EventBridgeHandles {
                                 }
                             }
                             Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
-                                BROADCAST_LAG_MD.fetch_add(skipped, Ordering::Relaxed);
+                                record_broadcast_lag_md(skipped);
                                 warn!("[event_bridge] market data lagged; skipped {skipped}");
                             }
                             Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
@@ -85,7 +86,7 @@ pub fn start_event_bridge(inputs: EventBridgeInputs<'_>) -> EventBridgeHandles {
                                 let _ = cold_bus.publish(Arc::new(event));
                             }
                             Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
-                                BROADCAST_LAG_CEX.fetch_add(skipped, Ordering::Relaxed);
+                                record_broadcast_lag_cex(skipped);
                                 warn!("[event_bridge] CEX updates lagged; skipped {skipped}");
                             }
                             Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
@@ -110,7 +111,7 @@ pub fn start_event_bridge(inputs: EventBridgeInputs<'_>) -> EventBridgeHandles {
                                 let _ = dex_bus.publish(Arc::new(event));
                             }
                             Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
-                                BROADCAST_LAG_DEX.fetch_add(skipped, Ordering::Relaxed);
+                                record_broadcast_lag_dex(skipped);
                                 warn!("[event_bridge] DEX updates lagged; skipped {skipped}");
                             }
                             Err(tokio::sync::broadcast::error::RecvError::Closed) => break,

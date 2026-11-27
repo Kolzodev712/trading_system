@@ -67,3 +67,6 @@ mongodb = { workspace = true }
 # Testing
 tokio-test = { workspace = true }
 
+
+[lints]
+workspace = true

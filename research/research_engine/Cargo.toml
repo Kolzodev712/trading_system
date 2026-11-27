@@ -19,3 +19,6 @@ tokio = { workspace = true }
 [dev-dependencies]
 rust_decimal_macros = { workspace = true }
 tokio-test = { workspace = true }
+
+[lints]
+workspace = true

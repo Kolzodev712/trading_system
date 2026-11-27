@@ -3,11 +3,11 @@
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
-use super::event_bridge::{BROADCAST_LAG_CEX, BROADCAST_LAG_DEX, BROADCAST_LAG_MD};
 use super::zenoh_metrics::{
     ZENOH_TRANSPORT_DROPPED, ZENOH_TRANSPORT_PUBLISH_ERRORS, ZENOH_TRANSPORT_SENT,
 };
 use dex_engine::runtime::{DEX_EXECUTE_ERRORS_TOTAL, DEX_EXECUTE_TOTAL};
+use trading_core::metrics::{BROADCAST_LAG_CEX, BROADCAST_LAG_DEX, BROADCAST_LAG_MD};
 use trading_core::venue::VenueMode;
 use trading_trace::ExporterHandles;
 

@@ -24,7 +24,7 @@ async fn test_market_data_channel() {
 
     tx.send(
         trading_core::channels::market_data::MarketDataUpdate::Orderbook {
-            orderbook: orderbook.clone(),
+            orderbook: std::sync::Arc::new(orderbook.clone()),
             trace_context: None,
         },
     )

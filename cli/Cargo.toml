@@ -7,10 +7,8 @@ edition = "2021"
 name = "trading-cli"
 path = "src/main.rs"
 
-[build-dependencies]
-tonic-build = { workspace = true }
-
 [dependencies]
+trading_proto = { path = "../libs/trading_proto" }
 # gRPC client
 tonic = { workspace = true }
 prost = { workspace = true }
@@ -35,3 +33,6 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # Utils
 chrono = { workspace = true }
 smol_str = { workspace = true }
+
+[lints]
+workspace = true

@@ -28,3 +28,6 @@ prost-types = "0.14"
 [dev-dependencies]
 rust_decimal_macros = { workspace = true }
 tokio = { workspace = true }
+
+[lints]
+workspace = true

@@ -108,6 +108,7 @@ impl ExchangeStateSubscriber {
                         "Exchange update channel lagged, skipped {} messages; requesting reconcile",
                         skipped
                     );
+                    trading_core::metrics::record_broadcast_lag_cex(skipped);
                     // Skipped messages may include fills/cancels that TradingState never saw.
                     // Flag a reconcile against ExchangeStateManager (which saw them all).
                     self.needs_reconcile.store(true, Ordering::Release);

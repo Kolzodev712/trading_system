@@ -122,7 +122,7 @@ impl Book {
         fee_quote: Decimal,
     ) -> Result<(), EngineError> {
         if qty <= Decimal::ZERO {
-            return Err(EngineError::CustomError(anyhow::anyhow!(
+            return Err(EngineError::CustomError(smol_str::format_smolstr!(
                 "ledger fill quantity must be positive"
             )));
         }
@@ -191,7 +191,7 @@ impl ExecutionLedger {
         if let Some(parent) = path.parent() {
             if !parent.as_os_str().is_empty() {
                 create_dir_all(parent).map_err(|err| {
-                    EngineError::CustomError(anyhow::anyhow!(
+                    EngineError::CustomError(smol_str::format_smolstr!(
                         "execution ledger dir {}: {err}",
                         parent.display()
                     ))
@@ -204,7 +204,7 @@ impl ExecutionLedger {
             .append(true)
             .open(&path)
             .map_err(|err| {
-                EngineError::CustomError(anyhow::anyhow!(
+                EngineError::CustomError(smol_str::format_smolstr!(
                     "open execution ledger {}: {err}",
                     path.display()
                 ))
@@ -242,18 +242,18 @@ impl ExecutionLedger {
             }
         }
         let mut line = serde_json::to_string(&record).map_err(|err| {
-            EngineError::CustomError(anyhow::anyhow!("encode execution ledger: {err}"))
+            EngineError::CustomError(smol_str::format_smolstr!("encode execution ledger: {err}"))
         })?;
         line.push('\n');
         let mut file = self.file.lock().unwrap_or_else(|e| e.into_inner());
         file.write_all(line.as_bytes()).map_err(|err| {
-            EngineError::CustomError(anyhow::anyhow!("write execution ledger: {err}"))
+            EngineError::CustomError(smol_str::format_smolstr!("write execution ledger: {err}"))
         })?;
         file.flush().map_err(|err| {
-            EngineError::CustomError(anyhow::anyhow!("flush execution ledger: {err}"))
+            EngineError::CustomError(smol_str::format_smolstr!("flush execution ledger: {err}"))
         })?;
         file.sync_all().map_err(|err| {
-            EngineError::CustomError(anyhow::anyhow!("fsync execution ledger: {err}"))
+            EngineError::CustomError(smol_str::format_smolstr!("fsync execution ledger: {err}"))
         })?;
         self.seen
             .lock()
@@ -286,7 +286,7 @@ fn load_seen(path: &Path, _file: &mut std::fs::File) -> Result<HashSet<String>, 
 
 fn read_records(path: &Path) -> Result<Vec<LedgerRecord>, EngineError> {
     let file = OpenOptions::new().read(true).open(path).map_err(|err| {
-        EngineError::CustomError(anyhow::anyhow!(
+        EngineError::CustomError(smol_str::format_smolstr!(
             "read execution ledger {}: {err}",
             path.display()
         ))
@@ -295,13 +295,16 @@ fn read_records(path: &Path) -> Result<Vec<LedgerRecord>, EngineError> {
     let mut records = Vec::new();
     for (idx, line) in reader.lines().enumerate() {
         let line = line.map_err(|err| {
-            EngineError::CustomError(anyhow::anyhow!("execution ledger line {}: {err}", idx + 1))
+            EngineError::CustomError(smol_str::format_smolstr!(
+                "execution ledger line {}: {err}",
+                idx + 1
+            ))
         })?;
         if line.trim().is_empty() {
             continue;
         }
         let record: LedgerRecord = serde_json::from_str(&line).map_err(|err| {
-            EngineError::CustomError(anyhow::anyhow!(
+            EngineError::CustomError(smol_str::format_smolstr!(
                 "parse execution ledger line {}: {err}",
                 idx + 1
             ))
@@ -343,7 +346,7 @@ fn parse_side(side: &str) -> Result<Side, EngineError> {
     match side.to_ascii_lowercase().as_str() {
         "buy" => Ok(Side::Buy),
         "sell" => Ok(Side::Sell),
-        other => Err(EngineError::CustomError(anyhow::anyhow!(
+        other => Err(EngineError::CustomError(smol_str::format_smolstr!(
             "ledger unknown side {other}"
         ))),
     }
@@ -352,7 +355,7 @@ fn parse_side(side: &str) -> Result<Side, EngineError> {
 fn parse_decimal(value: &str, field: &str) -> Result<Decimal, EngineError> {
     value
         .parse()
-        .map_err(|err| EngineError::CustomError(anyhow::anyhow!("ledger {field}: {err}")))
+        .map_err(|err| EngineError::CustomError(smol_str::format_smolstr!("ledger {field}: {err}")))
 }
 
 fn fee_in_quote(fee: Decimal, fee_currency: &str, pair: &Pair, price: Decimal) -> Decimal {

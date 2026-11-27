@@ -27,7 +27,7 @@ impl DeepBookMarketDataClient {
         message_handler: Option<Box<dyn WSMessageHandler + Send + Sync>>,
     ) -> Result<Self, EngineError> {
         let indexer = DeepBookIndexerClient::new(config.indexer_url.clone()).map_err(|e| {
-            EngineError::CustomError(anyhow::anyhow!("DeepBook indexer client: {e}"))
+            EngineError::CustomError(smol_str::format_smolstr!("DeepBook indexer client: {e}"))
         })?;
         Ok(Self {
             config,

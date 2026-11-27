@@ -5,10 +5,7 @@ use tonic::service::Interceptor;
 use tonic::transport::Channel;
 use tonic::{Request, Status};
 
-#[allow(clippy::all)]
-mod trading_cli {
-    include!(concat!(env!("OUT_DIR"), "/trading_cli.rs"));
-}
+use trading_proto::trading_cli;
 
 use trading_cli::trading_cli_service_client::TradingCliServiceClient;
 use trading_cli::{

@@ -126,10 +126,10 @@ pub async fn submit_operator_reduce_only_exits(
     let rest_open = match trading_client.fetch_open_orders().await {
         Ok(orders) => Some(orders),
         Err(err) if inflight_any => {
-            return Err(EngineError::CustomError(anyhow::anyhow!(
+            return Err(EngineError::CustomError(smol_str::SmolStr::from(
                 flatten_exit_unverified(&format!(
                     "paginated REST working-order lookup failed: {err}"
-                ))
+                )),
             )));
         }
         Err(err) => {
@@ -254,7 +254,7 @@ pub async fn submit_operator_reduce_only_exits(
                     &pending,
                     SubmissionState::Unknown,
                 ))?;
-                return Err(EngineError::CustomError(anyhow::anyhow!(
+                return Err(EngineError::CustomError(smol_str::format_smolstr!(
                     "flatten send unknown after journaled {client_order_id}: {err}"
                 )));
             }
@@ -278,13 +278,13 @@ pub async fn verify_rest_working_orders_cleared(
             if remaining.is_empty() {
                 Ok(())
             } else {
-                Err(EngineError::CustomError(anyhow::anyhow!(
+                Err(EngineError::CustomError(smol_str::format_smolstr!(
                     "CancelWorking unverified: REST still shows working orders after cancel ({})",
                     remaining.join(",")
                 )))
             }
         }
-        Err(err) => Err(EngineError::CustomError(anyhow::anyhow!(
+        Err(err) => Err(EngineError::CustomError(smol_str::format_smolstr!(
             "CancelWorking unverified: REST GET /open_orders failed: {err}"
         ))),
     }
@@ -311,13 +311,13 @@ pub async fn verify_rest_exposure_flat(
                     if leftover.is_empty() {
                         Ok(())
                     } else {
-                        Err(EngineError::CustomError(anyhow::anyhow!(
+                        Err(EngineError::CustomError(smol_str::format_smolstr!(
                             "REST positions still open ({})",
                             leftover.join(",")
                         )))
                     }
                 }
-                Err(err) => Err(EngineError::CustomError(anyhow::anyhow!(
+                Err(err) => Err(EngineError::CustomError(smol_str::format_smolstr!(
                     "REST GET /positions failed: {err}"
                 ))),
             }
@@ -328,13 +328,13 @@ pub async fn verify_rest_exposure_flat(
                 if leftover.is_empty() {
                     Ok(())
                 } else {
-                    Err(EngineError::CustomError(anyhow::anyhow!(
+                    Err(EngineError::CustomError(smol_str::format_smolstr!(
                         "REST spot wallet still shows base inventory ({})",
                         leftover.join(",")
                     )))
                 }
             }
-            Err(err) => Err(EngineError::CustomError(anyhow::anyhow!(
+            Err(err) => Err(EngineError::CustomError(smol_str::format_smolstr!(
                 "REST GET /wallet failed: {err}"
             ))),
         },
@@ -612,13 +612,13 @@ async fn verify_journaled_exit_on_venue(
             order_id: order.order_id.as_str().to_string(),
         }),
         Ok(ClientOrderLookup::Terminal(_)) => Ok(VenueExit::Terminal),
-        Ok(ClientOrderLookup::Inconclusive) => Err(EngineError::CustomError(anyhow::anyhow!(
+        Ok(ClientOrderLookup::Inconclusive) => Err(EngineError::CustomError(smol_str::SmolStr::from(
             flatten_exit_unverified(&format!(
                 "journaled operator exit {} not on paginated REST working book and orderLinkId open/history lookup is inconclusive",
                 record.client_order_id
             ))
         ))),
-        Err(err) => Err(EngineError::CustomError(anyhow::anyhow!(
+        Err(err) => Err(EngineError::CustomError(smol_str::SmolStr::from(
             flatten_exit_unverified(&format!(
                 "REST lookup by orderLinkId {} failed: {err}",
                 record.client_order_id
@@ -742,11 +742,15 @@ mod tests {
                 .exchange_params
                 .get("orderLinkId")
                 .map(|s| s.to_string())
-                .ok_or_else(|| EngineError::CustomError(anyhow::anyhow!("missing orderLinkId")))?;
+                .ok_or_else(|| {
+                    EngineError::CustomError(smol_str::format_smolstr!("missing orderLinkId"))
+                })?;
             *self.last_link.lock().await = Some(link.clone());
             if let Some(err) = self.place_err.lock().await.clone() {
                 self.placed.fetch_add(1, Ordering::SeqCst);
-                return Err(EngineError::CustomError(anyhow::anyhow!(err)));
+                return Err(EngineError::CustomError(smol_str::format_smolstr!(
+                    "{}", err
+                )));
             }
             let n = self.placed.fetch_add(1, Ordering::SeqCst) + 1;
             Ok(Order {
@@ -777,7 +781,9 @@ mod tests {
 
         async fn fetch_open_orders(&self) -> Result<Vec<Order>, EngineError> {
             if let Some(err) = self.open_err.lock().await.clone() {
-                return Err(EngineError::CustomError(anyhow::anyhow!(err)));
+                return Err(EngineError::CustomError(smol_str::format_smolstr!(
+                    "{}", err
+                )));
             }
             Ok(self.rest_open.lock().await.clone())
         }
@@ -787,7 +793,9 @@ mod tests {
             client_order_id: &str,
         ) -> Result<ClientOrderLookup, EngineError> {
             if let Some(err) = self.lookup_err.lock().await.clone() {
-                return Err(EngineError::CustomError(anyhow::anyhow!(err)));
+                return Err(EngineError::CustomError(smol_str::format_smolstr!(
+                    "{}", err
+                )));
             }
             Ok(self
                 .lookups
@@ -854,7 +862,9 @@ mod tests {
             Ok(())
         }
         async fn fetch_balance(&self) -> Result<Vec<Balance>, EngineError> {
-            Err(EngineError::CustomError(anyhow::anyhow!("wallet 503")))
+            Err(EngineError::CustomError(smol_str::format_smolstr!(
+                "wallet 503"
+            )))
         }
         async fn fetch_open_orders(&self) -> Result<Vec<Order>, EngineError> {
             Ok(vec![])
@@ -885,7 +895,7 @@ mod tests {
             Err(EngineError::NotSupported("test".into()))
         }
         async fn fetch_positions(&self) -> Result<Vec<Position>, EngineError> {
-            Err(EngineError::CustomError(anyhow::anyhow!(
+            Err(EngineError::CustomError(smol_str::format_smolstr!(
                 "REST GET /positions: 503"
             )))
         }

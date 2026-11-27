@@ -56,6 +56,16 @@ rand = { workspace = true }
 # Testing
 tokio-test = { workspace = true }
 
+[dev-dependencies]
+criterion = { workspace = true }
+
+[[bench]]
+name = "orderbook_merge"
+harness = false
+
 [features]
 default = []
 redis = ["dep:redis"]
+
+[lints]
+workspace = true

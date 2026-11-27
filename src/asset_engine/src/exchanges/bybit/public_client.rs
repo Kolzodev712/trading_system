@@ -67,18 +67,15 @@ impl BybitPublicClient {
                 url, category
             );
 
-            let response = self
-                .http_client
-                .get(&url)
-                .send()
-                .await
-                .map_err(|e| EngineError::CustomError(anyhow::anyhow!("HTTP error: {}", e)))?;
+            let response = self.http_client.get(&url).send().await.map_err(|e| {
+                EngineError::CustomError(smol_str::format_smolstr!("HTTP error: {}", e))
+            })?;
 
             if !response.status().is_success() {
                 let status = response.status();
                 let text = response.text().await.unwrap_or_default();
                 error!("Instruments info request failed: {} - {}", status, text);
-                return Err(EngineError::CustomError(anyhow::anyhow!(
+                return Err(EngineError::CustomError(smol_str::format_smolstr!(
                     "Instruments info request failed: {} - {}",
                     status,
                     text
@@ -87,11 +84,11 @@ impl BybitPublicClient {
 
             let mut instruments_response: BybitInstrumentsInfoResponse =
                 response.json().await.map_err(|e| {
-                    EngineError::CustomError(anyhow::anyhow!("JSON parse error: {}", e))
+                    EngineError::CustomError(smol_str::format_smolstr!("JSON parse error: {}", e))
                 })?;
 
             if instruments_response.ret_code != 0 {
-                return Err(EngineError::CustomError(anyhow::anyhow!(
+                return Err(EngineError::CustomError(smol_str::format_smolstr!(
                     "Bybit API error: {} - {}",
                     instruments_response.ret_code,
                     instruments_response.ret_msg

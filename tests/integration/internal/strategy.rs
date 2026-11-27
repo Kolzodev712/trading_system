@@ -76,10 +76,15 @@ async fn test_strategy_monitoring_with_position() {
         strategy_manager: None,
         instrument_type: trading_core::types::common::InstrumentType::Spot,
         exchange: "Test".to_string(),
+        #[cfg(feature = "dex")]
         dex_state_manager: None,
+        #[cfg(feature = "dex")]
         dex_venue_label: None,
+        #[cfg(feature = "dex")]
         dex_quote_manager: None,
+        #[cfg(feature = "dex")]
         dex_strategy_manager: None,
+        #[cfg(feature = "dex")]
         dex_indicator_engine: None,
         strategy_caps: None,
         execution_mode: trading_core::types::ExecutionMode::Exchange,
@@ -168,10 +173,15 @@ async fn test_strategy_monitoring_without_position() {
         strategy_manager: None,
         instrument_type: trading_core::types::common::InstrumentType::Spot,
         exchange: "Test".to_string(),
+        #[cfg(feature = "dex")]
         dex_state_manager: None,
+        #[cfg(feature = "dex")]
         dex_venue_label: None,
+        #[cfg(feature = "dex")]
         dex_quote_manager: None,
+        #[cfg(feature = "dex")]
         dex_strategy_manager: None,
+        #[cfg(feature = "dex")]
         dex_indicator_engine: None,
         strategy_caps: None,
         execution_mode: trading_core::types::ExecutionMode::Exchange,
@@ -278,10 +288,15 @@ async fn test_strategy_monitoring_with_active_orders() {
         strategy_manager: None,
         instrument_type: trading_core::types::common::InstrumentType::Spot,
         exchange: "Test".to_string(),
+        #[cfg(feature = "dex")]
         dex_state_manager: None,
+        #[cfg(feature = "dex")]
         dex_venue_label: None,
+        #[cfg(feature = "dex")]
         dex_quote_manager: None,
+        #[cfg(feature = "dex")]
         dex_strategy_manager: None,
+        #[cfg(feature = "dex")]
         dex_indicator_engine: None,
         strategy_caps: None,
         execution_mode: trading_core::types::ExecutionMode::Exchange,

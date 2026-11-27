@@ -7,6 +7,10 @@ use trading_core::secret::Secret;
 use trading_core::types::common::{Exchange, InstrumentType, Pair};
 use trading_core::venue::VenueMode;
 
+/// Error text when a DEX venue mode is requested in a build without `feature = "dex"`.
+#[cfg(not(feature = "dex"))]
+pub const DEX_NOT_ENABLED_MSG: &str = "DEX support not enabled; build with --features dex";
+
 /// General bot configuration - system-wide settings, not trading-specific
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BotConfig {
@@ -21,7 +25,9 @@ pub struct BotConfig {
     #[serde(rename = "exchange_engine")]
     pub exchange_engine: ExchangeConfig,
 
-    /// DEX engine configuration (required when `venue.mode` is `dex`)
+    /// DEX engine configuration (required when `venue.mode` is `dex`).
+    /// Only present with `feature = "dex"`; otherwise a `dex_engine` JSON key is ignored.
+    #[cfg(feature = "dex")]
     #[serde(default)]
     pub dex_engine: Option<dex_engine::DexEngineConfig>,
 
@@ -425,6 +431,11 @@ impl BotConfig {
         }
         match self.venue.mode {
             VenueMode::Cex => {}
+            #[cfg(not(feature = "dex"))]
+            VenueMode::Dex | VenueMode::Both => {
+                return Err(DEX_NOT_ENABLED_MSG.to_string());
+            }
+            #[cfg(feature = "dex")]
             VenueMode::Dex | VenueMode::Both => {
                 if self.dex_engine.is_none() {
                     return Err(
@@ -472,6 +483,11 @@ impl BotConfig {
                     self.venue.mode
                 ));
             }
+            #[cfg(not(feature = "dex"))]
+            "dex" | "dex-strategies" => {
+                return Err(DEX_NOT_ENABLED_MSG.to_string());
+            }
+            #[cfg(feature = "dex")]
             "dex" | "dex-strategies"
                 if !matches!(self.venue.mode, VenueMode::Dex | VenueMode::Both) =>
             {
@@ -480,6 +496,7 @@ impl BotConfig {
                     self.venue.mode
                 ));
             }
+            #[cfg(feature = "dex")]
             "dex" => {
                 if let Some(ref dex) = self.dex_engine {
                     dex.deepbook_config()
@@ -488,6 +505,7 @@ impl BotConfig {
                         .map_err(|e| format!("invalid dex_engine DeepBook config: {e}"))?;
                 }
             }
+            #[cfg(feature = "dex")]
             "dex-strategies" => {
                 if self.dex_engine.is_none() {
                     return Err("dex-strategies mode requires dex_engine in bot config".into());
@@ -676,6 +694,20 @@ mod config_smoke_tests {
         cfg.validate_for_runner("levels").unwrap();
     }
 
+    #[cfg(not(feature = "dex"))]
+    #[test]
+    fn dex_venue_modes_rejected_without_dex_feature() {
+        for example in ["bot.dex.example.json", "bot.both.example.json"] {
+            let cfg = BotConfig::load_from_file(example_path(example).to_str().unwrap()).unwrap();
+            assert_eq!(cfg.validate().unwrap_err(), DEX_NOT_ENABLED_MSG);
+            assert_eq!(
+                cfg.validate_for_runner("dex").unwrap_err(),
+                DEX_NOT_ENABLED_MSG
+            );
+        }
+    }
+
+    #[cfg(feature = "dex")]
     #[test]
     fn bot_dex_example_validates() {
         let path = example_path("bot.dex.example.json");
@@ -685,6 +717,7 @@ mod config_smoke_tests {
         assert!(cfg.validate_for_runner("levels").is_err());
     }
 
+    #[cfg(feature = "dex")]
     #[test]
     fn bot_both_example_validates() {
         let path = example_path("bot.both.example.json");
@@ -817,6 +850,7 @@ mod config_smoke_tests {
         assert!(err.contains("second executing strategy"));
     }
 
+    #[cfg(feature = "dex")]
     #[test]
     fn dex_example_labels_deepbook_testnet() {
         let cfg = BotConfig::load_from_file(example_path("bot.dex.example.json").to_str().unwrap())

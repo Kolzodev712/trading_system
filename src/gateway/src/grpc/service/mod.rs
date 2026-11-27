@@ -1,6 +1,8 @@
 //! gRPC Service Implementation
 mod converters;
+#[cfg(feature = "dex")]
 mod dex_quotes;
+#[cfg(feature = "dex")]
 mod dex_strategies;
 mod levels;
 mod monitoring;
@@ -12,9 +14,11 @@ pub use monitoring::{MonitoringService, StrategyInfo};
 pub use strategy_config::{OperatorFields, StrategyOperator, StrategyOperatorHandle};
 
 use async_trait::async_trait;
+#[cfg(feature = "dex")]
 use dex_engine::runtime::DexEngineRuntime;
 use exchange_engine::state::manager::ExchangeStateManager;
 use indicator_engine::IndicatorService;
+#[cfg(feature = "dex")]
 use smol_str::SmolStr;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -23,6 +27,7 @@ use tonic::{Request, Response, Status};
 use trading_core::grpc::{TradingControl, GLOBAL_TOGGLE_SEMANTICS};
 use trading_core::types::exchange::OrderRequest;
 use trading_core::venue::cex::traits::TradingClient;
+#[cfg(feature = "dex")]
 use trading_engine::dex::{DexIndicatorEngine, DexQuoteManager, DexStrategyManager};
 use trading_engine::levels::LevelManager;
 use trading_engine::state::manager::TradingStateManager;
@@ -44,12 +49,19 @@ pub struct TradingCliServiceImpl {
     strategy_manager: Option<Arc<RwLock<StrategyManager>>>,
     instrument_type: trading_core::types::common::InstrumentType,
     exchange: String,
+    #[cfg(feature = "dex")]
     dex_state_manager: Option<Arc<dex_engine::state::manager::DexStateManager>>,
+    #[cfg(feature = "dex")]
     dex_venue_label: Option<String>,
+    #[cfg(feature = "dex")]
     dex_quote_manager: Option<Arc<RwLock<DexQuoteManager>>>,
+    #[cfg(feature = "dex")]
     dex_strategy_manager: Option<Arc<RwLock<DexStrategyManager>>>,
+    #[cfg(feature = "dex")]
     dex_indicator_engine: Option<Arc<DexIndicatorEngine>>,
+    #[cfg(feature = "dex")]
     dex_runtime: Option<Arc<DexEngineRuntime>>,
+    #[cfg(feature = "dex")]
     dex_balance_manager_id: Option<SmolStr>,
     strategy_operator: Option<strategy_config::StrategyOperatorHandle>,
     strategy_caps: Option<Arc<RwLock<std::collections::HashMap<String, rust_decimal::Decimal>>>>,
@@ -87,12 +99,19 @@ impl TradingCliServiceImpl {
             strategy_manager: None,
             instrument_type: trading_core::types::common::InstrumentType::Spot,
             exchange: "Unknown".to_string(),
+            #[cfg(feature = "dex")]
             dex_state_manager: None,
+            #[cfg(feature = "dex")]
             dex_venue_label: None,
+            #[cfg(feature = "dex")]
             dex_quote_manager: None,
+            #[cfg(feature = "dex")]
             dex_strategy_manager: None,
+            #[cfg(feature = "dex")]
             dex_indicator_engine: None,
+            #[cfg(feature = "dex")]
             dex_runtime: None,
+            #[cfg(feature = "dex")]
             dex_balance_manager_id: None,
             strategy_operator: None,
             strategy_caps: None,
@@ -106,6 +125,7 @@ impl TradingCliServiceImpl {
         }
     }
 
+    #[cfg(feature = "dex")]
     pub fn with_dex_strategy_manager(
         mut self,
         strategy_manager: Arc<RwLock<DexStrategyManager>>,
@@ -114,11 +134,13 @@ impl TradingCliServiceImpl {
         self
     }
 
+    #[cfg(feature = "dex")]
     pub fn with_dex_indicator_engine(mut self, engine: Arc<DexIndicatorEngine>) -> Self {
         self.dex_indicator_engine = Some(engine);
         self
     }
 
+    #[cfg(feature = "dex")]
     pub fn with_dex_quote_control(
         mut self,
         quote_manager: Arc<RwLock<DexQuoteManager>>,
@@ -131,6 +153,7 @@ impl TradingCliServiceImpl {
         self
     }
 
+    #[cfg(feature = "dex")]
     pub fn with_dex_state_manager(
         mut self,
         dex_state_manager: Arc<dex_engine::state::manager::DexStateManager>,
@@ -241,12 +264,19 @@ impl TradingCliServiceImpl {
             strategy_manager: self.strategy_manager.clone(),
             instrument_type: self.instrument_type.clone(),
             exchange: self.exchange.clone(),
+            #[cfg(feature = "dex")]
             dex_state_manager: self.dex_state_manager.clone(),
+            #[cfg(feature = "dex")]
             dex_venue_label: self.dex_venue_label.clone(),
+            #[cfg(feature = "dex")]
             dex_quote_manager: self.dex_quote_manager.clone(),
+            #[cfg(feature = "dex")]
             dex_strategy_manager: self.dex_strategy_manager.clone(),
+            #[cfg(feature = "dex")]
             dex_indicator_engine: self.dex_indicator_engine.clone(),
+            #[cfg(feature = "dex")]
             dex_runtime: self.dex_runtime.clone(),
+            #[cfg(feature = "dex")]
             dex_balance_manager_id: self.dex_balance_manager_id.clone(),
             strategy_operator: self.strategy_operator.clone(),
             strategy_caps: self.strategy_caps.clone(),
@@ -260,6 +290,7 @@ impl TradingCliServiceImpl {
         }
     }
 
+    #[cfg(feature = "dex")]
     fn dex_quote_service(&self) -> Option<dex_quotes::DexQuoteService> {
         Some(dex_quotes::DexQuoteService {
             quote_manager: self.dex_quote_manager.clone()?,
@@ -268,6 +299,7 @@ impl TradingCliServiceImpl {
         })
     }
 
+    #[cfg(feature = "dex")]
     fn dex_strategy_service(&self) -> Option<dex_strategies::DexStrategyService> {
         Some(dex_strategies::DexStrategyService {
             strategy_manager: self.dex_strategy_manager.clone()?,
@@ -279,6 +311,7 @@ impl TradingCliServiceImpl {
             level_manager: self.level_manager.clone(),
             trading_state_manager: self.trading_state_manager.clone(),
             exchange_state_manager: self.exchange_state_manager.clone(),
+            #[cfg(feature = "dex")]
             dex_state_manager: self.dex_state_manager.clone(),
             market_data_state_manager: self.market_data_state_manager.clone(),
             indicator_calculator: self.indicator_calculator.clone(),
@@ -286,9 +319,13 @@ impl TradingCliServiceImpl {
             strategy_manager: self.strategy_manager.clone(),
             instrument_type: self.instrument_type.clone(),
             exchange: self.exchange.clone(),
+            #[cfg(feature = "dex")]
             dex_venue_label: self.dex_venue_label.clone(),
+            #[cfg(feature = "dex")]
             dex_quote_manager: self.dex_quote_manager.clone(),
+            #[cfg(feature = "dex")]
             dex_strategy_manager: self.dex_strategy_manager.clone(),
+            #[cfg(feature = "dex")]
             dex_indicator_engine: self.dex_indicator_engine.clone(),
             strategy_caps: self.strategy_caps.clone(),
             execution_mode: self.execution_mode,
@@ -458,6 +495,7 @@ impl TradingCliService for TradingCliServiceImpl {
         self.level_service().toggle_level(request).await
     }
 
+    #[cfg(feature = "dex")]
     async fn toggle_dex_quote(
         &self,
         request: Request<trading_cli::ToggleDexQuoteRequest>,
@@ -471,6 +509,18 @@ impl TradingCliService for TradingCliServiceImpl {
         service.toggle_dex_quote(request).await
     }
 
+    #[cfg(not(feature = "dex"))]
+    async fn toggle_dex_quote(
+        &self,
+        request: Request<trading_cli::ToggleDexQuoteRequest>,
+    ) -> Result<Response<trading_cli::ToggleDexQuoteResponse>, Status> {
+        self.require_mutating(&request)?;
+        Err(Status::failed_precondition(
+            "DEX support not enabled; build with --features dex",
+        ))
+    }
+
+    #[cfg(feature = "dex")]
     async fn cancel_dex_pool_orders(
         &self,
         request: Request<trading_cli::CancelDexPoolOrdersRequest>,
@@ -484,6 +534,18 @@ impl TradingCliService for TradingCliServiceImpl {
         service.cancel_dex_pool_orders(request).await
     }
 
+    #[cfg(not(feature = "dex"))]
+    async fn cancel_dex_pool_orders(
+        &self,
+        request: Request<trading_cli::CancelDexPoolOrdersRequest>,
+    ) -> Result<Response<trading_cli::CancelDexPoolOrdersResponse>, Status> {
+        self.require_mutating(&request)?;
+        Err(Status::failed_precondition(
+            "DEX support not enabled; build with --features dex",
+        ))
+    }
+
+    #[cfg(feature = "dex")]
     async fn toggle_dex_strategy(
         &self,
         request: Request<trading_cli::ToggleDexStrategyRequest>,
@@ -495,6 +557,17 @@ impl TradingCliService for TradingCliServiceImpl {
             ));
         };
         service.toggle_dex_strategy(request).await
+    }
+
+    #[cfg(not(feature = "dex"))]
+    async fn toggle_dex_strategy(
+        &self,
+        request: Request<trading_cli::ToggleDexStrategyRequest>,
+    ) -> Result<Response<trading_cli::ToggleDexStrategyResponse>, Status> {
+        self.require_mutating(&request)?;
+        Err(Status::failed_precondition(
+            "DEX support not enabled; build with --features dex",
+        ))
     }
 
     async fn toggle_strategy(

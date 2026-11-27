@@ -8,7 +8,9 @@ use tracing::{error, info, warn};
 use crate::config::BotConfig;
 use crate::platform::shutdown::ShutdownManager;
 
-use crate::platform::venue::{CexVenueHandle, DexVenueHandle, VenueInterface};
+#[cfg(feature = "dex")]
+use crate::platform::venue::DexVenueHandle;
+use crate::platform::venue::{CexVenueHandle, VenueInterface};
 use asset_engine::AssetService;
 use indicator_engine::IndicatorService;
 use market_data_engine::{
@@ -31,6 +33,7 @@ pub type IndicatorServiceHandles = (
 );
 
 /// DEX indicator init: CEX indicator stub handles plus optional DEX engine.
+#[cfg(feature = "dex")]
 pub type DexIndicatorServiceHandles = (
     IndicatorServiceHandles,
     Option<Arc<trading_engine::dex::DexIndicatorEngine>>,
@@ -352,6 +355,7 @@ pub fn initialize_market_data_engine(
 }
 
 /// Initialize market data from DeepBook indexer (DEX mode).
+#[cfg(feature = "dex")]
 pub fn initialize_dex_market_data_engine(
     bot_config: &BotConfig,
     shutdown_manager: &ShutdownManager,
@@ -422,6 +426,7 @@ pub fn initialize_dex_market_data_engine(
 }
 
 /// Whether `venue.mode: both` should also poll DeepBook indexer MD.
+#[cfg(feature = "dex")]
 pub fn should_spawn_deepbook_sidecar(bot_config: &BotConfig) -> bool {
     bot_config.venue.mode == VenueMode::Both
         && bot_config.dex_engine.as_ref().is_some_and(|dex| {
@@ -431,6 +436,7 @@ pub fn should_spawn_deepbook_sidecar(bot_config: &BotConfig) -> bool {
 }
 
 /// Poll DeepBook alongside CEX MD, writing into the shared `MarketDataStateManager`.
+#[cfg(feature = "dex")]
 pub fn spawn_deepbook_market_data_sidecar(
     bot_config: &BotConfig,
     shutdown_manager: &ShutdownManager,
@@ -484,6 +490,7 @@ pub fn spawn_deepbook_market_data_sidecar(
 }
 
 /// DEX indicator engine + empty CEX indicator calculator stub for gRPC monitoring.
+#[cfg(feature = "dex")]
 pub fn initialize_dex_indicator_service(
     indicators_path: &str,
     market_data_rx: trading_core::channels::market_data::MarketDataUpdateReceiver,
@@ -515,6 +522,7 @@ pub fn initialize_dex_indicator_service(
 }
 
 /// Minimal indicator stack for dex-only mode (no MongoDB, no MD subscription).
+#[cfg(feature = "dex")]
 pub fn initialize_indicator_service_dex_stub(
     shutdown_manager: &ShutdownManager,
 ) -> IndicatorServiceHandles {
@@ -690,6 +698,7 @@ pub async fn build_cex_handle(
 }
 
 /// Build DEX handles (`dex_engine`, DeepBook on Sui).
+#[cfg(feature = "dex")]
 pub async fn build_dex_handle(
     bot_config: &BotConfig,
     dex_config: dex_engine::DexEngineConfig,
@@ -730,6 +739,9 @@ pub async fn initialize_venue(
         VenueMode::Cex => Ok(VenueInterface::Cex(
             build_cex_handle(bot_config, shutdown_manager).await?,
         )),
+        #[cfg(not(feature = "dex"))]
+        VenueMode::Dex | VenueMode::Both => Err(crate::config::DEX_NOT_ENABLED_MSG.into()),
+        #[cfg(feature = "dex")]
         VenueMode::Dex => {
             let dex_config = bot_config
                 .dex_engine
@@ -739,6 +751,7 @@ pub async fn initialize_venue(
                 build_dex_handle(bot_config, dex_config, shutdown_manager).await?,
             ))
         }
+        #[cfg(feature = "dex")]
         VenueMode::Both => {
             let dex_config = bot_config
                 .dex_engine

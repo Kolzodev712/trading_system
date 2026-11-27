@@ -127,6 +127,13 @@ pub fn environment_label(exchange: &Exchange, config: &JsonValue) -> String {
     }
 }
 
+#[cfg(not(feature = "dex"))]
+fn dex_environment(_bot: &BotConfig) -> String {
+    // DEX venue modes are rejected by `BotConfig::validate` without `feature = "dex"`.
+    "UNKNOWN".to_string()
+}
+
+#[cfg(feature = "dex")]
 fn dex_environment(bot: &BotConfig) -> String {
     let Some(dex) = bot.dex_engine.as_ref() else {
         return "UNKNOWN".to_string();

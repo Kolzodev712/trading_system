@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-dex_engine = { path = "../dex_engine" }
+dex_engine = { path = "../dex_engine", optional = true }
 trading_core = { path = "../../libs/trading_core" }
 trading_trace = { path = "../../libs/trading_trace" }
 
@@ -66,6 +66,7 @@ harness = false
 [features]
 default = []
 redis = ["dep:redis"]
+dex = ["dep:dex_engine"]
 
 [lints]
 workspace = true

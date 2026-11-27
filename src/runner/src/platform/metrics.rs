@@ -6,6 +6,7 @@ use std::sync::Arc;
 use super::zenoh_metrics::{
     ZENOH_TRANSPORT_DROPPED, ZENOH_TRANSPORT_PUBLISH_ERRORS, ZENOH_TRANSPORT_SENT,
 };
+#[cfg(feature = "dex")]
 use dex_engine::runtime::{DEX_EXECUTE_ERRORS_TOTAL, DEX_EXECUTE_TOTAL};
 use trading_core::metrics::{BROADCAST_LAG_CEX, BROADCAST_LAG_DEX, BROADCAST_LAG_MD};
 use trading_core::venue::VenueMode;
@@ -30,7 +31,23 @@ pub fn build_metrics_provider(
     })
 }
 
+/// DEX execute counters as `(total, errors)`; always `(0, 0)` without `feature = "dex"`.
+fn dex_execute_counters() -> (u64, u64) {
+    #[cfg(feature = "dex")]
+    {
+        (
+            DEX_EXECUTE_TOTAL.load(Ordering::Relaxed),
+            DEX_EXECUTE_ERRORS_TOTAL.load(Ordering::Relaxed),
+        )
+    }
+    #[cfg(not(feature = "dex"))]
+    {
+        (0, 0)
+    }
+}
+
 pub fn encode_platform_metrics(venue_mode: VenueMode) -> String {
+    let (dex_execute_total, dex_execute_errors_total) = dex_execute_counters();
     let mode_value = match venue_mode {
         VenueMode::Cex => 0,
         VenueMode::Dex => 1,
@@ -61,8 +78,8 @@ pub fn encode_platform_metrics(venue_mode: VenueMode) -> String {
          # TYPE zenoh_transport_publish_errors_total counter\n\
          zenoh_transport_publish_errors_total {}\n",
         mode_value,
-        DEX_EXECUTE_TOTAL.load(Ordering::Relaxed),
-        DEX_EXECUTE_ERRORS_TOTAL.load(Ordering::Relaxed),
+        dex_execute_total,
+        dex_execute_errors_total,
         BROADCAST_LAG_MD.load(Ordering::Relaxed),
         BROADCAST_LAG_CEX.load(Ordering::Relaxed),
         BROADCAST_LAG_DEX.load(Ordering::Relaxed),

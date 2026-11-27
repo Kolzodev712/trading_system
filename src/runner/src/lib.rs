@@ -1,5 +1,6 @@
 pub mod cex;
 pub mod config;
+#[cfg(feature = "dex")]
 pub mod dex;
 pub mod launch;
 pub mod platform;
@@ -35,6 +36,7 @@ pub struct SharedServices {
     /// Clone of indicator service level bindings (avoids locking `indicator_service` while its run loop holds the mutex).
     pub level_pricing: Arc<parking_lot::RwLock<LevelPricingRegistry>>,
     pub indicator_calculator: Arc<indicator_engine::calculator::IndicatorCalculator>,
+    #[cfg(feature = "dex")]
     pub dex_indicator_engine: Option<Arc<trading_engine::dex::DexIndicatorEngine>>,
     pub shutdown_manager: ShutdownManager,
     pub market_data_handle: JoinHandle<()>,
@@ -95,6 +97,7 @@ pub async fn run(
     )
     .await?;
     let needs_cex_md = matches!(bot_config.venue.mode, VenueMode::Cex | VenueMode::Both);
+    #[cfg(feature = "dex")]
     let needs_dex_md = matches!(bot_config.venue.mode, VenueMode::Dex | VenueMode::Both);
 
     let configured_pairs = if needs_cex_md {
@@ -109,27 +112,36 @@ pub async fn run(
         )
         .await;
         pairs
-    } else if needs_dex_md {
-        let dex = bot_config
-            .dex_engine
-            .as_ref()
-            .ok_or("dex_engine required when venue.mode is dex")?;
-        if dex.chain == dex_engine::config::DexChain::Sui
-            && dex.venue == trading_core::venue::VenueId::DeepBook
+    } else {
+        #[cfg(feature = "dex")]
         {
-            let deepbook = dex
-                .deepbook_config()
-                .map_err(|e| format!("invalid dex_engine config: {e}"))?;
-            deepbook
-                .pools
-                .iter()
-                .map(|p| dex_engine::pool_name_to_pair(p.as_str()))
-                .collect()
-        } else {
+            if needs_dex_md {
+                let dex = bot_config
+                    .dex_engine
+                    .as_ref()
+                    .ok_or("dex_engine required when venue.mode is dex")?;
+                if dex.chain == dex_engine::config::DexChain::Sui
+                    && dex.venue == trading_core::venue::VenueId::DeepBook
+                {
+                    let deepbook = dex
+                        .deepbook_config()
+                        .map_err(|e| format!("invalid dex_engine config: {e}"))?;
+                    deepbook
+                        .pools
+                        .iter()
+                        .map(|p| dex_engine::pool_name_to_pair(p.as_str()))
+                        .collect()
+                } else {
+                    Vec::new()
+                }
+            } else {
+                Vec::new()
+            }
+        }
+        #[cfg(not(feature = "dex"))]
+        {
             Vec::new()
         }
-    } else {
-        Vec::new()
     };
 
     let (venue, market_data_rx, market_data_handle, market_data_state_manager) = if needs_cex_md {
@@ -137,6 +149,7 @@ pub async fn run(
             let cex = platform::init::build_cex_handle(&bot_config, &shutdown_manager).await?;
             let (_, market_data_rx, market_data_handle, market_data_state_manager) =
                 platform::init::initialize_market_data_engine(&bot_config, &shutdown_manager)?;
+            #[cfg(feature = "dex")]
             let venue = if bot_config.venue.mode == VenueMode::Both {
                 let dex_config = bot_config
                     .dex_engine
@@ -149,6 +162,8 @@ pub async fn run(
             } else {
                 VenueInterface::Cex(cex)
             };
+            #[cfg(not(feature = "dex"))]
+            let venue = VenueInterface::Cex(cex);
             (
                 venue,
                 market_data_rx,
@@ -168,50 +183,65 @@ pub async fn run(
                 market_data_state_manager,
             )
         }
-    } else if needs_dex_md {
-        let dex = bot_config
-            .dex_engine
-            .as_ref()
-            .ok_or("dex_engine required when venue.mode is dex")?;
-        if dex.chain == dex_engine::config::DexChain::Sui
-            && dex.venue == trading_core::venue::VenueId::DeepBook
-        {
-            let venue = platform::init::initialize_venue(&bot_config, &shutdown_manager).await?;
-            let (_, market_data_rx, market_data_handle, market_data_state_manager) =
-                platform::init::initialize_dex_market_data_engine(&bot_config, &shutdown_manager)?;
-            (
-                venue,
-                market_data_rx,
-                market_data_handle,
-                market_data_state_manager,
-            )
-        } else {
-            let venue = platform::init::initialize_venue(&bot_config, &shutdown_manager).await?;
-            let (market_data_tx, market_data_rx) =
-                trading_core::channels::market_data::market_data_update_channel(
-                    bot_config.channels.market_data_capacity,
-                );
-            let symbol_registry = Arc::new(
-                trading_core::registry::symbol::SymbolRegistry::from_pairs(vec![]),
-            );
-            let market_data_state_manager = Arc::new(
-                market_data_engine::state::manager::MarketDataStateManager::new(
-                    market_data_tx.clone(),
-                    symbol_registry,
-                ),
-            );
-            let market_data_handle = tokio::spawn(async {});
-            (
-                venue,
-                market_data_rx,
-                market_data_handle,
-                market_data_state_manager,
-            )
-        }
     } else {
-        return Err("invalid venue.mode configuration".into());
+        #[cfg(feature = "dex")]
+        {
+            if needs_dex_md {
+                let dex = bot_config
+                    .dex_engine
+                    .as_ref()
+                    .ok_or("dex_engine required when venue.mode is dex")?;
+                if dex.chain == dex_engine::config::DexChain::Sui
+                    && dex.venue == trading_core::venue::VenueId::DeepBook
+                {
+                    let venue =
+                        platform::init::initialize_venue(&bot_config, &shutdown_manager).await?;
+                    let (_, market_data_rx, market_data_handle, market_data_state_manager) =
+                        platform::init::initialize_dex_market_data_engine(
+                            &bot_config,
+                            &shutdown_manager,
+                        )?;
+                    (
+                        venue,
+                        market_data_rx,
+                        market_data_handle,
+                        market_data_state_manager,
+                    )
+                } else {
+                    let venue =
+                        platform::init::initialize_venue(&bot_config, &shutdown_manager).await?;
+                    let (market_data_tx, market_data_rx) =
+                        trading_core::channels::market_data::market_data_update_channel(
+                            bot_config.channels.market_data_capacity,
+                        );
+                    let symbol_registry = Arc::new(
+                        trading_core::registry::symbol::SymbolRegistry::from_pairs(vec![]),
+                    );
+                    let market_data_state_manager = Arc::new(
+                        market_data_engine::state::manager::MarketDataStateManager::new(
+                            market_data_tx.clone(),
+                            symbol_registry,
+                        ),
+                    );
+                    let market_data_handle = tokio::spawn(async {});
+                    (
+                        venue,
+                        market_data_rx,
+                        market_data_handle,
+                        market_data_state_manager,
+                    )
+                }
+            } else {
+                return Err("invalid venue.mode configuration".into());
+            }
+        }
+        #[cfg(not(feature = "dex"))]
+        {
+            return Err("invalid venue.mode configuration".into());
+        }
     };
 
+    #[cfg(feature = "dex")]
     if platform::init::should_spawn_deepbook_sidecar(&bot_config) {
         let _deepbook_md_handle = platform::init::spawn_deepbook_market_data_sidecar(
             &bot_config,
@@ -228,36 +258,44 @@ pub async fn run(
     let (indicator_tx, indicator_rx) = trading_core::channels::indicators::indicator_update_channel(
         bot_config.channels.indicator_update_capacity,
     );
-    let (
-        (indicator_service, indicator_handle, indicator_calculator, level_pricing),
-        dex_indicator_engine,
-    ) = if bot_config.venue.mode == VenueMode::Dex {
-        platform::init::initialize_dex_indicator_service(
+    #[cfg(feature = "dex")]
+    let (dex_indicator_handles, dex_indicator_engine) = if bot_config.venue.mode == VenueMode::Dex {
+        let (handles, engine) = platform::init::initialize_dex_indicator_service(
             config_paths
                 .dex_indicators
                 .as_deref()
                 .unwrap_or("config/dex/indicators.json"),
             market_data_rx.resubscribe(),
             &shutdown_manager,
-        )?
+        )?;
+        (Some(handles), engine)
     } else {
-        let mongo = mongo_client
-            .as_ref()
-            .ok_or("MongoDB is required for this runner mode")?;
-        let (svc, handle, calc, pricing) = platform::init::initialize_indicator_service(
-            &bot_config,
-            mongo,
-            market_data_rx.resubscribe(),
-            indicator_tx,
-            &shutdown_manager,
-            configured_pairs.as_slice(),
-        )
-        .await?;
-        ((svc, handle, calc, pricing), None)
+        (None, None)
     };
+    #[cfg(not(feature = "dex"))]
+    let dex_indicator_handles: Option<platform::init::IndicatorServiceHandles> = None;
 
-    let trading_state_manager = match &venue {
-        VenueInterface::Cex(cex) | VenueInterface::Both { cex, .. } => {
+    let (indicator_service, indicator_handle, indicator_calculator, level_pricing) =
+        if let Some(handles) = dex_indicator_handles {
+            handles
+        } else {
+            let mongo = mongo_client
+                .as_ref()
+                .ok_or("MongoDB is required for this runner mode")?;
+            let (svc, handle, calc, pricing) = platform::init::initialize_indicator_service(
+                &bot_config,
+                mongo,
+                market_data_rx.resubscribe(),
+                indicator_tx,
+                &shutdown_manager,
+                configured_pairs.as_slice(),
+            )
+            .await?;
+            (svc, handle, calc, pricing)
+        };
+
+    let trading_state_manager = match venue.cex_handle() {
+        Some(cex) => {
             let instrument_type = bot_config
                 .get_instrument_type()
                 .unwrap_or(trading_core::types::common::InstrumentType::Spot);
@@ -276,7 +314,7 @@ pub async fn run(
             platform::init::start_trading_state_subscriber(tsm.clone(), shutdown_manager.clone());
             Some(tsm)
         }
-        VenueInterface::Dex { .. } => None,
+        None => None,
     };
 
     let services = SharedServices {
@@ -290,6 +328,7 @@ pub async fn run(
         market_data_handle,
         trading_ws_handle: tokio::spawn(async {}),
         indicator_handle,
+        #[cfg(feature = "dex")]
         dex_indicator_engine,
         trading_state_manager,
         market_data_state_manager,
@@ -324,6 +363,7 @@ pub async fn run(
             )
             .await?;
         }
+        #[cfg(feature = "dex")]
         "dex" => {
             let _ = extra_factory;
             if !matches!(services.venue.mode(), VenueMode::Dex | VenueMode::Both) {
@@ -338,6 +378,7 @@ pub async fn run(
             )
             .await?;
         }
+        #[cfg(feature = "dex")]
         "dex-strategies" => {
             let _ = extra_factory;
             if !matches!(services.venue.mode(), VenueMode::Dex | VenueMode::Both) {
@@ -393,6 +434,7 @@ impl SharedServices {
 
 pub use cex::{level_runner, strategy_runner, strategy_runner_with};
 pub use config::mode_config;
+#[cfg(feature = "dex")]
 pub use dex::{run as dex_runner, run_levels, run_strategies, DexRunConfig};
 pub use launch::launch;
 pub use platform::build_metrics_provider;
@@ -403,9 +445,11 @@ pub use platform::init;
 pub use platform::shutdown;
 pub use platform::venue;
 
+#[cfg(feature = "dex")]
+pub use platform::init::build_dex_handle;
 pub use platform::init::{
-    build_cex_handle, build_dex_handle, create_level_persistence, create_shutdown_manager,
-    fetch_asset_data, initialize_asset_service, initialize_exchange_engine,
-    initialize_indicator_service, initialize_market_data_engine, initialize_mongodb,
-    initialize_venue, setup_shutdown_handler, start_trading_state_subscriber,
+    build_cex_handle, create_level_persistence, create_shutdown_manager, fetch_asset_data,
+    initialize_asset_service, initialize_exchange_engine, initialize_indicator_service,
+    initialize_market_data_engine, initialize_mongodb, initialize_venue, setup_shutdown_handler,
+    start_trading_state_subscriber,
 };

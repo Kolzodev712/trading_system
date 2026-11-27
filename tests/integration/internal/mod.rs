@@ -11,6 +11,7 @@
 pub mod channels;
 pub mod circuit_breaker;
 pub mod config;
+#[cfg(feature = "dex")]
 pub mod dex;
 pub mod futures;
 pub mod indicator;

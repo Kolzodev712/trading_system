@@ -16,6 +16,13 @@ const MD_STALE_SECS: u64 = 120;
 const MD_GRACE_SECS: u64 = 45;
 
 /// DeepBook pool pairs from bot config (empty when not DEX/both).
+#[cfg(not(feature = "dex"))]
+pub fn dex_pairs_from_config(_bot_config: &BotConfig) -> Vec<Pair> {
+    Vec::new()
+}
+
+/// DeepBook pool pairs from bot config (empty when not DEX/both).
+#[cfg(feature = "dex")]
 pub fn dex_pairs_from_config(bot_config: &BotConfig) -> Vec<Pair> {
     if !matches!(bot_config.venue.mode, VenueMode::Dex | VenueMode::Both) {
         return Vec::new();

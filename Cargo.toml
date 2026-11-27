@@ -103,6 +103,11 @@ debug = 1
 [workspace.lints.rust]
 unused = { level = "warn", priority = -1 }
 
+[features]
+default = []
+# Opt-in DEX integration tests (DeepBook / dex_engine). Off by default; see Design Log #016.
+dex = ["trading_engine/dex", "runner/dex", "market_data_engine/dex"]
+
 [dependencies]
 
 [dev-dependencies]

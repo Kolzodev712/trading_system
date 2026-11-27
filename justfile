@@ -39,6 +39,19 @@ test:
     # 5R packages include integration/bin tests (frozen parity lives under tests/)
     cargo test -p strategy_core -p research_engine -p research_cli -p trading_engine -p runner -p btc_price_ma_app --all-targets
 
+# Fail if default CEX packages still pull dex_engine (Design Log #016 Phase A).
+test-cex-no-dex:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    for pkg in trading_engine runner gateway market_data_engine btc_price_ma_app; do
+      if cargo tree -p "$pkg" -e normal | grep -E 'dex_engine v' >/dev/null; then
+        echo "dex_engine still in default $pkg tree"
+        cargo tree -p "$pkg" -e normal | grep -E 'dex_engine' || true
+        exit 1
+      fi
+    done
+    echo "cex-no-dex: PASS"
+
 # Fail if live crates depend on research/model crates or the Candidate #2 app.
 test-5r-graph:
     #!/usr/bin/env bash

@@ -8,6 +8,7 @@ use tonic::Status;
 use tracing::debug;
 use trading_core::grpc::TradingControl;
 use trading_core::utils::hours_ago;
+#[cfg(feature = "dex")]
 use trading_engine::dex::{DexIndicatorEngine, DexQuoteManager, DexStrategyManager};
 use trading_engine::levels::LevelManager;
 use trading_engine::state::manager::TradingStateManager;
@@ -34,9 +35,13 @@ pub struct MonitoringService {
     pub level_manager: Arc<RwLock<LevelManager>>,
     pub trading_state_manager: Arc<TradingStateManager>,
     pub exchange_state_manager: Arc<ExchangeStateManager>,
+    #[cfg(feature = "dex")]
     pub dex_state_manager: Option<Arc<dex_engine::state::manager::DexStateManager>>,
+    #[cfg(feature = "dex")]
     pub dex_quote_manager: Option<Arc<RwLock<DexQuoteManager>>>,
+    #[cfg(feature = "dex")]
     pub dex_strategy_manager: Option<Arc<RwLock<DexStrategyManager>>>,
+    #[cfg(feature = "dex")]
     pub dex_indicator_engine: Option<Arc<DexIndicatorEngine>>,
     pub market_data_state_manager: Arc<market_data_engine::state::manager::MarketDataStateManager>,
     pub indicator_calculator: Arc<indicator_engine::calculator::IndicatorCalculator>,
@@ -44,6 +49,7 @@ pub struct MonitoringService {
     pub strategy_manager: Option<Arc<RwLock<StrategyManager>>>,
     pub instrument_type: trading_core::types::common::InstrumentType,
     pub exchange: String,
+    #[cfg(feature = "dex")]
     pub dex_venue_label: Option<String>,
     pub strategy_caps: Option<Arc<RwLock<HashMap<String, rust_decimal::Decimal>>>>,
     pub execution_mode: trading_core::types::ExecutionMode,
@@ -306,7 +312,11 @@ impl MonitoringService {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_millis() as i64)
             .unwrap_or(0);
-        let runner_mode = if self.dex_state_manager.is_some() {
+        #[cfg(feature = "dex")]
+        let is_dex_runner = self.dex_state_manager.is_some();
+        #[cfg(not(feature = "dex"))]
+        let is_dex_runner = false;
+        let runner_mode = if is_dex_runner {
             "dex"
         } else if self.strategy_manager.is_some() {
             "strategies"
@@ -396,6 +406,7 @@ impl MonitoringService {
         Ok(data)
     }
 
+    #[cfg(feature = "dex")]
     async fn collect_dex_snapshot(&self) -> Option<trading_cli::DexVenueSnapshot> {
         let dex_sm = self.dex_state_manager.as_ref()?;
         let snap = dex_engine::monitoring::collect_dex_snapshot(
@@ -502,6 +513,11 @@ impl MonitoringService {
             dex_strategies,
             dex_indicators,
         })
+    }
+
+    #[cfg(not(feature = "dex"))]
+    async fn collect_dex_snapshot(&self) -> Option<trading_cli::DexVenueSnapshot> {
+        None
     }
 
     pub async fn get_trades(&self) -> Result<Vec<trading_cli::Trade>, Status> {

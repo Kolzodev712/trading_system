@@ -1,8 +1,10 @@
 use trading_core::{error::EngineError, types::common::Exchange};
 
+#[cfg(feature = "dex")]
+use super::exchanges::deepbook::config::DeepBookMarketDataConfig;
 use super::exchanges::{
     binance::config::BinanceConfig, bybit::config::BybitConfig,
-    deepbook::config::DeepBookMarketDataConfig, k_paper::config::PaperConfig as KPaperConfig,
+    k_paper::config::PaperConfig as KPaperConfig,
 };
 use serde::{Deserialize, Serialize};
 
@@ -34,6 +36,7 @@ pub enum ExchangeConfig {
     Binance(BinanceConfig),
     Bybit(BybitConfig),
     Paper(KPaperConfig),
+    #[cfg(feature = "dex")]
     DeepBook(DeepBookMarketDataConfig),
 }
 
@@ -114,7 +117,11 @@ mod tests {
                 assert_eq!(binance_config.base_delay, None);
                 assert_eq!(binance_config.max_delay, None);
             }
-            ExchangeConfig::Bybit(_) | ExchangeConfig::Paper(_) | ExchangeConfig::DeepBook(_) => {
+            ExchangeConfig::Bybit(_) | ExchangeConfig::Paper(_) => {
+                panic!("Expected Binance config in test");
+            }
+            #[cfg(feature = "dex")]
+            ExchangeConfig::DeepBook(_) => {
                 panic!("Expected Binance config in test");
             }
         }

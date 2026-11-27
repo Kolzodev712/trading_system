@@ -176,6 +176,7 @@ pub async fn level_runner(
         .with_submission_journal(journal.clone())
         .with_restart_flag_path(bot_config.restart_flag_path.clone())
         .with_risk_manager(risk_manager.clone());
+    #[cfg(feature = "dex")]
     let grpc_service = if let Some(dex_sm) = services.venue.dex_state_manager() {
         grpc_service.with_dex_state_manager(dex_sm, format!("{:?}", services.venue.mode()))
     } else {
@@ -373,7 +374,7 @@ pub async fn level_runner(
         market_data_state_manager: Some(services.market_data_state_manager.clone()),
         configured_pairs: configured_pairs.clone(),
         dex_pairs: dex_pairs_from_config(&bot_config),
-        dex_ready: services.venue.dex_state_manager().is_some(),
+        dex_ready: services.venue.has_dex(),
         mongo_enabled: bot_config.mongo.enabled,
     };
     let readiness_check = {

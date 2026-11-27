@@ -1,4 +1,5 @@
 pub mod cex;
+#[cfg(feature = "dex")]
 pub mod dex;
 pub mod health;
 pub mod order_validation;

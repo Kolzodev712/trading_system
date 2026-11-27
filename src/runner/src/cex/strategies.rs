@@ -719,7 +719,7 @@ pub async fn strategy_runner_with(
         market_data_state_manager: Some(services.market_data_state_manager.clone()),
         configured_pairs: configured_pairs.clone(),
         dex_pairs: dex_pairs_from_config(&bot_config),
-        dex_ready: services.venue.dex_state_manager().is_some(),
+        dex_ready: services.venue.has_dex(),
         mongo_enabled: bot_config.mongo.enabled,
     };
     let readiness_check = {

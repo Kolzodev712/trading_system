@@ -203,24 +203,30 @@ impl BybitStreamingClient {
                                         warn!("Subscription failed: {}", resp.ret_msg);
                                     }
                                 }
-                                Ok(BybitStreamingMessage::Position(pos)) => {
+                                Ok(BybitStreamingMessage::Position(positions)) => {
                                     if authenticated {
-                                        if let Err(e) = event_tx.send(StreamingEvent::Position(pos)).await {
-                                            error!("Failed to send position event: {}", e);
+                                        for pos in positions {
+                                            if let Err(e) = event_tx.send(StreamingEvent::Position(pos)).await {
+                                                error!("Failed to send position event: {}", e);
+                                            }
                                         }
                                     }
                                 }
-                                Ok(BybitStreamingMessage::Execution(trade)) => {
+                                Ok(BybitStreamingMessage::Execution(trades)) => {
                                     if authenticated {
-                                        if let Err(e) = event_tx.send(StreamingEvent::Execution(trade)).await {
-                                            error!("Failed to send execution event: {}", e);
+                                        for trade in trades {
+                                            if let Err(e) = event_tx.send(StreamingEvent::Execution(trade)).await {
+                                                error!("Failed to send execution event: {}", e);
+                                            }
                                         }
                                     }
                                 }
-                                Ok(BybitStreamingMessage::Order(order)) => {
+                                Ok(BybitStreamingMessage::Order(orders)) => {
                                     if authenticated {
-                                        if let Err(e) = event_tx.send(StreamingEvent::Order(order)).await {
-                                            error!("Failed to send order event: {}", e);
+                                        for order in orders {
+                                            if let Err(e) = event_tx.send(StreamingEvent::Order(order)).await {
+                                                error!("Failed to send order event: {}", e);
+                                            }
                                         }
                                     }
                                 }

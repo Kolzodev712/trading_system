@@ -97,10 +97,11 @@ impl ExchangeState {
 
         // Update orders_by_pair index if we have a mapping in the registry
         if let Some(pair) = pair_opt {
-            self.orders_by_pair
-                .entry(pair.clone())
-                .or_default()
-                .push(order_id);
+            // Orders are updated repeatedly (New -> PartiallyFilled -> Filled); only index once.
+            let ids = self.orders_by_pair.entry(pair).or_default();
+            if !ids.contains(&order_id) {
+                ids.push(order_id);
+            }
         }
 
         self.last_update = std::time::SystemTime::now()
@@ -392,6 +393,27 @@ mod tests {
         let order = create_test_order("123", "BTCUSDT", OrderStatus::New);
 
         state.update_order(order.clone());
+
+        assert_eq!(state.orders.len(), 1);
+        assert_eq!(state.orders_by_pair.get(&pair).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn test_update_order_twice_does_not_duplicate_index() {
+        use std::sync::Arc;
+        use trading_core::registry::symbol::SymbolRegistry;
+
+        let mut registry = SymbolRegistry::new();
+        let pair = Pair::new("BTC", "USDT");
+        registry.register(Symbol::from("BTCUSDT"), pair.clone());
+
+        let mut state = ExchangeState::with_registry(Arc::new(registry));
+        state.update_order(create_test_order("123", "BTCUSDT", OrderStatus::New));
+        state.update_order(create_test_order(
+            "123",
+            "BTCUSDT",
+            OrderStatus::PartiallyFilled,
+        ));
 
         assert_eq!(state.orders.len(), 1);
         assert_eq!(state.orders_by_pair.get(&pair).unwrap().len(), 1);

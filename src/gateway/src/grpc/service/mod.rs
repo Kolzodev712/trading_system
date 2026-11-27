@@ -688,12 +688,6 @@ impl TradingCliService for TradingCliServiceImpl {
         let service = self.clone_for_streaming();
 
         tokio::spawn(async move {
-            std::panic::set_hook(Box::new(|panic_info| {
-                tracing::error!(
-                    "[gRPC] stream_monitoring_data: PANIC in streaming task: {:?}",
-                    panic_info
-                );
-            }));
             let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(1));
             interval.tick().await;
             loop {

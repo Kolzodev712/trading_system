@@ -145,6 +145,14 @@ impl PaperClient {
                         }
                     }
                 }
+                Some("lagged") => {
+                    let skipped = v.get("skipped").and_then(|s| s.as_u64()).unwrap_or(0);
+                    warn!(
+                        skipped,
+                        "k-paper market data: lagged — ending loop to reconnect"
+                    );
+                    break;
+                }
                 _ => {}
             }
         }

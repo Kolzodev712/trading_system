@@ -8,6 +8,7 @@ use super::operator_flatten::{
 };
 use super::{SubmissionJournal, TradingState};
 use crate::cex::state::ledger::ExecutionLedger;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::sync::RwLock;
 use tracing::{debug, warn};
@@ -28,6 +29,9 @@ pub struct ExchangeStateSubscriber {
     instrument_type: InstrumentType,
     execution_ledger: Arc<Mutex<Option<Arc<ExecutionLedger>>>>,
     submission_journal: Arc<Mutex<Option<Arc<SubmissionJournal>>>>,
+    /// Set when the lossy broadcast dropped venue updates (possibly fills); the
+    /// owner's event loop polls it and reconciles against ExchangeStateManager.
+    needs_reconcile: Arc<AtomicBool>,
 }
 
 impl ExchangeStateSubscriber {
@@ -46,7 +50,14 @@ impl ExchangeStateSubscriber {
             instrument_type: InstrumentType::Spot,
             execution_ledger: Arc::new(Mutex::new(None)),
             submission_journal: Arc::new(Mutex::new(None)),
+            needs_reconcile: Arc::new(AtomicBool::new(false)),
         }
+    }
+
+    /// Share the reconcile-request flag with the owner (see `TradingStateManager`).
+    pub fn with_needs_reconcile_flag(mut self, flag: Arc<AtomicBool>) -> Self {
+        self.needs_reconcile = flag;
+        self
     }
 
     pub fn with_instrument_type(mut self, instrument_type: InstrumentType) -> Self {
@@ -94,10 +105,12 @@ impl ExchangeStateSubscriber {
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
                     warn!(
-                        "Exchange update channel lagged, skipped {} messages",
+                        "Exchange update channel lagged, skipped {} messages; requesting reconcile",
                         skipped
                     );
-                    // Continue processing - we'll catch up
+                    // Skipped messages may include fills/cancels that TradingState never saw.
+                    // Flag a reconcile against ExchangeStateManager (which saw them all).
+                    self.needs_reconcile.store(true, Ordering::Release);
                 }
             }
         }

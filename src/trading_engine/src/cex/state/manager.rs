@@ -9,6 +9,7 @@ use crate::cex::state::reconciler::{PositionReconciler, ReconciliationResult};
 use crate::cex::state::subscriber::ExchangeStateSubscriber;
 use crate::cex::state::TradingState;
 use exchange_engine::state::manager::ExchangeStateManager;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::sync::RwLock;
 use trading_core::{
@@ -37,6 +38,10 @@ pub struct TradingStateManager {
     /// Shared with the subscriber so flatten rows settle on fill / flat without
     /// waiting for the next FlattenAndPause.
     submission_journal: Arc<Mutex<Option<Arc<SubmissionJournal>>>>,
+
+    /// Set when a broadcast receiver lagged and may have missed fills; polled by the
+    /// levels event loop via `take_reconcile_request`.
+    needs_reconcile: Arc<AtomicBool>,
 }
 
 impl TradingStateManager {
@@ -66,11 +71,13 @@ impl TradingStateManager {
         ));
         let execution_ledger = Arc::new(Mutex::new(None));
         let submission_journal = Arc::new(Mutex::new(None));
+        let needs_reconcile = Arc::new(AtomicBool::new(false));
         let subscriber = Arc::new(tokio::sync::Mutex::new(
             ExchangeStateSubscriber::new(exchange_update_rx, state.clone())
                 .with_instrument_type(instrument_type.clone())
                 .with_execution_ledger_slot(execution_ledger.clone())
-                .with_submission_journal_slot(submission_journal.clone()),
+                .with_submission_journal_slot(submission_journal.clone())
+                .with_needs_reconcile_flag(needs_reconcile.clone()),
         ));
         let reconciler =
             PositionReconciler::new(exchange_state_manager).with_instrument_type(instrument_type);
@@ -81,7 +88,23 @@ impl TradingStateManager {
             reconciler,
             execution_ledger,
             submission_journal,
+            needs_reconcile,
         }
+    }
+
+    /// Balances cached by ExchangeStateManager (empty if not yet populated).
+    pub async fn cached_balances(&self) -> Vec<trading_core::types::exchange::Balance> {
+        self.reconciler.cached_balances().await
+    }
+
+    /// Ask the event loop to reconcile on its next tick (e.g. after a lagged broadcast).
+    pub fn request_reconcile(&self) {
+        self.needs_reconcile.store(true, Ordering::Release);
+    }
+
+    /// Returns true (and clears the flag) if a reconcile was requested.
+    pub fn take_reconcile_request(&self) -> bool {
+        self.needs_reconcile.swap(false, Ordering::AcqRel)
     }
 
     pub fn with_execution_ledger(self, ledger: Arc<ExecutionLedger>) -> Self {

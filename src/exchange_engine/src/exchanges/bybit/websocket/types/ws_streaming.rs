@@ -125,9 +125,10 @@ pub struct BybitSubscribeResponse {
 
 #[derive(Debug, Clone)]
 pub enum BybitStreamingMessage {
-    Position(Position),
-    Execution(Trade),
-    Order(Order),
+    // Private topics are batched by Bybit: one frame may carry several items.
+    Position(Vec<Position>),
+    Execution(Vec<Trade>),
+    Order(Vec<Order>),
     Wallet(Vec<Balance>),
     AuthResponse(BybitAuthResponse),
     PongResponse(BybitPongResponse),

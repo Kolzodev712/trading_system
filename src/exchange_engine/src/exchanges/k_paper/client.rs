@@ -774,7 +774,7 @@ pub async fn run_websocket_loop(
                         }
                         tracing::debug!("k-paper exchange: recv #{} type={}", recv_count, typ);
                     }
-                    if let Err(e) = handle_message(
+                    match handle_message(
                         &msg,
                         &state,
                         market_data_tx.as_ref(),
@@ -782,7 +782,17 @@ pub async fn run_websocket_loop(
                         &instrument_type,
                         balance_ready.as_ref(),
                     ).await {
-                        warn!("k-paper: handle_message error: {} (raw type from JSON may not match)", e);
+                        Ok(HandleOutcome::Continue) => {}
+                        Ok(HandleOutcome::Reconnect) => {
+                            warn!("k-paper: server reported lag; reconnecting to resync");
+                            break;
+                        }
+                        Err(e) => {
+                            warn!(
+                                "k-paper: handle_message error: {} (raw type from JSON may not match)",
+                                e
+                            );
+                        }
                     }
                     if !snapshot_sent {
                         snapshot_sent = true;
@@ -829,6 +839,11 @@ pub async fn run_websocket_loop(
     }
 }
 
+enum HandleOutcome {
+    Continue,
+    Reconnect,
+}
+
 async fn handle_message(
     text: &str,
     state: &Arc<RwLock<KPaperState>>,
@@ -836,7 +851,7 @@ async fn handle_message(
     exchange_state_manager: &crate::state::manager::ExchangeStateManager,
     instrument_type: &InstrumentType,
     balance_ready: Option<&Arc<tokio::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>>>,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<HandleOutcome, Box<dyn std::error::Error + Send + Sync>> {
     let msg: KPaperMessage = match serde_json::from_str(text) {
         Ok(m) => m,
         Err(e) => {
@@ -853,6 +868,13 @@ async fn handle_message(
     match msg {
         KPaperMessage::Connected(_) => {
             info!("k-paper: received connected (WebSocket live)");
+        }
+        KPaperMessage::Lagged(lag) => {
+            warn!(
+                "k-paper: lagged skipped={} — reconnecting for account resync",
+                lag.skipped
+            );
+            return Ok(HandleOutcome::Reconnect);
         }
         KPaperMessage::Orderbook(ob) => {
             if let Some(tx) = market_data_tx {
@@ -1044,7 +1066,7 @@ async fn handle_message(
             let order_id = OrderId::new(ack.order_id.clone().into());
             let mut st = state.write().await;
             let Some((pending, expected_id, new_request)) = st.pending_amend.take() else {
-                return Ok(());
+                return Ok(HandleOutcome::Continue);
             };
             if expected_id != order_id {
                 let _ = pending.send(Err(EngineError::CustomError(anyhow::anyhow!(
@@ -1052,7 +1074,7 @@ async fn handle_message(
                     order_id.as_str(),
                     expected_id.as_str()
                 ))));
-                return Ok(());
+                return Ok(HandleOutcome::Continue);
             }
             let base = st
                 .open_orders
@@ -1096,5 +1118,5 @@ async fn handle_message(
             }
         }
     }
-    Ok(())
+    Ok(HandleOutcome::Continue)
 }

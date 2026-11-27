@@ -9,7 +9,7 @@ use futures_util::{stream::StreamExt, SinkExt};
 use serde_json::Value;
 use smol_str::SmolStr;
 use std::sync::Arc;
-use tokio::{net::TcpStream, sync::mpsc};
+use tokio::{net::TcpStream, sync::mpsc, task::JoinHandle};
 use tokio_tungstenite::{
     connect_async,
     tungstenite::protocol::{CloseFrame, Message},
@@ -151,19 +151,15 @@ impl DataHandler {
         // Bybit trade messages can contain multiple trades
         let structured_trades = bybit_trade.into_with_symbol_registry(self.symbol_registry.clone());
 
-        // For now, we'll handle the first trade (or we could emit multiple)
-        // Actually, let's handle all trades - but the message type only supports one
-        // We'll need to handle this differently - for now, take the first one
-        if let Some(trade) = structured_trades.first() {
-            Ok(ParsedBybitMessage::Trade {
-                trade: trade.clone(),
-            })
-        } else {
+        if structured_trades.is_empty() {
             debug!("Empty trade array in Bybit message");
-            Err(EngineError::new_custom_error(
+            return Err(EngineError::new_custom_error(
                 "Empty trade array in Bybit message".into(),
-            ))
+            ));
         }
+        Ok(ParsedBybitMessage::Trade {
+            trades: structured_trades,
+        })
     }
 
     fn handle_event(&self, topic: &str, v: Value) -> Result<ParsedBybitMessage, EngineError> {
@@ -243,32 +239,26 @@ impl BybitWSClient {
         self.make_ws_request(&self.url).await
     }
 
-    pub async fn run(&self, tx: mpsc::Sender<ParsedBybitMessage>) -> Result<(), EngineError> {
+    /// Connects, subscribes and spawns the reader task. The returned handle must be
+    /// aborted by the caller when abandoning the connection.
+    pub async fn run(
+        &self,
+        tx: mpsc::Sender<ParsedBybitMessage>,
+    ) -> Result<JoinHandle<()>, EngineError> {
         let mut ws_stream = self.create_ws_stream().await?;
         self.subscribe_to_channels(&mut ws_stream, self.subscription_handler.clone())
             .await?;
         let data_handler = DataHandler::new(self.symbol_registry.clone());
-        self.handle_messages(ws_stream, tx, data_handler).await?;
-        Ok(())
-    }
-}
-
-#[async_trait]
-impl WebSocketClient<ParsedBybitMessage> for BybitWSClient {
-    async fn make_ws_request(
-        &self,
-        ws_url: &str,
-    ) -> Result<WebSocketStream<MaybeTlsStream<TcpStream>>, EngineError> {
-        let (ws_stream, _) = connect_async(ws_url).await?;
-        Ok(ws_stream)
+        Ok(Self::spawn_reader(ws_stream, tx, data_handler))
     }
 
-    async fn handle_messages<H>(
-        &self,
+    /// Spawns the reader task and returns its handle so the caller can abort it
+    /// on reconnect. The task owns `tx`, so once it ends the receiver observes `None`.
+    fn spawn_reader<H>(
         mut ws_stream: WebSocketStream<MaybeTlsStream<TcpStream>>,
         tx: mpsc::Sender<ParsedBybitMessage>,
         handler: H,
-    ) -> Result<(), EngineError>
+    ) -> JoinHandle<()>
     where
         H: MessageHandler<ParsedBybitMessage> + Send + Sync + 'static,
     {
@@ -307,7 +297,31 @@ impl WebSocketClient<ParsedBybitMessage> for BybitWSClient {
                     _ => {}
                 }
             }
-        });
+        })
+    }
+}
+
+#[async_trait]
+impl WebSocketClient<ParsedBybitMessage> for BybitWSClient {
+    async fn make_ws_request(
+        &self,
+        ws_url: &str,
+    ) -> Result<WebSocketStream<MaybeTlsStream<TcpStream>>, EngineError> {
+        let (ws_stream, _) = connect_async(ws_url).await?;
+        Ok(ws_stream)
+    }
+
+    async fn handle_messages<H>(
+        &self,
+        ws_stream: WebSocketStream<MaybeTlsStream<TcpStream>>,
+        tx: mpsc::Sender<ParsedBybitMessage>,
+        handler: H,
+    ) -> Result<(), EngineError>
+    where
+        H: MessageHandler<ParsedBybitMessage> + Send + Sync + 'static,
+    {
+        // Reader handle is dropped here; `run` uses `spawn_reader` directly to keep it.
+        drop(Self::spawn_reader(ws_stream, tx, handler));
         Ok(())
     }
 

@@ -52,10 +52,9 @@ impl BinanceClient {
     }
 
     pub async fn start_stream(&mut self, data_type: DataType) -> Result<(), EngineError> {
-        let (tx, rx) = mpsc::channel(self.buffer_size);
         let channels = self.build_channels(data_type.clone());
 
-        self.run_with_reconnect(channels, tx, rx, data_type).await
+        self.run_with_reconnect(channels, data_type).await
     }
 
     fn build_channels(&self, data_type: DataType) -> Vec<BinanceChannel> {
@@ -75,16 +74,17 @@ impl BinanceClient {
     async fn run_with_reconnect(
         &self,
         channels: Vec<BinanceChannel>,
-        tx: mpsc::Sender<ParsedBinanceMessage>,
-        mut rx: mpsc::Receiver<ParsedBinanceMessage>,
         data_type: DataType,
     ) -> Result<(), EngineError> {
         let mut base_delay = std::time::Duration::from_secs(self.config.base_delay.unwrap_or(2));
         let max_delay = std::time::Duration::from_secs(self.config.max_delay.unwrap_or(60));
 
         loop {
+            // Fresh channel per attempt: the reader task is the only sender, so when it
+            // ends (or is aborted) the receiver sees `None` instead of hanging forever.
+            let (tx, mut rx) = mpsc::channel(self.buffer_size);
             match self
-                .connect_and_stream(channels.clone(), tx.clone(), &mut rx, data_type.clone())
+                .connect_and_stream(channels.clone(), tx, &mut rx, data_type.clone())
                 .await
             {
                 Ok(_) => debug!("WebSocket stream closed cleanly"),
@@ -104,14 +104,18 @@ impl BinanceClient {
     ) -> Result<(), EngineError> {
         let pair_count = channels.len();
         let client = BinanceWSClient::new(channels, self.symbol_registry.clone());
-        client.run(tx.clone()).await?;
+        // `tx` is moved into the reader task; no sender is kept alive here.
+        let reader = client.run(tx).await?;
 
         info!(
             "WebSocket stream started for {data_type:?} ({} pair(s))",
             pair_count
         );
 
-        self.event_loop(rx).await
+        let result = self.event_loop(rx).await;
+        // Stop the old reader before reconnecting so it cannot linger on a dead socket.
+        reader.abort();
+        result
     }
 
     async fn event_loop(

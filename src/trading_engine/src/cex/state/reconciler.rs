@@ -60,6 +60,13 @@ impl PositionReconciler {
         self
     }
 
+    /// Balances cached in ExchangeStateManager (bootstrapped via REST, kept fresh by WS).
+    pub async fn cached_balances(&self) -> Vec<trading_core::types::exchange::Balance> {
+        let state = self.exchange_state_manager.get_state();
+        let state = state.read().await;
+        state.get_balances().into_iter().cloned().collect()
+    }
+
     /// Reconcile TradingState with ExchangeStateManager (not with exchange directly)
     ///
     /// Compares TradingState positions and active orders with ExchangeStateManager's view.

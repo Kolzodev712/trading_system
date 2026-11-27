@@ -70,6 +70,8 @@ pub enum KPaperMessage {
     /// Server -> client: direct ack for amend (same connection)
     #[serde(rename = "AmendAck")]
     AmendAck(KPaperAmendAck),
+    /// Server -> client: this connection lagged; server closes next — reconnect to resync
+    Lagged(KPaperLagged),
     /// Server -> client: error
     Error(KPaperError),
 }
@@ -159,6 +161,11 @@ pub struct KPaperPosition {
     pub entry_price: Decimal,
     #[serde(default, deserialize_with = "decimal_flexible::opt_deserialize")]
     pub unrealized_pnl: Option<Decimal>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KPaperLagged {
+    pub skipped: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -75,8 +75,9 @@ impl BybitMessageMapper {
                     .into_iter()
                     .filter_map(|data| data.to_position(self.symbol_registry.clone()))
                     .collect();
-                if let Some(position) = positions.into_iter().next() {
-                    return Ok(BybitStreamingMessage::Position(position));
+                // A single frame can batch several positions; forward all of them.
+                if !positions.is_empty() {
+                    return Ok(BybitStreamingMessage::Position(positions));
                 }
             }
         }
@@ -88,8 +89,9 @@ impl BybitMessageMapper {
                     .into_iter()
                     .map(|data| data.to_trade(self.symbol_registry.clone()))
                     .collect();
-                if let Some(trade) = trades.into_iter().next() {
-                    return Ok(BybitStreamingMessage::Execution(trade));
+                // A single frame can batch several executions; forward all of them.
+                if !trades.is_empty() {
+                    return Ok(BybitStreamingMessage::Execution(trades));
                 }
             }
         }
@@ -101,8 +103,9 @@ impl BybitMessageMapper {
                     .into_iter()
                     .filter_map(|data| data.to_order(self.symbol_registry.clone()))
                     .collect();
-                if let Some(order) = orders.into_iter().next() {
-                    return Ok(BybitStreamingMessage::Order(order));
+                // A single frame can batch several orders; forward all of them.
+                if !orders.is_empty() {
+                    return Ok(BybitStreamingMessage::Order(orders));
                 }
             }
         }
@@ -210,6 +213,78 @@ mod tests {
                 assert!(text.contains("unknown"));
             }
             _ => panic!("Expected Unknown"),
+        }
+    }
+
+    #[test]
+    fn test_parse_multi_execution_frame_keeps_all_items() {
+        let json = r#"
+        {
+            "id": "exec-msg-1",
+            "topic": "execution",
+            "creationTime": 1697682317044,
+            "data": [
+                {
+                    "symbol": "BTCUSDT", "execId": "exec-1", "orderId": "order-1",
+                    "side": "Buy", "execPrice": "50000", "execQty": "0.1",
+                    "execFee": "0.001", "feeCurrency": "BTC", "execTime": "1690872862481",
+                    "baseCoin": "BTC", "quoteCoin": "USDT", "isMaker": false
+                },
+                {
+                    "symbol": "BTCUSDT", "execId": "exec-2", "orderId": "order-2",
+                    "side": "Sell", "execPrice": "50001", "execQty": "0.2",
+                    "execFee": "0.002", "feeCurrency": "BTC", "execTime": "1690872862482",
+                    "baseCoin": "BTC", "quoteCoin": "USDT", "isMaker": true
+                }
+            ]
+        }
+        "#;
+
+        let registry = Arc::new(SymbolRegistry::from_pairs(vec![Pair::new("BTC", "USDT")]));
+        let mapper = BybitMessageMapper::new(registry);
+
+        match mapper.parse_message(json).unwrap() {
+            BybitStreamingMessage::Execution(trades) => {
+                assert_eq!(trades.len(), 2);
+                assert_eq!(trades[0].trade_id, "exec-1");
+                assert_eq!(trades[1].trade_id, "exec-2");
+            }
+            other => panic!("Expected Execution, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_multi_order_frame_keeps_all_items() {
+        let json = r#"
+        {
+            "id": "order-msg-1",
+            "topic": "order",
+            "creationTime": 1697682317044,
+            "data": [
+                {
+                    "orderId": "order-1", "orderLinkId": "l1", "symbol": "BTCUSDT",
+                    "baseCoin": "BTC", "settleCoin": "USDT", "price": "50000", "qty": "0.1",
+                    "side": "Buy", "orderStatus": "New", "avgPrice": "0", "cumExecQty": "0",
+                    "orderType": "Limit", "createdTime": "1690872862481",
+                    "updatedTime": "1690872862481", "category": "linear"
+                },
+                {
+                    "orderId": "order-2", "orderLinkId": "l2", "symbol": "BTCUSDT",
+                    "baseCoin": "BTC", "settleCoin": "USDT", "price": "51000", "qty": "0.2",
+                    "side": "Sell", "orderStatus": "New", "avgPrice": "0", "cumExecQty": "0",
+                    "orderType": "Limit", "createdTime": "1690872862482",
+                    "updatedTime": "1690872862482", "category": "linear"
+                }
+            ]
+        }
+        "#;
+
+        let registry = Arc::new(SymbolRegistry::from_pairs(vec![Pair::new("BTC", "USDT")]));
+        let mapper = BybitMessageMapper::new(registry);
+
+        match mapper.parse_message(json).unwrap() {
+            BybitStreamingMessage::Order(orders) => assert_eq!(orders.len(), 2),
+            other => panic!("Expected Order, got {:?}", other),
         }
     }
 }

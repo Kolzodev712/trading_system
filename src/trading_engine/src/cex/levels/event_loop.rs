@@ -224,7 +224,9 @@ impl LevelBasedEventLoop {
                         }
                         Ok(_) => { /* ignore Balance, Trade, Position */ }
                         Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
-                            tracing::warn!("Exchange update receiver lagged, skipped {} messages", skipped);
+                            tracing::warn!("Exchange update receiver lagged, skipped {} messages; requesting reconcile", skipped);
+                            // Missed updates may include fills; the periodic tick below reconciles.
+                            self.trading_state_manager.request_reconcile();
                         }
                         Err(tokio::sync::broadcast::error::RecvError::Closed) => {
                             tracing::warn!("Exchange update channel closed");
@@ -286,10 +288,22 @@ impl LevelBasedEventLoop {
                         }
                     }
                     trading_was_enabled = enabled;
+                    if self.trading_state_manager.take_reconcile_request() {
+                        self.reconcile_all_pairs().await;
+                    }
                     if let Err(e) = self.handle_periodic_tasks(&subscriber_cache).await {
                         tracing::error!("Error in periodic tasks: {}", e);
                     }
                 }
+            }
+        }
+    }
+
+    /// Out-of-band reconcile after a lagged broadcast (fills may have been dropped).
+    async fn reconcile_all_pairs(&self) {
+        for pair in &self.pairs {
+            if let Err(e) = self.trading_state_manager.reconcile(pair, None).await {
+                tracing::error!("Lag-triggered reconciliation error for {}: {}", pair, e);
             }
         }
     }
@@ -491,10 +505,21 @@ impl LevelBasedEventLoop {
             matching_level_ids
         };
 
-        // Get balances
+        // Nothing to post/amend for this book: skip balance lookup and state cloning.
+        if level_ids.is_empty() {
+            return Ok(());
+        }
+
+        // Balances come from the ExchangeStateManager cache (REST bootstrap + WS updates);
+        // only fall back to REST when the cache has not been populated yet.
         let balances = {
-            let client = self.trading_client.read().await;
-            client.fetch_balance().await?
+            let cached = self.trading_state_manager.cached_balances().await;
+            if cached.is_empty() {
+                let client = self.trading_client.read().await;
+                client.fetch_balance().await?
+            } else {
+                cached
+            }
         };
 
         // Get fresh indicators once

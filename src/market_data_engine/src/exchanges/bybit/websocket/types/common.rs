@@ -56,8 +56,9 @@ pub enum ParsedBybitMessage {
     OrderBook {
         orderbook: StructuredOrderbook,
     },
+    /// One Bybit `publicTrade` frame can batch several trades; all are forwarded.
     Trade {
-        trade: StructuredPublicTrade,
+        trades: Vec<StructuredPublicTrade>,
     },
     Raw(
         #[serde(

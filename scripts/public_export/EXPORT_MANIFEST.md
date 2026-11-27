@@ -1,8 +1,13 @@
-# Public export manifest (reviewed export)
+# Public export manifest (LEGACY — reviewed export)
 
-Owner decisions: Design Log #017. This file defines what may enter a **new**
+> **SUPERSEDED (2026-11-27).** Authoritative policy: [`docs/CURRENT_PUBLICATION_POLICY.md`](../../docs/CURRENT_PUBLICATION_POLICY.md).  
+> The public remotes now publish **full history including `research/`**.  
+> This manifest describes an **optional legacy** research-stripped export tree only.  
+> Do **not** use it as the current publication process or to remove public research.
+
+Owner decisions at the time: Design Log #017 (partially superseded). Historically this file defined what may enter a **new**
 public repository produced by `prepare_public_export.sh`. The private original
-keeps full history and research.
+kept full history and research under the old plan.
 
 ## Include
 

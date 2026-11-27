@@ -1,5 +1,10 @@
 # OSS release decisions (Increment 0 close-out)
 
+> **SUPERSEDED IN PART (2026-11-27).** Authoritative current policy:  
+> `docs/CURRENT_PUBLICATION_POLICY.md`.  
+> Still in force: Apache/MIT licensing split; strategies public; no GitHub Actions; `main` default; NOTICE attribution.  
+> **Superseded:** decision 4 (reviewed export as publication history) and decision 6 (research private/omitted). Owner later published full history including research after credential-rotation commitment.
+
 ## Problem / context
 
 Owner decisions for the coordinated public open-source release preparation (see Increment 0 assessment). Needed before public/private separation, reviewed export, and relicensing.

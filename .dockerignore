@@ -59,10 +59,15 @@ docker-compose*.yml
 # Gitignore does not keep them out of `docker build` context.
 config/
 secrets/
+trading_keys/
 runtime-data/
 **/.env
 **/*.pem
-**/*secret*
+# Do not use **/*secret* — that excludes source files such as secret.rs.
+**/*secret*.json
+**/*secret*.env
+**/*secret*.txt
+**/secrets/**
 
 # Scripts, but keep the workspace member.
 scripts/*

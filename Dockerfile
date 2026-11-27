@@ -1,8 +1,7 @@
-# OBSOLETE (2026-11-27): This Dockerfile does not match the current workspace
-# (missing crates such as gateway/trading_proto/trading_networking, and previously
-# suppressed a failed dependency build with `|| true`). Do not use for release or
-# clean-checkout verification. Prefer Dockerfile.paper-bin or
-# trading-system-showcase-demo. Kept only so historical compose references resolve.
+# OBSOLETE (2026-11-27): Do not use for onboarding or CI.
+# Supported container path: ../trading-system-showcase/lab (Compose).
+# Alternatives: host cargo build + Dockerfile.paper-bin.
+# This file is incomplete for the current crate graph; kept for historical references only.
 FROM rust:1.98-slim AS builder
 
 # Install build dependencies

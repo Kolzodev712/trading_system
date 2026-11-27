@@ -5,11 +5,54 @@
 **License**: Apache License 2.0 (see [LICENSE](LICENSE) and [NOTICE](NOTICE))  
 **Copyright**: © 2024–2026 T.L.P. Arc Entertainment Ltd.
 
-A modular, exchange-agnostic trading system built in Rust with support for real-time market data, order execution, level-based trading, and strategy-based trading.
+## What this is
 
-**Current architecture:** [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) (narrative: [docs/Trading-System-Analysis.txt](docs/Trading-System-Analysis.txt)). Increment status and next gates: [docs/PROGRESSION.md](docs/PROGRESSION.md).
+Rust workspace for a **modular trading runtime**: market data, exchange adapters, in-process risk and trading engines, gRPC operator control, and optional research tooling. One process hosts the live engines; [**k-paper**](https://github.com/Kolzodev712/k-paper) (paper exchange) and [**trading-system-ui**](https://github.com/Kolzodev712/trading-system-ui) (browser console) are **separate repositories**.
 
-The system is **not** production complete and **not** mainnet ready. Candidate #2 is an operational baseline, not validated alpha.
+**Architecture (current):** [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — pure models in `strategy_core`, historical eval in `research_engine` / `research_cli`, live composition via `btc_price_ma_app` and `ExtraStrategyFactory`, generic `runner` for levels and built-in strategies. Narrative: [docs/Trading-System-Analysis.txt](docs/Trading-System-Analysis.txt). Status gates: [docs/PROGRESSION.md](docs/PROGRESSION.md).
+
+**Ecosystem map:** implementation docs here; runnable lab in sibling [**trading-system-showcase**](../trading-system-showcase) (`lab/` Compose).
+
+## Qualification boundaries (read first)
+
+| Claim | Status |
+| --- | --- |
+| Production / mainnet ready | **No** |
+| Candidate #2 (`btc_price_ma_app`) | Operational **baseline** on Paper/Demo paths — **not** validated alpha |
+| Paper / Demo runs | Integration and operator qualification — **not** evidence of live P&L |
+| Backtests (`research_cli`) | Research replay — **not** linked to the live runner |
+
+Do not infer trading permission from config labels alone; see [docs/VENUE_MODES.md](docs/VENUE_MODES.md) and [docs/EXCHANGE_CAPABILITY_MATRIX.md](docs/EXCHANGE_CAPABILITY_MATRIX.md).
+
+## Run Paper (supported paths)
+
+**Local qualification (this repo):**
+
+```bash
+# Mongo + k-paper on loopback; see CONTRIBUTING.md
+just test-paper
+```
+
+Related: `just test-paper-negative`, `just test-paper-ui` (UI repo checkout).
+
+**Full-stack laboratory (recommended for newcomers):** sibling [trading-system-showcase/lab](../trading-system-showcase/lab/README.md) — builds runner, k-paper, and UI; loopback-only; trading disabled until enabled in the UI.
+
+```bash
+cd ../trading-system-showcase/lab && cp .env.example .env && make doctor && make build && make demo
+```
+
+**From source (developers):** `cargo build -p runner` or `-p btc_price_ma_app` with [rust-toolchain.toml](rust-toolchain.toml). Spot levels smoke against k-paper is documented in k-paper’s DEV-GUIDE; Candidate #2 Paper gates use the linear USDT fixture — not the same as levels smoke.
+
+**Docker:** root [Dockerfile](Dockerfile) is **obsolete**. Use [trading-system-showcase/lab](../trading-system-showcase/lab/README.md) for containers, or host build + [Dockerfile.paper-bin](Dockerfile.paper-bin) for a thin runtime image.
+
+## Extend the system
+
+1. **Pure strategy model** — implement in `libs/strategy_core` (no I/O); evaluate with `research_engine` / `research_cli`.
+2. **Live Candidate** — add an `ExtraStrategyFactory` (see `src/btc_price_ma_app`) and a composition binary that injects it into `runner::run()`; do not embed model logic in `trading_engine`.
+3. **Venue client** — implement under `exchange_engine` / `market_data_engine`; wire in `config/bot.json`. Capability honesty: [docs/EXCHANGE_CAPABILITY_MATRIX.md](docs/EXCHANGE_CAPABILITY_MATRIX.md).
+4. **Levels / generic strategies** — configure Mongo + `runner --mode levels|strategies` (legacy paths; see [docs/STRATEGY_GUIDE.md](docs/STRATEGY_GUIDE.md) for strategy modes).
+
+There is **no** dynamic plugin registry; new behavior ships as workspace crates and explicit composition binaries.
 
 ## Table of Contents
 
@@ -39,7 +82,7 @@ The Trading System is a modular trading platform that supports:
 ### Key Features
 
 - ✅ **Exchange-Agnostic Design**: Easy to add new exchanges
-- ✅ **Ultra-Low Latency**: Channel-based communication (< 1μs)
+- ✅ **In-process events**: Tokio broadcast channels between engines (latency not benchmarked in public docs; treat microsecond claims as **unverified**)
 - ✅ **State Management**: Full state reconciliation and persistence
 - ✅ **Real-Time Monitoring**: TUI CLI with live data streaming
 - ✅ **Risk Management**: Circuit breakers, position limits, daily loss limits
@@ -86,11 +129,11 @@ graph TB
     IndicatorEngine -->|Persists Indicators| MongoDB
     LiveConfig -->|Persists Updates| MongoDB
     
-    ExchangeEngine -.->|Broadcast Channel<br/>< 1μs| TradingEngine
-    ExchangeEngine -.->|Broadcast Channel<br/>< 1μs| TradingEngine
-    MarketDataEngine -.->|Broadcast Channel<br/>< 1μs| IndicatorEngine
-    MarketDataEngine -.->|Broadcast Channel<br/>< 1μs| TradingEngine
-    IndicatorEngine -.->|Broadcast Channel<br/>< 1μs| TradingEngine
+    ExchangeEngine -.->|Broadcast channel| TradingEngine
+    ExchangeEngine -.->|Broadcast channel| TradingEngine
+    MarketDataEngine -.->|Broadcast channel| IndicatorEngine
+    MarketDataEngine -.->|Broadcast channel| TradingEngine
+    IndicatorEngine -.->|Broadcast channel| TradingEngine
     
     TradingEngine -->|Gets Rules| AssetEngine
     TradingEngine -->|Checks Risk| TradingEngine
@@ -165,10 +208,10 @@ sequenceDiagram
     Binance->>ExchangeEngine: WebSocket (Orders, Balances)
     Binance->>MarketDataEngine: WebSocket (Orderbooks, Trades)
     
-    ExchangeEngine->>TradingEngine: Broadcast Channel (< 1μs)
-    MarketDataEngine->>IndicatorEngine: Broadcast Channel (< 1μs)
-    MarketDataEngine->>TradingEngine: Broadcast Channel (< 1μs)
-    IndicatorEngine->>TradingEngine: Broadcast Channel (< 1μs)
+    ExchangeEngine->>TradingEngine: Broadcast channel
+    MarketDataEngine->>IndicatorEngine: Broadcast channel
+    MarketDataEngine->>TradingEngine: Broadcast channel
+    IndicatorEngine->>TradingEngine: Broadcast channel
     
     TradingEngine->>Binance: REST API (Place Order)
     
@@ -225,7 +268,7 @@ sequenceDiagram
 
 ### Communication Patterns
 
-- **In-Process**: Broadcast channels (ultra-low latency, < 1μs)
+- **In-Process**: Broadcast channels between engines (throughput-oriented; **no published latency SLO**)
 - **External**: gRPC (TUI CLI and optional standalone proxy); Zenoh (events and commands, **opt-in** via `ZENOH_ENABLED=1`, default off)
 - **Exchange**: WebSocket + REST API (for exchange communication)
 
@@ -286,7 +329,7 @@ For detailed architecture information, see the [Architecture Documentation](#arc
 **Key Features**:
 - SMA, EMA, composite indicators
 - Real-time calculation
-- In-memory caching (< 0.1ms lookup)
+- In-memory indicator cache (lookup cost **unverified** in public benchmarks)
 - Extensible framework
 
 **See**: [Indicator Engine Architecture](architecture/04-indicator-engine.md)
@@ -355,7 +398,7 @@ For detailed architecture information, see the [Architecture Documentation](#arc
 **Purpose**: High-performance distributed tracing and observability.
 
 **Key Features**:
-- **Hybrid Tracing**: Hot path (<1μs) for high-frequency operations, Cold path (<10μs) for commands/events
+- **Hybrid Tracing**: Separate hot/cold tracing paths (`trading_trace`); overhead **not** certified in this README (see crate README; treat μs figures as design targets unless measured locally)
 - **OpenTelemetry Integration**: Full OpenTelemetry SDK with Jaeger and Prometheus exporters
 - **Correlation IDs**: Link related operations across services
 - **Prometheus Metrics**: Pre-configured metrics for trading operations
@@ -509,7 +552,7 @@ cargo build
 
 - Local: `cargo build -p runner` (or `btc_price_ma_app`) with [`rust-toolchain.toml`](rust-toolchain.toml) (`1.98.1`)
 - Host-built binary + thin runtime: [`Dockerfile.paper-bin`](Dockerfile.paper-bin)
-- Integrated paper lab: private sibling `trading-system-showcase-demo` (`make demo`)
+- Integrated paper lab: [trading-system-showcase/lab](../trading-system-showcase/lab/README.md) (`make demo`)
 
 **📖 Historical notes:** [DOCKER.md](architecture/DOCKER.md) (verify against the note above before trusting build steps).
 
@@ -1079,75 +1122,21 @@ cargo test --test integration
 cargo tarpaulin --tests --test integration
 ```
 
-## CI/CD
+## Local verification (no GitHub Actions)
 
-The project includes a GitHub Actions CI pipeline that runs automatically on every commit and pull request.
-
-### GitHub Actions Workflow
-
-The CI pipeline (`.github/workflows/ci.yml`) includes:
-
-1. **Code Formatting Check** (`fmt`)
-   - Verifies code follows Rust formatting standards
-   - Uses `cargo fmt --check`
-
-2. **Linting** (`clippy`)
-   - Runs Clippy with all warnings as errors
-   - Catches common Rust issues and anti-patterns
-
-3. **Build Verification** (`build`)
-   - Builds all packages (runner, trading-cli)
-   - Tests both modes (levels, strategies)
-   - Ensures code compiles successfully
-
-4. **Unit Tests** (`test`)
-   - Runs all unit tests
-   - Fast feedback on core functionality
-
-5. **Integration Tests** (`integration-test`)
-   - Runs integration tests (excluding ignored tests)
-   - Validates service interactions
-   - Excludes external API calls
-
-6. **Cargo Check** (`check`)
-   - Verifies all packages compile
-   - Catches compilation errors early
-
-7. **Docker Build** (`docker-build`)
-   - Validates Docker images build successfully
-   - Tests multi-stage builds
-   - Uses Docker layer caching
-
-### Running CI Locally
-
-You can run CI checks locally:
+This repository does **not** ship GitHub Actions. Use local recipes:
 
 ```bash
-# Check formatting
-cargo fmt --all -- --check
-
-# Run clippy
-cargo clippy --all-targets --all-features -- -D warnings
-
-# Run all tests (excluding ignored)
-cargo test --test integration
-
-# Build all packages
-cargo build --release --package runner
-cargo build --release --bin trading-cli
-
-# Check all packages
-cargo check --all-targets --all-features
+just test-fast          # component + research unit gates
+just test-5r-graph      # architectural dependency checks
+just test-paper         # Paper workflow qualification (needs Mongo + k-paper)
+just test-paper-negative
+just test-paper-ui
+just ci-local           # combined local Paper qualification
 ```
 
-### CI Configuration
-
-The CI workflow is configured to:
-- Run on all branches (`branches: ['*']`)
-- Run on push and pull request events
-- Cache Cargo dependencies for faster builds
-- Use stable Rust toolchain
-- Run tests in parallel where possible
+Paper and UI layers expect sibling checkouts of `k-paper` and `trading-system-ui`.
+For the integrated laboratory, use `trading-system-showcase/lab/` (`make doctor`, `make qualify`).
 
 ## Maintenance
 
@@ -1427,7 +1416,7 @@ For detailed architecture information, see the [architecture/](architecture/) di
 ### Core Libraries
 
 - **[Trading Trace Library](libs/trading_trace/README.md)**: High-performance distributed tracing and observability
-  - Hybrid tracing approach (hot path <1μs, cold path <10μs)
+  - Hybrid tracing approach (see `libs/trading_trace`; μs overhead figures are **unverified** in this README)
   - OpenTelemetry integration with Jaeger and Prometheus exporters
   - Correlation IDs and metrics support
   - See [Trading Trace Library README](libs/trading_trace/README.md) for complete documentation

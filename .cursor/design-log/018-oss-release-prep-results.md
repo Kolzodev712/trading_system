@@ -1,5 +1,7 @@
 # OSS release preparation results (Increments 1–10)
 
+> **SUPERSEDED IN PART (2026-11-27).** Prep results below are historical. Publication later flipped to full-history public remotes including research; see `docs/CURRENT_PUBLICATION_POLICY.md` and `docs/PUBLICATION_SECURITY_FINDINGS.md`. Reviewed-export tooling is legacy-only.
+
 ## Problem / context
 
 Execute the open-source release program after Increment 0 decisions (#017), stopping before public visibility changes.

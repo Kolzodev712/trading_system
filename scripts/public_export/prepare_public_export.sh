@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
-# Build a clean reviewed-export tree (no .git). Does not publish or rewrite history.
+# LEGACY: Build a clean reviewed-export tree (no .git). Does not publish or rewrite history.
+#
+# SUPERSEDED as the publication process (2026-11-27). See docs/CURRENT_PUBLICATION_POLICY.md.
+# Public remotes include full history and research/. This script strips research/ and must
+# NOT be used to redefine what is public. Retained only as an optional archival/scan aid.
 set -euo pipefail
+echo "WARNING: prepare_public_export.sh is a LEGACY optional tool; it is not the current publication workflow." >&2
+echo "See docs/CURRENT_PUBLICATION_POLICY.md" >&2
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 DEST="${1:-$ROOT/artifacts/public-export/trading_system}"

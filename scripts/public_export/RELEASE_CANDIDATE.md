@@ -1,6 +1,11 @@
 # Release candidate report — v0.1.0 (proposed)
 
-**Status:** Stop before publication. Owner approval required to create public remotes,
+> **Partially superseded (2026-11-27).** Authoritative publication policy:  
+> [`docs/CURRENT_PUBLICATION_POLICY.md`](../../docs/CURRENT_PUBLICATION_POLICY.md).  
+> Full-history public remotes (including research) are live; reviewed-export is legacy.  
+> Credential rotation remains **OPEN_OWNER** — see `docs/PUBLICATION_SECURITY_FINDINGS.md`.
+
+**Status (historical at first draft):** Stop before publication. Owner approval required to create public remotes,
 change visibility, or publish images/tags.
 
 **Date:** 2026-11-27  

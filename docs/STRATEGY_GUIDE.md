@@ -1,11 +1,31 @@
 # Strategy Guide
 
 **Version**: 0.1  
-**Last Updated**: December 2024
+**Last Updated**: 2026-11-27
 
-## Overview
+## Current architecture (read first)
 
-The Trading System supports algorithmic trading strategies that can run continuously in the background. Strategies analyze market data in real-time and make trading decisions based on configurable parameters.
+Two distinct paths exist; do not conflate them.
+
+| Path | Where logic lives | How it runs |
+| --- | --- | --- |
+| **Research / Candidate models** | `libs/strategy_core` (pure, no I/O) | `research_engine` / `research_cli` replay; **no** live orders |
+| **Live Candidate #2** | Same model + adapter in `src/btc_price_ma_app` | Dedicated binary injects `BtcPriceMaFactory` via `ExtraStrategyFactory` into the generic runner |
+| **Built-in strategies** | `trading_engine` (`BuyLowSellHigh`, …) | `runner --mode strategies` + `config/strategies.json` |
+
+There is **no** runtime plugin loader. New live candidates ship as workspace crates and composition binaries (pattern: `btc_price_ma_app`).
+
+**Paper verification** for Candidate #2: `just test-paper` in `trading_system` with k-paper linear fixture (see [PROGRESSION.md](PROGRESSION.md), k-paper DEV-GUIDE). That proves integration, not alpha.
+
+**Extend a new model:** implement `ModelState` in `strategy_core`, backtest with `research_cli`, then add `ExtraStrategyFactory` + thin `*_app` binary that calls `runner::run()` with your factory.
+
+Full wiring: [ARCHITECTURE.md](ARCHITECTURE.md). Exchange honesty: [EXCHANGE_CAPABILITY_MATRIX.md](EXCHANGE_CAPABILITY_MATRIX.md).
+
+---
+
+## Overview (built-in strategies mode)
+
+The generic runner supports algorithmic strategies (e.g. BuyLowSellHigh) that run in the trading engine against configured venues. These are **not** the Candidate #2 composition path.
 
 ## Available Strategies
 
@@ -74,7 +94,21 @@ Strategies are configured in `config/strategies.json`:
 - **`price_history_size`** (integer, required): Size of price history buffer (e.g., 100)
 - **`min_price_history`** (integer, required): Minimum price history required before trading (e.g., 20)
 
-## Running Strategies
+## Candidate #2 example (`btc_price_ma_app`)
+
+```bash
+# Build the composition binary (injects ExtraStrategyFactory)
+cargo build -p btc_price_ma_app --bin btc_price_ma_app
+
+# Run against configured venue (Paper: bot JSON pointing at k-paper)
+cargo run -p btc_price_ma_app --bin btc_price_ma_app -- --mode strategies -c config/bot.json
+```
+
+Model code stays in `strategy_core`; the app crate only wires factory + CLI. Qualification: `just test-paper`, not `runner --mode strategies` alone.
+
+---
+
+## Running Strategies (built-in)
 
 ### Starting the Strategy
 
@@ -325,13 +359,9 @@ The strategy includes several performance optimizations:
 
 ## Future Strategies
 
-Additional strategies can be added by:
-1. Creating a new strategy module in `src/trading_engine/src/strategies/rust_strategies/`
-2. Implementing the `Strategy` trait
-3. Registering the strategy in the strategy manager
-4. Adding configuration support
+**Preferred for new alpha candidates:** `strategy_core` + research eval + `ExtraStrategyFactory` composition binary (`btc_price_ma_app` pattern).
 
-See the architecture documentation for details on implementing new strategies.
+**Legacy built-in path:** add a module under `trading_engine` strategies, implement the `Strategy` trait, register in the strategy manager, and extend `config/strategies.json`. See [architecture/03-trading-engine.md](../architecture/03-trading-engine.md) — engine docs may lag crate layout; [ARCHITECTURE.md](ARCHITECTURE.md) is authoritative.
 
 ## See Also
 

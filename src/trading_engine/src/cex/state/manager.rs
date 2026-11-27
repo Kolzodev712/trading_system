@@ -8,7 +8,7 @@ use crate::cex::state::ledger::ExecutionLedger;
 use crate::cex::state::reconciler::{PositionReconciler, ReconciliationResult};
 use crate::cex::state::subscriber::ExchangeStateSubscriber;
 use crate::cex::state::TradingState;
-use exchange_engine::state::manager::ExchangeStateManager;
+use trading_core::venue::cex::state::ExchangeStateManager;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::sync::RwLock;

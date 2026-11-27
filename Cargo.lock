@@ -5647,7 +5647,6 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "dex_engine",
- "exchange_engine",
  "futures-util",
  "hex",
  "hmac",

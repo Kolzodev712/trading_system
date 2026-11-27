@@ -7,7 +7,7 @@
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
-use trading_core::{
+use crate::{
     error::EngineError,
     registry::symbol::SymbolRegistry,
     types::{

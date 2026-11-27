@@ -192,6 +192,7 @@ impl PaperStack {
             .env("PAPER_EXCHANGE_PORT", paper_port.to_string())
             .env("PAPER_EXCHANGE_CONFIG", &instruments)
             .env("PAPER_EXCHANGE_PROFILE", "lab")
+            .env("PAPER_LAB_FAULTS", "1")
             .env("PAPER_EXCHANGE_HOST", "127.0.0.1")
             .current_dir(&kpaper_dir);
         let kpaper = ChildProc::spawn("k-paper", k_cmd, &run_dir.join("k-paper.log"))?;
@@ -545,7 +546,7 @@ fn instruments_yaml(kind: PaperInstrument) -> String {
         PaperInstrument::Spot => "",
     };
     format!(
-        "instruments:\n  - id: BTC-USDT\n    symbol: BTC-USDT\n    base_asset: BTC\n    quote_asset: USDT\n    tick_size: 0.01\n    lot_size: 0.001\n    min_notional: 10{fut}\ninitial_balances:\n  - asset: USDT\n    amount: 10000000\n{linear}fill_model:\n  kind: immediate_cross\n  slippage_bps: 0\n  fee_bps: 0\n  partial_fills: false\nmax_trade_history: 10000\nmarket:\n  interval_ms: 500\n  seed: 7\n  step: 100\n  spread_half: 50\n  levels: 5\n  trade_probability: 0.0\n  instruments:\n    - id: BTC-USDT\n      initial_mid: 50000\n"
+        "instruments:\n  - id: BTC-USDT\n    symbol: BTC-USDT\n    base_asset: BTC\n    quote_asset: USDT\n    tick_size: 0.01\n    lot_size: 0.001\n    min_notional: 10{fut}\ninitial_balances:\n  - asset: USDT\n    amount: 10000000\n{linear}fill_model:\n  kind: immediate_cross\n  slippage_bps: 0\n  fee_bps: 0\n  partial_fills: false\nmax_trade_history: 10000\nmarket:\n  interval_ms: 500\n  seed: 7\n  step_ticks: 10000\n  spread_half_ticks: 5000\n  levels: 5\n  trade_probability: 0.0\n  instruments:\n    - id: BTC-USDT\n      initial_mid: 50000\n"
     )
 }
 

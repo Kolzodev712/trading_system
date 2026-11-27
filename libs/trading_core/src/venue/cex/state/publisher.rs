@@ -4,7 +4,7 @@
 //! via broadcast channels for ultra-low latency fan-out to multiple consumers.
 
 use tracing::{debug, warn};
-use trading_core::{
+use crate::{
     error::EngineError,
     types::exchange::{Balance, Order, Position, Trade},
     venue::cex::channels::CexVenueUpdateSender,
@@ -32,7 +32,7 @@ impl ExchangeStatePublisher {
     /// # Errors
     /// Returns an error if the channel is closed (all receivers dropped)
     pub async fn publish_order(&self, order: &Order) -> Result<(), EngineError> {
-        use trading_core::venue::cex::channels::CexVenueUpdate;
+        use crate::venue::cex::channels::CexVenueUpdate;
 
         let tracer = get_tracer("exchange-engine");
         let mut ctx = ColdTraceContext::new_root_with_tracer(&tracer, "exchange.order", None);
@@ -67,7 +67,7 @@ impl ExchangeStatePublisher {
     /// # Errors
     /// Returns an error if the channel is closed (all receivers dropped)
     pub async fn publish_balance(&self, balance: &Balance) -> Result<(), EngineError> {
-        use trading_core::venue::cex::channels::CexVenueUpdate;
+        use crate::venue::cex::channels::CexVenueUpdate;
 
         let tracer = get_tracer("exchange-engine");
         let mut ctx = ColdTraceContext::new_root_with_tracer(&tracer, "exchange.balance", None);
@@ -99,7 +99,7 @@ impl ExchangeStatePublisher {
     /// # Errors
     /// Returns an error if the channel is closed (all receivers dropped)
     pub async fn publish_trade(&self, trade: &Trade) -> Result<(), EngineError> {
-        use trading_core::venue::cex::channels::CexVenueUpdate;
+        use crate::venue::cex::channels::CexVenueUpdate;
 
         let tracer = get_tracer("exchange-engine");
         let mut ctx = ColdTraceContext::new_root_with_tracer(&tracer, "exchange.trade", None);
@@ -131,7 +131,7 @@ impl ExchangeStatePublisher {
     /// # Errors
     /// Returns an error if the channel is closed (all receivers dropped)
     pub async fn publish_position(&self, position: &Position) -> Result<(), EngineError> {
-        use trading_core::venue::cex::channels::CexVenueUpdate;
+        use crate::venue::cex::channels::CexVenueUpdate;
 
         let tracer = get_tracer("exchange-engine");
         let mut ctx = ColdTraceContext::new_root_with_tracer(&tracer, "exchange.position", None);
@@ -174,7 +174,7 @@ mod tests {
     use rust_decimal::Decimal;
     use std::time::Duration;
     use tokio::time::timeout;
-    use trading_core::{
+    use crate::{
         types::{
             common::{OrderId, OrderStatus, Side},
             exchange::Order,
@@ -184,13 +184,13 @@ mod tests {
 
     fn create_test_order() -> Order {
         // symbol is the entire pair string (e.g., "BTCUSDT"), need to parse it
-        let registry = trading_core::registry::symbol::SymbolRegistry::default();
+        let registry = crate::registry::symbol::SymbolRegistry::default();
         let pair = registry.get_or_parse_pair("BTCUSDT");
         Order {
             order_id: OrderId::new("12345".into()),
             client_order_id: None,
-            instrument: trading_core::types::common::Instrument::new(
-                trading_core::types::common::InstrumentType::Spot,
+            instrument: crate::types::common::Instrument::new(
+                crate::types::common::InstrumentType::Spot,
                 pair,
             ),
             side: Side::Buy,
@@ -217,7 +217,7 @@ mod tests {
             .unwrap();
 
         match update {
-            trading_core::venue::cex::channels::CexVenueUpdate::Order {
+            crate::venue::cex::channels::CexVenueUpdate::Order {
                 order: published_order,
                 ..
             } => {

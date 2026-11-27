@@ -8,11 +8,10 @@ edition = "2021"
 [dependencies]
 trading_core = { path = "../../libs/trading_core" }
 indicator_engine = { path = "../indicator_engine" }
-exchange_engine = { path = "../exchange_engine" }
 dex_engine = { path = "../dex_engine", optional = true }
 asset_engine = { path = "../asset_engine" }
-# Note: Trading Engine communicates with Exchange Engine via channels,
-# but needs exchange_engine dependency for type references (ExchangeStateManager)
+# CEX account state (`ExchangeStateManager`, `ImmediateTrigger`) lives in
+# `trading_core::venue::cex::state`; adapters stay in `exchange_engine`.
 
 # Logging
 tracing = { workspace = true }

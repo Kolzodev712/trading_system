@@ -59,7 +59,7 @@ Run a sequenced program with **CEX as the only live system** until a future DEX 
 - **Timing:** before/after `cargo check -p trading_engine -j1` and `cargo check -p runner -j1` (cold and incremental after a one-line CEX edit).
 - **Thin API:** `trading_engine` `Cargo.toml` has no `exchange_engine` path dep (or only via a feature used by integration tests — prefer none).
 - **Behavior:** existing `cargo test -p trading_engine --lib`, `cargo test -p exchange_engine --lib`, Paper/Demo smoke unchanged.
-- **Gates:** keep `just test-5r-graph` / research isolation; add a small check that default CEX packages do not depend on `dex_engine`.
+- **Gates:** keep `just test-5r-graph` / research isolation.
 - **Core split (later phase):** each extracted crate builds alone; dependents use `workspace = true`; no increase in duplicate proto builds.
 
 ## Implementation plan (phased)
@@ -115,3 +115,23 @@ _(append after each phase: what shipped, tree/timing deltas, deviations)_
 - `cargo check -p trading_engine --features dex`, `-p runner --features dex --all-targets`, `-p gateway --features dex --all-targets`, `-p market_data_engine --features dex --all-targets`, `-p dex_engine`, `-p trading_system --tests --features dex` OK.
 - `cargo test -p trading_engine --lib` (196), `-p market_data_engine --lib` (42), `-p runner --lib` (39 default / 41 with `dex`), `-p gateway --lib` (25) pass.
 - `cargo clippy -D warnings` clean on the CEX packages (default features) and on `runner`/`market_data_engine` with `--features dex`.
+
+### Phase B — Thin CEX API (shipped)
+
+**What shipped**
+- Moved `exchange_engine::state` (`ExchangeStateManager`, `ImmediateTrigger`, in-memory state, publisher, WS/REST reconciler) to `trading_core::venue::cex::state`.
+- `exchange_engine::state` is now a re-export shim so adapters/runner/gateway/examples keep working unchanged.
+- `trading_engine` dropped its `exchange_engine` path dependency; CEX state imports go through `trading_core::venue::cex::state`.
+
+**Tree check**
+- `cargo tree -p trading_engine -e normal` → no `exchange_engine` (and no venue adapter crates via that edge). `ring`/`reqwest`/`tokio-tungstenite` may still appear via `trading_core` / `asset_engine` (core split is Phase C).
+
+**Deviations / notes**
+- Chose `trading_core` module over a new `cex_exchange_api` crate — state already depends only on core types + `trading_trace`, which `trading_core` already owns.
+- Harness/Paper smoke fixes landed alongside verification: workflow instruments use `step_ticks`/`spread_half_ticks`; `PAPER_LAB_FAULTS=1` is set when spawning k-paper. Sample report-stack instruments.yaml updated the same way.
+
+**Verification**
+- Pre-Phase-B: `just test-paper` → LAYER paper: PASS (negative_control_mismatch correctly FAIL).
+- `cargo check -p trading_core -p exchange_engine -p trading_engine -p runner -p gateway -p btc_price_ma_app`.
+- `cargo test -p trading_engine --lib` (196), `-p exchange_engine --lib` (251 + 1 ignored), `-p trading_core --lib` (129) pass.
+- `cargo clippy -p trading_core -p trading_engine -p exchange_engine -- -D warnings` clean.

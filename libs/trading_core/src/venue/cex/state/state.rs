@@ -6,7 +6,7 @@
 use rust_decimal::Decimal;
 use std::collections::HashMap;
 use std::sync::Arc;
-use trading_core::{
+use crate::{
     registry::symbol::SymbolRegistry,
     types::{
         common::{OrderId, Pair, Symbol},
@@ -243,7 +243,7 @@ impl ExchangeState {
     }
 
     /// Get trades for a specific pair
-    pub fn get_trades_for_pair(&self, pair: &trading_core::types::common::Pair) -> Vec<&Trade> {
+    pub fn get_trades_for_pair(&self, pair: &crate::types::common::Pair) -> Vec<&Trade> {
         self.private_trades
             .iter()
             .filter(|t| &t.pair == pair)
@@ -252,7 +252,7 @@ impl ExchangeState {
 
     /// Get all open orders (orders that are not filled, cancelled, rejected, or expired)
     pub fn get_open_orders(&self) -> Vec<&Order> {
-        use trading_core::types::common::OrderStatus;
+        use crate::types::common::OrderStatus;
         self.orders
             .values()
             .filter(|o| matches!(o.status, OrderStatus::New | OrderStatus::PartiallyFilled))
@@ -261,7 +261,7 @@ impl ExchangeState {
 
     /// Get open orders for a specific pair (orders that are not filled, cancelled, rejected, or expired)
     pub fn get_open_orders_for_pair(&self, pair: &Pair) -> Vec<&Order> {
-        use trading_core::types::common::OrderStatus;
+        use crate::types::common::OrderStatus;
         self.orders_by_pair
             .get(pair)
             .map(|order_ids| {
@@ -342,7 +342,7 @@ impl Default for ExchangeState {
 mod tests {
     use super::*;
     use rust_decimal::Decimal;
-    use trading_core::types::common::{Instrument, InstrumentType, OrderStatus, Side, Symbol};
+    use crate::types::common::{Instrument, InstrumentType, OrderStatus, Side, Symbol};
 
     fn create_test_order(order_id: &str, symbol: &str, status: OrderStatus) -> Order {
         // symbol is the entire pair string (e.g., "BTCUSDT"), need to parse it
@@ -382,7 +382,7 @@ mod tests {
     #[test]
     fn test_update_order() {
         use std::sync::Arc;
-        use trading_core::registry::symbol::SymbolRegistry;
+        use crate::registry::symbol::SymbolRegistry;
 
         let mut registry = SymbolRegistry::new();
         let pair = Pair::new("BTC", "USDT");
@@ -401,7 +401,7 @@ mod tests {
     #[test]
     fn test_update_order_twice_does_not_duplicate_index() {
         use std::sync::Arc;
-        use trading_core::registry::symbol::SymbolRegistry;
+        use crate::registry::symbol::SymbolRegistry;
 
         let mut registry = SymbolRegistry::new();
         let pair = Pair::new("BTC", "USDT");
@@ -422,7 +422,7 @@ mod tests {
     #[test]
     fn test_remove_order() {
         use std::sync::Arc;
-        use trading_core::registry::symbol::SymbolRegistry;
+        use crate::registry::symbol::SymbolRegistry;
 
         let mut registry = SymbolRegistry::new();
         let pair = Pair::new("BTC", "USDT");
@@ -458,7 +458,7 @@ mod tests {
     #[test]
     fn test_get_orders_for_pair() {
         use std::sync::Arc;
-        use trading_core::registry::symbol::SymbolRegistry;
+        use crate::registry::symbol::SymbolRegistry;
 
         let mut registry = SymbolRegistry::new();
         let btc_pair = Pair::new("BTC", "USDT");

@@ -70,8 +70,8 @@ pub struct StrategyExecutor<S: Strategy + 'static> {
     /// Required for Exchange+Futures. None means freshness is not enforced (Spot / Shadow).
     max_market_data_age_ms: Option<u64>,
     submission_journal: Option<Arc<crate::cex::state::SubmissionJournal>>,
-    exchange_state_manager: Option<Arc<exchange_engine::state::manager::ExchangeStateManager>>,
-    immediate_recon: Arc<exchange_engine::state::ImmediateTrigger>,
+    exchange_state_manager: Option<Arc<trading_core::venue::cex::state::ExchangeStateManager>>,
+    immediate_recon: Arc<trading_core::venue::cex::state::ImmediateTrigger>,
 }
 
 impl<S: Strategy> StrategyExecutor<S> {
@@ -122,7 +122,7 @@ impl<S: Strategy> StrategyExecutor<S> {
             max_market_data_age_ms: None,
             submission_journal: None,
             exchange_state_manager: None,
-            immediate_recon: Arc::new(exchange_engine::state::ImmediateTrigger::new()),
+            immediate_recon: Arc::new(trading_core::venue::cex::state::ImmediateTrigger::new()),
         }
     }
 
@@ -191,7 +191,7 @@ impl<S: Strategy> StrategyExecutor<S> {
 
     pub fn with_exchange_state_manager(
         mut self,
-        exchange_state_manager: Arc<exchange_engine::state::manager::ExchangeStateManager>,
+        exchange_state_manager: Arc<trading_core::venue::cex::state::ExchangeStateManager>,
     ) -> Self {
         self.exchange_state_manager = Some(exchange_state_manager);
         self

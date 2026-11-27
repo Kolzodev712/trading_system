@@ -8,7 +8,7 @@ use tokio::sync::RwLock;
 use tracing::{error, info};
 
 use super::ImmediateTrigger;
-use trading_core::{
+use crate::{
     error::EngineError,
     types::{
         common::Pair,
@@ -237,7 +237,7 @@ impl StateReconciler {
 }
 
 use rust_decimal::Decimal;
-use trading_core::types::common::{OrderId, OrderStatus};
+use crate::types::common::{OrderId, OrderStatus};
 
 /// Discrepancy detected during reconciliation
 #[derive(Debug, Clone)]
@@ -397,7 +397,7 @@ pub fn compare_trades(rest_trades: &[Trade], ws_trades: &[Trade]) -> Vec<Discrep
 #[cfg(test)]
 mod tests {
     use super::*;
-    use trading_core::{
+    use crate::{
         registry::symbol::SymbolRegistry,
         types::common::{Instrument, OrderId, OrderStatus, Side, Symbol},
     };
@@ -423,7 +423,7 @@ mod tests {
         Order {
             order_id: OrderId::new(order_id.into()),
             client_order_id: None,
-            instrument: Instrument::new(trading_core::types::common::InstrumentType::Spot, pair),
+            instrument: Instrument::new(crate::types::common::InstrumentType::Spot, pair),
             side: Side::Buy,
             price: Decimal::new(100, 0),
             amount: Decimal::new(1, 0),

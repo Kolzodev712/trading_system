@@ -1,13 +1,9 @@
-//! Exchange state management
+//! Exchange state management (re-exported from `trading_core`).
 //!
-//! This module provides state management for exchange data (balances, orders, trades)
-//! received from WebSocket streams. The state is kept in-memory for ultra-low latency access.
+//! Ownership lives in `trading_core::venue::cex::state` so `trading_engine` can
+//! depend on the thin CEX state API without pulling venue adapters.
 
-pub mod immediate;
-pub mod manager;
-pub mod publisher;
-pub mod reconciler;
-#[allow(clippy::module_inception)]
-pub mod state;
-
-pub use immediate::ImmediateTrigger;
+pub use trading_core::venue::cex::state::{
+    immediate, manager, publisher, reconciler, state, ExchangeState, ExchangeStateManager,
+    ImmediateTrigger,
+};

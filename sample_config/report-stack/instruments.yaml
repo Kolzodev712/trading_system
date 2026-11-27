@@ -18,8 +18,8 @@ max_trade_history: 10000
 market:
   interval_ms: 500
   seed: 7
-  step: 100
-  spread_half: 50
+  step_ticks: 10000
+  spread_half_ticks: 5000
   levels: 5
   trade_probability: 0.0
   instruments:

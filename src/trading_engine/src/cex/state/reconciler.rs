@@ -5,7 +5,7 @@
 //! This reconciler uses ExchangeStateManager's state (which is the single point of contact with exchange).
 
 use crate::cex::state::TradingState;
-use exchange_engine::state::manager::ExchangeStateManager;
+use trading_core::venue::cex::state::ExchangeStateManager;
 use rust_decimal::Decimal;
 use std::sync::Arc;
 use tracing::warn;

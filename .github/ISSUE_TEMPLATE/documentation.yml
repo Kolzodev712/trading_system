@@ -1,0 +1,24 @@
+name: Documentation improvement
+description: Fix or improve docs
+title: "[docs] "
+labels: ["documentation"]
+body:
+  - type: input
+    id: affected
+    attributes:
+      label: Affected documentation
+      placeholder: e.g. README.md, docs/STRATEGY_GUIDE.md
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Existing problem
+    validations:
+      required: true
+  - type: textarea
+    id: proposed
+    attributes:
+      label: Proposed correction
+    validations:
+      required: true

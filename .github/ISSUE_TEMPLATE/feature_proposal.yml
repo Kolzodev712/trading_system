@@ -1,0 +1,45 @@
+name: Feature proposal
+description: Propose an enhancement or new capability
+title: "[enhancement] "
+labels: ["enhancement", "needs-design"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem being solved
+    validations:
+      required: true
+  - type: input
+    id: user
+    attributes:
+      label: Intended user
+      placeholder: e.g. strategy developer, operator, integrator
+    validations:
+      required: true
+  - type: textarea
+    id: proposed
+    attributes:
+      label: Proposed behavior
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+  - type: textarea
+    id: components
+    attributes:
+      label: Affected components
+    validations:
+      required: true
+  - type: textarea
+    id: architecture
+    attributes:
+      label: Architectural implications
+      description: Especially risk, execution, journaling, recovery, auth
+  - type: textarea
+    id: verification
+    attributes:
+      label: Suggested verification
+    validations:
+      required: true

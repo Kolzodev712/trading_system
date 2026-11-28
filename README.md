@@ -11,7 +11,7 @@ Rust workspace for a **modular trading runtime**: market data, exchange adapters
 
 **Architecture (current):** [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — pure models in `strategy_core`, historical eval in `research_engine` / `research_cli`, live composition via `btc_price_ma_app` and `ExtraStrategyFactory`, generic `runner` for levels and built-in strategies. Narrative: [docs/Trading-System-Analysis.txt](docs/Trading-System-Analysis.txt). Status gates: [docs/PROGRESSION.md](docs/PROGRESSION.md).
 
-**Ecosystem map:** implementation docs here; runnable lab in sibling [**trading-system-showcase**](../trading-system-showcase) (`lab/` Compose).
+**Ecosystem map:** implementation docs here; runnable lab in [**trading-system-showcase**](https://github.com/Kolzodev712/trading-system-showcase) (`lab/` Compose).
 
 ## Qualification boundaries (read first)
 
@@ -35,15 +35,16 @@ just test-paper
 
 Related: `just test-paper-negative`, `just test-paper-ui` (UI repo checkout).
 
-**Full-stack laboratory (recommended for newcomers):** sibling [trading-system-showcase/lab](../trading-system-showcase/lab/README.md) — builds runner, k-paper, and UI; loopback-only; trading disabled until enabled in the UI.
+**Full-stack laboratory (recommended for newcomers):** [trading-system-showcase/lab](https://github.com/Kolzodev712/trading-system-showcase/tree/main/lab) — builds runner, k-paper, and UI; loopback-only; trading disabled until enabled in the UI.
 
 ```bash
-cd ../trading-system-showcase/lab && cp .env.example .env && make doctor && make build && make demo
+# after cloning the four public repos as siblings
+cd trading-system-showcase/lab && cp .env.example .env && make doctor && make build && make demo
 ```
 
 **From source (developers):** `cargo build -p runner` or `-p btc_price_ma_app` with [rust-toolchain.toml](rust-toolchain.toml). Spot levels smoke against k-paper is documented in k-paper’s DEV-GUIDE; Candidate #2 Paper gates use the linear USDT fixture — not the same as levels smoke.
 
-**Docker:** root [Dockerfile](Dockerfile) is **obsolete**. Use [trading-system-showcase/lab](../trading-system-showcase/lab/README.md) for containers, or host build + [Dockerfile.paper-bin](Dockerfile.paper-bin) for a thin runtime image.
+**Docker:** root [Dockerfile](Dockerfile) is **obsolete**. Use [trading-system-showcase/lab](https://github.com/Kolzodev712/trading-system-showcase/tree/main/lab) for containers, or host build + [Dockerfile.paper-bin](Dockerfile.paper-bin) for a thin runtime image.
 
 ## Extend the system
 
@@ -552,7 +553,7 @@ cargo build
 
 - Local: `cargo build -p runner` (or `btc_price_ma_app`) with [`rust-toolchain.toml`](rust-toolchain.toml) (`1.98.1`)
 - Host-built binary + thin runtime: [`Dockerfile.paper-bin`](Dockerfile.paper-bin)
-- Integrated paper lab: [trading-system-showcase/lab](../trading-system-showcase/lab/README.md) (`make demo`)
+- Integrated paper lab: [trading-system-showcase/lab](https://github.com/Kolzodev712/trading-system-showcase/tree/main/lab) (`make demo`)
 
 **📖 Historical notes:** [DOCKER.md](architecture/DOCKER.md) (verify against the note above before trusting build steps).
 
@@ -1439,19 +1440,9 @@ CONDITIONS OF ANY KIND, either express or implied.
 
 ## Contributing
 
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests
-5. Ensure all tests pass: `cargo test`
-6. Run clippy: `cargo clippy`
-7. Submit a pull request
+See [CONTRIBUTING.md](CONTRIBUTING.md) for environment setup, verification (`just test-fast` / Paper gates), and high-scrutiny areas. Related projects: [k-paper](https://github.com/Kolzodev712/k-paper), [trading-system-ui](https://github.com/Kolzodev712/trading-system-ui), [showcase lab](https://github.com/Kolzodev712/trading-system-showcase). Security: [SECURITY.md](SECURITY.md).
 
 ## Version History
 
-- **0.1** (December 2024): Initial release
-  - Level-based trading
-  - Strategy-based trading
-  - TUI CLI
-  - Comprehensive testing
-  - Architecture documentation
+- **0.1.1** (2026-11-27): Public stabilization release (see [CHANGELOG.md](CHANGELOG.md))
+- **0.1** (December 2024): Initial laboratory release

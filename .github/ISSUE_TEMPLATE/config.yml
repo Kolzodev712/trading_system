@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/Kolzodev712/trading_system/blob/main/SECURITY.md
+    about: Do not disclose vulnerabilities in public issues.
+  - name: Ecosystem lab / docs
+    url: https://github.com/Kolzodev712/trading-system-showcase/issues
+    about: Integrated laboratory and showcase documentation issues.

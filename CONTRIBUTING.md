@@ -56,8 +56,9 @@ Report which commands you ran in the pull request.
 
 ## Reporting problems
 
-- Bugs / features: GitHub Issues (use templates when available).
-- Security: see [SECURITY.md](SECURITY.md) — do not file public issues for vulnerabilities.
+- Bugs / features: GitHub Issues (use templates when available). Open contribution issues: https://github.com/Kolzodev712/trading_system/labels/good%20first%20issue
+- Security: see [SECURITY.md](SECURITY.md) — use GitHub private vulnerability reporting; do not file public issues for vulnerabilities.
+- Conduct: [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
 
 ## License
 

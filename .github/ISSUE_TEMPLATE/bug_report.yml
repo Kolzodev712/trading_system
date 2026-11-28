@@ -54,4 +54,4 @@ body:
   - type: markdown
     attributes:
       value: |
-        Security vulnerabilities: report via [SECURITY.md](../SECURITY.md), not this form.
+        Security vulnerabilities: use https://github.com/Kolzodev712/trading_system/security/advisories/new (see SECURITY.md), not this form.

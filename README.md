@@ -1440,7 +1440,7 @@ CONDITIONS OF ANY KIND, either express or implied.
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for environment setup, verification (`just test-fast` / Paper gates), and high-scrutiny areas. Related projects: [k-paper](https://github.com/Kolzodev712/k-paper), [trading-system-ui](https://github.com/Kolzodev712/trading-system-ui), [showcase lab](https://github.com/Kolzodev712/trading-system-showcase). Security: [SECURITY.md](SECURITY.md).
+See [CONTRIBUTING.md](CONTRIBUTING.md) for environment setup, verification (`just test-fast` / Paper gates), and high-scrutiny areas. Browse [good first issues](https://github.com/Kolzodev712/trading_system/labels/good%20first%20issue) and the ecosystem [ROADMAP](https://github.com/Kolzodev712/trading-system-showcase/blob/main/ROADMAP.md). Related projects: [k-paper](https://github.com/Kolzodev712/k-paper), [trading-system-ui](https://github.com/Kolzodev712/trading-system-ui), [showcase lab](https://github.com/Kolzodev712/trading-system-showcase). Security: [SECURITY.md](SECURITY.md). Code of conduct: [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
 
 ## Version History
 
